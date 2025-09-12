@@ -1,0 +1,22 @@
+[tool.deadcode]
+# Dossiers à analyser
+directories = ["src/adan_trading_bot"]
+
+# Fichiers à exclure
+exclude = [
+    "**/tests/**",
+    "**/__pycache__/**",
+    "**/*.pyi",
+    "**/migrations/**",
+    "**/templates/**",
+    "**/static/**",
+]
+
+# Niveau de détail du rapport
+verbose = 1
+
+# Ignorer les imports non utilisés
+ignore_unused_imports = false
+
+# Ignorer les variables avec préfixe _
+ignore_names_starting_with_underscore = true

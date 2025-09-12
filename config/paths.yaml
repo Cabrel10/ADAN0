@@ -1,0 +1,57 @@
+# Configuration des chemins du projet ADAN Trading Bot
+# Ce fichier définit la structure des chemins de manière centralisée
+
+# Chemins de base du projet
+base_paths:
+  root: /home/morningstar/Documents/trading/bot
+  data: ${base_paths.root}/data
+  models: ${base_paths.root}/models
+  logs: ${base_paths.root}/logs
+  reports: ${base_paths.root}/reports
+
+# Structure des données brutes
+raw_data:
+  base: ${base_paths.data}/raw
+  # Exemple: ${raw_data.base}/binance/BTCUSDT_1m.csv
+  binance: ${raw_data.base}/binance/{asset}_{timeframe}.csv
+
+# Structure des données traitées
+processed_data:
+  base: ${base_paths.data}/processed
+  indicators: ${processed_data.base}/indicators
+
+  # Structure des données d'entraînement
+  train: ${processed_data.indicators}/train/{asset}/{timeframe}.parquet
+
+  # Structure des données de validation
+  validation: ${processed_data.indicators}/val/{asset}/{timeframe}.parquet
+
+  # Structure des données de test
+  test: ${processed_data.indicators}/test/{asset}/{timeframe}.parquet
+
+# Modèles entraînés
+models:
+  base: ${base_paths.models}
+  rl_agents: ${models.base}/rl_agents
+
+  # Structure pour sauvegarder les modèles
+  # Exemple: ${models.rl_agents}/PPO/BTCUSDT/20230902_120000
+  trained_model: ${models.rl_agents}/{algorithm}/{asset}/{timestamp}
+
+# Logs et métriques
+logging:
+  base: ${base_paths.logs}
+  training: ${logging.base}/training
+  backtest: ${logging.base}/backtest
+
+  # Exemple: ${logging.training}/PPO_BTCUSDT_20230902_120000.log
+  training_log: ${logging.training}/{algorithm}_{asset}_{timestamp}.log
+
+# Rapports et visualisations
+reports:
+  base: ${base_paths.reports}
+  metrics: ${reports.base}/metrics
+  figures: ${reports.base}/figures
+
+  # Exemple: ${reports.metrics}/backtest/BTCUSDT_20230902_120000/metrics.json
+  backtest_metrics: ${reports.metrics}/backtest/{asset}_{timestamp}/metrics.json

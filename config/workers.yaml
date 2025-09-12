@@ -1,0 +1,411 @@
+# Worker configurations with tier-based risk management
+# Updated: 2025-08-31 - Implemented tier-based position sizing and risk management
+# Capital tiers and position sizing according to specifications
+
+# Global tier configuration
+tiers:
+  micro:
+    capital_range: [10, 100]  # USDT
+    exposure_range: [75, 90]  # % of capital
+    description: "Micro Capital (10-100 USDT) - High risk, high reward"
+  small:
+    capital_range: [100, 200]  # USDT
+    exposure_range: [60, 70]   # % of capital
+    description: "Small Capital (100-200 USDT) - Balanced risk"
+  medium:
+    capital_range: [200, 500]  # USDT
+    exposure_range: [50, 60]   # % of capital
+    description: "Medium Capital (200-500 USDT) - Moderate risk"
+  high:
+    capital_range: [500, 1000]  # USDT
+    exposure_range: [25, 35]    # % of capital
+    description: "High Capital (500-1000 USDT) - Conservative"
+  enterprise:
+    capital_range: [1000, 10000]  # USDT
+    exposure_range: [5, 20]       # % of capital
+    description: "Enterprise Capital (1000+ USDT) - Very conservative"
+
+workers:
+  # Worker 1 (Temporal Precision - Conservative)
+  w1:
+    profile: conservative
+    # Position sizing as percentage of tier's exposure range (min of range)
+    tier_position_ratio: 0.0  # Takes minimum of the tier's exposure range
+    agent_config:
+      ent_coef: 0.008
+      learning_rate: 8e-5
+      batch_size: 64
+      n_steps: 2048
+      n_epochs: 10
+      clip_range: 0.15
+    assets:
+      - BTCUSDT
+      - ETHUSDT
+    data_split: train
+    dbe_config:
+      # Market regime detection
+      market_regime_detection:
+        adx_threshold: 25
+        rsi_overbought: 70
+        rsi_oversold: 30
+        atr_multiplier: 1.8
+        ema_fast: 20
+        ema_slow: 50
+      # Regime-specific parameters
+      regime_parameters:
+        bull:
+          sl_multiplier: 1.1
+          tp_multiplier: 1.3
+          position_size_multiplier: 1.0
+        bear:
+          sl_multiplier: 0.7
+          tp_multiplier: 0.9
+          position_size_multiplier: 0.7
+        volatile:
+          sl_multiplier: 0.6
+          tp_multiplier: 0.7
+          position_size_multiplier: 0.5
+        sideways:
+          sl_multiplier: 0.9
+          tp_multiplier: 1.1
+          position_size_multiplier: 0.6
+      # Risk management settings
+      risk_management:
+        min_trade_value: 11.0  # Minimum de 11 USDT par trade
+        max_drawdown_pct: 4.0  # Drawdown maximum absolu de 4%
+        max_leverage: 1.0
+      # Volatility management
+      volatility_management:
+        lookback: 21
+        min_volatility: 0.01
+        max_volatility: 0.20
+    description: "Conservative profile focusing on capital preservation with strict risk controls"
+    model_config:
+      cnn_config: 5m
+      features: ["close", "volume", "rsi", "macd", "bb_upper", "bb_middle", "bb_lower"]
+    name: Conservative Trader
+    reward_config:
+      drawdown_penalty: -0.003
+      profit_factor_bonus: 0.15
+      sharpe_ratio_bonus: 0.1
+      sortino_ratio_bonus: 0.1
+      calmar_ratio_bonus: 0.1
+      win_rate_bonus: 0.05
+      consistency_bonus: 0.1
+      holding_penalty: -0.00005
+      max_drawdown_penalty: -0.005
+    risk_parameters:
+      position_size_pct: 0.05  # 5% of capital per position
+      position_size_range: [0.02, 0.10]  # Min 2%, Max 10%
+      risk_per_trade_pct: 0.5  # 0.5% risk per trade
+      max_drawdown_pct: 0.1    # 10% max drawdown
+      volatility_lookback: 21   # 21 days for volatility calculation
+      max_concurrent_trades: 2  # Max 2 concurrent trades
+    timeframes:
+      - 5m
+      - 1h
+    trading_config:
+      position_risk_offset: -0.6
+      position_size_offset: -0.8
+      stop_loss_pct: 0.01
+      take_profit_pct: 0.02
+      trailing_stop: true
+      trailing_delta: 0.003
+      max_trade_duration: 24  # hours
+    trading_mode: spot
+  # Worker 2 (Moderate)
+  # Worker 2 (Low-Frequency Sentinel - Moderate)
+  w2:
+    profile: moderate
+    # Position sizing as percentage of tier's exposure range (middle of range)
+    tier_position_ratio: 0.5  # Takes middle of the tier's exposure range
+    agent_config:
+      ent_coef: 0.01
+      learning_rate: 1.5e-4
+      batch_size: 128
+      n_steps: 2048
+      n_epochs: 8
+      clip_range: 0.2
+    assets:
+      - BNBUSDT
+      - SOLUSDT
+    data_split: train
+    dbe_config:
+      market_regime_detection:
+        adx_threshold: 22
+        rsi_overbought: 75
+        rsi_oversold: 25
+        atr_multiplier: 2.0
+        ema_fast: 15
+        ema_slow: 45
+      regime_parameters:
+        bull:
+          sl_multiplier: 1.2
+          tp_multiplier: 1.4
+          position_size_multiplier: 1.0
+        bear:
+          sl_multiplier: 0.6
+          tp_multiplier: 0.8
+          position_size_multiplier: 0.7
+        volatile:
+          sl_multiplier: 0.5
+          tp_multiplier: 0.6
+          position_size_multiplier: 0.6
+        sideways:
+          sl_multiplier: 0.8
+          tp_multiplier: 1.2
+          position_size_multiplier: 0.8
+      risk_management:
+        min_trade_value: 11.0  # Minimum de 11 USDT par trade
+        max_drawdown_pct: 4.0  # Drawdown maximum absolu de 4%
+        max_leverage: 1.0
+      # Volatility management
+      volatility_management:
+        lookback: 14
+        min_volatility: 0.008
+        max_volatility: 0.25
+    description: "Balanced profile with moderate risk exposure and dynamic adjustments"
+    model_config:
+      cnn_config: 1h
+      features: ["close", "volume", "rsi", "stoch_k", "stoch_d", "macd", "macd_signal"]
+    name: Balanced Trader
+    reward_config:
+      drawdown_penalty: -0.002
+      profit_factor_bonus: 0.2
+      sharpe_ratio_bonus: 0.15
+      sortino_ratio_bonus: 0.15
+      calmar_ratio_bonus: 0.1
+      win_rate_bonus: 0.1
+      consistency_bonus: 0.15
+      holding_penalty: -0.00003
+      max_drawdown_penalty: -0.003
+    risk_parameters:
+      position_size_pct: 0.10  # 10% of capital per position
+      position_size_range: [0.05, 0.15]  # Min 5%, Max 15%
+      risk_per_trade_pct: 1.0  # 1% risk per trade
+      max_drawdown_pct: 0.15   # 15% max drawdown
+      volatility_lookback: 14   # 14 days for volatility calculation
+      max_concurrent_trades: 3  # Max 3 concurrent trades
+    timeframes:
+      - 1h
+      - 4h
+    trading_config:
+      position_risk_offset: 0.0
+      position_size_offset: 0.0
+      stop_loss_pct: 0.015
+      take_profit_pct: 0.03
+      trailing_stop: true
+      trailing_delta: 0.005
+      max_trade_duration: 48  # hours
+    trading_mode: spot
+  # Worker 3 (Aggressive)
+  # Worker 3 (Rug-Pull Resistant - Aggressive)
+  w3:
+    profile: aggressive
+    # Position sizing as percentage of tier's exposure range (max of range)
+    tier_position_ratio: 1.0  # Takes maximum of the tier's exposure range
+    agent_config:
+      ent_coef: 0.015
+      learning_rate: 2e-4
+      batch_size: 256
+      n_steps: 2048
+      n_epochs: 6
+      clip_range: 0.25
+    assets:
+      - BTCUSDT
+      - ETHUSDT
+      - XRPUSDT
+      - ADAUSDT
+    data_split: train
+    dbe_config:
+      # Market regime detection
+      market_regime_detection:
+        adx_threshold: 20
+        rsi_overbought: 75
+        rsi_oversold: 25
+        atr_multiplier: 2.2
+        ema_fast: 10
+        ema_slow: 40
+      # Regime-specific parameters
+      regime_parameters:
+        bull:
+          sl_multiplier: 1.3
+          tp_multiplier: 1.8
+          position_size_multiplier: 1.2
+        bear:
+          sl_multiplier: 0.9
+          tp_multiplier: 1.2
+          position_size_multiplier: 0.9
+        volatile:
+          sl_multiplier: 0.8
+          tp_multiplier: 0.9
+          position_size_multiplier: 0.7
+        sideways:
+          sl_multiplier: 1.1
+          tp_multiplier: 1.3
+          position_size_multiplier: 0.8
+      # Micro-capital settings
+      micro_capital:
+        threshold: 50.0
+        position_size_cap: 0.3
+        max_leverage: 1.0
+      # Volatility management
+      volatility_management:
+        lookback: 10
+        min_volatility: 0.005
+        max_volatility: 0.3
+    description: "Aggressive profile with dynamic risk management for higher returns"
+    model_config:
+      cnn_config: 5m
+      features: ["close", "volume", "rsi", "stoch_k", "stoch_d", "macd", "atr", "adx"]
+    name: Aggressive Trader
+    reward_config:
+      drawdown_penalty: -0.001
+      profit_factor_bonus: 0.3
+      sharpe_ratio_bonus: 0.2
+      sortino_ratio_bonus: 0.2
+      calmar_ratio_bonus: 0.15
+      win_rate_bonus: 0.15
+      momentum_bonus: 0.2
+      max_drawdown_penalty: -0.002
+    risk_parameters:
+      position_size_pct: 0.15  # 15% of capital per position
+      position_size_range: [0.08, 0.25]  # Min 8%, Max 25%
+      risk_per_trade_pct: 1.5  # 1.5% risk per trade
+      max_drawdown_pct: 0.20   # 20% max drawdown
+      volatility_lookback: 10   # 10 days for volatility calculation
+      max_concurrent_trades: 4  # Max 4 concurrent trades
+    timeframes:
+      - 5m
+      - 1h
+    trading_config:
+      position_risk_offset: 0.3
+      position_size_offset: 0.5
+      stop_loss_pct: 0.02
+      take_profit_pct: 0.04
+      trailing_stop: true
+      trailing_delta: 0.008
+      max_trade_duration: 36  # hours
+    trading_mode: spot
+  # Adaptive Worker (Dynamic Risk)
+  # Worker 4 (Adaptive - Variable)
+  w4:
+    profile: adaptive
+    # Position sizing as percentage of tier's exposure range (variable based on market conditions)
+    tier_position_ratio: 0.5  # Starts at middle, adapts based on performance
+    agent_config:
+      ent_coef: 0.02
+      learning_rate: 1.5e-4
+      batch_size: 256
+      n_steps: 4096
+      n_epochs: 5
+      clip_range: 0.3
+    assets:
+      - BTCUSDT
+      - ETHUSDT
+      - SOLUSDT
+      - XRPUSDT
+      - ADAUSDT
+    data_split: train
+    dbe_config:
+      # Advanced market regime detection
+      market_regime_detection:
+        adx_threshold: 18
+        rsi_overbought: 73
+        rsi_oversold: 27
+        atr_multiplier: 2.5
+        ema_fast: 12
+        ema_slow: 50
+        ema_trend: 200
+        regime_confidence_threshold: 0.7
+      # Dynamic regime parameters
+      regime_parameters:
+        bull:
+          sl_multiplier: 1.4
+          tp_multiplier: 2.0
+          position_size_multiplier: 1.3
+          max_holding_period: 72  # hours
+        bear:
+          sl_multiplier: 0.6
+          tp_multiplier: 1.0
+          position_size_multiplier: 0.7
+          max_holding_period: 48  # hours
+        volatile:
+          sl_multiplier: 0.5
+          tp_multiplier: 0.7
+          position_size_multiplier: 0.5
+          max_holding_period: 24  # hours
+        sideways:
+          sl_multiplier: 0.8
+          tp_multiplier: 1.2
+          position_size_multiplier: 0.6
+          max_holding_period: 36  # hours
+      # Micro-capital optimization
+      micro_capital:
+        threshold: 50.0
+        position_size_cap: 0.35
+        max_leverage: 1.0
+        min_position_value: 5.0  # Minimum position value in USDT
+      # Advanced volatility management
+      volatility_management:
+        lookback: 7
+        min_volatility: 0.005
+        max_volatility: 0.4
+        volatility_sensitivity: 1.5
+      # Dynamic position sizing
+      position_sizing:
+        base_size: 0.1
+        min_size: 0.03
+        max_size: 0.3
+        risk_per_trade: 0.01  # 1% risk per trade
+        max_daily_risk: 0.05  # 5% max daily risk
+      # Advanced risk management
+      risk_management:
+        max_drawdown_pct: 0.25
+        daily_loss_limit: 0.05  # 5% daily loss limit
+        weekly_loss_limit: 0.15  # 15% weekly loss limit
+        max_concurrent_trades: 5
+        correlation_threshold: 0.7
+    description: "Fully adaptive profile with DBE-driven risk management and dynamic adjustments"
+    model_config:
+      cnn_config: all
+      features: ["close", "volume", "rsi", "stoch_k", "stoch_d", "macd", "atr", "adx", "bb_upper", "bb_middle", "bb_lower", "obv"]
+    name: Adaptive Trader (DBE)
+    reward_config:
+      # Base rewards/penalties
+      drawdown_penalty: -0.0005
+      profit_factor_bonus: 0.25
+      sharpe_ratio_bonus: 0.2
+      sortino_ratio_bonus: 0.2
+      calmar_ratio_bonus: 0.15
+      # Advanced metrics
+      regime_adaptation_bonus: 0.3
+      volatility_adjustment_bonus: 0.15
+      consistency_bonus: 0.2
+      max_drawdown_penalty: -0.002
+      # Position management
+      holding_penalty: -0.00002
+      early_take_profit_bonus: 0.1
+      stop_loss_avoidance_bonus: 0.1
+    risk_parameters:
+      position_size_pct: 0.1  # Base value, will be overridden by DBE
+      position_size_range: [0.03, 0.3]  # Min 3%, Max 30%
+      risk_per_trade_pct: 1.0  # Will be overridden by DBE
+      max_drawdown_pct: 0.25   # 25% max drawdown
+      volatility_lookback: 7    # 7 days for volatility calculation
+      max_concurrent_trades: 5  # Max 5 concurrent trades
+    timeframes:
+      - 5m
+      - 1h
+      - 4h
+    trading_config:
+      position_risk_offset: 0.0  # Will be overridden by DBE
+      position_size_offset: 0.3  # Base value, will be overridden by DBE
+      stop_loss_pct: 0.03  # Base value, will be overridden by DBE
+      take_profit_pct: 0.06  # Base value, will be overridden by DBE
+      trailing_stop: true
+      trailing_delta: 0.006
+      dynamic_trailing: true
+      min_trailing_delta: 0.003
+      max_trailing_delta: 0.015
+    trading_mode: spot

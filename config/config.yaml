@@ -1,0 +1,1136 @@
+general:
+  project_name: ADAN
+  random_seed: 42
+  timezone: UTC
+  debug_mode: false
+  n_jobs: -1
+paths:
+  base_dir: /home/morningstar/Documents/trading/bot
+  data_dir: /home/morningstar/Documents/trading/bot/data
+  raw_data_dir: /home/morningstar/Documents/trading/bot/data/raw
+  processed_data_dir: /home/morningstar/Documents/trading/bot/data/processed
+  indicators_data_dir: /home/morningstar/Documents/trading/bot/data/processed/indicators
+  final_data_dir: /home/morningstar/Documents/trading/bot/data/final
+  models_dir: /home/morningstar/Documents/trading/bot/models
+  trained_models_dir: /home/morningstar/Documents/trading/bot/models/rl_agents
+  logs_dir: /home/morningstar/Documents/trading/bot/logs
+  reports_dir: /home/morningstar/Documents/trading/bot/reports
+  figures_dir: /home/morningstar/Documents/trading/bot/reports/figures
+  metrics_dir: /home/morningstar/Documents/trading/bot/reports/metrics
+model:
+  architecture:
+    block_a:
+      out_channels: 64
+      kernel_size: 3
+      padding: 1
+      leaky_relu_negative_slope: 0.01
+      dropout: 0.1
+    block_b:
+      multi_scale:
+        - kernel_size: 3
+          dilation: 1
+          padding: 1
+        - kernel_size: 5
+          dilation: 1
+          padding: 2
+        - kernel_size: 3
+          dilation: 2
+          padding: 2
+      se_ratio: 16
+      dropout: 0.2
+    attention:
+      num_heads: 4
+      dropout: 0.1
+      use_residual: true
+    head:
+      hidden_units:
+        - 256
+        - 128
+      dropout: 0.3
+      activation: leaky_relu
+  diagnostics:
+    use_grad_cam: true
+    use_integrated_gradients: true
+    target_layer: block_b.conv3
+    save_attention_maps: true
+    attention_map_dir: ${paths.models_dir}/attention_maps
+    volume_up: "#95A5A6"
+    volume_down: "#BDC3C7"
+    ma_short: "#F1C40F"
+    ma_medium: "#3498DB"
+    ma_long: "#8E44AD"
+    bollinger_mid: "#2980B9"
+    bollinger_band: "#85C1E9"
+    rsi_line: "#34495E"
+    rsi_overbought: "#E67E22"
+    rsi_oversold: "#2ECC71"
+    macd_line: "#2E86C1"
+    signal_line: "#F39C12"
+    histogram_up: "#2ECC71"
+    histogram_down: "#E74C3C"
+    background: "#FFFFFF"
+    grid: "#ECF0F1"
+  style:
+    figure_facecolor: white
+    axes_facecolor: white
+    grid_alpha: 0.3
+    font_family: sans-serif
+    font_size: 10
+    candle_width: 0.8
+    volume_alpha: 0.3
+    line_width: 1.0
+    legend_loc: upper left
+    legend_frameon: true
+    legend_facecolor: white
+    legend_edgecolor: "#DDDDDD"
+    left_margin: 0.05
+    right_margin: 0.95
+    top_margin: 0.95
+    bottom_margin: 0.1
+    hspace: 0.2
+data:
+  # Chargement de la configuration des chemins depuis paths.yaml
+  include: paths.yaml
+
+  # Actifs (doivent correspondre aux noms des dossiers en minuscules)
+  assets:
+    - btcusdt
+    - ethusdt
+    - adausdt
+    - solusdt
+    - xrpusdt
+
+  # Configuration des données traitées
+  processed_data:
+    train: /home/morningstar/Documents/trading/bot/data/processed/indicators/train/{asset}/{timeframe}.parquet
+    validation: /home/morningstar/Documents/trading/bot/data/processed/indicators/val/{asset}/{timeframe}.parquet
+    test: /home/morningstar/Documents/trading/bot/data/processed/indicators/test/{asset}/{timeframe}.parquet
+
+  # Timeframes disponibles (doivent correspondre aux noms des fichiers)
+  timeframes:
+    - 5m
+    - 1h
+    - 4h
+
+  # Configuration des répertoires de données (répertoire parent contenant train/val/test)
+  data_dirs:
+    base: /home/morningstar/Documents/trading/bot/data/processed/indicators
+    train: /home/morningstar/Documents/trading/bot/data/processed/indicators/train
+    val: /home/morningstar/Documents/trading/bot/data/processed/indicators/val
+    test: /home/morningstar/Documents/trading/bot/data/processed/indicators/test
+
+  features_per_timeframe:
+    "5m":
+      - OPEN
+      - HIGH
+      - LOW
+      - CLOSE
+      - VOLUME
+      - RSI_14
+      - STOCH_K_14_3_3
+      - STOCH_D_14_3_3
+      - MACD_HIST_12_26_9
+      - ATR_14
+      - EMA_5
+      - EMA_12
+      - BB_UPPER
+      - BB_MIDDLE
+      - BB_LOWER
+    "1h":
+      - OPEN
+      - HIGH
+      - LOW
+      - CLOSE
+      - VOLUME
+      - RSI_14
+      - STOCH_K_14_3_3
+      - STOCH_D_14_3_3
+      - MACD_HIST_12_26_9
+      - ADX_14
+      - BB_UPPER
+      - BB_MIDDLE
+      - BB_LOWER
+      - EMA_26
+      - EMA_50
+    "4h":
+      - OPEN
+      - HIGH
+      - LOW
+      - CLOSE
+      - VOLUME
+      - RSI_14
+      - MACD_HIST_12_26_9
+      - ADX_14
+      - ATR_14
+      - OBV
+      - EMA_50
+      - EMA_200
+      - SMA_200
+      - STOCH_K_14_3_3
+      - STOCH_D_14_3_3
+portfolio:
+  initial_balance: 20.5
+  include_portfolio_state: true
+  portfolio_state_features:
+    - cash_available
+    - total_equity
+    - total_return_pct
+    - sharpe_ratio
+    - max_drawdown_pct
+    - num_positions
+    - largest_positions: 5
+workers:
+  w1:
+    name: "Worker 1 (Pilier Stable)"
+    description: "Se concentre sur les paires majeures et les données d'entraînement."
+    assets: [BTCUSDT, ETHUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_mode: spot
+    agent_config:
+      {
+        ent_coef: 0.008,
+        learning_rate: 8e-5,
+        batch_size: 64,
+        n_steps: 2048,
+        n_epochs: 10,
+        clip_range: 0.15,
+      }
+    reward_config:
+      {
+        drawdown_penalty: -0.003,
+        profit_factor_bonus: 0.15,
+        sharpe_ratio_bonus: 0.1,
+        win_rate_bonus: 0.05,
+      }
+  w2:
+    name: "Worker 2 (Explorateur d'Alts)"
+    description: "Apprend la dynamique des altcoins plus volatiles sur les données d'entraînement."
+    assets: [SOLUSDT, ADAUSDT, XRPUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_mode: spot
+    agent_config:
+      {
+        ent_coef: 0.01,
+        learning_rate: 9e-5,
+        batch_size: 64,
+        n_steps: 2048,
+        n_epochs: 10,
+        clip_range: 0.2,
+      }
+    reward_config:
+      {
+        drawdown_penalty: -0.005,
+        profit_factor_bonus: 0.2,
+        sharpe_ratio_bonus: 0.15,
+        win_rate_bonus: 0.1,
+      }
+  w3:
+    name: "Worker 3 (Validation Croisée)"
+    description: "Valide la stratégie sur des données non vues à l'entraînement pour éviter la sur-optimisation."
+    assets: [BTCUSDT, SOLUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: val
+    trading_mode: spot
+    agent_config:
+      {
+        ent_coef: 0.005,
+        learning_rate: 7e-5,
+        batch_size: 128,
+        n_steps: 2048,
+        n_epochs: 10,
+        clip_range: 0.15,
+      }
+    reward_config:
+      {
+        drawdown_penalty: -0.002,
+        profit_factor_bonus: 0.1,
+        sharpe_ratio_bonus: 0.2,
+      }
+  w4:
+    name: "Worker 4 (Stratège Global)"
+    description: "Travaille sur tous les actifs avec les données de test pour évaluer la généralisation finale."
+    assets: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, ADAUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_mode: spot
+    agent_config: { learning_rate: 0.00025, ent_coef: 0.04 }
+    reward_config: { volatility_bonus: 0.3, drawdown_penalty: -0.003 }
+
+preprocessing:
+  normalization:
+    method: robust
+    clip_values:
+      - -5
+      - 5
+    scale_per_asset: true
+    scale_per_timeframe: true
+  stationarity:
+    price_transform: log_returns
+    volume_transform: log1p
+  window_config:
+    window_sizes:
+      5m: 20
+      1h: 20
+      4h: 20
+    min_window_size: 5
+    step_size: 1
+  technical_indicators:
+    use_price_indicators: true
+    price_indicators:
+      - RSI_14
+      - STOCH_14_3 # Indicateur composite qui génère STOCHk_14_3 et STOCHd_14_3
+      - CCI_20_0.015
+      - ROC_9
+      - MFI_14
+      - EMA_5
+      - EMA_20
+      - SUPERTREND_14_2.0
+      - PSAR_0.02_0.2
+      # Configuration des indicateurs par timeframe (mise à jour le 01/09/2025)
+      - ATR_14
+      - ADX_14
+      - MACD_HIST
+      - SUPERTREND_14_2.0
+    use_volume_indicators: false
+    volume_indicators: []
+    use_volatility_indicators: false
+    volatility_indicators: []
+feature_engineering:
+  timeframes:
+    - 5m
+    - 1h
+    - 4h
+  columns_to_normalize:
+    - open
+    - high
+    - low
+    - close
+    - volume
+  indicators:
+    timeframes:
+      5m:
+        momentum:
+          - RSI_14
+          - STOCHk_14_3 # Composante %K de STOCH
+          - STOCHd_14_3 # Composante %D de STOCH
+          - CCI_20_0.015
+          - ROC_9
+          - MFI_14
+        trend:
+          - EMA_5
+          - EMA_20
+          - SUPERTREND_14_2.0
+          - PSAR_0.02_0.2
+        volatility:
+          - ATR_14 # Ajout de l'ATR pour la volatilité
+          - ATR_14
+          - BB_20_2.0
+        volume:
+          - VWAP
+          - OBV
+      1h:
+        momentum:
+          - RSI_14
+          - MACD_12_26_9
+          - MACD_HIST_12_26_9
+          - CCI_20
+          - MFI_14
+        trend:
+          - EMA_50
+          - EMA_100
+          - SMA_200
+          - ICHIMOKU_9_26_52
+          - PSAR_0.02_0.2
+        volatility:
+          - ATR_14
+          - BB_20_2.0
+        volume:
+          - OBV
+          - VWAP
+      4h:
+        momentum:
+          - RSI_14
+          - MACD_12_26_9
+          - CCI_20
+          - MFI_14
+        trend:
+          - SMA_200
+          - EMA_50
+          - ICHIMOKU_9_26_52
+          - SUPERTREND_14_3.0
+          - PSAR_0.02_0.2
+        volatility:
+          - ATR_14
+          - BB_20_2.0
+        volume:
+          - OBV
+          - VWAP_DAILY
+          - VWAP_WEEKLY
+    common:
+      bollinger:
+        window: 20
+        window_dev: 2.0
+      rsi:
+        window: 14
+      macd:
+        fast: 12
+        slow: 26
+        signal: 9
+      atr:
+        window: 14
+      supertrend:
+        window: 14
+        multiplier: 2.0
+      psar:
+        step: 0.02
+        max_step: 0.2
+  preprocessing:
+    fillna: true
+    normalize: true
+    remove_outliers: true
+    min_data_points: 50
+  performance:
+    chunk_size: 250
+    n_jobs: -1
+    cache_indicators: true
+    parallel_timeframes: true
+  validation:
+    check_nan_percentage: true
+    max_nan_percentage: 0.05
+    check_feature_correlation: true
+    max_correlation_threshold: 0.95
+
+environment:
+  max_steps: 500000
+  initial_balance: 10000.0
+  commission: 0.001
+  reward_scaling: 1.0
+  window_size: 50
+  features_config:
+    price: ["open", "high", "low", "close"]
+    volume: ["volume"]
+    indicators:
+      ["rsi_14", "macd_hist", "atr_14", "bb_upper", "bb_middle", "bb_lower"]
+  max_chunks_per_episode: 10
+  assets:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - ADAUSDT
+  observation:
+    shape: [3, 20, 15] # [timeframes, window_size, features]
+    window_sizes:
+      5m: 20
+      1h: 20
+      4h: 20
+    warmup_steps: 50
+    timeframes: ["5m", "1h", "4h"]
+    features:
+      base: ["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]
+      indicators:
+        5m:
+          [
+            "RSI_14",
+            "STOCH_K_14_3_3",
+            "STOCH_D_14_3_3",
+            "MACD_HIST_12_26_9",
+            "ATR_14",
+            "EMA_5",
+            "EMA_12",
+            "BB_UPPER",
+            "BB_MIDDLE",
+            "BB_LOWER",
+          ]
+        1h:
+          [
+            "RSI_14",
+            "STOCH_K_14_3_3",
+            "STOCH_D_14_3_3",
+            "MACD_HIST_12_26_9",
+            "ADX_14",
+            "BB_UPPER",
+            "BB_MIDDLE",
+            "BB_LOWER",
+            "EMA_26",
+            "EMA_50",
+          ]
+        4h:
+          [
+            "RSI_14",
+            "MACD_HIST_12_26_9",
+            "ADX_14",
+            "ATR_14",
+            "OBV",
+            "EMA_50",
+            "EMA_200",
+            "SMA_200",
+            "STOCH_K_14_3_3",
+            "STOCH_D_14_3_3",
+          ]
+      # Vérification du nombre total de caractéristiques (mise à jour le 01/09/2025)
+      expected_features: 15 # 5 de base + 10 indicateurs
+  mode: backtest
+  base_currency: USDT
+  memory:
+    chunk_size: 10000
+    max_chunks_in_memory: 2
+    aggressive_cleanup: true
+    force_gc_after_chunk: true
+    memory_warning_threshold_mb: 8000
+    memory_critical_threshold_mb: 9000
+    num_workers: 1
+    pin_memory: false
+    batch_size: 32
+    prefetch_factor: 1
+    shuffle: true
+    drop_last: true
+    include_portfolio_state: true
+  risk_management:
+    position_sizing:
+      # Paramètres de base
+      max_position_size: 0.5 # 50% du capital
+      initial_sl_pct: 0.02 # 2% de stop-loss initial
+      initial_tp_pct: 0.04 # 4% de take-profit initial
+      initial_position_size: 0.1 # 10% du capital par défaut
+      min_trade_value: 11.0 # Minimum de 11 USDT par trade
+      max_risk_per_trade_pct: 5.0 # 5% de risque max par trade
+      max_asset_allocation_pct: 20.0 # 20% du capital max par actif
+
+      # Limites de concentration par actif (en % du capital total)
+      concentration_limits:
+        BTCUSDT: 30.0
+        ETHUSDT: 25.0
+        SOLUSDT: 20.0
+        XRPUSDT: 15.0
+        ADAUSDT: 10.0
+
+      # Paramètres de take-profit
+      take_profit:
+        enabled: true
+        risk_reward_ratio: 2.0
+        trailing_enabled: true
+        trailing_deviation_pct: 1.0
+
+      # Paramètres de gestion des risques
+      risk_parameters:
+        min_risk_level: 0.3
+        max_risk_level: 2.0
+        base_sl_pct: 0.02
+        base_tp_pct: 0.04
+        max_sl_pct: 0.10
+        min_sl_pct: 0.005
+        daily_loss_limit: 0.05 # 5% de perte journalière max
+        weekly_loss_limit: 0.15 # 15% de perte hebdomadaire max
+  penalties:
+    invalid_action: -0.1
+    order_rejection: -0.5
+    inaction_freq_threshold: 0.15
+    inaction_pnl_threshold: 0.05
+    base_inaction_penalty: -0.001
+# Configuration de reward_shaping déplacée plus bas dans le fichier
+trading_rules:
+  futures_enabled: false
+  leverage: 1.0
+  commission_pct: 0.001
+  min_order_value_usdt: 10
+  slippage_pct: 0.001
+  stop_loss_pct: 0.05
+  take_profit_pct: 0.15
+  trailing_stop: 0.01
+capital_tiers:
+  - name: Micro Capital
+    min_capital: 11.0
+    max_capital: 30.0
+    max_position_size_pct: 90
+    exposure_range: [75, 90]
+    leverage: 1.0
+    risk_per_trade_pct: 5.0
+    max_drawdown_pct: 50.0
+    max_concurrent_positions: 1
+  - name: Small Capital
+    min_capital: 30.0
+    max_capital: 100.0
+    max_position_size_pct: 70
+    leverage: 1.0
+    risk_per_trade_pct: 1.5
+    max_drawdown_pct: 4.0
+    max_concurrent_positions: 2
+  - name: Medium Capital
+    min_capital: 100.0
+    max_capital: 300.0
+    max_position_size_pct: 60
+    leverage: 1.0
+    risk_per_trade_pct: 2.0
+    max_drawdown_pct: 3.5
+    max_concurrent_positions: 3
+  - name: High Capital
+    min_capital: 300.0
+    max_capital: 1000.0
+    max_position_size_pct: 35
+    leverage: 1.0
+    risk_per_trade_pct: 2.5
+    max_drawdown_pct: 3.0
+    max_concurrent_positions: 4
+  - name: Enterprise
+    min_capital: 1000.0
+    max_capital: null
+    max_position_size_pct: 20
+    leverage: 1.0
+    risk_per_trade_pct: 3.0
+    max_drawdown_pct: 2.5
+    max_concurrent_positions: 5
+agent:
+  algorithm: PPO
+  policy: MultiInputPolicy
+  learning_rate: 3e-4
+  n_steps: 8192
+  batch_size: 16384
+  n_epochs: 4
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.1
+  clip_range_vf: 0.1
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  target_kl: 0.03
+  seed: 42
+  verbose: 1
+  deterministic_inference: true
+  custom_log_freq_rollouts: 10
+  eval_freq: 2500
+  eval_episodes: 10
+  checkpoint_freq: 5000
+  n_envs: 4
+  buffer_size: 100000
+  window_size: 100
+  features_extractor_kwargs:
+    cnn_configs:
+      5m:
+        input_shape: [3, 20, 15] # [timeframes, window_size, features]
+        channel_groups: 15
+        groups:
+          price:
+            indices: [0, 1, 2, 3] # OPEN, HIGH, LOW, CLOSE
+            out_channels: 32
+            kernel_size: [1, 3]
+            padding: same
+          volume:
+            indices: [4] # VOLUME
+            out_channels: 16
+            kernel_size: [1, 1]
+            padding: same
+          indicators:
+            indices: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14] # 10 Indicateurs techniques
+            out_channels: 32
+            kernel_size: [1, 3]
+            padding: same
+      1h:
+        input_shape: [3, 20, 15] # [timeframes, window_size, features]
+        channel_groups: 15
+        groups:
+          price:
+            indices: [0, 1, 2, 3]
+            out_channels: 32
+            kernel_size: [1, 3]
+            padding: same
+          volume:
+            indices: [4]
+            out_channels: 16
+            kernel_size: [1, 1]
+            padding: same
+          indicators:
+            indices: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+            out_channels: 32
+            kernel_size: [1, 3]
+            padding: same
+      4h:
+        input_shape: [3, 20, 15] # [timeframes, window_size, features]
+        channel_groups: 15
+        groups:
+          price:
+            indices: [0, 1, 2, 3] # OPEN, HIGH, LOW, CLOSE
+            out_channels: 32
+            kernel_size: [1, 3]
+            padding: same
+          volume:
+            indices: [4] # VOLUME
+            out_channels: 16
+            kernel_size: [1, 1]
+            padding: same
+          indicators:
+            indices: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14] # 10 indicateurs techniques
+            out_channels: 32
+            kernel_size: [1, 3]
+            padding: same
+        conv_blocks:
+          - type: grouped
+            filters: 32
+            kernel_size:
+              - 1
+              - 3
+            padding: same
+            activation: leaky_relu
+            batch_norm: true
+            se_block: true
+            dropout: 0.1
+          - type: inception
+            filters: 64
+            kernel_sizes:
+              - - 1
+                - 3
+              - - 1
+                - 5
+              - - 1
+                - 7
+            pool_size:
+              - 1
+              - 2
+            residual: true
+            activation: leaky_relu
+            batch_norm: true
+            dropout: 0.2
+          - type: attention
+            num_heads: 4
+            key_dim: 64
+            dropout: 0.1
+        activation: leaky_relu
+        batch_norm: true
+        final_dropout: 0.25
+        use_channel_attention: true
+        use_temporal_attention: false
+        temporal_attention_heads: 4
+    fc_layers:
+      - 256
+      - 128
+    attention:
+      num_heads: 4
+      dropout: 0.1
+      use_relative_positions: true
+    normalization:
+      use_batch_norm: true
+      use_layer_norm: false
+    initialization:
+      conv: he_normal
+      dense: glorot_uniform
+      bias: zeros
+    dropout: 0.2
+    activation: leaky_relu
+    policy_kwargs:
+      net_arch:
+        shared:
+          - 256
+          - 128
+        pi:
+          - 64
+          - 32
+        vf:
+          - 64
+          - 32
+      activation_fn: leaky_relu
+    ppo:
+      n_steps: 8192
+      batch_size: 16384
+      n_epochs: 4
+      gae_lambda: 0.95
+      clip_range: 0.1
+      clip_range_vf: null
+      ent_coef: 0.01
+      vf_coef: 0.5
+      max_grad_norm: 0.5
+      normalize_advantage: true
+      use_sde: false
+      sde_sample_freq: -1
+      use_reparameterization: false
+  learning_rate_schedule:
+    type: linear
+    start: 3e-4
+    end: 1e-6
+  ent_coef_schedule:
+    type: linear
+    start: 0.01
+    end: 0.0001
+data_processing:
+  max_lookahead: 100
+  temporal_transforms:
+    enabled: true
+    diffs:
+      - close
+      - volume
+    moving_averages:
+      - ma5
+      - ma10
+      - ma20
+    rolling_windows:
+      - 5
+      - 10
+      - 20
+      - 50
+    rsi_window: 14
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    bollinger_window: 20
+    bollinger_std: 2.0
+data_augmentation:
+  enabled: true
+  time_warping:
+    enabled: true
+    window: 10
+    sigma: 0.2
+    exclude_columns:
+      - volume
+      - trades
+  gaussian_noise:
+    enabled: true
+    std: 0.01
+    exclude_columns:
+      - volume
+      - trades
+  window_permutation:
+    enabled: false
+    window_size: 5
+    n_permutations: 1
+    exclude_columns:
+      - volume
+      - trades
+  random_scaling:
+    enabled: false
+    scale_range:
+      - 0.9
+      - 1.1
+    exclude_columns:
+      - volume
+      - trades
+  trend_augmentation:
+    enabled: false
+    max_trend: 0.01
+    exclude_columns:
+      - volume
+      - trades
+  partial_shuffle:
+    enabled: false
+    segment_size: 5
+    exclude_columns:
+      - volume
+      - trades
+  random_impulses:
+    enabled: false
+    probability: 0.01
+    max_impulse: 0.1
+    exclude_columns:
+      - volume
+      - trades
+  apply_order:
+    - time_warping
+    - gaussian_noise
+    - window_permutation
+    - random_scaling
+    - trend_augmentation
+    - partial_shuffle
+    - random_impulses
+regularization:
+  dropout_rate: 0.3
+  use_batch_norm: true
+  batch_norm_momentum: 0.99
+  batch_norm_epsilon: 1e-5
+  weight_decay: 1e-5
+  gradient_clip: 1.0
+training:
+  num_instances: 8
+  timesteps_per_instance: 2000000
+  batch_size: 64
+  save_freq: 5000
+  checkpointing:
+    enabled: true
+    save_freq: 50000
+    model_name: adan_model
+    save_path: /home/morningstar/Documents/trading/bot/models/rl_agents/adan_model
+  progress_bar: false # Désactivé pour éviter les conflits avec le callback personnalisé
+  use_custom_progress: true # Activer le callback personnalisé
+risk_parameters:
+  base_sl_pct: 0.02
+  base_tp_pct: 0.04
+  max_sl_pct: 0.10
+  min_sl_pct: 0.005
+  min_tp_pct: 0.01
+  max_tp_pct: 0.20
+  drawdown_risk_multiplier: 2.0
+  volatility_impact: 1.5
+  volatility_sl_factor: 0.1
+  winrate_tp_factor: 0.1
+  max_drawdown_pct: 0.25
+  min_risk_level: 0.1
+  max_risk_level: 2.0
+  risk_step: 0.05
+  daily_loss_limit: 0.05
+  weekly_loss_limit: 0.15
+
+# Configuration du Dynamic Behavior Engine (DBE)
+dbe:
+  default_reset_capital: 20.5
+  # Paramètres de position sizing - Doit être à la racine pour le DBE
+  capital_tiers:
+    - name: "Micro Capital"
+      min_capital: 11.0
+      max_capital: 30.0
+      max_position_size_pct: 90
+      exposure_range: [75, 90]
+      leverage: 1.0
+      risk_per_trade_pct: 5.0
+      max_drawdown_pct: 50.0
+
+    - name: "Small Capital"
+      min_capital: 30.0
+      max_capital: 100.0
+      max_position_size_pct: 70
+      exposure_range: [60, 75]
+      leverage: 1.0
+      risk_per_trade_pct: 4.0
+      max_drawdown_pct: 40.0
+
+    - name: "Medium Capital"
+      min_capital: 100.0
+      max_capital: 300.0
+      max_position_size_pct: 60
+      exposure_range: [50, 65]
+      leverage: 1.0
+      risk_per_trade_pct: 3.0
+      max_drawdown_pct: 30.0
+
+    - name: "High Capital"
+      min_capital: 300.0
+      max_capital: 1000.0
+      max_position_size_pct: 40
+      exposure_range: [30, 50]
+      leverage: 1.0
+      risk_per_trade_pct: 2.0
+      max_drawdown_pct: 20.0
+
+    - name: "Enterprise"
+      min_capital: 1000.0
+      max_capital: null # Pas de limite supérieure
+      max_position_size_pct: 30
+      exposure_range: [20, 40]
+      leverage: 1.0
+      risk_per_trade_pct: 1.0
+      max_drawdown_pct: 10.0
+
+  # Paramètres de détection du régime de marché (mise à jour le 01/09/2025)
+  market_regime_detection:
+    adx_threshold: 20 # Seuil ADX plus bas pour une meilleure sensibilité
+    rsi_overbought: 75 # Ajustement des seuils RSI
+    rsi_oversold: 25
+    ema_fast: 12 # Utilisation des EMAs 12/26 pour la cohérence avec MACD
+    ema_slow: 26
+    atr_multiplier: 2.0 # Ajustement pour la volatilité des marchés crypto
+    macd_signal: 9 # Paramètre MACD pour la confirmation de tendance
+
+  # Paramètres spécifiques au régime
+  regime_parameters:
+    bull:
+      sl_multiplier: 1.1
+      tp_multiplier: 1.3
+      position_size_multiplier: 1.0 # Plus agressif en tendance haussière
+    bear:
+      sl_multiplier: 0.7
+      tp_multiplier: 0.9
+      position_size_multiplier: 0.7 # Plus conservateur en tendance baissière
+    volatile:
+      sl_multiplier: 0.6
+      tp_multiplier: 0.7
+      position_size_multiplier: 0.5 # Très conservateur en période de forte volatilité
+    sideways:
+      sl_multiplier: 0.9
+      tp_multiplier: 1.1
+      position_size_multiplier: 0.6 # Modérément conservateur en range
+
+  # Paramètres généraux de gestion des risques
+  risk_management:
+    min_trade_value: 11.0 # Minimum de 11 USDT par trade
+    max_leverage: 1.0 # Pas d'effet de levier
+    max_consecutive_losses: 3 # Nombre maximum de pertes consécutives avant réduction du risque
+
+  # Paramètres de take-profit dynamique (mise à jour le 01/09/2025)
+  take_profit:
+    enabled: true
+    risk_reward_ratio: 2.0 # Objectif de 2:1 pour le ratio risque/rendement
+    trailing_enabled: true
+    trailing_deviation_pct: 0.8 # Déclenchement plus réactif à 0.8%
+
+    # Ajustement dynamique du take-profit en fonction de la volatilité
+    volatility_adjustment: true
+    min_volatility: 0.015 # Seuils ajustés pour les marchés crypto
+    max_volatility: 0.25
+    atr_period: 14 # Période ATR pour le calcul de la volatilité
+
+  # Paramètres de performance et adaptation (mise à jour le 01/09/2025)
+  performance:
+    lookback_window: 100 # Nombre de périodes pour le calcul des métriques
+    min_trades_for_metrics: 15 # Augmenté pour une évaluation plus stable
+    winrate_target: 0.52 # Cible ajustée pour les marchés volatils
+    profit_factor_target: 1.4 # Objectif légèrement réduit
+
+    # Adaptation dynamique des paramètres
+    adaptation:
+      learning_rate: 0.008 # Apprentissage plus progressif
+      min_risk_level: 0.4 # Niveau de risque minimum augmenté
+      max_risk_level: 1.8 # Niveau de risque maximum réduit
+      risk_increment: 0.08 # Incréments plus petits pour des ajustements plus fins
+      risk_decrement: 0.04 # Réduction plus progressive du risque
+
+      # Nouvelles métriques pour l'adaptation
+      use_dynamic_sizing: true # Activation du dimensionnement dynamique
+      volatility_smoothing: 0.1 # Lissage de la volatilité pour éviter les changements brusques
+
+  # Paramètres de journalisation et de suivi
+  logging:
+    level: INFO # Niveau de détail des logs
+    save_trade_history: true # Enregistrer l'historique des trades
+    performance_metrics: true # Activer le suivi des métriques de performance
+
+    # Fréquence de sauvegarde
+    save_interval: 3600 # Toutes les heures (en secondes)
+
+reward_shaping:
+  risk_factor: 1.0
+  volatility_factor: 1.0
+  drawdown_penalty: 0.1
+  sharpe_factor: 0.5
+  position_reward: 1.0
+  commission_reward: -0.1
+  slippage_reward: -0.1
+  profit_factor_bonus: 0.5
+  risk_reward_ratio: 2.0
+  max_position_size: 0.1
+  max_order_size: 0.01
+  min_order_value_usdt: 10
+  commission_pct: 0.001
+  commission_penalty: 1.5
+  min_profit_multiplier: 3.0
+  slippage_pct: 0.001
+  dbe:
+    initial_risk: 0.3
+    min_risk: 0.1
+    max_risk: 1.0
+    winrate_decay: 0.9
+    drawdown_impact: 1.2
+    cash_utilization_impact: 0.5
+  tier_rewards:
+    promotion_bonus: 50.0
+    demotion_penalty: -20.0
+    checkpoint_on_promotion: true
+    checkpoint_dir: /home/morningstar/Documents/trading/bot/models/rl_agents/checkpoints
+    min_episodes_for_promotion: 5
+    min_profit_for_promotion: 0.1
+    tier_performance_multipliers:
+      - tier: Micro Capital
+        multiplier: 1.0
+      - tier: Small Capital
+        multiplier: 1.2
+      - tier: Medium Capital
+        multiplier: 1.5
+      - tier: High Capital
+        multiplier: 2.0
+      - tier: Enterprise
+        multiplier: 2.5
+  logging:
+    version: 1
+    disable_existing_loggers: false
+    log_dirs:
+      base: logs
+      dbe_replay: logs/dbe_replay
+      metrics: logs/metrics
+      models: logs/models
+      performance: logs/performance
+      data_quality: logs/data_quality
+      memory: logs/memory
+    formatters:
+      standard:
+        format: "%(asctime)s - %(name)-25s - %(levelname)-8s - %(message)s"
+        datefmt: "%Y-%m-%d %H:%M:%S"
+      detailed:
+        format:
+          "%(asctime)s - %(name)-25s - %(levelname)-8s - %(filename)s:%(lineno)d
+          - %(message)s"
+        datefmt: "%Y-%m-%d %H:%M:%S"
+      json:
+        class: pythonjsonlogger.jsonlogger.JsonFormatter
+        format: "%(asctime)s %(name)s %(levelname)s %(filename)s %(lineno)s %(message)s"
+        datefmt: "%Y-%m-%d %H:%M:%S"
+    handlers:
+      console:
+        class: logging.StreamHandler
+        level: DEBUG
+        formatter: standard
+        stream: ext://sys.stdout
+      file_handler:
+        class: logging.handlers.TimedRotatingFileHandler
+        level: DEBUG
+        formatter: detailed
+        filename: logs/adan.log
+        when: midnight
+        backupCount: 30
+        encoding: utf-8
+        utc: true
+      error_file_handler:
+        class: logging.handlers.RotatingFileHandler
+        level: ERROR
+        formatter: detailed
+        filename: logs/error.log
+        maxBytes: 10485760
+        backupCount: 10
+        encoding: utf-8
+      json_file_handler:
+        class: logging.handlers.RotatingFileHandler
+        level: INFO
+        formatter: json
+        filename: logs/adan_structured.log
+        maxBytes: 10485760
+        backupCount: 10
+        encoding: utf-8
+    loggers:
+      "":
+        level: WARNING
+        handlers:
+          - console
+          - file_handler
+          - error_file_handler
+        propagate: false
+      adan:
+        level: DEBUG
+        handlers:
+          - console
+          - file_handler
+          - json_file_handler
+        propagate: false
+      tensorflow:
+        level: WARNING
+        handlers:
+          - file_handler
+        propagate: false
+      stable_baselines3:
+        level: INFO
+        handlers:
+          - file_handler
+        propagate: false
+      urllib3:
+        level: WARNING
+        handlers:
+          - file_handler
+        propagate: false
+      pyarrow:
+        level: WARNING
+        handlers:
+          - file_handler
+        propagate: false
+    root:
+      level: WARNING
+      handlers:
+        - console
+        - file_handler
+        - error_file_handler
+      propagate: false

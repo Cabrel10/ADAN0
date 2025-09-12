@@ -1,0 +1,123 @@
+# Configuration du site
+site_name: ADAN Trading Bot
+site_url: https://votre-utilisateur.github.io/adan-trading-bot/
+site_author: Votre Nom
+site_description: Documentation du projet ADAN Trading Bot
+
+# Thème
+# Voir https://squidfunk.github.io/mkdocs-material/setup/changing-the-colors/
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Basculer en mode sombre
+    - scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Basculer en mode clair
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - content.tabs.link
+    - content.code.annotate
+    - content.action.edit
+    - content.action.view
+    - header.autohide
+    - navigation.footer
+    - navigation.instant
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+
+# Personnalisation
+repo_name: votre-utilisateur/adan-trading-bot
+repo_url: https://github.com/votre-utilisateur/adan-trading-bot
+edit_uri: edit/main/docs/
+
+# Extensions
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.smartsymbols
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+  - toc:
+      permalink: true
+
+# Navigation
+nav:
+  - Accueil: index.md
+  - Installation: installation.md
+  - Configuration: configuration.md
+  - Utilisation:
+      - 'Préparation des données': usage/data_preparation.md
+      - 'Entraînement du modèle': usage/model_training.md
+      - 'Évaluation des performances': usage/evaluation.md
+      - 'Trading en direct': usage/live_trading.md
+  - Architecture: architecture.md
+  - API:
+      - 'Référence': api/reference.md
+      - 'Exemples': api/examples.md
+  - Développement:
+      - 'Guide de contribution': development/contributing.md
+      - 'Standards de code': development/coding_standards.md
+      - 'Tests': development/testing.md
+  - FAQ: faq.md
+  - Changelog: changelog.md
+
+# Extras
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/votre-utilisateur/adan-trading-bot
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/votrecompte
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/votre-lien
+
+# Plugins
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_source: true
+  - minify:
+      minify_html: true
+  - git-revision-date-localized:
+      type: timeago
+      fallback_to_build_date: true
+
+# Personnalisation du pied de page
+copyright: Copyright &copy; 2024 Votre Nom
+
+# Options de génération
+strict: true
+use_directory_urls: true
+
+# Personnalisation des couleurs
+extra_css:
+  - css/extra.css
+
+extra_javascript:
+  - js/extra.js

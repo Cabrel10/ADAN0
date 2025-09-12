@@ -1,0 +1,49 @@
+# Inclut toutes les dépendances de base
+-r requirements.txt
+
+# ===================================
+# PyTorch pour CPU uniquement
+# ===================================
+torch>=2.2.0,<3.0.0
+torchvision>=0.17.0,<1.0.0
+torchaudio>=2.2.0,<3.0.0
+
+# ===================================
+# Optimisations pour CPU
+# ===================================
+# Accélération CPU pour les calculs scientifiques
+numba>=0.58.0
+llvmlite>=0.41.0
+
+# Optimisation des calculs numériques
+scipy>=1.10.0
+pandas-ta>=0.3.14b0
+
+# ===================================
+# Apprentissage par renforcement avancé
+# ===================================
+# Pour l'apprentissage en ligne et la mémoire de rejeu prioritaire
+gymnasium>=0.29.0
+stable-baselines3>=2.2.0
+
+# Pour la visualisation des données d'entraînement
+tensorboard>=2.15.0
+
+# Pour la gestion des tableaux de données volumineux
+dask>=2023.8.0
+xarray>=2023.6.0
+
+# ===================================
+# Outils de profiling et optimisation
+# ===================================
+# Pour l'analyse des performances
+psutil>=5.9.0
+memory_profiler>=0.61.0
+line_profiler>=4.0.0
+
+# Pour le suivi des expériences
+alembic>=1.12.0
+sacred>=0.8.4
+
+# Pour le débogage et le logging avancé
+loguru>=0.7.2

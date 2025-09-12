@@ -1,0 +1,97 @@
+# Fichiers de données brutes
+data/raw/
+data/processed/
+
+# Fichiers temporaires
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environnements virtuels
+venv/
+env/
+.venv/
+.env
+
+# Fichiers de configuration locaux
+*.local
+
+# Fichiers de logs
+logs/
+
+# Fichiers de checkpoints
+checkpoints/
+
+# Fichiers de résultats temporaires
+results/
+reports/
+
+# Fichiers IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Fichiers de cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Fichiers de configuration locaux
+config/local_*.yaml
+
+# Fichiers de jupyter notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# Fichiers de sauvegarde temporaires
+*.bak
+*.tmp
+*~
+
+# Fichiers de déploiement
+.env
+.env.*
+!.env.example
+
+# Fichiers de documentation générés
+docs/_build/
+
+# Fichiers de couverture de test
+.coverage
+htmlcov/
+
+# Fichiers de configuration personnalisés
+*.local.yaml
+*.local.yml
+
+# Fichiers de données volumineux
+*.h5
+*.hdf5
+*.pkl
+*.pth
+*.pt
+*.bin
+*.zip
+*.tar.gz
+*.7z
+
+# Fichiers de modèles entraînés
+models/*.zip
+!models/__init__.py
+
+# Fichiers de cache Python
+.python-version
+.python-version-*
+
+# Fichiers de logs spécifiques
+*.log
+
+# Fichiers de configuration spécifiques
+wandb/
+mlruns/

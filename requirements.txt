@@ -1,0 +1,91 @@
+# ===================================
+# Dépendances principales
+# ===================================
+# Core
+numpy>=1.26.0,<2.0.0
+pandas>=2.2.0,<3.0.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+
+# Apprentissage par renforcement
+gymnasium>=0.29.0
+stable-baselines3[extra]>=2.2.0
+
+# Traitement des données
+joblib>=1.3.0
+scikit-learn>=1.4.0
+pyarrow>=15.0.0
+ccxt>=4.2.0
+ta>=0.10.0
+pandas-ta>=0.3.14b0
+watchdog>=3.0.0
+
+# Utilitaires
+rich>=13.0.0
+tqdm>=4.65.0
+requests>=2.31.0
+python-dateutil>=2.8.0
+pytz>=2024.1
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+pyfiglet>=0.7.0
+
+# ===================================
+# Interface de trading avancée (TradingView/MetaTrader-like)
+# ===================================
+# Interface graphique (utilise PySide6 qui est déjà installé)
+PySide6>=6.5.0
+pyqtgraph>=0.13.0
+QDarkStyle>=3.1.0
+# Note: PyQtChart n'est pas compatible avec PySide6, on utilise les graphiques intégrés de pyqtgraph
+
+# Données en temps réel et backtesting
+pandas_ta>=0.3.14b0
+backtesting>=0.3.3
+tradingview-ta>=3.3.0  # Alternative moderne à tvDatafeed
+mplfinance>=0.12.10b0
+yfinance>=0.2.36  # Pour les données de marché
+
+# Gestion des indicateurs techniques
+# Note: Pour installer TA-Lib, suivez les instructions dans le README.md
+# ou utilisez: conda install -c conda-forge ta-lib
+# ou: pip install TA-Lib (après avoir installé les dépendances système)
+
+# ===================================
+# Conversion de fichiers et notebooks
+# ===================================
+nbformat>=5.9.0
+nbconvert>=7.0.0
+jupyter-client>=8.0.0
+jupyter-core>=5.0.0
+jupytext>=1.15.0  # Pour la conversion bidirectionnelle
+papermill>=2.5.0  # Pour l'exécution paramétrée de notebooks
+
+# ===================================
+# Visualisation (optionnel)
+# ===================================
+matplotlib>=3.8.0
+seaborn>=0.13.0
+plotly>=5.18.0
+kaleido>=0.2.1
+bokeh>=3.2.0  # Pour des dashboards interactifs
+
+# ===================================
+# Tests et développement (optionnel)
+# ===================================
+# pytest>=8.0.0
+# pytest-cov>=4.1.0
+# black>=24.0.0
+# flake8>=7.0.0
+# mypy>=1.8.0
+
+# ===================================
+# Dépendances système (à installer manuellement si nécessaire)
+# ===================================
+# TA-Lib (Technical Analysis Library)
+# Sur Ubuntu/Debian: sudo apt-get install python3-ta-lib
+# Sur macOS: brew install ta-lib
+# Puis: pip install TA-Lib
+
+# Pour la compilation de certaines dépendances
+# build-essential python3-dev

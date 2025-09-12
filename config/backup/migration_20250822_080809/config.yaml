@@ -1,0 +1,1133 @@
+general:
+  project_name: ADAN
+  random_seed: 42
+  timezone: UTC
+  debug_mode: false
+  n_jobs: -1
+paths:
+  base_dir: /home/morningstar/Documents/trading/bot
+  data_dir: /home/morningstar/Documents/trading/bot/data
+  raw_data_dir: /home/morningstar/Documents/trading/bot/data/raw
+  processed_data_dir: /home/morningstar/Documents/trading/bot/data/processed
+  indicators_data_dir: /home/morningstar/Documents/trading/bot/data/processed/indicators
+  final_data_dir: /home/morningstar/Documents/trading/bot/data/final
+  models_dir: /home/morningstar/Documents/trading/bot/models
+  trained_models_dir: /home/morningstar/Documents/trading/bot/models/rl_agents
+  logs_dir: /home/morningstar/Documents/trading/bot/logs
+  reports_dir: /home/morningstar/Documents/trading/bot/reports
+  figures_dir: /home/morningstar/Documents/trading/bot/reports/figures
+  metrics_dir: /home/morningstar/Documents/trading/bot/reports/metrics
+model:
+  architecture:
+    block_a:
+      out_channels: 64
+      kernel_size: 3
+      padding: 1
+      leaky_relu_negative_slope: 0.01
+      dropout: 0.1
+    block_b:
+      multi_scale:
+      - kernel_size: 3
+        dilation: 1
+        padding: 1
+      - kernel_size: 5
+        dilation: 1
+        padding: 2
+      - kernel_size: 3
+        dilation: 2
+        padding: 2
+      se_ratio: 16
+      dropout: 0.2
+    attention:
+      num_heads: 4
+      dropout: 0.1
+      use_residual: true
+    head:
+      hidden_units:
+      - 256
+      - 128
+      dropout: 0.3
+      activation: leaky_relu
+  diagnostics:
+    use_grad_cam: true
+    use_integrated_gradients: true
+    target_layer: block_b.conv3
+    save_attention_maps: true
+    attention_map_dir: ${paths.models_dir}/attention_maps
+    volume_up: '#95A5A6'
+    volume_down: '#BDC3C7'
+    ma_short: '#F1C40F'
+    ma_medium: '#3498DB'
+    ma_long: '#8E44AD'
+    bollinger_mid: '#2980B9'
+    bollinger_band: '#85C1E9'
+    rsi_line: '#34495E'
+    rsi_overbought: '#E67E22'
+    rsi_oversold: '#2ECC71'
+    macd_line: '#2E86C1'
+    signal_line: '#F39C12'
+    histogram_up: '#2ECC71'
+    histogram_down: '#E74C3C'
+    background: '#FFFFFF'
+    grid: '#ECF0F1'
+  style:
+    figure_facecolor: white
+    axes_facecolor: white
+    grid_alpha: 0.3
+    font_family: sans-serif
+    font_size: 10
+    candle_width: 0.8
+    volume_alpha: 0.3
+    line_width: 1.0
+    legend_loc: upper left
+    legend_frameon: true
+    legend_facecolor: white
+    legend_edgecolor: '#DDDDDD'
+    left_margin: 0.05
+    right_margin: 0.95
+    top_margin: 0.95
+    bottom_margin: 0.1
+    hspace: 0.2
+data:
+  data_dir: /home/morningstar/Documents/trading/bot/data/processed/indicators
+  file_structure:
+    pattern: '{asset}/{timeframe}.parquet'
+    assets:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - ADAUSDT
+    timeframes:
+    - 5m
+    - 1h
+    - 4h
+  train_dir: /home/morningstar/Documents/trading/bot/data/processed/indicators/train
+  val_dir: /home/morningstar/Documents/trading/bot/data/processed/indicators/val
+  test_dir: /home/morningstar/Documents/trading/bot/data/processed/indicators/test
+  features_per_timeframe:
+    5m:
+    - OPEN
+    - HIGH
+    - LOW
+    - CLOSE
+    - VOLUME
+    - RSI_14
+    - STOCHk_14_3_3
+    - STOCHd_14_3_3
+    - CCI_20_0.015
+    - ROC_9
+    - MFI_14
+    - EMA_5
+    - EMA_20
+    - SUPERTREND_14_2.0
+    - PSAR_0.02_0.2
+    1h:
+    - OPEN
+    - HIGH
+    - LOW
+    - CLOSE
+    - VOLUME
+    - RSI_14
+    - CCI_20_0.015
+    - MFI_14
+    - EMA_50
+    - EMA_100
+    - SMA_200
+    4h:
+    - OPEN
+    - HIGH
+    - LOW
+    - CLOSE
+    - VOLUME
+    - RSI_14
+    - CCI_20_0.015
+    - MFI_14
+    - EMA_50
+    - SMA_200
+portfolio:
+  initial_balance: 20.0
+  include_portfolio_state: true
+  portfolio_state_features:
+  - cash_available
+  - total_equity
+  - total_return_pct
+  - sharpe_ratio
+  - max_drawdown_pct
+  - num_positions
+  - largest_positions: 5
+workers:
+  w1:
+    name: Temporal Precision
+    description: Scalping optimisé sur micro-régimes de marché.
+    assets:
+    - BTCUSDT
+    - ETHUSDT
+    timeframes:
+    - 5m
+    data_split: train
+    trading_mode: spot
+    trading_config:
+      stop_loss_pct: 0.05
+      take_profit_pct: 0.15
+      position_risk_offset: 0.0
+      position_size_offset: -0.5
+    reward_config:
+      trend_following_bonus: 0.2
+      holding_reward: 0.0001
+    dbe_config:
+      volatility_impact: 0.8
+      drawdown_risk_multiplier: 1.5
+    agent_config:
+      learning_rate: 1e-4
+      ent_coef: 0.01
+    model_config:
+      cnn_config: 5m
+  w2:
+    name: Low-Frequency Sentinel
+    description: Apprentissage des tendances de fond (bull/bear/range).
+    assets:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    timeframes:
+    - 1h
+    - 4h
+    data_split: train
+    trading_mode: spot
+    trading_config:
+      stop_loss_pct: 0.05
+      take_profit_pct: 0.15
+      position_risk_offset: 0.5
+      position_size_offset: 1.0
+    reward_config:
+      short_term_profit_bonus: 0.3
+      frequency_penalty: -0.001
+    dbe_config:
+      volatility_impact: 2.0
+      drawdown_risk_multiplier: 1.0
+    agent_config:
+      learning_rate: 3e-4
+      ent_coef: 0.05
+    model_config:
+      cnn_config: 1h
+  w3:
+    name: Rug-Pull Resistant
+    description: Entraînement sur des conditions de marché extrêmes.
+    assets:
+    - BTCUSDT
+    - ETHUSDT
+    - XRPUSDT
+    - ADAUSDT
+    timeframes:
+    - 5m
+    - 1h
+    data_split: train
+    trading_mode: spot
+    trading_config:
+      stop_loss_pct: 0.05
+      take_profit_pct: 0.15
+      position_risk_offset: 0.0
+      position_size_offset: 0.0
+      indicators:
+        use_rsi: true
+        rsi_overbought: 70
+        rsi_oversold: 30
+        use_stochastic: true
+    reward_config:
+      mean_reversion_bonus: 0.25
+      drawdown_penalty: -0.002
+    dbe_config:
+      volatility_impact: 1.2
+      drawdown_risk_multiplier: 1.8
+    agent_config:
+      learning_rate: 2e-4
+      ent_coef: 0.03
+    model_config:
+      cnn_config: 5m
+  w4:
+    name: Multi-Asset Optimizer
+    description: Optimisation de l'allocation entre plusieurs actifs.
+    assets:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - ADAUSDT
+    timeframes:
+    - 5m
+    - 4h
+    data_split: train
+    trading_mode: spot
+    trading_config:
+      stop_loss_pct: 0.05
+      take_profit_pct: 0.15
+      position_risk_offset: -0.5
+      position_size_offset: -0.5
+      filters:
+        use_atr_breakout: true
+        atr_window: 14
+        atr_threshold: 0.015
+    reward_config:
+      volatility_bonus: 0.3
+      drawdown_penalty: -0.003
+    dbe_config:
+      volatility_impact: 2.5
+      drawdown_risk_multiplier: 2.0
+    agent_config:
+      learning_rate: 0.00025
+      ent_coef: 0.04
+    model_config:
+      cnn_config: 4h
+preprocessing:
+  normalization:
+    method: robust
+    clip_values:
+    - -5
+    - 5
+    scale_per_asset: true
+    scale_per_timeframe: true
+  stationarity:
+    price_transform: log_returns
+    volume_transform: log1p
+  window_config:
+    window_sizes:
+      5m: 20
+      1h: 10
+      4h: 5
+    min_window_size: 5
+    step_size: 1
+  technical_indicators:
+    use_price_indicators: true
+    price_indicators:
+    - sma_20
+    - sma_50
+    - ema_12
+    - ema_26
+    - rsi_14
+    - macd
+    - bollinger_bands
+    - atr_14
+    use_volume_indicators: true
+    volume_indicators:
+    - volume_sma_20
+    - obv
+    use_volatility_indicators: true
+    volatility_indicators:
+    - returns_std_20
+    - atr_14
+feature_engineering:
+  timeframes:
+  - 5m
+  - 1h
+  - 4h
+  columns_to_normalize:
+  - open
+  - high
+  - low
+  - close
+  - volume
+  indicators:
+    timeframes:
+      5m:
+        momentum:
+        - RSI_14
+        - STOCH_14_3
+        - CCI_20
+        - ROC_9
+        - MFI_14
+        trend:
+        - EMA_5
+        - EMA_20
+        - SUPERTREND_14_2.0
+        - PSAR_0.02_0.2
+        volatility:
+        - ATR_14
+        - BB_20_2.0
+        volume:
+        - VWAP
+        - OBV
+      1h:
+        momentum:
+        - RSI_14
+        - MACD_12_26_9
+        - MACD_HIST_12_26_9
+        - CCI_20
+        - MFI_14
+        trend:
+        - EMA_50
+        - EMA_100
+        - SMA_200
+        - ICHIMOKU_9_26_52
+        - PSAR_0.02_0.2
+        volatility:
+        - ATR_14
+        - BB_20_2.0
+        volume:
+        - OBV
+        - VWAP
+      4h:
+        momentum:
+        - RSI_14
+        - MACD_12_26_9
+        - CCI_20
+        - MFI_14
+        trend:
+        - SMA_200
+        - EMA_50
+        - ICHIMOKU_9_26_52
+        - SUPERTREND_14_3.0
+        - PSAR_0.02_0.2
+        volatility:
+        - ATR_14
+        - BB_20_2.0
+        volume:
+        - OBV
+        - VWAP_DAILY
+        - VWAP_WEEKLY
+    common:
+      bollinger:
+        window: 20
+        window_dev: 2.0
+      rsi:
+        window: 14
+      macd:
+        fast: 12
+        slow: 26
+        signal: 9
+      atr:
+        window: 14
+      supertrend:
+        window: 14
+        multiplier: 2.0
+      psar:
+        step: 0.02
+        max_step: 0.2
+  preprocessing:
+    fillna: true
+    normalize: true
+    remove_outliers: true
+    min_data_points: 50
+  performance:
+    chunk_size: 1000
+    n_jobs: -1
+    cache_indicators: true
+    parallel_timeframes: true
+  validation:
+    check_nan_percentage: true
+    max_nan_percentage: 0.05
+    check_feature_correlation: true
+    max_correlation_threshold: 0.95
+environment:
+  initial_balance: 20.0
+  trading_fees: 0.01
+  max_steps: 500
+  max_chunks_per_episode: 10
+  assets:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - ADAUSDT
+  observation:
+    shape:
+    - 3
+    - 20
+    - 36
+    window_sizes:
+      5m: 20
+      1h: 10
+      4h: 5
+    warmup_steps: 200
+    timeframes:
+    - 5m
+    - 1h
+    - 4h
+    features:
+      base:
+      - OPEN
+      - HIGH
+      - LOW
+      - CLOSE
+      - VOLUME
+      - returns
+      indicators:
+        5m:
+        - RSI_14
+        - STOCHk_14_3_3
+        - STOCHd_14_3_3
+        - CCI_20_0.015
+        - ROC_9
+        - MFI_14
+        - EMA_5
+        - EMA_20
+        - SUPERTREND_14_2.0
+        - PSAR_0.02_0.2
+        1h:
+        - RSI_14
+        - CCI_20_0.015
+        - MFI_14
+        - EMA_50
+        - EMA_100
+        - SMA_200
+        4h:
+        - RSI_14
+        - CCI_20_0.015
+        - MFI_14
+        - SMA_200
+        - EMA_50
+        - VWAP_D
+        - VWAP_W
+  mode: backtest
+  base_currency: USDT
+  memory:
+    chunk_size: 10000
+    max_chunks_in_memory: 2
+    aggressive_cleanup: true
+    force_gc_after_chunk: true
+    memory_warning_threshold_mb: 8000
+    memory_critical_threshold_mb: 9000
+    num_workers: 1
+    pin_memory: false
+    batch_size: 32
+    prefetch_factor: 1
+    shuffle: true
+    drop_last: true
+    include_portfolio_state: true
+  risk_management:
+    position_sizing:
+      max_risk_per_trade_pct: 5.0
+      max_asset_allocation_pct: 20.0
+      concentration_limits:
+        BTCUSDT: 30.0
+        ETHUSDT: 25.0
+        SOLUSDT: 20.0
+        XRPUSDT: 15.0
+        ADAUSDT: 10.0
+      take_profit:
+        enabled: true
+        risk_reward_ratio: 2.0
+        trailing_enabled: true
+        trailing_deviation_pct: 1.0
+  penalties:
+    invalid_action: -0.1
+    order_rejection: -0.5
+    inaction_freq_threshold: 0.15
+    inaction_pnl_threshold: 0.05
+    base_inaction_penalty: -0.001
+  reward_shaping:
+    realized_pnl_multiplier: 1.0
+    unrealized_pnl_multiplier: 0.1
+    reward_clipping_range:
+    - -3.0
+    - 3.0
+    optimal_trade_bonus: 2.0
+    performance_threshold: 0.6
+    chunk_size: 5000
+    use_ewc: true
+    ewc_lambda: 0.2
+    use_prioritized_replay: true
+trading_rules:
+  futures_enabled: false
+  leverage: 1.0
+  commission_pct: 0.001
+  min_order_value_usdt: 10
+  slippage_pct: 0.001
+  stop_loss_pct: 0.05
+  take_profit_pct: 0.15
+  trailing_stop: 0.01
+capital_tiers:
+- name: Micro Capital
+  min_capital: 11.0
+  max_capital: 30.0
+  max_position_size_pct: 90
+  leverage: 1.0
+  risk_per_trade_pct: 5.0
+  max_drawdown_pct: 50.0
+  max_concurrent_positions: 1
+- name: Small Capital
+  min_capital: 30.0
+  max_capital: 100.0
+  max_position_size_pct: 70
+  leverage: 1.0
+  risk_per_trade_pct: 1.5
+  max_drawdown_pct: 4.0
+  max_concurrent_positions: 2
+- name: Medium Capital
+  min_capital: 100.0
+  max_capital: 300.0
+  max_position_size_pct: 60
+  leverage: 1.0
+  risk_per_trade_pct: 2.0
+  max_drawdown_pct: 3.5
+  max_concurrent_positions: 3
+- name: High Capital
+  min_capital: 300.0
+  max_capital: 1000.0
+  max_position_size_pct: 35
+  leverage: 1.0
+  risk_per_trade_pct: 2.5
+  max_drawdown_pct: 3.0
+  max_concurrent_positions: 4
+- name: Enterprise
+  min_capital: 1000.0
+  max_capital: null
+  max_position_size_pct: 20
+  leverage: 1.0
+  risk_per_trade_pct: 3.0
+  max_drawdown_pct: 2.5
+  max_concurrent_positions: 5
+agent:
+  algorithm: PPO
+  policy: MultiInputPolicy
+  learning_rate: 3e-4
+  n_steps: 4096
+  batch_size: 8192
+  n_epochs: 4
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.1
+  clip_range_vf: 0.1
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  target_kl: 0.03
+  seed: 42
+  verbose: 1
+  deterministic_inference: true
+  custom_log_freq_rollouts: 10
+  eval_freq: 2500
+  eval_episodes: 10
+  checkpoint_freq: 5000
+  n_envs: 4
+  buffer_size: 100000
+  window_size: 100
+  features_extractor_kwargs:
+    cnn_configs:
+      5m:
+        input_shape:
+        - 3
+        - 20
+        - 5
+        channel_groups:
+          price:
+            indices:
+            - 0
+            - 1
+            - 2
+            - 3
+            out_channels: 32
+            kernel_size:
+            - 1
+            - 3
+            padding: same
+          volume:
+            indices:
+            - 4
+            out_channels: 16
+            kernel_size:
+            - 1
+            - 1
+            padding: same
+          indicators:
+            indices:
+            - 5
+            - 6
+            - 7
+            - 8
+            - 9
+            - 10
+            - 11
+            - 12
+            - 13
+            - 14
+            out_channels: 32
+            kernel_size:
+            - 1
+            - 3
+            padding: same
+        conv_blocks:
+        - type: grouped
+          filters: 32
+          kernel_size:
+          - 1
+          - 3
+          padding: same
+          activation: leaky_relu
+          batch_norm: true
+          se_block: true
+          dropout: 0.1
+        - type: inception
+          filters: 64
+          kernel_sizes:
+          - - 1
+            - 3
+          - - 1
+            - 5
+          - - 1
+            - 7
+          pool_size:
+          - 1
+          - 2
+          residual: true
+          activation: leaky_relu
+          batch_norm: true
+          dropout: 0.2
+        - type: attention
+          num_heads: 4
+          key_dim: 64
+          dropout: 0.1
+        activation: leaky_relu
+        batch_norm: true
+        final_dropout: 0.25
+      1h:
+        input_shape:
+        - 3
+        - 100
+        - 4
+        channel_groups:
+          price:
+            indices:
+            - 0
+            - 1
+            - 2
+            - 3
+            out_channels: 32
+            kernel_size:
+            - 1
+            - 3
+            padding: same
+          volume:
+            indices:
+            - 4
+            out_channels: 16
+            kernel_size:
+            - 1
+            - 1
+            padding: same
+          indicators:
+            indices:
+            - 5
+            - 6
+            - 7
+            - 8
+            - 9
+            - 10
+            out_channels: 32
+            kernel_size:
+            - 1
+            - 3
+            padding: same
+        conv_blocks:
+        - type: grouped
+          filters: 32
+          kernel_size:
+          - 1
+          - 3
+          padding: same
+          activation: leaky_relu
+          batch_norm: true
+          se_block: true
+          dropout: 0.1
+        - type: inception
+          filters: 64
+          kernel_sizes:
+          - - 1
+            - 3
+          - - 1
+            - 5
+          pool_size:
+          - 1
+          - 2
+          residual: true
+          activation: leaky_relu
+          batch_norm: true
+          dropout: 0.2
+        - type: attention
+          num_heads: 4
+          key_dim: 64
+          dropout: 0.1
+        activation: leaky_relu
+        batch_norm: true
+        final_dropout: 0.25
+        use_channel_attention: true
+        use_temporal_attention: true
+        temporal_attention_heads: 4
+      4h:
+        input_shape:
+        - 3
+        - 10
+        - 4
+        channel_groups:
+          price:
+            indices:
+            - 0
+            - 1
+            - 2
+            - 3
+            out_channels: 32
+            kernel_size:
+            - 1
+            - 3
+            padding: same
+          volume:
+            indices:
+            - 4
+            out_channels: 16
+            kernel_size:
+            - 1
+            - 1
+            padding: same
+          indicators:
+            indices:
+            - 5
+            - 6
+            - 7
+            - 8
+            - 9
+            out_channels: 32
+            kernel_size:
+            - 1
+            - 3
+            padding: same
+        conv_blocks:
+        - type: grouped
+          filters: 32
+          kernel_size:
+          - 1
+          - 3
+          padding: same
+          activation: leaky_relu
+          batch_norm: true
+          se_block: true
+          dropout: 0.1
+        - type: inception
+          filters: 64
+          kernel_sizes:
+          - - 1
+            - 3
+          - - 1
+            - 5
+          pool_size:
+          - 1
+          - 2
+          residual: true
+          activation: leaky_relu
+          batch_norm: true
+          dropout: 0.2
+        activation: leaky_relu
+        batch_norm: true
+        final_dropout: 0.25
+        use_channel_attention: true
+        use_temporal_attention: false
+        temporal_attention_heads: 4
+    fc_layers:
+    - 256
+    - 128
+    attention:
+      num_heads: 4
+      dropout: 0.1
+      use_relative_positions: true
+    normalization:
+      use_batch_norm: true
+      use_layer_norm: false
+    initialization:
+      conv: he_normal
+      dense: glorot_uniform
+      bias: zeros
+    dropout: 0.2
+    activation: leaky_relu
+    policy_kwargs:
+      net_arch:
+        shared:
+        - 256
+        - 128
+        pi:
+        - 64
+        - 32
+        vf:
+        - 64
+        - 32
+      activation_fn: leaky_relu
+      gamma: 0.99
+      gae_lambda: 0.95
+      ent_coef: 0.01
+      ent_coef_annealing: true
+      learning_rate: 3e-4
+      n_steps: 4096
+      batch_size: 8192
+      n_epochs: 4
+      nminibatches: 4
+      clip_range: 'lambda f: f * 0.2'
+      clip_range_vf: 0.2
+      l2_penalty: 0.0
+      dropout: 0.1
+      batch_norm: true
+      target_update_interval: 1
+      target_update_freq: 1000
+      exploration_noise: 0.1
+      exploration_noise_type: normal
+      ou_params:
+        mu: 0.0
+        theta: 0.15
+        sigma: 0.2
+      random_exploration: 10000
+      exploration_strategy: gaussian
+      normalize_observations: false
+      normalize_rewards: false
+    ppo:
+      n_steps: 4096
+      batch_size: 8192
+      n_epochs: 4
+      gae_lambda: 0.95
+      clip_range: 0.1
+      clip_range_vf: null
+      ent_coef: 0.01
+      vf_coef: 0.5
+      max_grad_norm: 0.5
+      normalize_advantage: true
+      use_sde: false
+      sde_sample_freq: -1
+      use_reparameterization: false
+  learning_rate_schedule:
+    type: linear
+    start: 3e-4
+    end: 1e-6
+  ent_coef_schedule:
+    type: linear
+    start: 0.01
+    end: 0.0001
+data_processing:
+  max_lookahead: 100
+  temporal_transforms:
+    enabled: true
+    diffs:
+    - close
+    - volume
+    moving_averages:
+    - ma5
+    - ma10
+    - ma20
+    rolling_windows:
+    - 5
+    - 10
+    - 20
+    - 50
+    rsi_window: 14
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    bollinger_window: 20
+    bollinger_std: 2.0
+data_augmentation:
+  enabled: true
+  time_warping:
+    enabled: true
+    window: 10
+    sigma: 0.2
+    exclude_columns:
+    - volume
+    - trades
+  gaussian_noise:
+    enabled: true
+    std: 0.01
+    exclude_columns:
+    - volume
+    - trades
+  window_permutation:
+    enabled: false
+    window_size: 5
+    n_permutations: 1
+    exclude_columns:
+    - volume
+    - trades
+  random_scaling:
+    enabled: false
+    scale_range:
+    - 0.9
+    - 1.1
+    exclude_columns:
+    - volume
+    - trades
+  trend_augmentation:
+    enabled: false
+    max_trend: 0.01
+    exclude_columns:
+    - volume
+    - trades
+  partial_shuffle:
+    enabled: false
+    segment_size: 5
+    exclude_columns:
+    - volume
+    - trades
+  random_impulses:
+    enabled: false
+    probability: 0.01
+    max_impulse: 0.1
+    exclude_columns:
+    - volume
+    - trades
+  apply_order:
+  - time_warping
+  - gaussian_noise
+  - window_permutation
+  - random_scaling
+  - trend_augmentation
+  - partial_shuffle
+  - random_impulses
+regularization:
+  dropout_rate: 0.3
+  use_batch_norm: true
+  batch_norm_momentum: 0.99
+  batch_norm_epsilon: 1e-5
+  weight_decay: 1e-5
+  gradient_clip: 1.0
+training:
+  num_instances: 4
+  timesteps_per_instance: 1250000
+  batch_size: 64
+  save_freq: 5000
+  checkpointing:
+    enabled: true
+    save_freq: 50000
+    model_name: adan_model
+    save_path: /home/morningstar/Documents/trading/bot/models/rl_agents/adan_model
+reward_shaping:
+  risk_factor: 1.0
+  volatility_factor: 1.0
+  drawdown_penalty: 0.1
+  sharpe_factor: 0.5
+  position_reward: 1.0
+  commission_reward: -0.1
+  slippage_reward: -0.1
+  profit_factor_bonus: 0.5
+  risk_reward_ratio: 2.0
+  max_position_size: 0.1
+  max_order_size: 0.01
+  min_order_value_usdt: 10
+  commission_pct: 0.001
+  commission_penalty: 1.5
+  min_profit_multiplier: 3.0
+  slippage_pct: 0.001
+  dbe:
+    initial_risk: 0.3
+    min_risk: 0.1
+    max_risk: 1.0
+    winrate_decay: 0.9
+    drawdown_impact: 1.2
+    cash_utilization_impact: 0.5
+  tier_rewards:
+    promotion_bonus: 50.0
+    demotion_penalty: -20.0
+    checkpoint_on_promotion: true
+    checkpoint_dir: /home/morningstar/Documents/trading/bot/models/rl_agents/checkpoints
+    min_episodes_for_promotion: 5
+    min_profit_for_promotion: 0.1
+    tier_performance_multipliers:
+    - tier: Micro Capital
+      multiplier: 1.0
+    - tier: Small Capital
+      multiplier: 1.2
+    - tier: Medium Capital
+      multiplier: 1.5
+    - tier: High Capital
+      multiplier: 2.0
+    - tier: Enterprise
+      multiplier: 2.5
+  logging:
+    version: 1
+    disable_existing_loggers: false
+    log_dirs:
+      base: logs
+      dbe_replay: logs/dbe_replay
+      metrics: logs/metrics
+      models: logs/models
+      performance: logs/performance
+      data_quality: logs/data_quality
+      memory: logs/memory
+    formatters:
+      standard:
+        format: '%(asctime)s - %(name)-25s - %(levelname)-8s - %(message)s'
+        datefmt: '%Y-%m-%d %H:%M:%S'
+      detailed:
+        format: '%(asctime)s - %(name)-25s - %(levelname)-8s - %(filename)s:%(lineno)d
+          - %(message)s'
+        datefmt: '%Y-%m-%d %H:%M:%S'
+      json:
+        class: pythonjsonlogger.jsonlogger.JsonFormatter
+        format: '%(asctime)s %(name)s %(levelname)s %(filename)s %(lineno)s %(message)s'
+        datefmt: '%Y-%m-%d %H:%M:%S'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        level: DEBUG
+        formatter: standard
+        stream: ext://sys.stdout
+      file_handler:
+        class: logging.handlers.TimedRotatingFileHandler
+        level: DEBUG
+        formatter: detailed
+        filename: logs/adan.log
+        when: midnight
+        backupCount: 30
+        encoding: utf-8
+        utc: true
+      error_file_handler:
+        class: logging.handlers.RotatingFileHandler
+        level: ERROR
+        formatter: detailed
+        filename: logs/error.log
+        maxBytes: 10485760
+        backupCount: 10
+        encoding: utf-8
+      json_file_handler:
+        class: logging.handlers.RotatingFileHandler
+        level: INFO
+        formatter: json
+        filename: logs/adan_structured.log
+        maxBytes: 10485760
+        backupCount: 10
+        encoding: utf-8
+    loggers:
+      ? ''
+      : level: WARNING
+        handlers:
+        - console
+        - file_handler
+        - error_file_handler
+        propagate: false
+      adan:
+        level: DEBUG
+        handlers:
+        - console
+        - file_handler
+        - json_file_handler
+        propagate: false
+      tensorflow:
+        level: WARNING
+        handlers:
+        - file_handler
+        propagate: false
+      stable_baselines3:
+        level: INFO
+        handlers:
+        - file_handler
+        propagate: false
+      urllib3:
+        level: WARNING
+        handlers:
+        - file_handler
+        propagate: false
+      pyarrow:
+        level: WARNING
+        handlers:
+        - file_handler
+        propagate: false
+    root:
+      level: WARNING
+      handlers:
+      - console
+      - file_handler
+      - error_file_handler
+      propagate: false

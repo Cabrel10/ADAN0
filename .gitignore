@@ -1,0 +1,367 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Fichiers de configuration locaux
+.env
+.env.*
+!.env.example
+
+# Données et modèles
+/data/**/*.parquet
+/data/**/*.csv
+/data/**/*.json
+/data/raw/
+/data/processed/
+/models/
+!/data/raw/.gitkeep
+!/data/processed/.gitkeep
+
+# Exclure les fichiers de données volumineux
+*.parquet
+!**/test/**/*.parquet  # Inclure les fichiers de test si nécessaire
+*.csv
+!**/test/**/*.csv     # Inclure les fichiers de test si nécessaire
+*.json
+!**/test/**/*.json    # Inclure les fichiers de test si nécessaire
+
+# Logs et sorties
+/logs/*
+!/logs/.gitkeep
+/logs/*.json
+/outputs/
+
+# Fichiers de configuration IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Fichiers temporaires
+*.tmp
+*.bak
+*~
+
+# Fichiers de cache
+.cache/
+.mypy_cache/
+.ruff_cache/
+
+# Fichiers de configuration locaux
+local_settings.py
+
+# Fichiers de jupyter notebook
+.ipynb_checkpoints/
+
+# Fichiers de configuration PDM
+.pdm.toml
+.pdm-build/
+__pypackages__/
+
+# Fichiers de configuration Python
+.python-version
+
+# Fichiers de configuration VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Fichiers de configuration PyCharm
+.idea/
+
+# Fichiers de configuration Jupyter
+.jupyter/
+
+# Fichiers de configuration IPython
+.ipython/
+
+# Fichiers de configuration pytest
+.pytest_cache/
+
+# Fichiers de configuration coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# Fichiers de configuration mypy
+.mypy_cache/
+
+# Fichiers de configuration Black
+.cache/
+
+# Fichiers de configuration isort
+.isort.cfg
+
+# Fichiers de configuration flake8
+.flake8
+
+# Fichiers de configuration pre-commit
+.pre-commit-config.yaml
+
+# Fichiers de configuration Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+
+# Fichiers de configuration Kubernetes
+k8s/
+
+# Fichiers de configuration Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Fichiers de configuration Ansible
+ansible/
+
+# Fichiers de configuration Vagrant
+.vagrant/
+
+# Fichiers de configuration Virtualenv
+venv/
+env/
+ENV/
+
+# Fichiers de configuration Pipenv
+Pipfile
+Pipfile.lock
+
+# Fichiers de configuration Poetry
+poetry.lock
+pyproject.toml
+
+# Fichiers de configuration PDM
+pdm.lock
+pdm.toml
+
+# Fichiers de configuration Pip
+dev-requirements.txt
+test-requirements.txt
+
+# Fichiers de configuration Setuptools
+*.egg-info/
+*.egg
+
+# Fichiers de configuration Wheel
+build/
+dist/
+
+# Fichiers de configuration Sphinx
+docs/_build/
+
+# Fichiers de configuration MkDocs
+site/
+
+# Fichiers de configuration MkDocs Material
+.mkdocs/
+
+# Fichiers de configuration Read the Docs
+.readthedocs.yml
+
+# Fichiers de configuration Sphinx
+_build/
+_builds/
+
+# Fichiers de configuration Jupyter Book
+_build/
+
+# Fichiers de configuration Jupyter Book
+.jupyter-book/
+
+# Fichiers de configuration Jupyter Book
+_build/
+
+# Fichiers de configuration Jupyter Book
+.jupyter-book/
+
+# Fichiers de configuration Jupyter Book
+_build/
+
+# Fichiers de configuration Jupyter Book
+.jupyter-book/
+
+# Fichiers de configuration Jupyter Book
+_build/
+
+# Fichiers de configuration Jupyter Book
+.jupyter-book/
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+#  Usually these files are created by a CI server and aren't committed to VCS
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+nosetests.xml
+coverage.xml
+*.cover
+junit/
+test_artifacts/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+site/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pdm
+.pdm.toml
+.pdm-build/
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak
+venv.bak
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+
+# PyCharm
+.idea/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Project Specific
+# Logs
+logs/
+*.log
+nohup.out
+debug_output.txt
+convert_real_data.log
+data_validation.log
+test_state_builder.log
+
+# Data, Models, Reports
+data/
+models/
+reports/
+simulation_results.png
+
+# Cache
+cache/
+
+# Secrets
+*.pem
+*.key
+gemini_api_keys.txt
+config/api_keys.enc
+
+# Dependencies and large files
+ta-lib/
+ta-lib-0.4.0-src.tar.gz
+config/config.yaml.tar.gz
+*.zip
+
+# Checkpoints
+checkpoints/

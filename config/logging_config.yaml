@@ -1,0 +1,44 @@
+# Logging configuration for ADAN Trading Bot
+
+# Global log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+level: INFO
+
+# Directory to store log files
+log_dir: "logs"
+
+# Console logging
+enable_console_logs: true
+
+# File logging
+enable_file_logs: true
+log_file: "adan_trading_bot.log"
+
+# JSON logging
+enable_json_logs: true
+json_log_file: "adan_trading_bot.json"
+
+# Log rotation settings
+max_log_size: 10485760  # 10MB in bytes
+backup_count: 5
+compress_backups: true
+
+# Log formatting
+format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+date_format: "%Y-%m-%d %H:%M:%S"
+
+# Log levels for specific modules
+loggers:
+  urllib3:
+    level: WARNING
+  matplotlib:
+    level: WARNING
+  requests:
+    level: WARNING
+  adan_trading_bot:
+    level: INFO
+  adan_trading_bot.monitoring:
+    level: DEBUG
+  adan_trading_bot.trading:
+    level: DEBUG
+  adan_trading_bot.data_processing:
+    level: INFO

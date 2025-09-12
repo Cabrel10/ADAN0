@@ -1,0 +1,39 @@
+# Inclut toutes les dépendances de base
+-r requirements.txt
+
+# ===================================
+# PyTorch pour CPU uniquement
+# ===================================
+torch>=2.2.0,<3.0.0 --index-url https://download.pytorch.org/whl/cpu
+torchvision>=0.17.0,<1.0.0 --index-url https://download.pytorch.org/whl/cpu
+torchaudio>=2.2.0,<3.0.0 --index-url https://download.pytorch.org/whl/cpu
+
+# ===================================
+# Optimisations pour CPU
+# ===================================
+# Accélération CPU pour les calculs scientifiques
+numba>=0.58.0
+llvmlite>=0.41.0
+
+# Optimisation des calculs numériques
+scipy>=1.10.0
+pandas-ta>=0.3.14b0
+
+# ===================================
+# Outils de profiling et optimisation
+# ===================================
+# Pour l'analyse des performances
+psutil>=5.9.0
+memory_profiler>=0.61.0
+line_profiler>=4.0.0
+
+# ===================================
+# Notes d'installation
+# ===================================
+# Pour installer avec optimisations complètes :
+# pip install -r requirements_cpu.txt --no-cache-dir
+
+# Pour installer TA-Lib (requiert une installation système préalable) :
+# Sur Ubuntu/Debian : sudo apt-get install python3-ta-lib
+# Sur macOS : brew install ta-lib
+# Puis : pip install TA-Lib

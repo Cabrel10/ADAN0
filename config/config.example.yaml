@@ -1,0 +1,189 @@
+# Configuration d'exemple pour ADAN Trading Bot
+# Copiez ce fichier en config.yaml et modifiez les valeurs selon vos besoins
+
+# Configuration générale
+general:
+  project_name: "adan_trading_bot"
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  random_seed: 42
+  device: "auto"  # "cuda", "cpu", ou "auto"
+
+# Configuration des données
+data:
+  data_dir: "data/"
+  raw_data_dir: "${data.raw_data_dir}"
+  processed_data_dir: "${data.processed_data_dir}"
+  
+  # Paires de trading (exemple)
+  symbols:
+    - "BTC/USDT"
+    - "ETH/USDT"
+    - "ADA/USDT"
+  
+  # Timeframes supportés
+  timeframes:
+    - "1m"
+    - "5m"
+    - "1h"
+    - "4h"
+
+# Configuration de l'environnement de trading
+environment:
+  # Paramètres du marché
+  initial_balance: 10000.0  # Balance initiale en USDT
+  commission: 0.001  # Commission de trading (0.1%)
+  
+  # Paramètres de risque
+  max_position_size: 0.1  # Taille maximale de position (10% du portefeuille)
+  max_drawdown: 0.2  # Drawdown maximal autorisé (20%)
+  
+  # Paramètres de l'environnement
+  window_size: 50  # Nombre de bougies d'historique
+  use_indicators: true  # Utiliser des indicateurs techniques
+  
+  # Récompenses et pénalités
+  reward_config:
+    profit_factor: 1.0
+    drawdown_penalty: 2.0
+    sharpe_ratio_factor: 0.5
+
+# Configuration du modèle
+model:
+  name: "PPO"  # PPO, A2C, DQN, etc.
+  
+  # Architecture du réseau de neurones
+  network:
+    hidden_sizes: [64, 64]  # Taille des couches cachées
+    activation: "ReLU"  # Fonction d'activation
+    
+  # Paramètres d'entraînement
+  training:
+    total_timesteps: 1000000
+    batch_size: 64
+    learning_rate: 0.0003
+    gamma: 0.99  # Facteur de réduction
+    gae_lambda: 0.95  # Pour PPO/A2C
+    ent_coef: 0.01  # Coefficient d'entropie
+    vf_coef: 0.5  # Coefficient de la fonction de valeur
+    max_grad_norm: 0.5  # Normalisation du gradient
+    
+  # Configuration du buffer d'expérience
+  buffer:
+    buffer_size: 100000
+    batch_size: 64
+    alpha: 0.6  # Priorité exponentielle
+    beta: 0.4  # Importance sampling
+    beta_increment: 0.001  # Incrément de beta
+
+# Configuration de l'orchestrateur d'entraînement
+training:
+  num_workers: 4  # Nombre de workers parallèles
+  save_freq: 10000  # Fréquence de sauvegarde (en pas)
+  eval_freq: 1000  # Fréquence d'évaluation (en pas)
+  log_interval: 100  # Fréquence de journalisation (en pas)
+  
+  # Configuration du tensorboard
+  tensorboard:
+    log_dir: "runs/"
+    update_freq: 10  # Fréquence de mise à jour (en pas)
+
+# Configuration du backtest
+backtest:
+  initial_balance: 10000.0
+  start_date: "2023-01-01"
+  end_date: "2023-12-31"
+  commission: 0.001
+  slippage: 0.0005  # Glissement de prix
+  
+  # Métriques à évaluer
+  metrics:
+    - "sharpe_ratio"
+    - "max_drawdown"
+    - "win_rate"
+    - "profit_factor"
+
+# Configuration de l'API d'échange (exemple avec Binance)
+exchange:
+  name: "binance"
+  api_key: "${EXCHANGE_API_KEY}"  # À définir dans les variables d'environnement
+  api_secret: "${EXCHANGE_API_SECRET}"  # À définir dans les variables d'environnement
+  testnet: true  # Utiliser l'environnement de test
+  
+  # Limites de l'API
+  rate_limit: true
+  retries: 3  # Nombre de tentatives en cas d'échec
+  
+  # Paramètres de connexion
+  timeout: 30  # Timeout en secondes
+  enable_rate_limit: true
+  
+  # Configuration du WebSocket
+  websocket:
+    enabled: true
+    reconnect_delay: 5  # Délai de reconnexion en secondes
+    max_retries: 10  # Nombre maximum de tentatives de reconnexion
+
+# Configuration des logs
+logging:
+  version: 1
+  disable_existing_loggers: false
+  
+  formatters:
+    standard:
+      format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+      datefmt: "%Y-%m-%d %H:%M:%S"
+  
+  handlers:
+    console:
+      class: "logging.StreamHandler"
+      level: "INFO"
+      formatter: "standard"
+      stream: "ext://sys.stdout"
+    
+    file:
+      class: "logging.handlers.RotatingFileHandler"
+      level: "DEBUG"
+      formatter: "standard"
+      filename: "logs/adan_trading_bot.log"
+      maxBytes: 10485760  # 10MB
+      backupCount: 5
+      encoding: "utf8"
+  
+  loggers:
+    adan_trading_bot:
+      level: "DEBUG"
+      handlers: ["console", "file"]
+      propagate: false
+    
+    __main__:
+      level: "DEBUG"
+      handlers: ["console", "file"]
+      propagate: false
+
+  root:
+    level: "INFO"
+    handlers: ["console", "file"]
+
+# Configuration du monitoring
+monitoring:
+  # Configuration de Prometheus (optionnel)
+  prometheus:
+    enabled: false
+    port: 8000
+    
+  # Configuration des alertes
+  alerts:
+    email:
+      enabled: false
+      sender: "your-email@example.com"
+      recipients: ["recipient@example.com"]
+      smtp_server: "smtp.example.com"
+      smtp_port: 587
+      smtp_user: "your-email@example.com"
+      smtp_password: "${SMTP_PASSWORD}"  # À définir dans les variables d'environnement
+    
+    # Seuils d'alerte
+    thresholds:
+      max_drawdown: 0.1  # 10%
+      min_balance: 1000.0  # Solde minimum en USDT
+      max_connection_errors: 5  # Nombre maximum d'erreurs de connexion avant alerte
