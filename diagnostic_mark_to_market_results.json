@@ -1,0 +1,179 @@
+{
+  "timestamp": "2025-09-24T22:01:34.757558",
+  "price_history": [],
+  "portfolio_history": [
+    {
+      "step": 0,
+      "value_before": 1000.0,
+      "value_after": 1000.0,
+      "cash": 950.0,
+      "unrealized_pnl": 0.0,
+      "change": 0.0
+    },
+    {
+      "step": 1,
+      "value_before": 1000.0,
+      "value_after": 1000.0998334166468,
+      "cash": 950.0,
+      "unrealized_pnl": 0.0998334166468311,
+      "change": 0.09983341664678846
+    },
+    {
+      "step": 2,
+      "value_before": 1000.0998334166468,
+      "value_after": 1000.198669330795,
+      "cash": 950.0,
+      "unrealized_pnl": 0.1986693307950631,
+      "change": 0.09883591414825332
+    },
+    {
+      "step": 3,
+      "value_before": 1000.198669330795,
+      "value_after": 1000.2955202066613,
+      "cash": 950.0,
+      "unrealized_pnl": 0.2955202066613438,
+      "change": 0.0968508758662665
+    },
+    {
+      "step": 4,
+      "value_before": 1000.2955202066613,
+      "value_after": 1000.3894183423087,
+      "cash": 950.0,
+      "unrealized_pnl": 0.3894183423086517,
+      "change": 0.0938981356473505
+    },
+    {
+      "step": 5,
+      "value_before": 1000.3894183423087,
+      "value_after": 1000.4794255386042,
+      "cash": 950.0,
+      "unrealized_pnl": 0.4794255386042039,
+      "change": 0.09000719629557352
+    },
+    {
+      "step": 6,
+      "value_before": 1000.4794255386042,
+      "value_after": 1000.564642473395,
+      "cash": 950.0,
+      "unrealized_pnl": 0.5646424733950326,
+      "change": 0.08521693479076475
+    },
+    {
+      "step": 7,
+      "value_before": 1000.564642473395,
+      "value_after": 1000.6442176872376,
+      "cash": 950.0,
+      "unrealized_pnl": 0.6442176872376919,
+      "change": 0.0795752138426451
+    },
+    {
+      "step": 8,
+      "value_before": 1000.6442176872376,
+      "value_after": 1000.7173560908996,
+      "cash": 950.0,
+      "unrealized_pnl": 0.7173560908995213,
+      "change": 0.07313840366191471
+    },
+    {
+      "step": 9,
+      "value_before": 1000.7173560908996,
+      "value_after": 1000.7833269096275,
+      "cash": 950.0,
+      "unrealized_pnl": 0.7833269096274833,
+      "change": 0.06597081872791932
+    }
+  ],
+  "position_history": [
+    {
+      "step": 0,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50000.0,
+      "expected_value": 50.0,
+      "actual_value": 50.0
+    },
+    {
+      "step": 1,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50099.83341664683,
+      "expected_value": 50.09983341664683,
+      "actual_value": 50.09983341664683
+    },
+    {
+      "step": 2,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50198.66933079506,
+      "expected_value": 50.19866933079506,
+      "actual_value": 50.19866933079506
+    },
+    {
+      "step": 3,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50295.52020666134,
+      "expected_value": 50.295520206661344,
+      "actual_value": 50.295520206661344
+    },
+    {
+      "step": 4,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50389.41834230865,
+      "expected_value": 50.38941834230865,
+      "actual_value": 50.38941834230865
+    },
+    {
+      "step": 5,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50479.425538604206,
+      "expected_value": 50.479425538604204,
+      "actual_value": 50.479425538604204
+    },
+    {
+      "step": 6,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50564.64247339503,
+      "expected_value": 50.56464247339503,
+      "actual_value": 50.56464247339503
+    },
+    {
+      "step": 7,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50644.21768723769,
+      "expected_value": 50.64421768723769,
+      "actual_value": 50.64421768723769
+    },
+    {
+      "step": 8,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50717.35609089952,
+      "expected_value": 50.71735609089952,
+      "actual_value": 50.71735609089952
+    },
+    {
+      "step": 9,
+      "asset": "BTCUSDT",
+      "size": 0.001,
+      "entry_price": 50000.0,
+      "current_price": 50783.32690962748,
+      "expected_value": 50.78332690962748,
+      "actual_value": 50.78332690962748
+    }
+  ],
+  "update_calls": 10
+}

@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<!-- saved from url=(0031)http://127.0.0.1:8000/repo2text -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Repo2Text - Convert Local Directories to Text</title>
+    <script src="./Repo2Text - Convert Local Directories to Text_files/saved_resource"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="./Repo2Text - Convert Local Directories to Text_files/FileSaver.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        }
+        .file-item {
+            transition: all 0.2s ease-in-out;
+        }
+        .file-item:hover {
+            background-color: #f3f4f6;
+        }
+        .directory-tree {
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+    </style>
+<style>*, ::before, ::after{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgb(59 130 246 / 0.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgb(59 130 246 / 0.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/* ! tailwindcss v3.4.17 | MIT License | https://tailwindcss.com */*,::after,::before{box-sizing:border-box;border-width:0;border-style:solid;border-color:#e5e7eb}::after,::before{--tw-content:''}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;tab-size:4;font-family:ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0;padding:0}legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.mx-auto{margin-left:auto;margin-right:auto}.mb-2{margin-bottom:0.5rem}.mb-4{margin-bottom:1rem}.mb-8{margin-bottom:2rem}.ml-2{margin-left:0.5rem}.ml-4{margin-left:1rem}.mr-2{margin-right:0.5rem}.mt-1{margin-top:0.25rem}.block{display:block}.inline{display:inline}.flex{display:flex}.grid{display:grid}.hidden{display:none}.h-5{height:1.25rem}.h-4{height:1rem}.min-h-screen{min-height:100vh}.w-5{width:1.25rem}.w-full{width:100%}.w-4{width:1rem}.max-w-6xl{max-width:72rem}.flex-1{flex:1 1 0%}.grid-cols-1{grid-template-columns:repeat(1, minmax(0, 1fr))}.items-center{align-items:center}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-6{gap:1.5rem}.divide-y > :not([hidden]) ~ :not([hidden]){--tw-divide-y-reverse:0;border-top-width:calc(1px * calc(1 - var(--tw-divide-y-reverse)));border-bottom-width:calc(1px * var(--tw-divide-y-reverse))}.overflow-hidden{overflow:hidden}.rounded{border-radius:0.25rem}.rounded-lg{border-radius:0.5rem}.rounded-md{border-radius:0.375rem}.rounded-xl{border-radius:0.75rem}.rounded-l-md{border-top-left-radius:0.375rem;border-bottom-left-radius:0.375rem}.rounded-r-md{border-top-right-radius:0.375rem;border-bottom-right-radius:0.375rem}.rounded-b{border-bottom-right-radius:0.25rem;border-bottom-left-radius:0.25rem}.rounded-t{border-top-left-radius:0.25rem;border-top-right-radius:0.25rem}.border{border-width:1px}.border-b{border-bottom-width:1px}.border-l{border-left-width:1px}.border-r{border-right-width:1px}.border-blue-400{--tw-border-opacity:1;border-color:rgb(96 165 250 / var(--tw-border-opacity, 1))}.border-gray-200{--tw-border-opacity:1;border-color:rgb(229 231 235 / var(--tw-border-opacity, 1))}.border-gray-300{--tw-border-opacity:1;border-color:rgb(209 213 219 / var(--tw-border-opacity, 1))}.bg-gray-50{--tw-bg-opacity:1;background-color:rgb(249 250 251 / var(--tw-bg-opacity, 1))}.bg-blue-500{--tw-bg-opacity:1;background-color:rgb(59 130 246 / var(--tw-bg-opacity, 1))}.bg-blue-600{--tw-bg-opacity:1;background-color:rgb(37 99 235 / var(--tw-bg-opacity, 1))}.bg-green-600{--tw-bg-opacity:1;background-color:rgb(22 163 74 / var(--tw-bg-opacity, 1))}.bg-white{--tw-bg-opacity:1;background-color:rgb(255 255 255 / var(--tw-bg-opacity, 1))}.bg-gray-100{--tw-bg-opacity:1;background-color:rgb(243 244 246 / var(--tw-bg-opacity, 1))}.bg-blue-100{--tw-bg-opacity:1;background-color:rgb(219 234 254 / var(--tw-bg-opacity, 1))}.p-4{padding:1rem}.p-6{padding:1.5rem}.p-2{padding:0.5rem}.px-3{padding-left:0.75rem;padding-right:0.75rem}.px-4{padding-left:1rem;padding-right:1rem}.py-2{padding-top:0.5rem;padding-bottom:0.5rem}.py-8{padding-top:2rem;padding-bottom:2rem}.px-2{padding-left:0.5rem;padding-right:0.5rem}.py-1{padding-top:0.25rem;padding-bottom:0.25rem}.text-center{text-align:center}.text-3xl{font-size:1.875rem;line-height:2.25rem}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:0.875rem;line-height:1.25rem}.text-xs{font-size:0.75rem;line-height:1rem}.font-bold{font-weight:700}.font-medium{font-weight:500}.text-gray-800{--tw-text-opacity:1;color:rgb(31 41 55 / var(--tw-text-opacity, 1))}.text-blue-600{--tw-text-opacity:1;color:rgb(37 99 235 / var(--tw-text-opacity, 1))}.text-gray-500{--tw-text-opacity:1;color:rgb(107 114 128 / var(--tw-text-opacity, 1))}.text-gray-600{--tw-text-opacity:1;color:rgb(75 85 99 / var(--tw-text-opacity, 1))}.text-gray-700{--tw-text-opacity:1;color:rgb(55 65 81 / var(--tw-text-opacity, 1))}.text-white{--tw-text-opacity:1;color:rgb(255 255 255 / var(--tw-text-opacity, 1))}.text-blue-500{--tw-text-opacity:1;color:rgb(59 130 246 / var(--tw-text-opacity, 1))}.text-yellow-500{--tw-text-opacity:1;color:rgb(234 179 8 / var(--tw-text-opacity, 1))}.text-blue-800{--tw-text-opacity:1;color:rgb(30 64 175 / var(--tw-text-opacity, 1))}.shadow-md{--tw-shadow:0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);--tw-shadow-colored:0 4px 6px -1px var(--tw-shadow-color), 0 2px 4px -2px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.shadow-sm{--tw-shadow:0 1px 2px 0 rgb(0 0 0 / 0.05);--tw-shadow-colored:0 1px 2px 0 var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.hover\:bg-blue-600:hover{--tw-bg-opacity:1;background-color:rgb(37 99 235 / var(--tw-bg-opacity, 1))}.hover\:bg-blue-700:hover{--tw-bg-opacity:1;background-color:rgb(29 78 216 / var(--tw-bg-opacity, 1))}.hover\:bg-green-700:hover{--tw-bg-opacity:1;background-color:rgb(21 128 61 / var(--tw-bg-opacity, 1))}.hover\:bg-gray-50:hover{--tw-bg-opacity:1;background-color:rgb(249 250 251 / var(--tw-bg-opacity, 1))}.focus\:border-blue-500:focus{--tw-border-opacity:1;border-color:rgb(59 130 246 / var(--tw-border-opacity, 1))}.focus\:outline-none:focus{outline:2px solid transparent;outline-offset:2px}.focus\:ring-2:focus{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000)}.focus\:ring-blue-500:focus{--tw-ring-opacity:1;--tw-ring-color:rgb(59 130 246 / var(--tw-ring-opacity, 1))}.focus\:ring-green-500:focus{--tw-ring-opacity:1;--tw-ring-color:rgb(34 197 94 / var(--tw-ring-opacity, 1))}.focus\:ring-offset-2:focus{--tw-ring-offset-width:2px}@media (min-width: 768px){.md\:p-8{padding:2rem}}@media (min-width: 1024px){.lg\:col-span-1{grid-column:span 1 / span 1}.lg\:col-span-2{grid-column:span 2 / span 2}.lg\:grid-cols-3{grid-template-columns:repeat(3, minmax(0, 1fr))}}</style></head>
+<body class="bg-gray-50 min-h-screen p-4 md:p-8 text-gray-800">
+    <div class="max-w-6xl mx-auto bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+            <div class="text-center mb-8">
+                <h1 class="text-3xl font-bold text-gray-800 mb-2">Repo2Text</h1>
+                <p class="text-gray-600">Convert local directories to a single, well-formatted text file</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Panel -->
+                <div class="lg:col-span-1 bg-gray-50 p-4 rounded-lg">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Select Directory</label>
+                        <div class="flex">
+                            <input type="file" id="directoryInput" webkitdirectory="" directory="" multiple="" class="hidden">
+                            <button id="selectDirectoryBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                                Choose Directory
+                            </button>
+                            <button id="selectZipBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-r-md border-l border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                                .ZIP
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Extensions de fichiers (séparées par des virgules)</label>
+                        <div class="flex">
+                            <input type="text" id="fileExtensions" value=".py,.md,.txt,.yaml,.json" class="flex-1 px-3 py-2 border border-gray-300 rounded-l-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                            <button id="filterBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 rounded-r-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                                Filtrer
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="flex items-center">
+                            <input type="checkbox" id="includeHidden" class="rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-500">
+                            <span class="ml-2 text-sm text-gray-700">Include hidden files</span>
+                        </label>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Output Format</label>
+                        <select id="outputFormat" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                            <option value="markdown">Markdown</option>
+                            <option value="plain">Plain Text</option>
+                            <option value="json">JSON</option>
+                        </select>
+                    </div>
+
+                    <button id="generateBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                        </svg>
+                        Generate Text File
+                    </button>
+                </div>
+
+                <!-- Right Panel -->
+                <div class="lg:col-span-2">
+                    <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                        <div class="p-4 border-b border-gray-200 bg-gray-50">
+                            <div class="flex justify-between items-center">
+                                <div class="flex-1">
+                                <h2 class="text-lg font-medium text-gray-800">Structure des fichiers</h2>
+                                <div class="flex items-center mt-1">
+                                    <span id="fileCount" class="text-sm text-gray-600">4 fichier(s) sélectionné(s)</span>
+                                    <span id="tokenCount" class="text-sm text-blue-600 ml-4">Total: 1471 tokens</span>
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                        <div id="fileTree" class="p-4 directory-tree"><div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot.egg-info</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">SOURCES.txt</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1262 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">dependency_links.txt</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">requires.txt</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">203 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">top_level.txt</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">5 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">main.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">931 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">online_learning_agent.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">8732 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">model_initializer.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">2028 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">384 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/evaluation</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">23 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/live_trading</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">experience_buffer.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">2102 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">112 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">online_reward_calculator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">6845 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">safety_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4376 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/exchange_api</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">connector.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">2713 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">150 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/data_processing</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">data_loader.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">5894 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">observation_validator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">7910 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">parallel_processor.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">2666 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">state_builder.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">36159 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="4"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">preprocessing_cache.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">2811 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="5"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">182 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="6"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">feature_engineer.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">2595 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="7"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">legacy_data_loader.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">294 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/agent</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">ppo_agent.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">5995 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">feature_extractors.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">6317 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">21 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/training</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">trainer.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3195 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">callbacks.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4565 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">training_orchestrator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3677 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">shared_experience_buffer.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3718 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="4"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">model_fusion.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">761 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="5"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">hyperparam_modulator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1406 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="6"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">49 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="7"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">dynamic_training_callback.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">0 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/workflows</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">workflow_orchestrator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">5315 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/optimization</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">hyperparameter_optimizer.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1705 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">91 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/model</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">39 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">model_ensemble.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3196 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">custom_cnn.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4150 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/common</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">config_watcher.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">11353 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">json_log_handler.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1446 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">custom_logger.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1874 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">system_metrics.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">2062 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="4"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">reward_logger.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4499 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="5"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">observation_logger.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4548 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="6"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">memory_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4999 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="7"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">metrics_tracker.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3876 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="8"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">replay_logger.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4097 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="9"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">constants.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">895 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="10"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">utils.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4521 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="11"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">config_validator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">7937 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="12"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">42 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="13"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">config_loader.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">5377 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="14"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">enhanced_config_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4324 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/environment</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">error_handling.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">2029 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">dynamic_behavior_engine.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">21321 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">circuit_breaker.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">0 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">adaptive_dbe.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">7039 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="4"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">state_builder.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">0 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="5"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">compat.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">386 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="6"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">reward_shaper.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">490 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="7"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">finance_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1919 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="8"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">52 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="9"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">reward_calculator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">7838 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="10"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">continuous_optimization_dbe.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">6346 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="11"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">data_handler.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">290 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="12"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">multi_asset_chunked_env.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">42340 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="13"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">order_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1616 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="14"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">action_translator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">862 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="15"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">checkpoint_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3197 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/models</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">feature_extractors.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1349 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">attention_cnn.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4186 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/monitoring</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">alert_system.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4106 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">worker_monitor.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">2521 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">system_health_monitor.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">5996 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/visualization</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">plotting_styles.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">713 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">gradcam_1d.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">922 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/trading</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">fee_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4269 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">manual_trading_interface.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">7896 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">secure_api_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">8746 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">position_sizer.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">6270 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="4"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">111 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="5"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">action_validator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">7249 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="6"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">order_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1675 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="7"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">safety_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3416 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="8"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">action_translator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">6252 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/portfolio</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">80 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">portfolio_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">37205 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/utils</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">timeout_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">812 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">vectorized_indicators.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4935 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">visualization.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3133 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">intelligent_cache.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3868 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="4"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">__init__.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">108 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="5"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">caching_utils.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1229 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="6"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">log_utils.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3276 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/performance</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">metrics.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">1688 tokens</span></div></div></div><div class="mb-4"><div class="flex items-center bg-gray-50 p-2 rounded-t border"><input type="checkbox" class="mr-2 directory-checkbox"><span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </span><span class="text-sm font-medium">src/adan_trading_bot/risk_management</span></div><div class="border-l border-r border-b rounded-b divide-y"><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="0"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">risk_monitor.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">404 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="1"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">risk_calculator.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">4524 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="2"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">position_manager.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">912 tokens</span></div><div class="flex items-center p-2 hover:bg-gray-50"><input type="checkbox" class="mr-2 file-checkbox" data-index="3"><span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </span><span class="text-sm flex-1">risk_assessor.py</span><span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2">3351 tokens</span></div></div></div></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Fonction pour compter les tokens (approximation simple)
+        function countTokens(text) {
+            // Compter les mots et la ponctuation
+            const wordCount = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+            const charCount = text.length;
+            // Approximation: 1 token ≈ 4 caractères ou 0.75 mots (moyenne)
+            return Math.max(Math.ceil(wordCount * 0.75), Math.ceil(charCount / 4));
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const directoryInput = document.getElementById('directoryInput');
+            const selectDirectoryBtn = document.getElementById('selectDirectoryBtn');
+            const selectZipBtn = document.getElementById('selectZipBtn');
+            const fileTree = document.getElementById('fileTree');
+            const fileCount = document.getElementById('fileCount');
+            const fileExtensions = document.getElementById('fileExtensions');
+            const includeHidden = document.getElementById('includeHidden');
+            const outputFormat = document.getElementById('outputFormat');
+            const generateBtn = document.getElementById('generateBtn');
+            const filterBtn = document.getElementById('filterBtn');
+            const tokenCountElement = document.getElementById('tokenCount');
+
+            let selectedFiles = [];
+            let allFiles = [];
+            let currentExtensions = [];
+
+            // Handle directory selection
+            selectDirectoryBtn.addEventListener('click', () => {
+                directoryInput.click();
+            });
+
+            // Handle ZIP file selection
+            selectZipBtn.addEventListener('click', () => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.zip';
+                input.onchange = handleZipFile;
+                input.click();
+            });
+
+            // Handle directory input change
+            directoryInput.addEventListener('change', (e) => {
+                const files = Array.from(e.target.files);
+                allFiles = files;
+                updateFileList();
+            });
+
+            // Handle filter button click
+            filterBtn.addEventListener('click', () => {
+                updateFileList();
+            });
+
+            // Handle ZIP file processing
+            async function handleZipFile(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                try {
+                    const zip = await JSZip.loadAsync(file);
+                    const files = [];
+                    
+                    zip.forEach((relativePath, zipEntry) => {
+                        if (!zipEntry.dir) {
+                            files.push({
+                                name: zipEntry.name.split('/').pop(),
+                                path: zipEntry.name,
+                                file: zipEntry,
+                                isDirectory: false
+                            });
+                        }
+                    });
+
+                    processFiles(files, true);
+                } catch (error) {
+                    console.error('Error processing ZIP file:', error);
+                    alert('Error processing ZIP file. Please make sure the file is not corrupted.');
+                }
+            }
+
+            // Update file list based on selected extensions
+            async function updateFileList() {
+                const extensions = fileExtensions.value
+                    .split(',')
+                    .map(ext => ext.trim().toLowerCase())
+                    .filter(ext => ext);
+                
+                currentExtensions = extensions;
+                
+                // Filter files by extension
+                const filteredFiles = allFiles.filter(file => {
+                    const fileName = file.name || file.webkitRelativePath.split('/').pop();
+                    return extensions.some(ext => fileName.toLowerCase().endsWith(ext));
+                });
+                
+                // Process and display files
+                processFiles(filteredFiles);
+            }
+
+            // Process files and build file list
+            async function processFiles(files) {
+                fileTree.innerHTML = '';
+                
+                if (files.length === 0) {
+                    fileTree.innerHTML = '<p class="text-gray-500 text-center py-8">Aucun fichier trouvé avec les extensions sélectionnées</p>';
+                    return;
+                }
+                
+                // Group files by directory
+                const filesByDir = {};
+                
+                for (const file of files) {
+                    const path = file.webkitRelativePath || file.name;
+                    const parts = path.split('/');
+                    const fileName = parts.pop();
+                    const dirPath = parts.join('/') || '/';
+                    
+                    if (!filesByDir[dirPath]) {
+                        filesByDir[dirPath] = [];
+                    }
+                    
+                    filesByDir[dirPath].push({
+                        name: fileName,
+                        path: path,
+                        file: file,
+                        selected: false,
+                        tokenCount: 0
+                    });
+                }
+                
+                // Render directory structure
+                const container = document.createElement('div');
+                
+                for (const [dirPath, dirFiles] of Object.entries(filesByDir)) {
+                    const dirElement = document.createElement('div');
+                    dirElement.className = 'mb-4';
+                    
+                    // Directory header
+                    const dirHeader = document.createElement('div');
+                    dirHeader.className = 'flex items-center bg-gray-50 p-2 rounded-t border';
+                    
+                    const dirCheckbox = document.createElement('input');
+                    dirCheckbox.type = 'checkbox';
+                    dirCheckbox.className = 'mr-2 directory-checkbox';
+                    dirCheckbox.addEventListener('change', (e) => {
+                        const isChecked = e.target.checked;
+                        dirFiles.forEach((_, index) => {
+                            const fileCheckbox = dirElement.querySelector(`.file-checkbox[data-index="${index}"]`);
+                            if (fileCheckbox) {
+                                fileCheckbox.checked = isChecked;
+                                dirFiles[index].selected = isChecked;
+                            }
+                        });
+                        updateSelectionSummary();
+                    });
+                    
+                    dirHeader.appendChild(dirCheckbox);
+                    
+                    const dirIcon = document.createElement('span');
+                    dirIcon.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                    `;
+                    dirHeader.appendChild(dirIcon);
+                    
+                    const dirName = document.createElement('span');
+                    dirName.className = 'text-sm font-medium';
+                    dirName.textContent = dirPath || 'Root';
+                    dirHeader.appendChild(dirName);
+                    
+                    dirElement.appendChild(dirHeader);
+                    
+                    // Files list
+                    const filesList = document.createElement('div');
+                    filesList.className = 'border-l border-r border-b rounded-b divide-y';
+                    
+                    for (let i = 0; i < dirFiles.length; i++) {
+                        const file = dirFiles[i];
+                        const fileElement = document.createElement('div');
+                        fileElement.className = 'flex items-center p-2 hover:bg-gray-50';
+                        
+                        const fileCheckbox = document.createElement('input');
+                        fileCheckbox.type = 'checkbox';
+                        fileCheckbox.className = 'mr-2 file-checkbox';
+                        fileCheckbox.dataset.index = i;
+                        fileCheckbox.addEventListener('change', (e) => {
+                            const index = parseInt(e.target.dataset.index);
+                            dirFiles[index].selected = e.target.checked;
+                            updateSelectionSummary();
+                        });
+                        
+                        const fileIcon = document.createElement('span');
+                        fileIcon.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                        `;
+                        
+                        const fileName = document.createElement('span');
+                        fileName.className = 'text-sm flex-1';
+                        fileName.textContent = file.name;
+                        
+                        const tokenBadge = document.createElement('span');
+                        tokenBadge.className = 'bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded ml-2';
+                        tokenBadge.textContent = 'calcul...';
+                        
+                        fileElement.appendChild(fileCheckbox);
+                        fileElement.appendChild(fileIcon);
+                        fileElement.appendChild(fileName);
+                        fileElement.appendChild(tokenBadge);
+                        
+                        filesList.appendChild(fileElement);
+                        
+                        // Read file and count tokens
+                        readFileContent(file.file).then(content => {
+                            file.tokenCount = countTokens(content);
+                            tokenBadge.textContent = `${file.tokenCount} tokens`;
+                            tokenBadge.className = 'bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2';
+                            updateSelectionSummary();
+                        }).catch(error => {
+                            console.error('Error reading file:', error);
+                            tokenBadge.textContent = 'erreur';
+                            tokenBadge.className = 'bg-red-100 text-red-800 text-xs px-2 py-1 rounded ml-2';
+                        });
+                    }
+                    
+                    dirElement.appendChild(filesList);
+                    container.appendChild(dirElement);
+                }
+                
+                fileTree.appendChild(container);
+                updateSelectionSummary();
+            }
+            
+            // Helper function to read file content
+            async function readFileContent(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = reject;
+                    reader.readAsText(file);
+                });
+            }
+            
+            // Update selection summary
+            function updateSelectionSummary() {
+                // Get all selected files
+                selectedFiles = [];
+                let totalTokens = 0;
+                
+                document.querySelectorAll('.file-checkbox').forEach((checkbox, index) => {
+                    if (checkbox.checked) {
+                        // Find the file data in the DOM structure
+                        const fileElement = checkbox.closest('.flex.items-center');
+                        if (fileElement) {
+                            const fileName = fileElement.querySelector('span:not(.text-xs)')?.textContent;
+                            const tokenBadge = fileElement.querySelector('.text-xs');
+                            const tokenMatch = tokenBadge?.textContent.match(/(\d+)\s*tokens?/);
+                            const tokens = tokenMatch ? parseInt(tokenMatch[1]) : 0;
+                            
+                            totalTokens += tokens;
+                            
+                            selectedFiles.push({
+                                name: fileName,
+                                path: fileName,
+                                file: null, // Will be set when generating
+                                tokenCount: tokens
+                            });
+                        }
+                    }
+                });
+                
+                // Update UI
+                fileCount.textContent = `${selectedFiles.length} fichier(s) sélectionné(s)`;
+                tokenCountElement.textContent = `Total: ${totalTokens} tokens`;
+                
+                // Enable/disable generate button
+                generateBtn.disabled = selectedFiles.length === 0;
+            }
+
+            // Render file tree
+            function renderFileTree(node, level = 0) {
+                if (node.children.length === 0) return '';
+
+                const ul = document.createElement('ul');
+                ul.className = level > 0 ? 'ml-4' : '';
+
+                node.children.forEach(child => {
+                    const li = document.createElement('li');
+                    li.className = 'py-1';
+
+                    const div = document.createElement('div');
+                    div.className = 'flex items-center file-item p-1 rounded hover:bg-gray-100 cursor-pointer';
+                    
+                    if (child.isDirectory) {
+                        div.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                            </svg>
+                            <span class="text-sm font-medium">${child.name}</span>
+                        `;
+                    } else {
+                        div.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span class="text-sm">${child.name}</span>
+                        `;
+                    }
+
+                    if (child.children.length > 0) {
+                        const toggleBtn = document.createElement('button');
+                        toggleBtn.className = 'ml-2 text-gray-500 hover:text-gray-700';
+                        toggleBtn.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        `;
+                        
+                        const childUl = document.createElement('div');
+                        childUl.className = 'hidden';
+                        
+                        toggleBtn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            childUl.classList.toggle('hidden');
+                            toggleBtn.querySelector('svg').classList.toggle('rotate-180');
+                        });
+                        
+                        div.prepend(toggleBtn);
+                        renderFileTree(child, level + 1, childUl);
+                        li.appendChild(div);
+                        li.appendChild(childUl);
+                    } else {
+                        li.appendChild(div);
+                    }
+                    
+                    ul.appendChild(li);
+                });
+
+                if (level === 0) {
+                    fileTree.innerHTML = '';
+                    fileTree.appendChild(ul);
+                }
+                
+                return ul;
+            }
+
+            // Update file count
+            function updateFileCount() {
+                const count = selectedFiles.length;
+                fileCount.textContent = `${count} file${count !== 1 ? 's' : ''} selected`;
+            }
+
+            // Generate text file
+            generateBtn.addEventListener('click', async () => {
+                if (selectedFiles.length === 0) {
+                    alert('Veuillez sélectionner au moins un fichier.');
+                    return;
+                }
+
+                let output = '';
+                const format = outputFormat.value;
+                let totalTokens = 0;
+                
+                // Show loading state
+                const originalButtonText = generateBtn.innerHTML;
+                generateBtn.disabled = true;
+                generateBtn.innerHTML = `
+                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Génération en cours...
+                `;
+                
+                try {
+                    // Process files based on selected format
+                    for (const file of selectedFiles) {
+                        try {
+                            let content = '';
+                            
+                            if (file.file instanceof File) {
+                                content = await readFileContent(file.file);
+                            } else if (file.file?.async) {
+                                // Handle ZIP file entries
+                                content = await file.file.async('text');
+                            } else if (file.tokenCount > 0) {
+                                // If we already have the content from token counting
+                                content = file.content || '';
+                            }
+                            
+                            // Update token count if not already set
+                            if (!file.tokenCount) {
+                                file.tokenCount = countTokens(content);
+                            }
+                            totalTokens += file.tokenCount;
+                            
+                            // Format output based on selected format
+                            if (format === 'markdown') {
+                                output += `## ${file.path}\n\`\`\`${getFileExtension(file.name)}\n${content}\n\`\`\`\n\n`;
+                            } else if (format === 'json') {
+                                output += JSON.stringify({
+                                    path: file.path,
+                                    name: file.name,
+                                    content: content,
+                                    token_count: file.tokenCount
+                                }, null, 2) + '\n\n';
+                            } else {
+                                output += `=== ${file.path} (${file.tokenCount} tokens) ===\n${content}\n\n`;
+                            }
+                        } catch (error) {
+                            console.error(`Erreur lors de la lecture du fichier ${file.path}:`, error);
+                            output += `=== ${file.path} ===\n[Erreur lors de la lecture du fichier]\n\n`;
+                        }
+                    }
+                    
+                    // Add summary
+                    const summary = `\n\n=== RÉSUMÉ ===\nFichiers: ${selectedFiles.length}\nTokens totaux: ${totalTokens}\nGénéré le: ${new Date().toLocaleString()}\n`;
+                    output += format === 'json' ? '' : summary;
+
+                    // Create and download the file
+                    const blob = new Blob([output], { type: 'text/plain;charset=utf-8' });
+                    saveAs(blob, `repo2text_${new Date().toISOString().split('T')[0]}.${format === 'json' ? 'json' : 'txt'}`);
+                    
+                } catch (error) {
+                    console.error('Erreur lors de la génération du fichier:', error);
+                    alert('Une erreur est survenue lors de la génération du fichier.');
+                } finally {
+                    // Restore button state
+                    generateBtn.disabled = false;
+                    generateBtn.innerHTML = originalButtonText;
+                }
+            });
+
+            // Helper function to read file as text
+            function readFileAsText(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = (e) => reject(e);
+                    reader.readAsText(file);
+                });
+            }
+
+            // Helper function to get file extension
+            function getFileExtension(filename) {
+                return filename.split('.').pop().toLowerCase();
+            }
+        });
+    </script>
+
+</body></html>

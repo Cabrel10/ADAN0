@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="4" time="3.494" timestamp="2025-07-26T18:38:30.385742" hostname="kali"><testcase classname="tests.unit.portfolio.test_portfolio_manager.TestPortfolioManager" name="test_calculate_position_size_with_confidence" time="0.003"><failure message="AssertionError: 0.004 != 0.002 within 4 places (0.002 difference)">self = &lt;test_portfolio_manager.TestPortfolioManager testMethod=test_calculate_position_size_with_confidence&gt;
+
+    def test_calculate_position_size_with_confidence(self):
+        """
+        Tests that the position size is correctly modulated by the confidence score.
+        """
+        self.portfolio_manager.portfolio_value = 1000.0  # Force Enterprise Capital Tier
+    
+        # --- Test avec une confiance maximale (1.0) ---
+        size_full_confidence = self.portfolio_manager.calculate_position_size(
+            action_type='buy',
+            asset='BTC/USDT',
+            current_price=50000,
+            confidence=1.0,
+            stop_loss_pct=1.0 # 1% stop loss
+        )
+        # Expected size: 0.004
+        self.assertAlmostEqual(size_full_confidence, 0.004, places=4)
+    
+        # --- Test avec une confiance modérée (0.5) ---
+        size_half_confidence = self.portfolio_manager.calculate_position_size(
+            action_type='buy',
+            asset='BTC/USDT',
+            current_price=50000,
+            confidence=0.5,
+            stop_loss_pct=1.0 # 1% stop loss
+        )
+        # Expected size: 0.004 * 0.5 = 0.002
+&gt;       self.assertAlmostEqual(size_half_confidence, 0.002, places=4)
+E       AssertionError: 0.004 != 0.002 within 4 places (0.002 difference)
+
+ADAN/tests/unit/portfolio/test_portfolio_manager.py:70: AssertionError</failure></testcase><testcase classname="tests.unit.portfolio.test_portfolio_manager.TestPortfolioManager" name="test_check_liquidation" time="0.001" /><testcase classname="tests.unit.portfolio.test_portfolio_manager.TestPortfolioManager" name="test_get_current_tier" time="0.001" /><testcase classname="tests.unit.portfolio.test_portfolio_manager.TestPortfolioManager" name="test_initialization" time="0.001" /></testsuite></testsuites>

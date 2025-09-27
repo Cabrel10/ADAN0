@@ -1,0 +1,44 @@
+{
+  "timestamp": "2025-09-24T21:46:42.428430",
+  "duration": 0.004271507263183594,
+  "results": {
+    "chunk_progression": {
+      "total_chunks": 0,
+      "chunk_sizes": {},
+      "progression_possible": false
+    },
+    "worker_behavior": {
+      "worker_0_conditions": 29,
+      "logs_restricted": true
+    },
+    "model_initialization": {
+      "has_checkpoints": false,
+      "parameters_too_precise": true
+    },
+    "metrics_calculation": {
+      "positions_opened": true,
+      "metrics_at_zero": true,
+      "only_counts_closed_positions": true
+    },
+    "pnl_updates": {
+      "portfolio_value_static": true,
+      "realized_pnl_always_zero": true,
+      "mark_to_market_broken": true
+    },
+    "penalty_system": {
+      "immediate_high_penalty": true,
+      "no_grace_period": true,
+      "criteria_too_strict": true,
+      "penalty_dominates_signal": true
+    }
+  },
+  "problems_found": 6,
+  "problems_list": [
+    "\u274c Progression des chunks impossible",
+    "\u274c Logs restreints au worker 0 seulement",
+    "\u274c Mod\u00e8le pas vraiment al\u00e9atoire au d\u00e9part",
+    "\u274c M\u00e9triques bloqu\u00e9es \u00e0 z\u00e9ro",
+    "\u274c Valorisation mark-to-market cass\u00e9e",
+    "\u274c Syst\u00e8me de p\u00e9nalit\u00e9s trop agressif"
+  ]
+}

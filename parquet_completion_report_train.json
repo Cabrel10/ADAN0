@@ -1,0 +1,197 @@
+[
+  {
+    "file": "bot/data/processed/indicators/train/BTCUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/BTCUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/BTCUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/BTCUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/BTCUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/BTCUSDT/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/XRPUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/XRPUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/XRPUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/XRPUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/XRPUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/XRPUSDT/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ETHUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/ETHUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ETHUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/ETHUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ETHUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/ETHUSDT/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/SOLUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/SOLUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/SOLUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/SOLUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/SOLUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/SOLUSDT/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ADAUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/ADAUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ADAUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/ADAUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ADAUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/train/ADAUSDT/completed/5m.parquet"
+  }
+]

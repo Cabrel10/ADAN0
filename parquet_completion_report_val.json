@@ -1,0 +1,197 @@
+[
+  {
+    "file": "bot/data/processed/indicators/val/solusdt/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/solusdt/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/solusdt/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/solusdt/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/solusdt/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/solusdt/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/xrpusdt/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/xrpusdt/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/xrpusdt/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/xrpusdt/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/xrpusdt/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/xrpusdt/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/adausdt/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/adausdt/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/adausdt/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/adausdt/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/adausdt/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/adausdt/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/ethusdt/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/ethusdt/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/ethusdt/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/ethusdt/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/ethusdt/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/ethusdt/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/btcusdt/4h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/btcusdt/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/btcusdt/1h.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/btcusdt/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/val/btcusdt/5m.parquet",
+    "status": "completed",
+    "added": [
+      "EMA_12",
+      "EMA_26"
+    ],
+    "nan_counts": {
+      "EMA_12": 11,
+      "EMA_26": 25
+    },
+    "out": "bot/data/processed/indicators/val/btcusdt/completed/5m.parquet"
+  }
+]

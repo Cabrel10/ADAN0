@@ -1,0 +1,437 @@
+[
+  {
+    "file": "bot/data/processed/indicators/train/BTCUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/BTCUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/BTCUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/BTCUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/BTCUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 0
+    },
+    "out": "bot/data/processed/indicators/train/BTCUSDT/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/XRPUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/XRPUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/XRPUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/XRPUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/XRPUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 0
+    },
+    "out": "bot/data/processed/indicators/train/XRPUSDT/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ETHUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/ETHUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ETHUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/ETHUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ETHUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 0
+    },
+    "out": "bot/data/processed/indicators/train/ETHUSDT/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/SOLUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/SOLUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/SOLUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/SOLUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/SOLUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 0
+    },
+    "out": "bot/data/processed/indicators/train/SOLUSDT/completed/5m.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ADAUSDT/4h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/ADAUSDT/completed/4h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ADAUSDT/1h.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 25
+    },
+    "out": "bot/data/processed/indicators/train/ADAUSDT/completed/1h.parquet"
+  },
+  {
+    "file": "bot/data/processed/indicators/train/ADAUSDT/5m.parquet",
+    "status": "completed",
+    "added": [
+      "ATR_14",
+      "ATR_PCT",
+      "MACD_12_26_9",
+      "MACD_SIGNAL_12_26_9",
+      "MACD_HIST_12_26_9",
+      "ADX_14",
+      "STOCH_K_14_3_3",
+      "STOCH_D_14_3_3",
+      "EMA_200",
+      "EMA_RATIO_FAST_SLOW"
+    ],
+    "nan_counts": {
+      "ATR_14": 0,
+      "ATR_PCT": 13,
+      "MACD_12_26_9": 25,
+      "MACD_SIGNAL_12_26_9": 33,
+      "MACD_HIST_12_26_9": 33,
+      "ADX_14": 26,
+      "STOCH_K_14_3_3": 15,
+      "STOCH_D_14_3_3": 17,
+      "EMA_200": 199,
+      "EMA_RATIO_FAST_SLOW": 0
+    },
+    "out": "bot/data/processed/indicators/train/ADAUSDT/completed/5m.parquet"
+  }
+]

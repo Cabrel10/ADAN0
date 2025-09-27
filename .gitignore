@@ -1,0 +1,97 @@
+# Secrets
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.venv/
+
+# Test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE/Editor
+.ropeproject/
+.zed/
+.vscode/
+.idea/
+
+# Data files
+*.parquet
+*.csv
+*.parquet.*
+
+# Logs & artifacts
+logs/
+reports/
+models/
+checkpoints/
+!checkpoints/latest.pt  # Garder uniquement le dernier modèle
+*.log
+*.jsonl
+*.pt
+!*.pt_emergency  # Conserver les fichiers d'urgence
+*.gz
+*.zip
+
+# Checkpoints intermédiaires
+checkpoints/checkpoint_*
+checkpoints/checkpoint-*
+
+# Données brutes et intermédiaires
+data/raw/
+data/processed/
+
+# Fichiers de données volumineux
+bot/logs/
+bot/reports/
+training_run.log
+*.h5
+*.hdf5
+*.npy
+*.npz
+
+# Fichiers temporaires
+*.tmp
+*.swp
+*~
+
+# Fichiers système
+.DS_Store
+.Trash-*
+
+# Fichiers de configuration spécifiques à l'environnement
+config/local/
+
+# Fichiers de sauvegarde
+*.bak
+*.backup
+
+# Fichiers de débogage
+*.pdb
+*.ipynb_checkpoints
+
+# Fichiers de cache
+.cache/
+.eggs/
+
+# Fichiers de build
+dist/
+build/
+*.egg-info/
+
+# Fichiers de documentation
+_build/
+
+# Fichiers spécifiques au projet
+bot_backup/
+.windsurfignore
+
+# Fichiers de logs volumineux
+logs/training_events.jsonl
+training_run.log
