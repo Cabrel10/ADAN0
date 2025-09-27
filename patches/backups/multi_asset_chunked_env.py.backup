@@ -8,7 +8,6 @@ avec chargement efficace des données par lots.
 """
 # Standard library imports
 import json
-from typing import Dict, List, Optional
 import logging
 import os
 import threading
@@ -152,21 +151,6 @@ if not logging.root.handlers:
 
 # Désactiver la propagation pour éviter les doublons
 logger.propagate = False
-
-
-
-# Patch Gugu & March - Système d'Excellence
-try:
-    from ..patches.gugu_march_excellence_rewards import (
-        GuguMarchExcellenceRewards,
-        ExcellenceMetrics,
-        create_excellence_rewards_system
-    )
-    EXCELLENCE_SYSTEM_AVAILABLE = True
-    logger.info("[GUGU-MARCH] Excellence rewards system loaded successfully")
-except ImportError as e:
-    logger.warning(f"[GUGU-MARCH] Excellence system not available: {e}")
-    EXCELLENCE_SYSTEM_AVAILABLE = False
 
 
 class MultiAssetChunkedEnv(gym.Env):
@@ -1490,92 +1474,6 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception as e:
             logger.warning(f"Failed to set warmup step_in_chunk: {e}")
             self.step_in_chunk = 1  # Safe fallback
-    def _calculate_excellence_bonus(self, base_reward: float, worker_id: int = 0) -> float:
-        """Calcule les bonus d'excellence Gugu & March"""
-        if not self.excellence_rewards or not EXCELLENCE_SYSTEM_AVAILABLE:
-            return 0.0
-
-        try:
-            # Récupérer les métriques actuelles du worker
-            metrics = self._build_excellence_metrics(worker_id)
-
-            # Calculer les bonus d'excellence
-            total_bonus, bonus_breakdown = self.excellence_rewards.calculate_excellence_bonus(
-                base_reward, metrics, trade_won=(base_reward > 0)
-            )
-
-            # Logger si bonus significatif
-            if total_bonus > 0.01:
-                logger.debug(f"[GUGU-MARCH] Worker {worker_id} excellence bonus: {total_bonus:.4f}")
-
-            return total_bonus
-
-        except Exception as e:
-            logger.warning(f"[GUGU-MARCH] Error calculating excellence bonus: {e}")
-            return 0.0
-
-    def _build_excellence_metrics(self, worker_id: int = 0) -> 'ExcellenceMetrics':
-        """Construit les métriques d'excellence pour un worker"""
-        if not EXCELLENCE_SYSTEM_AVAILABLE:
-            from dataclasses import dataclass
-            @dataclass
-            class DummyMetrics:
-                sharpe_ratio: float = 0.0
-                profit_factor: float = 1.0
-                win_rate: float = 0.5
-                winning_streak: int = 0
-                total_trades: int = 0
-            return DummyMetrics()
-
-        try:
-            # Récupérer les métriques depuis le portfolio manager
-            portfolio = self.portfolio_managers[worker_id] if hasattr(self, 'portfolio_managers') else self.portfolio_manager
-            perf_metrics = self.performance_metrics[worker_id] if hasattr(self, 'performance_metrics') else self.performance_metrics
-
-            metrics_summary = perf_metrics.get_metrics_summary() if perf_metrics else {}
-
-            # Analyser confluence des timeframes (exemple simplifié)
-            timeframe_signals = self._analyze_current_confluence(worker_id)
-
-            return ExcellenceMetrics(
-                sharpe_ratio=metrics_summary.get('sharpe_ratio', 0.0),
-                profit_factor=metrics_summary.get('profit_factor', 1.0),
-                win_rate=metrics_summary.get('win_rate', 0.5),
-                winning_streak=getattr(self.excellence_rewards, 'last_winning_streak', 0),
-                total_trades=metrics_summary.get('total_trades', 0),
-                current_drawdown=portfolio.current_drawdown_pct if portfolio else 0.0,
-                timeframe_signals=timeframe_signals
-            )
-
-        except Exception as e:
-            logger.warning(f"[GUGU-MARCH] Error building excellence metrics: {e}")
-            return ExcellenceMetrics()
-
-    def _analyze_current_confluence(self, worker_id: int = 0) -> Dict[str, bool]:
-        """Analyse la confluence des signaux multi-timeframes"""
-        # Implémentation simplifiée - à adapter selon votre structure de données
-        try:
-            confluence = {"5m": False, "1h": False, "4h": False}
-
-            # Exemple: vérifier si les indicateurs sont alignés
-            if hasattr(self, 'current_observations') and self.current_observations:
-                obs = self.current_observations[worker_id] if isinstance(self.current_observations, list) else self.current_observations
-
-                # Logique simplifiée de confluence (à personnaliser)
-                # Par exemple, vérifier RSI et MACD sur différents TF
-                for tf in ['5m', '1h', '4h']:
-                    if f'rsi_{tf}' in obs:
-                        rsi = obs[f'rsi_{tf}']
-                        macd = obs.get(f'macd_{tf}', 0)
-                        # Signal haussier si RSI < 70 et MACD > 0
-                        confluence[tf] = (20 < rsi < 70) and (macd > -0.1)
-
-            return confluence
-
-        except Exception as e:
-            logger.debug(f"[GUGU-MARCH] Error in confluence analysis: {e}")
-            return {"5m": False, "1h": False, "4h": False}
-
 
     def reset(self, *, seed=None, options=None):
         """Reset the environment to start a new episode.
@@ -1854,17 +1752,6 @@ class MultiAssetChunkedEnv(gym.Env):
         # Initialize last trade step
         self.last_trade_step = 0
         logger.info("[INIT] Last trade step initialized to 0")
-
-        # Patch Gugu & March - Initialisation du système d'excellence
-        if EXCELLENCE_SYSTEM_AVAILABLE:
-            try:
-                self.excellence_rewards = create_excellence_rewards_system(self.config)
-                logger.info("[GUGU-MARCH] Excellence rewards system initialized")
-            except Exception as e:
-                logger.warning(f"[GUGU-MARCH] Failed to initialize excellence system: {e}")
-                self.excellence_rewards = None
-        else:
-            self.excellence_rewards = None
 
         if self.warmup_steps < self.window_size:
             msg = (
@@ -3985,18 +3872,6 @@ class MultiAssetChunkedEnv(gym.Env):
             lookback: Nombre de jours pour le calcul de la volatilité (par défaut: 21 jours)
 
         Returns:
-        # Patch Gugu & March - Ajouter bonus d'excellence
-        if hasattr(self, 'excellence_rewards') and self.excellence_rewards:
-            try:
-                excellence_bonus = self._calculate_excellence_bonus(total_reward, worker_id)
-                total_reward += excellence_bonus
-
-                if excellence_bonus > 0.01:
-                    logger.debug(f"[GUGU-MARCH] Worker {worker_id} total reward boosted by {excellence_bonus:.4f}")
-
-            except Exception as e:
-                logger.warning(f"[GUGU-MARCH] Error applying excellence bonus: {e}")
-        
             float: Volatilité annualisée en décimal (0.2 pour 20%)
         """
         try:

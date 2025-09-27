@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Repo2View - Code Structure Explorer</title>
+    <script src="https://unpkg.com/htmx.org@1.9.6"></script>
+    <script src="https://unpkg.com/hyperscript.org@0.9.11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #1e1e2e;
+            --text-color: #cdd6f4;
+            --accent-color: #89b4fa;
+            --border-color: #45475a;
+            --hover-color: #313244;
+        }
+        
+        body {
+            font-family: 'Fira Code', monospace;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .sidebar {
+            width: 300px;
+            background-color: var(--bg-color);
+            border-right: 1px solid var(--border-color);
+            padding: 1rem;
+            overflow-y: auto;
+        }
+        
+        .main-content {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+        }
+        
+        .file-tree {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .file-item {
+            padding: 0.25rem 0.5rem;
+            cursor: pointer;
+            border-radius: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .file-item:hover {
+            background-color: var(--hover-color);
+        }
+        
+        .file-item.active {
+            background-color: var(--accent-color);
+            color: #1e1e2e;
+        }
+        
+        .code-container {
+            background-color: #1e1e1e;
+            border-radius: 4px;
+            padding: 1rem;
+            font-family: 'Fira Code', monospace;
+            white-space: pre;
+            overflow-x: auto;
+        }
+        
+        .code-line {
+            display: flex;
+            line-height: 1.5;
+        }
+        
+        .line-number {
+            color: #6c757d;
+            padding-right: 1rem;
+            user-select: none;
+            min-width: 2.5em;
+            text-align: right;
+        }
+        
+        .code-content {
+            flex: 1;
+        }
+        
+        .highlight {
+            background-color: rgba(138, 180, 248, 0.2);
+        }
+        
+        .search-box {
+            margin-bottom: 1rem;
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        input[type="text"], input[type="file"], button {
+            background-color: #313244;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+        
+        button {
+            cursor: pointer;
+            background-color: var(--accent-color);
+            color: #1e1e2e;
+            border: none;
+            padding: 0.5rem 1rem;
+        }
+        
+        button:hover {
+            opacity: 0.9;
+        }
+        
+        .file-stats {
+            margin-top: 1rem;
+            font-size: 0.9em;
+            color: #a6adc8;
+        }
+        
+        .file-path {
+            font-family: 'Fira Code', monospace;
+            color: #89b4fa;
+            margin-bottom: 1rem;
+            word-break: break-all;
+        }
+        
+        .outline-item {
+            padding: 0.25rem 0.5rem 0.25rem 1.5rem;
+            cursor: pointer;
+            font-size: 0.9em;
+            opacity: 0.8;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .outline-item:hover {
+            background-color: var(--hover-color);
+            opacity: 1;
+        }
+        
+        .outline-item.class {
+            color: #f9e2af;
+            font-weight: bold;
+        }
+        
+        .outline-item.function {
+            color: #89dceb;
+        }
+        
+        .outline-item.method {
+            color: #a6e3a1;
+            padding-left: 2.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>Repo2View</h2>
+            
+            <div class="search-box">
+                <div style="margin-bottom: 10px; width: 100%;">
+                    <div style="display: flex; gap: 5px; margin-bottom: 5px;">
+                        <input type="text" id="pathInput" placeholder="Enter directory path" style="flex: 1;">
+                        <button onclick="addDirectory()">Add</button>
+                    </div>
+                    <div id="directoryList" style="max-height: 100px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; padding: 5px;">
+                        <!-- Directories will be added here -->
+                    </div>
+                </div>
+                <div style="display: flex; gap: 5px;">
+                    <input type="text" id="extensions" placeholder="File extensions (comma sep)" value="py" style="flex: 1;">
+                    <button onclick="analyzeDirectory()">Analyze</button>
+                </div>
+            </div>
+            
+            <div id="fileTree" class="file-tree">
+                <!-- Files will be loaded here -->
+            </div>
+            
+            <div id="fileStats" class="file-stats"></div>
+        </div>
+        
+        <div class="main-content">
+            <div id="filePath" class="file-path">Select a file to view its contents</div>
+            
+            <div style="display: flex; gap: 1rem;">
+                <div style="flex: 1;">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" placeholder="Search in file..." onkeyup="highlightSearch()">
+                    </div>
+                    
+                    <div id="codeContainer" class="code-container">
+                        <div>Select a file to view its contents</div>
+                    </div>
+                </div>
+                
+                <div style="width: 300px;">
+                    <h3>Outline</h3>
+                    <div id="outline">
+                        <!-- File outline will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentFile = '';
+        let currentAnalysis = null;
+        let directories = [];
+        
+        function addDirectory() {
+            const input = document.getElementById('pathInput');
+            const path = input.value.trim();
+            
+            if (path && !directories.includes(path)) {
+                directories.push(path);
+                updateDirectoryList();
+                input.value = '';
+            }
+        }
+        
+        function removeDirectory(index) {
+            directories.splice(index, 1);
+            updateDirectoryList();
+        }
+        
+        function updateDirectoryList() {
+            const container = document.getElementById('directoryList');
+            container.innerHTML = '';
+            
+            if (directories.length === 0) {
+                container.innerHTML = '<div style="color: #6c757d; padding: 5px; font-size: 0.9em;">No directories added</div>';
+                return;
+            }
+            
+            directories.forEach((dir, index) => {
+                const div = document.createElement('div');
+                div.style.display = 'flex';
+                div.style.justifyContent = 'space-between';
+                div.style.alignItems = 'center';
+                div.style.padding = '3px 5px';
+                div.style.marginBottom = '2px';
+                div.style.background = 'rgba(0,0,0,0.1)';
+                div.style.borderRadius = '3px';
+                
+                const span = document.createElement('span');
+                span.textContent = dir;
+                span.style.overflow = 'hidden';
+                span.style.textOverflow = 'ellipsis';
+                span.style.whiteSpace = 'nowrap';
+                span.style.flex = '1';
+                
+                const btn = document.createElement('button');
+                btn.textContent = '×';
+                btn.style.background = 'transparent';
+                btn.style.border = 'none';
+                btn.style.color = '#ff6b6b';
+                btn.style.cursor = 'pointer';
+                btn.style.padding = '0 5px';
+                btn.onclick = () => removeDirectory(index);
+                
+                div.appendChild(span);
+                div.appendChild(btn);
+                container.appendChild(div);
+            });
+        }
+        
+        async function analyzeDirectory() {
+            if (directories.length === 0) {
+                alert('Please add at least one directory');
+                return;
+            }
+            
+            const extensions = document.getElementById('extensions').value;
+            
+            try {
+                const formData = new FormData();
+                formData.append('directories', directories.join(','));
+                formData.append('extensions', extensions);
+                
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    body: new URLSearchParams(formData).toString(),
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    }
+                });
+                
+                const data = await response.json();
+                renderFileTree(data.files);
+                
+                // Update stats
+                document.getElementById('fileStats').innerHTML = `
+                    Files: ${data.total_files} | 
+                    Classes: ${data.total_classes} | 
+                    Functions: ${data.total_functions}
+                `;
+                
+                // Store analysis data
+                currentAnalysis = data;
+                
+            } catch (error) {
+                console.error('Error analyzing directory:', error);
+                alert('Error analyzing directory: ' + error.message);
+            }
+        }
+        
+        function renderFileTree(files) {
+            const fileTree = document.getElementById('fileTree');
+            fileTree.innerHTML = '';
+            
+            if (files.length === 0) {
+                fileTree.innerHTML = '<div>No files found</div>';
+                return;
+            }
+            
+            files.forEach(file => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                fileItem.textContent = file.file_path;
+                fileItem.onclick = () => loadFile(file.file_path);
+                fileTree.appendChild(fileItem);
+            });
+        }
+        
+        async function loadFile(filePath) {
+            try {
+                // Update UI
+                document.querySelectorAll('.file-item').forEach(el => {
+                    el.classList.toggle('active', el.textContent === filePath);
+                });
+                
+                document.getElementById('filePath').textContent = filePath;
+                
+                // Load file content
+                const response = await fetch(`/file?path=${encodeURIComponent(filePath)}`);
+                const data = await response.json();
+                
+                // Render code with line numbers
+                const lines = data.content.split('\n');
+                const codeContainer = document.getElementById('codeContainer');
+                codeContainer.innerHTML = '';
+                
+                lines.forEach((line, index) => {
+                    const lineDiv = document.createElement('div');
+                    lineDiv.className = 'code-line';
+                    lineDiv.innerHTML = `
+                        <div class="line-number">${index + 1}</div>
+                        <div class="code-content">${escapeHtml(line) || ' '}</div>
+                    `;
+                    codeContainer.appendChild(lineDiv);
+                });
+                
+                // Update outline
+                updateOutline(filePath);
+                
+            } catch (error) {
+                console.error('Error loading file:', error);
+                document.getElementById('codeContainer').innerHTML = 'Error loading file: ' + error.message;
+            }
+        }
+        
+        function updateOutline(filePath) {
+            const outline = document.getElementById('outline');
+            outline.innerHTML = '';
+            
+            if (!currentAnalysis) return;
+            
+            const file = currentAnalysis.files.find(f => f.file_path === filePath);
+            if (!file) return;
+            
+            // Add classes to outline
+            file.classes.forEach(cls => {
+                const classItem = document.createElement('div');
+                classItem.className = 'outline-item class';
+                classItem.textContent = `class ${cls.name}`;
+                classItem.onclick = () => scrollToLine(cls.line_start, cls.line_end);
+                outline.appendChild(classItem);
+                
+                // Add methods
+                cls.methods.forEach(method => {
+                    const methodItem = document.createElement('div');
+                    methodItem.className = 'outline-item method';
+                    methodItem.textContent = `${method.name}()`;
+                    methodItem.onclick = (e) => {
+                        e.stopPropagation();
+                        scrollToLine(method.line_start, method.line_end);
+                    };
+                    outline.appendChild(methodItem);
+                });
+            });
+            
+            // Add top-level functions
+            file.functions.forEach(fn => {
+                const fnItem = document.createElement('div');
+                fnItem.className = 'outline-item function';
+                fnItem.textContent = `${fn.name}()`;
+                fnItem.onclick = () => scrollToLine(fn.line_start, fn.line_end);
+                outline.appendChild(fnItem);
+            });
+        }
+        
+        function scrollToLine(startLine, endLine) {
+            const lines = document.querySelectorAll('.code-line');
+            
+            // Remove previous highlights
+            document.querySelectorAll('.highlight').forEach(el => {
+                el.classList.remove('highlight');
+            });
+            
+            // Highlight and scroll to the target line range
+            for (let i = 0; i < lines.length; i++) {
+                const lineNumber = parseInt(lines[i].querySelector('.line-number').textContent);
+                if (lineNumber >= startLine && lineNumber <= endLine) {
+                    lines[i].classList.add('highlight');
+                    if (lineNumber === startLine) {
+                        lines[i].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }
+            }
+        }
+        
+        function highlightSearch() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            if (!searchTerm) {
+                document.querySelectorAll('.code-line').forEach(line => {
+                    line.classList.remove('highlight');
+                });
+                return;
+            }
+            
+            const lines = document.querySelectorAll('.code-line');
+            lines.forEach(line => {
+                const content = line.textContent.toLowerCase();
+                line.classList.toggle('highlight', content.includes(searchTerm));
+            });
+        }
+        
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+        
+        // Allow drag and drop of directories
+        document.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        
+        document.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const items = e.dataTransfer.items;
+            if (items.length > 0) {
+                const item = items[0];
+                if (item.kind === 'file') {
+                    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+                    if (entry && entry.isDirectory) {
+                        document.getElementById('pathInput').value = item.getAsFile().path;
+                        analyzeDirectory();
+                    } else {
+                        alert('Please drop a directory, not a file.');
+                    }
+                }
+            }
+        });
+        
+        // Initialize directory list
+        document.addEventListener('DOMContentLoaded', () => {
+            updateDirectoryList();
+        });
+    </script>
+</body>
+</html>

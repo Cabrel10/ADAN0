@@ -7,7 +7,6 @@ This module is responsible for tracking the agent's financial status, including
 capital, positions, and performance metrics.
 """
 
-from typing import Dict, List, Optional
 import logging
 import math
 import json
@@ -236,17 +235,7 @@ class PortfolioManager:
                 self.cash += price * pos['size']
                 closed_pos = self.open_positions.pop(i)
                 logger.info(f"[POSITION FERMÉE Worker {self.worker_id}] {asset}: {pos['size']} @ {pos['entry_price']:.2f}→{price:.2f} | PnL: {pnl:+.2f}")
-                
-        # Patch Gugu & March - Mise à jour série victoires
-        try:
-            if realized_pnl > 0:
-                self.update_winning_streak(trade_won=True)
-            elif realized_pnl < 0:
-                self.update_winning_streak(trade_won=False, trade_lost=True)
-        except Exception as e:
-            logger.debug(f"[MARCH] Error updating winning streak: {e}")
-            
-        return closed_pos
+                return closed_pos
         return None
 
     def calculate_drawdown(self):
@@ -3772,26 +3761,6 @@ class PortfolioManager:
                     f"skew={self._calculate_skewness(returns):.3f}")
 
         return returns
-
-    
-    # Patch Gugu & March - Tracking des séries de victoires
-    def update_winning_streak(self, trade_won: bool, trade_lost: bool = False):
-        """Met à jour le compteur de série de victoires"""
-        if not hasattr(self, '_winning_streak_count'):
-            self._winning_streak_count = 0
-
-        if trade_won:
-            self._winning_streak_count += 1
-            logger.debug(f"[MARCH] Winning streak extended to {self._winning_streak_count}")
-        elif trade_lost:
-            if self._winning_streak_count >= 3:
-                logger.info(f"[MARCH] End of winning streak: {self._winning_streak_count} trades")
-            self._winning_streak_count = 0
-
-    @property
-    def winning_streak_count(self) -> int:
-        """Retourne le nombre actuel de victoires consécutives"""
-        return getattr(self, '_winning_streak_count', 0)
 
     def _calculate_skewness(self, data: np.ndarray) -> float:
         """Calcule l'asymétrie (skewness) d'une distribution."""

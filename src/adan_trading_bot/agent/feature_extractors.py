@@ -243,15 +243,16 @@ class CustomCNNFeatureExtractor(BaseFeaturesExtractor):
     """
 
     def __init__(self,
-                 observation_space: gym.spaces.Dict,
+                 observation_space: gym.spaces.Space,
                  features_dim: int = 256,
                  num_input_channels: int = 3,
                  cnn_config: Optional[Dict[str, Any]] = None) -> None:
         """Initialize the custom CNN feature extractor with channel groups and attention.
 
         Args:
-            observation_space: The observation space (must be a gym.spaces.Dict)
-                with 'image_features' and 'vector_features' keys
+            observation_space: The observation space (gym.spaces.Dict or gym.spaces.Box)
+                For Dict: with 'image_features' and 'vector_features' keys
+                For Box: treated as image_features only
             features_dim: Dimension of the output features
             num_input_channels: Number of input channels in the image data
             cnn_config: Configuration dictionary for the CNN with the following structure:
@@ -296,13 +297,17 @@ class CustomCNNFeatureExtractor(BaseFeaturesExtractor):
 
         # Get the output dimension of the CNN
         with th.no_grad():
-            # Create a dummy input to determine the output dimension
-            dummy_input = th.zeros(
-                1,
-                num_input_channels,
-                observation_space['image_features'].shape[-2],  # height
-                observation_space['image_features'].shape[-1]   # width
-            )
+            # Create a dummy input to determine the output dimension - handle both Dict and Box
+            if isinstance(observation_space, gym.spaces.Dict):
+                # Dict observation space
+                dummy_height = observation_space['image_features'].shape[-2]
+                dummy_width = observation_space['image_features'].shape[-1]
+            else:
+                # Box observation space (C, H, W)
+                dummy_height = observation_space.shape[-2]
+                dummy_width = observation_space.shape[-1]
+
+            dummy_input = th.zeros(1, num_input_channels, dummy_height, dummy_width)
 
             # Process through channel groups if enabled
             if hasattr(self, 'channel_groups') and self.channel_groups is not None:
@@ -319,8 +324,19 @@ class CustomCNNFeatureExtractor(BaseFeaturesExtractor):
             cnn_output = self.shared_cnn(cnn_input)
             self.cnn_output_dim = cnn_output.view(-1).shape[0]
 
-        # Get the vector features dimension
-        self.vector_features_dim = observation_space['vector_features'].shape[0]
+        # Get the vector features dimension - handle both Dict and Box observation spaces
+        if isinstance(observation_space, gym.spaces.Dict) and 'vector_features' in observation_space.spaces:
+            self.vector_features_dim = observation_space['vector_features'].shape[0]
+        else:
+            # For Box observations, use default vector features dim
+            self.vector_features_dim = 64
+
+        # Vector features processing layer
+        self.vector_fc = nn.Sequential(
+            nn.Linear(self.vector_features_dim, self.vector_features_dim),
+            nn.ReLU(),
+            nn.Dropout(cnn_config.get('dropout', 0.2))
+        )
 
         # Final fully connected layers
         self.combined_fc = nn.Sequential(
@@ -509,7 +525,7 @@ class CustomCNNFeatureExtractor(BaseFeaturesExtractor):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-    def forward(self, observations: Dict[str, Tensor]) -> Tensor:
+    def forward(self, observations) -> Tensor:
         """Forward pass through the feature extractor.
 
         Processes input through:
@@ -527,18 +543,25 @@ class CustomCNNFeatureExtractor(BaseFeaturesExtractor):
         Returns:
             Extracted features of shape (batch_size, features_dim)
         """
-        # Extract inputs
-        image_features = observations["image_features"]
-        vector_features = observations["vector_features"]
+        # Extract inputs - Handle both Dict and Box observations
+        if isinstance(observations, dict):
+            image_features = observations["image_features"]
+            vector_features = observations.get("vector_features", th.zeros(observations["image_features"].shape[0], self.vector_features_dim, device=observations["image_features"].device))
+        else:
+            # Box Tensor: treat as image, create empty vector
+            image_features = observations
+            vector_features = th.zeros(image_features.shape[0], getattr(self, 'vector_features_dim', 64), device=image_features.device)
 
-        # Check for NaN/Inf values in input features
+        # Check for NaN/Inf values in input features and clip extreme values
+        image_features = th.nan_to_num(image_features, nan=0.0, posinf=1e6, neginf=-1e6)
         if not th.all(th.isfinite(image_features)):
             logger.warning("Non-finite values detected in image_features")
-            image_features = th.nan_to_num(image_features, nan=0.0, posinf=1.0, neginf=-1.0)
+            image_features = th.clamp(image_features, -1e5, 1e5)
 
+        vector_features = th.nan_to_num(vector_features, nan=0.0, posinf=1e6, neginf=-1e6)
         if not th.all(th.isfinite(vector_features)):
             logger.warning("Non-finite values detected in vector_features")
-            vector_features = th.nan_to_num(vector_features, nan=0.0, posinf=1.0, neginf=-1.0)
+            vector_features = th.clamp(vector_features, -1e5, 1e5)
 
         # Process image features through channel groups if enabled
         if hasattr(self, 'channel_groups') and self.channel_groups is not None:

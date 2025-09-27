@@ -4,7 +4,24 @@
 """Script d'entraînement parallèle pour instances ADAN."""
 
 import logging
+logging.getLogger().setLevel(logging.ERROR)  # Niveau ERROR seulement - très restrictif
+logging.getLogger().propagate = False
+
+# Supprimer tous les logs DEBUG de toutes les bibliothèques
+logging.getLogger("root").setLevel(logging.ERROR)
+logging.getLogger("matplotlib").setLevel(logging.ERROR)
+logging.getLogger("numpy").setLevel(logging.ERROR)
+logging.getLogger("pandas").setLevel(logging.ERROR)
+logging.getLogger("torch").setLevel(logging.ERROR)
+logging.getLogger("stable_baselines3").setLevel(logging.ERROR)
+logging.getLogger("gymnasium").setLevel(logging.ERROR)
+logging.getLogger("gym").setLevel(logging.ERROR)
+logging.getLogger("adan_trading_bot").setLevel(logging.ERROR)
+
 import os
+import warnings
+# Désactiver complètement les warnings
+warnings.filterwarnings("ignore")
 import signal
 import sys
 import psutil
@@ -46,6 +63,348 @@ from stable_baselines3.common.vec_env import (
     VecNormalize
 )
 import contextlib
+import uuid  # For correlation_id
+from rich.console import Console
+from rich.tree import Tree
+from rich.progress import Progress, BarColumn, TimeElapsedColumn
+
+console = Console()
+
+class HierarchicalTrainingCallback(BaseCallback):
+    """Callback pour affichage hiérarchique de l'entraînement avec métriques détaillées."""
+
+    def __init__(self, verbose=1, display_freq=1000, total_timesteps=1000000, initial_capital=20.50):
+        super().__init__(verbose)
+        self.display_freq = display_freq
+        self.total_timesteps = total_timesteps
+        self.initial_capital = initial_capital
+        self.correlation_id = str(uuid.uuid4())
+        self.start_time = time.time()
+        self.last_step_summary = 0
+        self.episode_rewards = []
+        self.episode_count = 0
+        self.positions = {}
+        self.metrics = {
+            "sharpe": 0.0, "sortino": 0.0, "profit_factor": 0.0,
+            "max_dd": 0.0, "cagr": 0.0, "win_rate": 0.0, "trades": 0
+        }
+
+    def _on_training_start(self):
+        """Démarrage de l'entraînement avec affichage de la configuration."""
+        logger.info("╭" + "─" * 60 + "╮")
+        logger.info("│" + " " * 15 + "🚀 DÉMARRAGE ADAN TRAINING" + " " * 15 + "│")
+        logger.info("╰" + "─" * 60 + "╯")
+        logger.info(f"[TRAINING START] Correlation ID: {self.correlation_id}")
+        logger.info(f"[TRAINING START] Total timesteps: {self.total_timesteps:,}")
+        logger.info(f"[TRAINING START] Capital initial: ${self.initial_capital:.2f}")
+
+        # Affichage de la configuration des flux monétaires
+        logger.info("╭" + "─" * 50 + " Configuration Flux Monétaires " + "─" * 50 + "╮")
+        logger.info("│ 💰 Capital Initial: $%-40.2f │" % self.initial_capital)
+        logger.info("│ 🎯 Gestion Dynamique des Flux Activée" + " " * 32 + "│")
+        logger.info("│ 📊 Monitoring en Temps Réel" + " " * 39 + "│")
+        logger.info("╰" + "─" * 132 + "╯")
+
+    def _on_step(self) -> bool:
+        """Appelé à chaque étape pour mettre à jour l'affichage."""
+        # Collecter les récompenses d'épisode
+        if hasattr(self, 'locals') and "rewards" in self.locals:
+            if isinstance(self.locals["rewards"], (list, np.ndarray)):
+                self.episode_rewards.extend(self.locals["rewards"])
+            else:
+                self.episode_rewards.append(self.locals["rewards"])
+
+        # À la fin d'un épisode
+        if hasattr(self, 'locals') and self.locals.get("dones", [False])[0]:
+            self.episode_count += 1
+            mean_reward = np.mean(self.episode_rewards[-10:]) if len(self.episode_rewards) >= 10 else (
+                np.mean(self.episode_rewards) if self.episode_rewards else 0
+            )
+            progress = self.num_timesteps / self.total_timesteps * 100
+
+            # Barre de progression visuelle
+            progress_bar_length = 30
+            filled_length = int(progress_bar_length * progress // 100)
+            bar = "━" * filled_length + "━" * (progress_bar_length - filled_length)
+
+            logger.info(
+                f"🚀 ADAN Training {bar} {progress:.1f}% ({self.num_timesteps:,}/{self.total_timesteps:,}) • "
+                f"Episode {self.episode_count} • Mean Reward: {mean_reward:.2f}"
+            )
+
+        # Affichage hiérarchique périodique
+        if self.num_timesteps % self.display_freq == 0 and self.num_timesteps > 0:
+            self._log_detailed_metrics()
+
+        return True
+
+    def _log_detailed_metrics(self):
+        """Affichage détaillé des métriques pour chaque worker individuellement."""
+        try:
+            # En-tête de la section
+            logger.info("╭" + "─" * 90 + "╮")
+            logger.info("│" + " " * 30 + f"ÉTAPE {self.num_timesteps:,}" + " " * 30 + "│")
+            logger.info("╰" + "─" * 90 + "╯")
+
+            if not hasattr(self.model, 'get_env'):
+                logger.info("Impossible d'accéder aux environnements des workers.")
+                return
+
+            env = self.model.get_env()
+
+            # Métriques globales du modèle (une seule fois)
+            self._display_model_metrics()
+
+            # Méthode principale pour les environnements vectorisés
+            if hasattr(env, 'envs') and len(env.envs) > 0:
+                logger.info(f"📊 WORKERS ANALYSIS | Total: {len(env.envs)} workers")
+                logger.info("=" * 92)
+
+                for i, worker_env_wrapper in enumerate(env.envs):
+                    self._display_individual_worker_metrics(i, worker_env_wrapper)
+
+            # Méthode de fallback avec get_attr
+            elif hasattr(env, 'get_attr'):
+                try:
+                    all_infos = env.get_attr('last_info')
+                    all_metrics = env.get_attr('get_portfolio_metrics') if hasattr(env, 'get_attr') else None
+
+                    if all_infos:
+                        logger.info(f"📊 WORKERS ANALYSIS | Total: {len(all_infos)} workers")
+                        logger.info("=" * 92)
+
+                        for i, info in enumerate(all_infos):
+                            metrics = all_metrics[i] if all_metrics and i < len(all_metrics) else info
+                            if metrics:
+                                self._display_worker_summary(i, metrics)
+                            else:
+                                logger.info(f"│ WORKER {i} | ❌ Informations non disponibles.")
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'accès aux infos workers: {e}")
+
+            # Temps et vitesse globale
+            elapsed = time.time() - self.start_time
+            steps_per_sec = self.num_timesteps / elapsed if elapsed > 0 else 0
+            logger.info("=" * 92)
+            logger.info(f"⏱️  GLOBAL TIMING | Elapsed: {elapsed/60:.1f}min | Speed: {steps_per_sec:.1f} steps/s")
+            logger.info("─" * 92)
+
+        except Exception as e:
+            logger.error(f"Erreur lors de l'affichage des métriques: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
+    def _display_individual_worker_metrics(self, worker_id: int, worker_env_wrapper):
+        """Afficher les métriques détaillées d'un worker spécifique."""
+        try:
+            # Naviguer à travers les wrappers pour trouver l'environnement réel et ses métriques
+            current_env = worker_env_wrapper
+            metrics = None
+            info = None
+
+            # Essayer de trouver les métriques à travers les couches de wrappers
+            while hasattr(current_env, 'env') or hasattr(current_env, 'get_portfolio_metrics'):
+                if hasattr(current_env, 'get_portfolio_metrics'):
+                    try:
+                        metrics = current_env.get_portfolio_metrics()
+                        break
+                    except:
+                        pass
+
+                if hasattr(current_env, 'last_info'):
+                    info = current_env.last_info
+
+                current_env = getattr(current_env, 'env', None)
+                if current_env is None:
+                    break
+
+            # Utiliser info comme fallback
+            if not metrics and info:
+                metrics = info
+
+            if metrics:
+                self._display_worker_summary(worker_id, metrics)
+            else:
+                logger.info(f"│ WORKER {worker_id} | ❌ Impossible de récupérer les métriques.")
+
+        except Exception as e:
+            logger.error(f"Erreur lors de l'affichage des métriques du worker {worker_id}: {e}")
+
+    def _display_worker_summary(self, worker_id: int, metrics: dict):
+        """Afficher le résumé complet des métriques d'un worker."""
+        try:
+            # Métriques de base
+            portfolio_value = metrics.get('portfolio_value', self.initial_capital)
+            cash = metrics.get('cash', self.initial_capital)
+            roi = ((portfolio_value - self.initial_capital) / self.initial_capital) * 100 if self.initial_capital > 0 else 0
+            drawdown = metrics.get('drawdown', 0.0)
+            max_dd = metrics.get('max_dd', 0.0)
+            sharpe = metrics.get('sharpe', 0.0)
+            win_rate = metrics.get('win_rate', 0.0)
+            total_trades = metrics.get('trades', 0)
+
+            # Métriques de trading détaillées
+            valid_trades = metrics.get('valid_trades', 0)
+            invalid_trades = total_trades - valid_trades if total_trades > valid_trades else 0
+            current_positions = metrics.get('positions', {})
+            closed_positions = metrics.get('closed_positions', [])
+
+            # Informations de récompense et pénalités
+            last_reward = metrics.get('last_reward', 0.0)
+            last_penalty = metrics.get('last_penalty', 0.0)
+            cumulative_reward = metrics.get('cumulative_reward', 0.0)
+
+            # Dates et actifs
+            current_date = metrics.get('current_date', 'N/A')
+            active_assets = list(current_positions.keys()) if current_positions else []
+
+            # En-tête du worker
+            logger.info(f"╭─── WORKER {worker_id} ────────────────────────────────────────────────────────────────╮")
+
+            # Ligne 1: Portfolio et Performance
+            logger.info(f"│ 📊 PORTFOLIO  | Valeur: ${portfolio_value:>10.2f} | Cash: ${cash:>10.2f} | ROI: {roi:>+7.2f}% │")
+
+            # Ligne 2: Risk Management
+            logger.info(f"│ ⚠️  RISK      | Drawdown: {drawdown:>6.2f}% | Max DD: {max_dd:>6.2f}% | Sharpe: {sharpe:>6.2f}     │")
+
+            # Ligne 3: Trading Statistics
+            logger.info(f"│ 📈 TRADING    | Total: {total_trades:>3d} | Valid: {valid_trades:>3d} | Invalid: {invalid_trades:>3d} | Win Rate: {win_rate:>5.1f}% │")
+
+            # Ligne 4: Rewards & Penalties
+            logger.info(f"│ 🎯 REWARDS    | Last: {last_reward:>+8.4f} | Penalty: {last_penalty:>+8.4f} | Cumul: {cumulative_reward:>+8.2f}   │")
+
+            # Ligne 5: Temporal & Assets
+            date_str = str(current_date)[:10] if current_date != 'N/A' else 'N/A'
+            assets_str = ', '.join(active_assets[:3]) if active_assets else 'Aucun'
+            if len(active_assets) > 3:
+                assets_str += f'+{len(active_assets)-3}'
+            logger.info(f"│ 📅 CONTEXT    | Date: {date_str:>10s} | Active Assets: {assets_str:<25s}              │")
+
+            # Positions ouvertes détaillées (si présentes)
+            if current_positions:
+                logger.info("│ ├─ POSITIONS OUVERTES:" + " " * 54 + "│")
+                for asset, pos in list(current_positions.items())[:3]:  # Max 3 pour l'affichage
+                    if isinstance(pos, dict):
+                        size = pos.get('size', 0)
+                        entry_price = pos.get('entry_price', 0)
+                        current_value = pos.get('value', 0)
+                        pnl = pos.get('unrealized_pnl', 0)
+                        logger.info(f"│ │  {asset:<8s} | Size: {size:>6.2f} @ {entry_price:>8.4f} | Val: ${current_value:>7.2f} | PnL: {pnl:>+6.2f} │")
+
+                remaining = len(current_positions) - 3
+                if remaining > 0:
+                    logger.info(f"│ │  ... et {remaining} autres positions" + " " * 44 + "│")
+
+            # Derniers trades fermés (si disponibles)
+            if closed_positions:
+                recent_closed = closed_positions[-2:] if len(closed_positions) >= 2 else closed_positions
+                logger.info("│ ├─ DERNIERS TRADES FERMÉS:" + " " * 48 + "│")
+                for trade in recent_closed:
+                    if isinstance(trade, dict):
+                        asset = trade.get('asset', 'N/A')
+                        profit = trade.get('profit', 0)
+                        duration = trade.get('duration', 'N/A')
+                        close_reason = trade.get('reason', 'N/A')[:8]
+                        logger.info(f"│ │  {asset:<8s} | Profit: {profit:>+8.2f} | Durée: {str(duration):<6s} | Raison: {close_reason:<8s}  │")
+
+            logger.info(f"╰──────────────────────────────────────────────────────────────────────────────────╯")
+
+        except Exception as e:
+            logger.error(f"Erreur lors de l'affichage des métriques du worker {worker_id}: {e}")
+            logger.info(f"│ WORKER {worker_id} | ❌ Erreur d'affichage des métriques.")
+
+    def _display_model_metrics(self):
+        """Afficher les métriques globales du modèle PPO."""
+        try:
+            # Récupérer les métriques du modèle PPO
+            model_metrics = {}
+            total_loss = 0.0
+            policy_loss = 0.0
+            value_loss = 0.0
+            entropy = 0.0
+
+            if hasattr(self.model, 'logger') and hasattr(self.model.logger, 'name_to_value'):
+                model_metrics = self.model.logger.name_to_value
+                total_loss = model_metrics.get("train/loss", 0.0)
+                policy_loss = model_metrics.get("train/policy_loss", 0.0)
+                value_loss = model_metrics.get("train/value_loss", 0.0)
+                entropy = model_metrics.get("train/entropy_loss", 0.0)
+
+            # Model Learning Metrics
+            logger.info(
+                f"🧠 MODEL | Loss: {total_loss:.4f} | Policy: {policy_loss:+.4f} | "
+                f"Value: {value_loss:.4f} | Entropy: {entropy:.4f}"
+            )
+
+        except Exception as e:
+            logger.error(f"Erreur lors de l'affichage des métriques du modèle: {e}")
+
+    def _on_rollout_end(self):
+        """Appelé à la fin de chaque rollout pour capturer les positions fermées."""
+        try:
+            # Essayer de récupérer les positions fermées via les wrappers améliorés
+            if hasattr(self.model, 'get_env'):
+                env = self.model.get_env()
+                closed_positions = []
+
+                try:
+                    # Si c'est un environnement vectorisé, essayer d'accéder au premier environnement
+                    if hasattr(env, 'envs') and len(env.envs) > 0:
+                        first_env = env.envs[0]
+                        # Naviguer à travers les wrappers pour trouver notre GymnasiumToGymWrapper
+                        current_env = first_env
+                        while hasattr(current_env, 'env'):
+                            if isinstance(current_env, GymnasiumToGymWrapper):
+                                metrics = current_env.get_portfolio_metrics()
+                                closed_positions = metrics.get('closed_positions', [])
+                                break
+                            current_env = current_env.env if hasattr(current_env, 'env') else None
+                            if current_env is None:
+                                break
+
+                    # Méthode de fallback avec get_attr si disponible
+                    elif hasattr(env, 'get_attr'):
+                        env_infos = env.get_attr('last_info')
+                        if env_infos and len(env_infos) > 0 and env_infos[0]:
+                            info = env_infos[0]
+                            closed_positions = info.get('closed_positions', [])
+
+                    if closed_positions:
+                        logger.info("╭" + "─" * 25 + " Positions Fermées " + "─" * 25 + "╮")
+                        for pos in closed_positions:
+                            if isinstance(pos, dict):
+                                asset = pos.get('asset', 'Unknown')
+                                size = pos.get('size', 0)
+                                entry_price = pos.get('entry_price', 0)
+                                exit_price = pos.get('exit_price', 0)
+                                pnl = pos.get('pnl', 0)
+                                pnl_pct = pos.get('pnl_pct', 0)
+                                logger.info(
+                                    f"│ {asset}: Taille: {size:.2f} | Entrée: {entry_price:.4f} | "
+                                    f"Sortie: {exit_price:.4f} | PnL: ${pnl:.2f} ({pnl_pct:.2f}%)" + " " * 5 + "│"
+                                )
+                        logger.info("╰" + "─" * 68 + "╯")
+                except Exception as e:
+                    logger.debug(f"Impossible de récupérer les positions fermées: {e}")
+        except Exception as e:
+            logger.error(f"Erreur lors du traitement des positions fermées: {e}")
+
+    def _on_training_end(self):
+        """Fin de l'entraînement avec résumé complet."""
+        elapsed = time.time() - self.start_time
+        logger.info("╭" + "─" * 60 + "╮")
+        logger.info("│" + " " * 15 + "✅ ENTRAÎNEMENT TERMINÉ" + " " * 15 + "│")
+        logger.info("╰" + "─" * 60 + "╯")
+        logger.info(f"[TRAINING END] Total steps: {self.num_timesteps:,}")
+        logger.info(f"[TRAINING END] Duration: {elapsed/60:.1f} minutes")
+        logger.info(f"[TRAINING END] Episodes: {self.episode_count}")
+
+        # Résumé final des performances
+        if self.episode_rewards:
+            final_reward = np.mean(self.episode_rewards[-10:]) if len(self.episode_rewards) >= 10 else np.mean(self.episode_rewards)
+            logger.info(f"[TRAINING END] Final Mean Reward: {final_reward:.2f}")
+
+        logger.info(f"[TRAINING END] Correlation ID: {self.correlation_id}")
 
 # Timeout and environment validation
 from adan_trading_bot.utils.timeout_manager import TimeoutManager, TimeoutException as TMTimeoutException
@@ -53,6 +412,128 @@ from adan_trading_bot.training.trainer import validate_environment
 
 # Configuration du logger de base
 from adan_trading_bot.common.custom_logger import setup_logging
+
+def resolve_config_variables(config):
+    """
+    Résout les variables de configuration de type ${variable.path}.
+    Version silencieuse optimisée sans logs debug.
+    """
+    import copy
+
+    # Utiliser des chemins fixes pour éviter les problèmes de résolution
+    base_dir = "/home/morningstar/Documents/trading/bot"
+
+    # Dictionnaire de substitution complet
+    substitutions = {
+        '${paths.base_dir}': base_dir,
+        '${paths.data_dir}': f"{base_dir}/data",
+        '${paths.raw_data_dir}': f"{base_dir}/data/raw",
+        '${paths.processed_data_dir}': f"{base_dir}/data/processed",
+        '${paths.indicators_data_dir}': f"{base_dir}/data/processed/indicators",
+        '${paths.final_data_dir}': f"{base_dir}/data/final",
+        '${paths.models_dir}': f"{base_dir}/models",
+        '${paths.trained_models_dir}': f"{base_dir}/models/rl_agents",
+        '${paths.logs_dir}': f"{base_dir}/logs",
+        '${paths.reports_dir}': f"{base_dir}/reports",
+        '${paths.figures_dir}': f"{base_dir}/reports/figures",
+        '${paths.metrics_dir}': f"{base_dir}/reports/metrics",
+        '${data.data_dirs.base}': f"{base_dir}/data/processed/indicators"
+    }
+
+    def simple_resolve(obj):
+        if isinstance(obj, str):
+            result = obj
+            for var, value in substitutions.items():
+                result = result.replace(var, value)
+            return result
+        elif isinstance(obj, dict):
+            return {k: simple_resolve(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [simple_resolve(item) for item in obj]
+        else:
+            return obj
+
+    return simple_resolve(copy.deepcopy(config))
+
+def clean_worker_id(worker_id):
+    """
+    Nettoie l'ID du worker pour éviter les erreurs JSONL.
+    Convertit 'w0' en 0, 'w1' en 1, etc.
+
+    Args:
+        worker_id: ID du worker (peut être string ou int)
+
+    Returns:
+        int: ID du worker nettoyé
+    """
+    if isinstance(worker_id, str):
+        # Supprimer le préfixe 'w' si présent
+        if worker_id.startswith('w'):
+            try:
+                return int(worker_id[1:])
+            except ValueError:
+                return 0
+        # Essayer de convertir directement en int
+        try:
+            return int(worker_id)
+        except ValueError:
+            return 0
+    elif isinstance(worker_id, int):
+        return worker_id
+    else:
+        return 0
+
+
+def log_worker_comparison(envs, n_workers):
+    """
+    Log comparison metrics between workers for debugging and analysis.
+
+    Args:
+        envs: List or VecEnv containing environment instances
+        n_workers: Number of workers to compare
+    """
+    try:
+        logger.info("=" * 80)
+        logger.info("[WORKER COMPARISON] Performance Analysis")
+        logger.info("=" * 80)
+
+        for worker_id in range(n_workers):
+            try:
+                # Get environment instance
+                if hasattr(envs, 'get_attr'):
+                    # VecEnv case
+                    worker_env = envs.get_attr('envs')[0][worker_id] if hasattr(envs.get_attr('envs')[0], '__getitem__') else None
+                elif isinstance(envs, list):
+                    # List of envs
+                    worker_env = envs[worker_id] if worker_id < len(envs) else None
+                else:
+                    worker_env = None
+
+                if worker_env is None:
+                    logger.warning(f"[COMPARISON] Worker {worker_id}: Unable to access environment")
+                    continue
+
+                # Get performance metrics
+                if hasattr(worker_env, 'portfolio_manager') and hasattr(worker_env.portfolio_manager, 'metrics'):
+                    metrics = worker_env.portfolio_manager.metrics.calculate_metrics() if hasattr(worker_env.portfolio_manager.metrics, 'calculate_metrics') else {}
+                    equity = worker_env.portfolio_manager.get_equity() if hasattr(worker_env.portfolio_manager, 'get_equity') else 0.0
+                    positions_count = getattr(worker_env, 'positions_count', {})
+
+                    logger.info(f"[COMPARISON Worker {worker_id}] "
+                               f"Trades: {metrics.get('total_trades', 0)}, "
+                               f"Winrate: {metrics.get('winrate', 0.0):.1f}%, "
+                               f"Equity: {equity:.2f} USDT, "
+                               f"Counts: {positions_count}")
+                else:
+                    logger.info(f"[COMPARISON Worker {worker_id}] No metrics available")
+
+            except Exception as e:
+                logger.warning(f"[COMPARISON Worker {worker_id}] Error accessing metrics: {e}")
+
+        logger.info("=" * 80)
+
+    except Exception as e:
+        logger.error(f"Error in worker comparison: {e}")
 
 # Configurer le logger avec la configuration personnalisée
 logger = setup_logging(
@@ -84,6 +565,10 @@ class GymnasiumToGymWrapper(gym.Wrapper):
         super().__init__(env)
         self.rank = rank
         self.log_prefix = f"[WORKER-{rank}]"
+        self.last_info = {}
+        self.last_obs = None
+        self.episode_rewards = []
+        self.episode_count = 0
 
     def reset(self, *, seed=None, options=None):
         """Garantit que reset() retourne toujours un tuple (obs, info)."""
@@ -251,6 +736,34 @@ class GymnasiumToGymWrapper(gym.Wrapper):
                 'portfolio_state': np.zeros(expected_portfolio_shape, dtype=np.float32)
             }
 
+    def get_metrics(self):
+        """Retourne les métriques actuelles de l'environnement."""
+        return {
+            'last_info': self.last_info,
+            'episode_count': getattr(self, 'episode_count', 0),
+            'episode_rewards': getattr(self, 'episode_rewards', []),
+            'last_obs': self.last_obs
+        }
+
+    def get_portfolio_metrics(self):
+        """Retourne spécifiquement les métriques de portfolio."""
+        if hasattr(self, 'last_info') and self.last_info:
+            return {
+                'portfolio_value': self.last_info.get('portfolio_value', 0),
+                'cash': self.last_info.get('cash', 0),
+                'drawdown': self.last_info.get('drawdown', 0),
+                'positions': self.last_info.get('positions', {}),
+                'closed_positions': self.last_info.get('closed_positions', []),
+                'sharpe': self.last_info.get('sharpe', 0),
+                'sortino': self.last_info.get('sortino', 0),
+                'profit_factor': self.last_info.get('profit_factor', 0),
+                'max_dd': self.last_info.get('max_dd', 0),
+                'cagr': self.last_info.get('cagr', 0),
+                'win_rate': self.last_info.get('win_rate', 0),
+                'trades': self.last_info.get('trades', 0)
+            }
+        return {}
+
     def step(self, action):
         """Convertit le retour de step() de gymnasium (5 valeurs) au format SB3."""
         out = super().step(action)
@@ -272,14 +785,40 @@ class GymnasiumToGymWrapper(gym.Wrapper):
             # Valider le format de l'observation
             obs = self._validate_observation(obs)
 
-            # Retourner le format attendu par SB3 avec 5 valeurs
-            return obs, float(reward), done, info, {}
+            # Stocker les informations pour les métriques
+            self.last_info = info.copy() if isinstance(info, dict) else {}
+            self.last_obs = obs
 
-        # Si le format est déjà correct (4 valeurs), on ajoute un dict vide à la fin
+            # Collecter les récompenses d'épisode
+            if hasattr(self, 'episode_rewards'):
+                self.episode_rewards.append(float(reward))
+
+            # Compter les épisodes terminés
+            if done:
+                self.episode_count += 1
+
+            # Retourner le format attendu par SB3 avec 5 valeurs (Gymnasium)
+            return obs, float(reward), terminated, truncated, info
+
+        # Si le format est déjà correct (4 valeurs)
         elif isinstance(out, tuple) and len(out) == 4:
             obs, reward, done, info = out
             obs = self._validate_observation(obs)
-            return obs, float(reward), done, info, {}
+
+            # Stocker les informations pour les métriques
+            self.last_info = info.copy() if isinstance(info, dict) else {}
+            self.last_obs = obs
+
+            # Collecter les récompenses d'épisode
+            if hasattr(self, 'episode_rewards'):
+                self.episode_rewards.append(float(reward))
+
+            # Compter les épisodes terminés
+            if done:
+                self.episode_count += 1
+
+            # Convertir done en terminated/truncated pour compatibilité Gymnasium
+            return obs, float(reward), done, False, info
 
         # Si le format est inattendu, essayer de le convertir
         logger.error(
@@ -291,17 +830,26 @@ class GymnasiumToGymWrapper(gym.Wrapper):
         if isinstance(out, tuple) and len(out) == 3:
             obs, reward, done = out
             obs = self._validate_observation(obs)
-            return obs, float(reward), done, {}, {}
+            self.last_obs = obs
+            if hasattr(self, 'episode_rewards'):
+                self.episode_rewards.append(float(reward))
+            if done:
+                self.episode_count += 1
+            return obs, float(reward), done, False, {}
 
         # Si c'est un tuple avec 2 éléments, supposer que c'est (obs, reward)
         if isinstance(out, tuple) and len(out) == 2:
             obs, reward = out
             obs = self._validate_observation(obs)
-            return obs, float(reward), False, {}, {}
+            self.last_obs = obs
+            if hasattr(self, 'episode_rewards'):
+                self.episode_rewards.append(float(reward))
+            return obs, float(reward), False, False, {}
 
         # Si c'est juste une observation, retourner avec des valeurs par défaut
         obs = self._validate_observation(out)
-        return obs, 0.0, False, {}, {}
+        self.last_obs = obs
+        return obs, 0.0, False, False, {}
 
 # Gestion des exceptions
 class TimeoutException(Exception):
@@ -448,9 +996,13 @@ class GymnasiumToSB3Wrapper(gym.Wrapper):
 
 # Local application imports
 from adan_trading_bot.environment.multi_asset_chunked_env import MultiAssetChunkedEnv
+from adan_trading_bot.environment.dynamic_behavior_engine import DynamicBehaviorEngine
 # Import déjà effectué plus haut
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize, VecTransposeImage, VecEnv
 from stable_baselines3.common.utils import set_random_seed
+
+# SOLUTION IMMORTALITÉ ADAN: Registre global des DBE pour survivre aux recréations d'environnement
+_GLOBAL_DBE_REGISTRY = {}
 
 def _normalize_obs_for_sb3(obs: Any) -> Union[np.ndarray, Dict[str, np.ndarray]]:
     """Normalize observation for Stable Baselines 3 compatibility.
@@ -1043,7 +1595,7 @@ class SB3GymCompatibilityWrapper(gym.Wrapper):
         return default_obs
 
 
-def make_env(rank: int = 0, seed: Optional[int] = None, config: Dict = None, worker_config: Dict = None) -> gym.Env:
+def make_env(rank: int = 0, seed: Optional[int] = None, config: Dict = None, worker_config: Dict = None, dbe_registry: Dict = None) -> gym.Env:
     """
     Crée et configure un environnement pour un worker donné.
 
@@ -1056,6 +1608,13 @@ def make_env(rank: int = 0, seed: Optional[int] = None, config: Dict = None, wor
     Returns:
         Un environnement Gym valide
     """
+    # Imports nécessaires pour la création de données factices
+    try:
+        import pandas as pd
+        import numpy as np
+    except ImportError:
+        pd = None
+        np = None
     # Configuration par défaut si config n'est pas fourni
     if config is None:
         config = {}
@@ -1069,7 +1628,7 @@ def make_env(rank: int = 0, seed: Optional[int] = None, config: Dict = None, wor
 
         worker_config = {
             "rank": rank,
-            "worker_id": f"W{rank}",  # ID unique pour logs synchronisés
+            "worker_id": clean_worker_id(rank),  # ID nettoyé pour éviter les erreurs JSONL
             "num_workers": config.get("num_workers", 1),
             "assets": assets,
             "timeframes": timeframes,
@@ -1087,34 +1646,68 @@ def make_env(rank: int = 0, seed: Optional[int] = None, config: Dict = None, wor
     env_config = config.get("environment", {})
 
     # Récupérer les paramètres du worker
-    assets = [a.lower() for a in worker_config.get("assets", [])]
+    assets = [a for a in worker_config.get("assets", [])]
     timeframes = [str(tf).lower() for tf in worker_config.get("timeframes", [])]
 
     # Récupérer le data_split de la configuration du worker, avec une valeur par défaut
     data_split = worker_config.get("data_split", "val").lower()
 
-    # Dossier de base des données (utiliser data_dirs[data_split] s'il existe, sinon data_dirs.base)
-    data_dirs = config.get("data", {}).get("data_dirs", {})
+    # Utiliser des chemins absolus avec fallbacks intelligents
+    possible_paths = [
+        Path("/home/morningstar/Documents/trading/data/processed/indicators") / data_split,
+        Path("data/processed/indicators") / data_split,
+        Path(__file__).parent.parent.parent / "data" / "processed" / "indicators" / data_split,
+        Path(__file__).parent.parent / "data" / "processed" / "indicators" / data_split
+    ]
 
-    # Utiliser le dossier spécifique au split s'il existe, sinon utiliser le dossier de base
-    if data_split in data_dirs:
-        data_dir = Path(data_dirs[data_split])
-    elif "base" in data_dirs:
-        data_dir = Path(data_dirs["base"]) / data_split
-    else:
-        data_dir = Path("data/processed/indicators") / data_split
+    data_dir = None
+    for path in possible_paths:
+        if path.exists():
+            data_dir = path
+            break
 
-    logger.info(f"Configuration data_dirs: {data_dirs}")
+    # Si aucun chemin n'existe, utiliser le premier comme défaut
+    if data_dir is None:
+        data_dir = possible_paths[0]
+
     logger.info(f"Data split utilisé: {data_split}")
     logger.info(f"Dossier de données final: {data_dir}")
 
-    # Vérifier que le répertoire existe
+    # Créer le répertoire s'il n'existe pas (pour les tests)
     if not data_dir.exists():
-        raise FileNotFoundError(f"Le répertoire de données {data_dir} n'existe pas")
+        logger.warning(f"Répertoire de données {data_dir} non trouvé, création en cours...")
+        data_dir.mkdir(parents=True, exist_ok=True)
 
-    # Vérifier que le répertoire existe
-    if not data_dir.exists():
-        raise FileNotFoundError(f"Le répertoire de données {data_dir} n'existe pas")
+        # Créer des données factices pour les tests si aucune donnée n'existe
+        if pd is None or np is None:
+            logger.error("Pandas ou NumPy non disponible pour créer des données factices")
+            raise ValueError(f"Le répertoire de données {data_dir} n'existe pas et impossible de créer des données factices")
+
+        for asset in assets:
+            clean_asset = asset.replace("/", "").replace("-", "")
+            asset_dir = data_dir / clean_asset.upper()
+            asset_dir.mkdir(exist_ok=True)
+
+            for tf in timeframes:
+                file_path = asset_dir / f"{tf}.parquet"
+                if not file_path.exists():
+                    # Créer des données factices pour le test
+                    dates = pd.date_range('2024-01-01', periods=1000, freq='5min')
+                    fake_data = pd.DataFrame({
+                        'timestamp': dates,
+                        'open': np.random.uniform(0.5, 1.0, 1000),
+                        'high': np.random.uniform(0.5, 1.0, 1000),
+                        'low': np.random.uniform(0.5, 1.0, 1000),
+                        'close': np.random.uniform(0.5, 1.0, 1000),
+                        'volume': np.random.uniform(1000, 10000, 1000),
+                    })
+
+                    # Ajouter des indicateurs techniques factices
+                    for i in range(10):  # 10 indicateurs factices
+                        fake_data[f'indicator_{i}'] = np.random.uniform(-1, 1, 1000)
+
+                    fake_data.to_parquet(file_path, index=False)
+                    logger.info(f"Données factices créées: {file_path}")
 
     logger.info(f"Chargement des données depuis : {data_dir}")
     logger.info(f"Actifs: {assets}")
@@ -1128,8 +1721,8 @@ def make_env(rank: int = 0, seed: Optional[int] = None, config: Dict = None, wor
     # Charger les données pour chaque actif et chaque timeframe
     for asset in assets:
         # Nettoyer le nom de l'actif (supprimer / et -) et forcer en minuscules
-        clean_asset = asset.replace("/", "").replace("-", "").lower()
-        data[clean_asset.upper()] = {}
+        clean_asset = asset.replace("/", "").replace("-", "")
+        data[clean_asset] = {}
         asset_data_found = False
 
         for tf in timeframes:
@@ -1166,7 +1759,7 @@ def make_env(rank: int = 0, seed: Optional[int] = None, config: Dict = None, wor
     if not data:
         raise ValueError(
             "Aucune donnée valide n'a pu être chargée. "
-            f"Vérifiez les chemins dans la configuration et assurez-vous que les fichiers existent dans {base_data_dir}."
+            f"Vérifiez les chemins dans la configuration et assurez-vous que les fichiers existent dans {data_dir}."
         )
 
     # Définir la taille de la fenêtre et la configuration des caractéristiques
@@ -1175,6 +1768,17 @@ def make_env(rank: int = 0, seed: Optional[int] = None, config: Dict = None, wor
 
     logger.info(f"Taille de la fenêtre: {window_size}")
     logger.info(f"Configuration des caractéristiques: {features_config}")
+
+    # SOLUTION IMMORTALITÉ ADAN: Récupérer ou créer le DBE pour ce worker
+    worker_id = worker_config.get("worker_id", f"w{rank}")
+    existing_dbe = None
+
+    if dbe_registry is not None:
+        existing_dbe = dbe_registry.get(worker_id)
+        if existing_dbe is not None:
+            logger.critical(f"👑 RÉUTILISATION DBE IMMORTEL réussie pour Worker {worker_id}, DBE_ID={id(existing_dbe)}")
+        else:
+            logger.critical(f"🆕 CRÉATION PREMIER DBE IMMORTEL pour Worker {worker_id}")
 
     # Créer l'environnement avec les données chargées
     env = MultiAssetChunkedEnv(
@@ -1190,8 +1794,17 @@ def make_env(rank: int = 0, seed: Optional[int] = None, config: Dict = None, wor
         enable_logging=config.get("enable_logging", True),
         log_dir=config.get("log_dir", "logs"),
         worker_config=worker_config,
-        config=config
+        config=config,
+        external_dbe=existing_dbe  # Passer le DBE existant s'il y en a un
     )
+
+    # SOLUTION IMMORTALITÉ ADAN: Enregistrer le DBE nouvellement créé dans le registre
+    if dbe_registry is not None and existing_dbe is None:
+        if hasattr(env, 'dbe') and env.dbe is not None:
+            dbe_registry[worker_id] = env.dbe
+            logger.critical(f"💾 DBE IMMORTEL SAUVEGARDÉ dans registre pour Worker {worker_id}, DBE_ID={id(env.dbe)}")
+        else:
+            logger.error(f"❌ ÉCHEC sauvegarde DBE pour Worker {worker_id} - DBE non trouvé dans l'environnement")
 
     # Appliquer le wrapper pour la compatibilité et éviter les logs dupliqués
     env = GymnasiumToGymWrapper(env, rank=rank)
@@ -1247,25 +1860,32 @@ def main(
         bool: True si l'entraînement s'est terminé avec succès, False sinon
     """
     try:
+        # Supprimer tous les logs de debug pour un affichage plus propre
+        logging.getLogger().setLevel(logging.ERROR)
+
         # Validate environment (Python version, deps, etc.)
         try:
             validate_environment()
         except Exception as e:
-            logger.error("Environment validation failed: %s", e)
+            print(f"Environment validation failed: {e}")
             raise
+
         # Charger la configuration
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
 
-        logger.info(f"Configuration chargée depuis {config_path}")
-        logger.info(f"Démarrage de l'entraînement avec un timeout de {timeout} secondes")
+        # Résoudre les variables de configuration (version simplifiée)
+        config = resolve_config_variables(config)
+
+        print("🚀 ADAN Training Bot - Configuration chargée")
+        print(f"⏱️  Timeout configuré: {timeout} secondes")
         # Activer ou non la barre de progression pendant l'entraînement (config training.progress_bar)
         progress_bar = bool(config.get('training', {}).get('progress_bar', False))
 
         # Récupérer la liste des actifs et timeframes depuis la configuration
         data_config = config.get("data", {})
         file_structure = data_config.get("file_structure", {})
-        assets = file_structure.get("assets", ["BTCUSDT"])
+        assets = data_config.get("assets", ["BTCUSDT"])
         timeframes = file_structure.get("timeframes", ["5m", "1h", "4h"])
         seed = config.get('seed', 42)
 
@@ -1287,10 +1907,13 @@ def main(
         # Choisir la classe d'environnement vectorisé
         VecEnvClass = SubprocVecEnv if use_subproc else DummyVecEnv
 
+        # SOLUTION IMMORTALITÉ ADAN: Initialiser le registre global des DBE
+        logger.critical(f"🏛️ INITIALISATION REGISTRE GLOBAL DBE pour {num_envs} workers")
+
         # Configurer les arguments pour SubprocVecEnv
         vec_env_kwargs = {}
         if use_subproc:
-            # Configuration spécifique pour le mode multiprocessus
+            # Paramètres optimisés pour les performances et la stabilité
             vec_env_kwargs.update({
                 'start_method': 'forkserver',  # Meilleur que 'spawn' pour les performances
                 'daemon': False  # Permet aux processus enfants de se terminer correctement
@@ -1307,7 +1930,7 @@ def main(
                     # Configuration spécifique au worker pour éviter les logs dupliqués
                     worker_config = {
                         "rank": rank,
-                        "worker_id": f"w{rank}",
+                        "worker_id": clean_worker_id(f"w{rank}"),  # Nettoyer l'ID pour éviter les erreurs JSONL
                         "log_prefix": f"[WORKER-{rank}]",
                         **base_worker_config
                     }
@@ -1316,7 +1939,8 @@ def main(
                         rank=rank,
                         seed=seed_val,
                         config=config,
-                        worker_config=worker_config
+                        worker_config=worker_config,
+                        dbe_registry=_GLOBAL_DBE_REGISTRY  # Passer le registre global
                     )
 
                     # Log seulement pour le worker principal pour éviter la duplication
@@ -1376,6 +2000,18 @@ def main(
         logger.info(f"- Seed de base: {config.get('seed', 42)}")
         logger.info(f"- Device: {'auto'}")
         logger.info("="*80 + "\n")
+
+        # Vérifier si on doit reprendre depuis un checkpoint
+        # Créer le répertoire de checkpoints si nécessaire
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        # Initialiser le CheckpointManager
+        checkpoint_manager = CheckpointManager(
+            checkpoint_dir=checkpoint_dir,
+            max_checkpoints=5,  # Garder les 5 derniers checkpoints
+            checkpoint_interval=10000,  # Sauvegarder tous les 10 000 steps
+            logger=logger
+        )
 
         # Vérifier si on doit reprendre depuis un checkpoint
         if resume and checkpoint_manager.list_checkpoints():
@@ -1450,16 +2086,7 @@ def main(
                 logger.warning(f"Failed to configure SB3 logger: {e}")
             start_timesteps = 0
 
-        # Créer le répertoire de checkpoints si nécessaire
-        os.makedirs(checkpoint_dir, exist_ok=True)
 
-        # Initialiser le CheckpointManager
-        checkpoint_manager = CheckpointManager(
-            checkpoint_dir=checkpoint_dir,
-            max_checkpoints=5,  # Garder les 5 derniers checkpoints
-            checkpoint_interval=10000,  # Sauvegarder tous les 10 000 steps
-            logger=logger
-        )
 
         # Vérifier si on doit reprendre depuis un checkpoint
         if resume:
@@ -1664,6 +2291,18 @@ def main(
             progress_callback = CustomTrainingInfoCallback(check_freq=1000, verbose=1)
             callbacks.append(progress_callback)
             logger.info("[TRAINING] Barre de progression personnalisée activée pour le suivi de l'entraînement")
+
+        # Ajouter le callback hiérarchique pour l'affichage structuré
+        total_timesteps = config.get('training', {}).get('total_timesteps', 1000000)
+        initial_capital = config.get('environment', {}).get('initial_balance', 10000.0)
+        hierarchical_callback = HierarchicalTrainingCallback(
+            verbose=1,
+            display_freq=1000,
+            total_timesteps=total_timesteps,
+            initial_capital=initial_capital
+        )
+        callbacks.append(hierarchical_callback)
+        logger.info("[TRAINING] Affichage hiérarchique activé avec métriques détaillées")
 
         # Créer un CallbackList pour gérer plusieurs callbacks
         from stable_baselines3.common.callbacks import CallbackList

@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Repo2Text - Convert Local Directories to Text</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        }
+        .file-item {
+            transition: all 0.2s ease-in-out;
+        }
+        .file-item:hover {
+            background-color: #f3f4f6;
+        }
+        .directory-tree {
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-4 md:p-8 text-gray-800">
+    <div class="max-w-6xl mx-auto bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+            <div class="text-center mb-8">
+                <h1 class="text-3xl font-bold text-gray-800 mb-2">Repo2Text</h1>
+                <p class="text-gray-600">Convert local directories to a single, well-formatted text file</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Panel -->
+                <div class="lg:col-span-1 bg-gray-50 p-4 rounded-lg">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Select Directory</label>
+                        <div class="flex">
+                            <input type="file" id="directoryInput" webkitdirectory directory multiple class="hidden">
+                            <button id="selectDirectoryBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                                Choose Directory
+                            </button>
+                            <button id="selectZipBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-r-md border-l border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                                .ZIP
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Extensions de fichiers (séparées par des virgules)</label>
+                        <div class="flex">
+                            <input type="text" id="fileExtensions" value=".py,.md,.txt,.yaml,.json" class="flex-1 px-3 py-2 border border-gray-300 rounded-l-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                            <button id="filterBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 rounded-r-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                                Filtrer
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="flex items-center">
+                            <input type="checkbox" id="includeHidden" class="rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-500">
+                            <span class="ml-2 text-sm text-gray-700">Include hidden files</span>
+                        </label>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Output Format</label>
+                        <select id="outputFormat" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                            <option value="markdown">Markdown</option>
+                            <option value="plain">Plain Text</option>
+                            <option value="json">JSON</option>
+                        </select>
+                    </div>
+
+                    <button id="generateBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                        Generate Text File
+                    </button>
+                </div>
+
+                <!-- Right Panel -->
+                <div class="lg:col-span-2">
+                    <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                        <div class="p-4 border-b border-gray-200 bg-gray-50">
+                            <div class="flex justify-between items-center">
+                                <div class="flex-1">
+                                <h2 class="text-lg font-medium text-gray-800">Structure des fichiers</h2>
+                                <div class="flex items-center mt-1">
+                                    <span id="fileCount" class="text-sm text-gray-600">0 fichier(s) sélectionné(s)</span>
+                                    <span id="tokenCount" class="text-sm text-blue-600 ml-4">Total: 0 tokens</span>
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                        <div id="fileTree" class="p-4 directory-tree">
+                            <p class="text-gray-500 text-center py-8">Select a directory to begin</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tokenizer Output Panel -->
+    <div id="tokenizerOutput" class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-lg hidden">
+        <div class="max-w-7xl mx-auto">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-lg font-medium text-gray-800">Code Tokenizer Généré</h3>
+                <div class="flex space-x-2">
+                    <button id="copyCodeBtn" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-md text-sm font-medium flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                        </svg>
+                        Copier
+                    </button>
+                    <button id="downloadTxtBtn" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-md text-sm font-medium flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Télécharger .txt
+                    </button>
+                    <button id="downloadMdBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                        </svg>
+                        Télécharger .md
+                    </button>
+                    <button id="closeOutputBtn" class="text-gray-500 hover:text-gray-700">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <pre id="tokenizerCode" class="bg-gray-50 p-4 rounded-md overflow-auto max-h-64 text-sm"></pre>
+        </div>
+    </div>
+
+    <style>
+        #tokenizerOutput {
+            transition: transform 0.3s ease-in-out;
+            transform: translateY(100%);
+        }
+        #tokenizerOutput.visible {
+            transform: translateY(0);
+        }
+        body.tokenizer-visible {
+            padding-bottom: 300px;
+        }
+    </style>
+
+    <script>
+        // Fonction pour compter les tokens (approximation simple)
+        function countTokens(text) {
+            // Compter les mots et la ponctuation
+            const wordCount = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+            const charCount = text.length;
+            // Approximation: 1 token ≈ 4 caractères ou 0.75 mots (moyenne)
+            return Math.max(Math.ceil(wordCount * 0.75), Math.ceil(charCount / 4));
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const directoryInput = document.getElementById('directoryInput');
+            const selectDirectoryBtn = document.getElementById('selectDirectoryBtn');
+            const selectZipBtn = document.getElementById('selectZipBtn');
+            const fileTree = document.getElementById('fileTree');
+            const fileCount = document.getElementById('fileCount');
+            const fileExtensions = document.getElementById('fileExtensions');
+            const includeHidden = document.getElementById('includeHidden');
+            const outputFormat = document.getElementById('outputFormat');
+            const generateBtn = document.getElementById('generateBtn');
+            const filterBtn = document.getElementById('filterBtn');
+            const tokenCountElement = document.getElementById('tokenCount');
+
+            let selectedFiles = [];
+            let allFiles = [];
+            let currentExtensions = [];
+
+            // Handle directory selection
+            selectDirectoryBtn.addEventListener('click', () => {
+                directoryInput.click();
+            });
+
+            // Handle ZIP file selection
+            selectZipBtn.addEventListener('click', () => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.zip';
+                input.onchange = handleZipFile;
+                input.click();
+            });
+
+            // Handle directory input change
+            directoryInput.addEventListener('change', (e) => {
+                const files = Array.from(e.target.files);
+                allFiles = files;
+                updateFileList();
+            });
+
+            // Handle filter button click
+            filterBtn.addEventListener('click', () => {
+                updateFileList();
+            });
+
+            // Handle ZIP file processing
+            async function handleZipFile(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                try {
+                    const zip = await JSZip.loadAsync(file);
+                    const files = [];
+                    
+                    zip.forEach((relativePath, zipEntry) => {
+                        if (!zipEntry.dir) {
+                            files.push({
+                                name: zipEntry.name.split('/').pop(),
+                                path: zipEntry.name,
+                                file: zipEntry,
+                                isDirectory: false
+                            });
+                        }
+                    });
+
+                    processFiles(files, true);
+                } catch (error) {
+                    console.error('Error processing ZIP file:', error);
+                    alert('Error processing ZIP file. Please make sure the file is not corrupted.');
+                }
+            }
+
+            // Update file list based on selected extensions
+            async function updateFileList() {
+                const extensions = fileExtensions.value
+                    .split(',')
+                    .map(ext => ext.trim().toLowerCase())
+                    .filter(ext => ext);
+                
+                currentExtensions = extensions;
+                
+                // Filter files by extension
+                const filteredFiles = allFiles.filter(file => {
+                    const fileName = file.name || file.webkitRelativePath.split('/').pop();
+                    return extensions.some(ext => fileName.toLowerCase().endsWith(ext));
+                });
+                
+                // Process and display files
+                processFiles(filteredFiles);
+            }
+
+            // Process files and build file list
+            async function processFiles(files) {
+                fileTree.innerHTML = '';
+                
+                if (files.length === 0) {
+                    fileTree.innerHTML = '<p class="text-gray-500 text-center py-8">Aucun fichier trouvé avec les extensions sélectionnées</p>';
+                    return;
+                }
+                
+                // Group files by directory
+                const filesByDir = {};
+                
+                for (const file of files) {
+                    const path = file.webkitRelativePath || file.name;
+                    const parts = path.split('/');
+                    const fileName = parts.pop();
+                    const dirPath = parts.join('/') || '/';
+                    
+                    if (!filesByDir[dirPath]) {
+                        filesByDir[dirPath] = [];
+                    }
+                    
+                    filesByDir[dirPath].push({
+                        name: fileName,
+                        path: path,
+                        file: file,
+                        selected: false,
+                        tokenCount: 0
+                    });
+                }
+                
+                // Render directory structure
+                const container = document.createElement('div');
+                
+                for (const [dirPath, dirFiles] of Object.entries(filesByDir)) {
+                    const dirElement = document.createElement('div');
+                    dirElement.className = 'mb-4';
+                    
+                    // Directory header
+                    const dirHeader = document.createElement('div');
+                    dirHeader.className = 'flex items-center bg-gray-50 p-2 rounded-t border';
+                    
+                    const dirCheckbox = document.createElement('input');
+                    dirCheckbox.type = 'checkbox';
+                    dirCheckbox.className = 'mr-2 directory-checkbox';
+                    dirCheckbox.addEventListener('change', (e) => {
+                        const isChecked = e.target.checked;
+                        dirFiles.forEach((_, index) => {
+                            const fileCheckbox = dirElement.querySelector(`.file-checkbox[data-index="${index}"]`);
+                            if (fileCheckbox) {
+                                fileCheckbox.checked = isChecked;
+                                dirFiles[index].selected = isChecked;
+                            }
+                        });
+                        updateSelectionSummary();
+                    });
+                    
+                    dirHeader.appendChild(dirCheckbox);
+                    
+                    const dirIcon = document.createElement('span');
+                    dirIcon.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                    `;
+                    dirHeader.appendChild(dirIcon);
+                    
+                    const dirName = document.createElement('span');
+                    dirName.className = 'text-sm font-medium';
+                    dirName.textContent = dirPath || 'Root';
+                    dirHeader.appendChild(dirName);
+                    
+                    dirElement.appendChild(dirHeader);
+                    
+                    // Files list
+                    const filesList = document.createElement('div');
+                    filesList.className = 'border-l border-r border-b rounded-b divide-y';
+                    
+                    for (let i = 0; i < dirFiles.length; i++) {
+                        const file = dirFiles[i];
+                        const fileElement = document.createElement('div');
+                        fileElement.className = 'flex items-center p-2 hover:bg-gray-50';
+                        
+                        const fileCheckbox = document.createElement('input');
+                        fileCheckbox.type = 'checkbox';
+                        fileCheckbox.className = 'mr-2 file-checkbox';
+                        fileCheckbox.dataset.index = i;
+                        fileCheckbox.addEventListener('change', (e) => {
+                            const index = parseInt(e.target.dataset.index);
+                            dirFiles[index].selected = e.target.checked;
+                            updateSelectionSummary();
+                        });
+                        
+                        const fileIcon = document.createElement('span');
+                        fileIcon.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                        `;
+                        
+                        const fileName = document.createElement('span');
+                        fileName.className = 'text-sm flex-1';
+                        fileName.textContent = file.name;
+                        
+                        const tokenBadge = document.createElement('span');
+                        tokenBadge.className = 'bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded ml-2';
+                        tokenBadge.textContent = 'calcul...';
+                        
+                        fileElement.appendChild(fileCheckbox);
+                        fileElement.appendChild(fileIcon);
+                        fileElement.appendChild(fileName);
+                        fileElement.appendChild(tokenBadge);
+                        
+                        filesList.appendChild(fileElement);
+                        
+                        // Read file and count tokens
+                        readFileContent(file.file).then(content => {
+                            file.tokenCount = countTokens(content);
+                            tokenBadge.textContent = `${file.tokenCount} tokens`;
+                            tokenBadge.className = 'bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded ml-2';
+                            updateSelectionSummary();
+                        }).catch(error => {
+                            console.error('Error reading file:', error);
+                            tokenBadge.textContent = 'erreur';
+                            tokenBadge.className = 'bg-red-100 text-red-800 text-xs px-2 py-1 rounded ml-2';
+                        });
+                    }
+                    
+                    dirElement.appendChild(filesList);
+                    container.appendChild(dirElement);
+                }
+                
+                fileTree.appendChild(container);
+                updateSelectionSummary();
+            }
+            
+            // Helper function to read file content
+            async function readFileContent(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = reject;
+                    reader.readAsText(file);
+                });
+            }
+            
+            // Update selection summary
+            function updateSelectionSummary() {
+                // Get all selected files
+                selectedFiles = [];
+                let totalTokens = 0;
+                
+                document.querySelectorAll('.file-checkbox').forEach((checkbox, index) => {
+                    if (checkbox.checked) {
+                        // Find the file data in the DOM structure
+                        const fileElement = checkbox.closest('.flex.items-center');
+                        if (fileElement) {
+                            const fileName = fileElement.querySelector('span:not(.text-xs)')?.textContent;
+                            const tokenBadge = fileElement.querySelector('.text-xs');
+                            const tokenMatch = tokenBadge?.textContent.match(/(\d+)\s*tokens?/);
+                            const tokens = tokenMatch ? parseInt(tokenMatch[1]) : 0;
+                            
+                            totalTokens += tokens;
+                            
+                            selectedFiles.push({
+                                name: fileName,
+                                path: fileName,
+                                file: null, // Will be set when generating
+                                tokenCount: tokens
+                            });
+                        }
+                    }
+                });
+                
+                // Update UI
+                fileCount.textContent = `${selectedFiles.length} fichier(s) sélectionné(s)`;
+                tokenCountElement.textContent = `Total: ${totalTokens} tokens`;
+                
+                // Enable/disable generate button
+                generateBtn.disabled = selectedFiles.length === 0;
+            }
+
+            // Render file tree
+            function renderFileTree(node, level = 0) {
+                if (node.children.length === 0) return '';
+
+                const ul = document.createElement('ul');
+                ul.className = level > 0 ? 'ml-4' : '';
+
+                node.children.forEach(child => {
+                    const li = document.createElement('li');
+                    li.className = 'py-1';
+
+                    const div = document.createElement('div');
+                    div.className = 'flex items-center file-item p-1 rounded hover:bg-gray-100 cursor-pointer';
+                    
+                    if (child.isDirectory) {
+                        div.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                            </svg>
+                            <span class="text-sm font-medium">${child.name}</span>
+                        `;
+                    } else {
+                        div.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span class="text-sm">${child.name}</span>
+                        `;
+                    }
+
+                    if (child.children.length > 0) {
+                        const toggleBtn = document.createElement('button');
+                        toggleBtn.className = 'ml-2 text-gray-500 hover:text-gray-700';
+                        toggleBtn.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        `;
+                        
+                        const childUl = document.createElement('div');
+                        childUl.className = 'hidden';
+                        
+                        toggleBtn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            childUl.classList.toggle('hidden');
+                            toggleBtn.querySelector('svg').classList.toggle('rotate-180');
+                        });
+                        
+                        div.prepend(toggleBtn);
+                        renderFileTree(child, level + 1, childUl);
+                        li.appendChild(div);
+                        li.appendChild(childUl);
+                    } else {
+                        li.appendChild(div);
+                    }
+                    
+                    ul.appendChild(li);
+                });
+
+                if (level === 0) {
+                    fileTree.innerHTML = '';
+                    fileTree.appendChild(ul);
+                }
+                
+                return ul;
+            }
+
+            // Update file count
+            function updateFileCount() {
+                const count = selectedFiles.length;
+                fileCount.textContent = `${count} file${count !== 1 ? 's' : ''} selected`;
+            }
+
+            // Show tokenizer output panel
+            const tokenizerOutput = document.getElementById('tokenizerOutput');
+            const tokenizerCode = document.getElementById('tokenizerCode');
+            const copyCodeBtn = document.getElementById('copyCodeBtn');
+            const downloadTxtBtn = document.getElementById('downloadTxtBtn');
+            const downloadMdBtn = document.getElementById('downloadMdBtn');
+            const closeOutputBtn = document.getElementById('closeOutputBtn');
+            
+            // Toggle output panel
+            function toggleOutputPanel(show = true) {
+                if (show) {
+                    document.body.classList.add('tokenizer-visible');
+                    tokenizerOutput.classList.remove('hidden');
+                    // Force reflow
+                    void tokenizerOutput.offsetWidth;
+                    tokenizerOutput.classList.add('visible');
+                } else {
+                    tokenizerOutput.classList.remove('visible');
+                    document.body.classList.remove('tokenizer-visible');
+                    setTimeout(() => {
+                        if (!tokenizerOutput.classList.contains('visible')) {
+                            tokenizerOutput.classList.add('hidden');
+                        }
+                    }, 300);
+                }
+            }
+            
+            // Copy code to clipboard
+            copyCodeBtn.addEventListener('click', () => {
+                const code = tokenizerCode.textContent;
+                navigator.clipboard.writeText(code).then(() => {
+                    const originalText = copyCodeBtn.innerHTML;
+                    copyCodeBtn.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                        Copié !
+                    `;
+                    setTimeout(() => {
+                        copyCodeBtn.innerHTML = originalText;
+                    }, 2000);
+                }).catch(err => {
+                    console.error('Erreur lors de la copie:', err);
+                });
+            });
+            
+            // Download as text file
+            function downloadFile(filename, content, type) {
+                const blob = new Blob([content], { type });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+            
+            downloadTxtBtn.addEventListener('click', () => {
+                const content = tokenizerCode.textContent;
+                const filename = `tokenizer_${new Date().toISOString().split('T')[0]}.txt`;
+                downloadFile(filename, content, 'text/plain');
+            });
+            
+            downloadMdBtn.addEventListener('click', () => {
+                const content = tokenizerCode.textContent;
+                const filename = `tokenizer_${new Date().toISOString().split('T')[0]}.md`;
+                downloadFile(filename, content, 'text/markdown');
+            });
+            
+            closeOutputBtn.addEventListener('click', () => {
+                toggleOutputPanel(false);
+            });
+
+            // Generate text file
+            generateBtn.addEventListener('click', async () => {
+                if (selectedFiles.length === 0) {
+                    alert('Veuillez sélectionner au moins un fichier.');
+                    return;
+                }
+
+                let output = '';
+                const format = outputFormat.value;
+                let totalTokens = 0;
+                
+                // Show loading state
+                const originalButtonText = generateBtn.innerHTML;
+                generateBtn.disabled = true;
+                generateBtn.innerHTML = `
+                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Génération en cours...
+                `;
+                
+                try {
+                    // Process files based on selected format
+                    for (const file of selectedFiles) {
+                        try {
+                            let content = '';
+                            
+                            if (file.file instanceof File) {
+                                content = await readFileContent(file.file);
+                            } else if (file.file?.async) {
+                                // Handle ZIP file entries
+                                content = await file.file.async('text');
+                            } else if (file.tokenCount > 0) {
+                                // If we already have the content from token counting
+                                content = file.content || '';
+                            }
+                            
+                            // Update token count if not already set
+                            if (!file.tokenCount) {
+                                file.tokenCount = countTokens(content);
+                            }
+                            totalTokens += file.tokenCount;
+                            
+                            // Format output based on selected format
+                            if (format === 'markdown') {
+                                output += `## ${file.path}\n\`\`\`${getFileExtension(file.name)}\n${content}\n\`\`\`\n\n`;
+                            } else if (format === 'json') {
+                                output += JSON.stringify({
+                                    path: file.path,
+                                    name: file.name,
+                                    content: content,
+                                    token_count: file.tokenCount
+                                }, null, 2) + '\n\n';
+                            } else {
+                                output += `=== ${file.path} (${file.tokenCount} tokens) ===\n${content}\n\n`;
+                            }
+                        } catch (error) {
+                            console.error(`Erreur lors de la lecture du fichier ${file.path}:`, error);
+                            output += `=== ${file.path} ===\n[Erreur lors de la lecture du fichier]\n\n`;
+                        }
+                    }
+                    
+                    // Add summary
+                    const summary = `\n\n=== RÉSUMÉ ===\nFichiers: ${selectedFiles.length}\nTokens totaux: ${totalTokens}\nGénéré le: ${new Date().toLocaleString()}\n`;
+                    output += format === 'json' ? '' : summary;
+
+                    // Show the output in the panel
+                    tokenizerCode.textContent = output;
+                    
+                    // Auto-scroll to the output
+                    setTimeout(() => {
+                        toggleOutputPanel(true);
+                        tokenizerCode.scrollTop = 0;
+                    }, 100);
+                    
+                    // Also download the file automatically
+                    const filename = `repo2text_${new Date().toISOString().split('T')[0]}.${format === 'json' ? 'json' : format === 'markdown' ? 'md' : 'txt'}`;
+                    const blob = new Blob([output], { type: 'text/plain;charset=utf-8' });
+                    saveAs(blob, filename);
+                    
+                } catch (error) {
+                    console.error('Erreur lors de la génération du fichier:', error);
+                    alert('Une erreur est survenue lors de la génération du fichier.');
+                } finally {
+                    // Restore button state
+                    generateBtn.disabled = false;
+                    generateBtn.innerHTML = originalButtonText;
+                }
+            });
+
+            // Helper function to read file as text
+            function readFileAsText(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = (e) => reject(e);
+                    reader.readAsText(file);
+                });
+            }
+
+            // Helper function to get file extension
+            function getFileExtension(filename) {
+                return filename.split('.').pop().toLowerCase();
+            }
+        });
+    </script>
+</body>
+</html>

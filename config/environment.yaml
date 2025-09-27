@@ -3,19 +3,19 @@
 
 environment:
   assets:
-  - BTCUSDT
-  - ETHUSDT
-  - SOLUSDT
-  - XRPUSDT
-  - ADAUSDT
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - ADAUSDT
   base_currency: USDT
   initial_balance: 20.0
-  max_chunks_per_episode: 2
-  max_steps: 50
+  max_chunks_per_episode: 10
+  max_steps: 500
   memory:
     aggressive_cleanup: true
     batch_size: 32
-    chunk_size: 1000
+    chunk_size: 500
     drop_last: true
     force_gc_after_chunk: true
     include_portfolio_state: true
@@ -28,15 +28,15 @@ environment:
     shuffle: true
   mode: backtest
   observation:
-    shape: [3, 20, 13]  # Mise à jour de la forme pour refléter le nouveau nombre de fonctionnalités
+    shape: [3, 20, 13] # Mise à jour de la forme pour refléter le nouveau nombre de fonctionnalités
     window_sizes:
       5m: 20
       1h: 20
       4h: 20
     features_per_timeframe:
-      5m: 13  # OPEN, HIGH, LOW, CLOSE, VOLUME, RSI_14, ATR_14, ADX_14, EMA_5, EMA_20, EMA_50, MACD_HIST, SUPERTREND_14_2.0
-      1h: 13  # OPEN, HIGH, LOW, CLOSE, VOLUME, RSI_14, ATR_14, ADX_14, EMA_12, EMA_50, EMA_200, MACD_HIST, SUPERTREND_14_2.0
-      4h: 13  # OPEN, HIGH, LOW, CLOSE, VOLUME, RSI_14, ATR_14, ADX_14, EMA_12, EMA_50, EMA_200, MACD_HIST, SUPERTREND_14_2.0
+      5m: 13 # OPEN, HIGH, LOW, CLOSE, VOLUME, RSI_14, ATR_14, ADX_14, EMA_5, EMA_20, EMA_50, MACD_HIST, SUPERTREND_14_2.0
+      1h: 13 # OPEN, HIGH, LOW, CLOSE, VOLUME, RSI_14, ATR_14, ADX_14, EMA_12, EMA_50, EMA_200, MACD_HIST, SUPERTREND_14_2.0
+      4h: 13 # OPEN, HIGH, LOW, CLOSE, VOLUME, RSI_14, ATR_14, ADX_14, EMA_12, EMA_50, EMA_200, MACD_HIST, SUPERTREND_14_2.0
     warmup_steps: 10
   penalties:
     base_inaction_penalty: -0.001
@@ -51,8 +51,8 @@ environment:
     performance_threshold: 0.6
     realized_pnl_multiplier: 1.0
     reward_clipping_range:
-    - -3.0
-    - 3.0
+      - -3.0
+      - 3.0
     unrealized_pnl_multiplier: 0.1
     use_ewc: true
     use_prioritized_replay: true
@@ -77,65 +77,65 @@ data:
   data_split: val
   # Timeframes pris en charge par le chargeur de données
   timeframes:
-  - 5m
-  - 1h
-  - 4h
+    - 5m
+    - 1h
+    - 4h
   # Définition des features par timeframe (utilisé par ChunkedDataLoader et l'env)
   features_per_timeframe:
     5m:
-    - OPEN
-    - HIGH
-    - LOW
-    - CLOSE
-    - VOLUME
-    - RSI_14
-    - ATR_14
-    - ADX_14
-    - EMA_5
-    - EMA_20
-    - EMA_50
-    - MACD_HIST
-    - SUPERTREND_14_2.0
+      - OPEN
+      - HIGH
+      - LOW
+      - CLOSE
+      - VOLUME
+      - RSI_14
+      - ATR_14
+      - ADX_14
+      - EMA_5
+      - EMA_20
+      - EMA_50
+      - MACD_HIST
+      - SUPERTREND_14_2.0
 
     1h:
-    - OPEN
-    - HIGH
-    - LOW
-    - CLOSE
-    - VOLUME
-    - RSI_14
-    - ATR_14
-    - ADX_14
-    - EMA_12
-    - EMA_50
-    - EMA_200
-    - MACD_HIST
-    - SUPERTREND_14_2.0
+      - OPEN
+      - HIGH
+      - LOW
+      - CLOSE
+      - VOLUME
+      - RSI_14
+      - ATR_14
+      - ADX_14
+      - EMA_12
+      - EMA_50
+      - EMA_200
+      - MACD_HIST
+      - SUPERTREND_14_2.0
 
     4h:
-    - OPEN
-    - HIGH
-    - LOW
-    - CLOSE
-    - VOLUME
-    - RSI_14
-    - ATR_14
-    - ADX_14
-    - EMA_12
-    - EMA_50
-    - EMA_200
-    - MACD_HIST
-    - SUPERTREND_14_2.0
+      - OPEN
+      - HIGH
+      - LOW
+      - CLOSE
+      - VOLUME
+      - RSI_14
+      - ATR_14
+      - ADX_14
+      - EMA_12
+      - EMA_50
+      - EMA_200
+      - MACD_HIST
+      - SUPERTREND_14_2.0
 paths:
   indicators_data_dir: /home/morningstar/Documents/trading/bot/data/processed/indicators
 portfolio:
   include_portfolio_state: true
   initial_balance: 20.0
   portfolio_state_features:
-  - cash_available
-  - total_equity
-  - total_return_pct
-  - sharpe_ratio
-  - max_drawdown_pct
-  - num_positions
-  - largest_positions: 5
+    - cash_available
+    - total_equity
+    - total_return_pct
+    - sharpe_ratio
+    - max_drawdown_pct
+    - num_positions
+    - largest_positions: 5

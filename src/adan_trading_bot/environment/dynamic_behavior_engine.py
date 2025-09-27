@@ -9,6 +9,8 @@ from typing import Dict, Any, Optional, List, Union, Tuple
 import numpy as np
 import json
 import os
+import time
+import uuid
 from datetime import datetime
 from dataclasses import dataclass, field
 import logging
@@ -17,6 +19,8 @@ from pathlib import Path
 from functools import lru_cache
 
 import yaml
+
+from ..utils.smart_logger import create_smart_logger
 
 from ..common.utils import get_logger
 from ..common.replay_logger import ReplayLogger
@@ -201,6 +205,15 @@ DEFAULT_CONFIG = {
         'n_steps': 2048,
         'n_epochs': 10,
         'clip_range': 0.2
+    },
+
+    # Paramètres de positionnement
+    'position_sizing': {
+        'max_position_size': 0.25,
+        'initial_sl_pct': 0.02,
+        'initial_tp_pct': 0.04,
+        'initial_position_size': 0.1,
+        'base_position_size': 0.1
     }
 }
 
@@ -215,7 +228,8 @@ class DynamicBehaviorEngine:
     MIN_TRADE = 11.0
 
     def __init__(self, config: Optional[Dict[str, Any]] = None,
-                 finance_manager: Optional[Any] = None):
+                 finance_manager: Optional[Any] = None,
+                 worker_id: int = 0):
         """
         Initialise le DBE avec la configuration fournie.
 
@@ -225,6 +239,9 @@ class DynamicBehaviorEngine:
         """
         # Fusion de la configuration par défaut avec celle fournie
         self.config = self._merge_configs(DEFAULT_CONFIG, config or {})
+
+        # Worker ID pour éviter la duplication de logs
+        self.worker_id = worker_id
 
         # Référence au gestionnaire de portefeuille
         self.finance_manager = finance_manager
@@ -243,6 +260,20 @@ class DynamicBehaviorEngine:
         # Initialisation des paramètres de trading
         self.current_sl_multiplier = 1.0
         self.current_tp_multiplier = 1.0
+
+        # Initialiser le SmartLogger pour ce worker
+        self.smart_logger = create_smart_logger(self.worker_id, total_workers=4, logger_name="dynamic_behavior_engine")
+
+        # Cache pour éviter les doublons de logs
+        self._last_logs = {}
+        import time
+        self._time_module = time
+
+    def log_info(self, message, step=None):
+        """Log un message avec le système intelligent SmartLogger."""
+        self.smart_logger.smart_info(logger, message, step)
+
+        # Initialisation des paramètres de trading (suite)
         self.current_position_size_multiplier = 1.0
 
         # Log available config keys for debugging
@@ -260,6 +291,9 @@ class DynamicBehaviorEngine:
             'risk_level': 1.0
         }
 
+        # Configuration de fréquence des positions
+        self.frequency_config = self.config.get('trading_rules', {}).get('frequency', {})
+
         # Initialisation du logger personnalisé
         self.logger = logging.getLogger(f"dbe.{self.__class__.__name__}")
 
@@ -274,48 +308,73 @@ class DynamicBehaviorEngine:
         # Initialisation des états des workers
         self.worker_states = {}
 
-        # Initialisation de l'état
-        self.state = {
-            'current_step': 0,
-            'last_trade_step': 0,
-            'consecutive_losses': 0,
-            'consecutive_wins': 0,
-            'last_win': False,
-            'last_reward': 0.0,
-            'drawdown': 0.0,
-            'current_risk_level': 1.0,  # Niveau de risque initial (1.0 = neutre)
-            'max_drawdown': 0.0,
-            'sharpe_ratio': 0.0,
-            'sortino_ratio': 0.0,
-            'volatility': 0.0,
-            'win_rate': 0.0,
-            'profit_factor': 0.0,
-            'recovery_factor': 0.0,
-            'expectancy': 0.0,
-            'avg_trade': 0.0,
-            'avg_win': 0.0,
-            'avg_loss': 0.0,
-            'max_win': 0.0,
-            'max_loss': 0.0,
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'equity_curve': [],
-            'returns': [],
-            'drawdowns': [],
-            'position_duration': 0,  # Durée de la position actuelle en pas de temps
-            'market_conditions': {},
-            'performance_metrics': {  # Ajout des métriques de performance initiales
+        # Initialisation de l'état avec gestion d'erreur
+        try:
+            self.state = {
+                'current_step': 0,
+                'last_trade_step': 0,
+                'consecutive_losses': 0,
+                'consecutive_wins': 0,
+                'last_win': False,
+                'last_reward': 0.0,
+                'drawdown': 0.0,
+                'current_risk_level': 1.0,  # Niveau de risque initial (1.0 = neutre)
+                'max_drawdown': 0.0,
                 'sharpe_ratio': 0.0,
                 'sortino_ratio': 0.0,
+                'volatility': 0.0,
                 'win_rate': 0.0,
                 'profit_factor': 0.0,
-                'max_drawdown': 0.0,
-                'volatility': 0.0,
+                'recovery_factor': 0.0,
+                'expectancy': 0.0,
                 'avg_trade': 0.0,
-                'expectancy': 0.0
+                'avg_win': 0.0,
+                'avg_loss': 0.0,
+                'max_win': 0.0,
+                'max_loss': 0.0,
+                'total_trades': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
+                'equity_curve': [],
+                'returns': [],
+                'drawdowns': [],
+                'position_duration': 0,  # Durée de la position actuelle en pas de temps
+                'market_conditions': {},
+                'performance_metrics': {  # Ajout des métriques de performance initiales
+                    'sharpe_ratio': 0.0,
+                    'sortino_ratio': 0.0,
+                    'win_rate': 0.0,
+                    'profit_factor': 0.0,
+                    'max_drawdown': 0.0,
+                    'volatility': 0.0,
+                    'avg_trade': 0.0,
+                    'expectancy': 0.0
+                },
+                # Champs additionnels requis par le code
+                'market_regime': 'NEUTRAL',
+                'winrate': 0.0,
+                'last_trade_pnl': 0.0,
+                'trend_strength': 0.0,
+                'last_modulation': {}
             }
-        }
+        except Exception as e:
+            logger.error(f"Error initializing DBE state: {e}")
+            # Fallback: initialize minimal state
+            self.state = {
+                'current_step': 0,
+                'market_regime': 'NEUTRAL',
+                'current_risk_level': 1.0,
+                'winrate': 0.0,
+                'win_rate': 0.0,
+                'drawdown': 0.0,
+                'volatility': 0.0,
+                'consecutive_losses': 0,
+                'position_duration': 0,
+                'last_trade_pnl': 0.0,
+                'trend_strength': 0.0,
+                'last_modulation': {},
+                'performance_metrics': {}
+            }
 
         # Chargement de la configuration externe si elle existe
         dbe_config_path = Path(__file__).parent.parent.parent.parent / 'config' / 'dbe_config.yaml'
@@ -325,15 +384,84 @@ class DynamicBehaviorEngine:
                 if dbe_config:
                     self.config = self._merge_configs(self.config, dbe_config)
 
-    def _merge_configs(self, base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
-        """Fusionne récursivement deux dictionnaires de configuration."""
-        result = base.copy()
+    def _merge_configs(self, result: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge two configuration dictionaries recursively.
+
+        Args:
+            result: Base configuration dictionary
+            update: Configuration dictionary to merge into result
+
+        Returns:
+            Merged configuration dictionary
+        """
+        result = result.copy()
         for key, value in update.items():
             if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 result[key] = self._merge_configs(result[key], value)
             else:
                 result[key] = value
         return result
+
+    def update_state(self, live_metrics: Dict[str, Any]) -> None:
+        """
+        Update the DBE state with live metrics from the environment.
+
+        Args:
+            live_metrics: Dictionary containing current market and portfolio metrics
+        """
+        try:
+            # Ensure state exists, but don't reinitialize if it already exists
+            if not hasattr(self, 'state') or self.state is None:
+                logger.info(f"[DBE Worker {self.worker_id}] Initializing DBE state for the first time")
+                self.state = {
+                    'current_step': 0,
+                    'market_regime': 'NEUTRAL',
+                    'current_risk_level': 1.0,
+                    'winrate': 0.0,
+                    'win_rate': 0.0,
+                    'drawdown': 0.0,
+                    'volatility': 0.0,
+                    'consecutive_losses': 0,
+                    'position_duration': 0,
+                    'last_trade_pnl': 0.0,
+                    'trend_strength': 0.0,
+                    'last_modulation': {},
+                    'performance_metrics': {},
+                    'initialized': True,
+                    'initialization_time': time.time()
+                }
+            else:
+                logger.debug(f"[DBE Worker {self.worker_id}] State already exists, updating...")
+
+            # Increment step counter
+            self.state['current_step'] += 1
+
+            # Update market data
+            if 'rsi' in live_metrics:
+                self.state['rsi'] = live_metrics['rsi']
+            if 'adx' in live_metrics:
+                self.state['adx'] = live_metrics['adx']
+            if 'volatility' in live_metrics:
+                self.state['volatility'] = live_metrics['volatility']
+
+            # Update portfolio metrics
+            if 'win_rate' in live_metrics:
+                self.state['win_rate'] = live_metrics['win_rate']
+                self.state['winrate'] = live_metrics['win_rate']
+            if 'drawdown' in live_metrics:
+                self.state['drawdown'] = live_metrics['drawdown']
+            if 'current_drawdown' in live_metrics:
+                self.state['drawdown'] = live_metrics['current_drawdown']
+            if 'max_drawdown' in live_metrics:
+                self.state['max_drawdown'] = live_metrics['max_drawdown']
+            if 'sharpe_ratio' in live_metrics:
+                self.state['sharpe_ratio'] = live_metrics['sharpe_ratio']
+            if 'sortino_ratio' in live_metrics:
+                self.state['sortino_ratio'] = live_metrics['sortino_ratio']
+
+        except Exception as e:
+            logger.error(f"Error in update_state: {e}")
 
     def detect_market_regime(self, market_data: Dict[str, Any]) -> Tuple[str, float]:
         """Détecte le régime de marché actuel."""
@@ -393,12 +521,6 @@ class DynamicBehaviorEngine:
             position_size_pct = risk_params.get('initial_position_size', 0.1) # Default
 
             if tier:
-                exposure_range = tier.get('exposure_range', [1, 10])
-                min_exposure_pct = exposure_range[0] / 100.0
-                max_exposure_pct = exposure_range[1] / 100.0
-
-                risk_level = self.state.get('current_risk_level', 1.0)
-                # Normaliser le niveau de risque (0.3-2.0) en un facteur (0-1)
                 normalized_risk = (risk_level - 0.3) / (2.0 - 0.3)
 
                 # Calculer la taille de position en %% en utilisant l'intervalle du palier
@@ -450,6 +572,13 @@ class DynamicBehaviorEngine:
             tp_multiplier = regime_params.get('tp_multiplier', 1.0)
             take_profit_pct = base_tp_pct * tp_multiplier
 
+            # Ajustement basé sur la fréquence des positions
+            if hasattr(self, 'env') and hasattr(self.env, 'positions_count') and self.frequency_config:
+                frequency_adjustment = self._calculate_frequency_adjustment(self.env.positions_count)
+                position_size_pct *= frequency_adjustment['position_size_multiplier']
+                stop_loss_pct *= frequency_adjustment['sl_multiplier']
+                take_profit_pct *= frequency_adjustment['tp_multiplier']
+
             return {
                 'stop_loss_pct': stop_loss_pct,
                 'take_profit_pct': take_profit_pct,
@@ -475,6 +604,77 @@ class DynamicBehaviorEngine:
                 'risk_level': 1.0,
             }
 
+    def _calculate_frequency_adjustment(self, positions_count: Dict[str, int]) -> Dict[str, float]:
+        """
+        Calcule les ajustements de paramètres basés sur la fréquence des positions.
+
+        Args:
+            positions_count: Dictionnaire avec les compteurs par timeframe
+
+        Returns:
+            Dict avec les multiplicateurs d'ajustement
+        """
+        if not self.frequency_config:
+            return {'position_size_multiplier': 1.0, 'sl_multiplier': 1.0, 'tp_multiplier': 1.0}
+
+        adjustment = {'position_size_multiplier': 1.0, 'sl_multiplier': 1.0, 'tp_multiplier': 1.0}
+
+        # Vérifier chaque timeframe individuellement
+        for timeframe in ['5m', '1h', '4h']:
+            if timeframe in self.frequency_config:
+                tf_config = self.frequency_config[timeframe]
+                min_pos = tf_config.get('min_positions', 0)
+                max_pos = tf_config.get('max_positions', 999)
+                current_count = positions_count.get(timeframe, 0)
+
+                # Ajustements en fonction du régime de marché et de la fréquence
+                if current_count < min_pos:
+                    # Pas assez de positions : encourager plus de trades
+                    if self.current_regime == 'bull':
+                        adjustment['position_size_multiplier'] *= 1.1  # Augmenter taille position
+                        adjustment['sl_multiplier'] *= 1.05  # SL moins strict
+                    elif self.current_regime == 'neutral':
+                        adjustment['position_size_multiplier'] *= 1.05
+                    # En bear, rester conservateur même si pas assez de positions
+
+                elif current_count > max_pos:
+                    # Trop de positions : limiter les trades
+                    adjustment['position_size_multiplier'] *= 0.8  # Réduire taille
+                    adjustment['sl_multiplier'] *= 0.9  # SL plus strict pour fermer plus vite
+                    adjustment['tp_multiplier'] *= 0.95  # TP plus court
+
+        # Ajustement pour le total journalier
+        total_min = self.frequency_config.get('total_daily_min', 5)
+        total_max = self.frequency_config.get('total_daily_max', 15)
+        daily_total = positions_count.get('daily_total', 0)
+
+        if daily_total < total_min:
+            # Encourager plus de trades au global
+            adjustment['position_size_multiplier'] *= 1.1
+            if self.current_regime in ['bull', 'neutral']:
+                adjustment['sl_multiplier'] *= 1.1  # SL moins strict
+        elif daily_total > total_max:
+            # Limiter les trades au global
+            adjustment['position_size_multiplier'] *= 0.7
+            adjustment['sl_multiplier'] *= 0.8  # SL plus strict
+            adjustment['tp_multiplier'] *= 0.9   # TP plus court
+
+        # S'assurer que les ajustements restent dans des bornes raisonnables
+        adjustment['position_size_multiplier'] = np.clip(adjustment['position_size_multiplier'], 0.3, 2.0)
+        adjustment['sl_multiplier'] = np.clip(adjustment['sl_multiplier'], 0.5, 1.5)
+        adjustment['tp_multiplier'] = np.clip(adjustment['tp_multiplier'], 0.7, 1.5)
+
+        return adjustment
+
+    def set_env_reference(self, env):
+        """
+        Définit la référence à l'environnement pour accéder aux compteurs de fréquence.
+
+        Args:
+            env: Instance de MultiAssetChunkedEnv
+        """
+        self.env = env
+
     def deep_update(self, d, u):
         for k, v in u.items():
             if isinstance(v, dict):
@@ -483,169 +683,6 @@ class DynamicBehaviorEngine:
                 d[k] = v
         return d
 
-    def update(self, dbe_config):
-        self.deep_update(self.config, dbe_config)
-
-        # Merge the provided config argument, which takes the highest precedence
-        if config:
-            self.config.update(config)
-
-        # Initialisation du gestionnaire financier
-        self.finance_manager = finance_manager
-
-        # État interne
-        self.state = {
-            'current_step': 0,
-            'drawdown': 0.0,
-            'winrate': 0.0,
-            'volatility': 0.0,
-            'market_regime': 'NEUTRAL',
-            'last_trade_pnl': 0.0,
-            'consecutive_losses': 0,
-            'position_duration': 0,
-            'current_risk_level': 1.0,  # Niveau de risque initial (1.0 = neutre)
-            'max_risk_level': 2.0,
-            'min_risk_level': 0.5,
-            'last_modulation': {},
-            'performance_metrics': {}
-        }
-
-        # Historique des trades et des décisions
-        self.trade_history: List[Dict[str, Any]] = []
-        self.decision_history: List[DBESnapshot] = []
-        self.win_rates = []
-        self.drawdowns = []
-        self.position_durations = []
-        self.pnl_history = []
-        self.trade_results = []
-
-        # Initialisation du logger de relecture
-        log_config = self.config.get('logging', {})
-        self.logger = ReplayLogger(
-            log_dir=log_config.get('log_dir', 'logs/dbe'),
-            compression=log_config.get('compression', 'gzip')
-        )
-
-        # Configuration du niveau de log
-        log_level = log_config.get('log_level', 'INFO').upper()
-        logging.getLogger().setLevel(getattr(logging, log_level))
-
-        # Initialisation des paramètres de lissage
-        self.smoothing_factor = self.config.get('smoothing_factor', 0.1)  # Facteur de lissage exponentiel
-        self.smoothed_params = {
-            'sl_pct': self.config.get('risk_parameters', {}).get('base_sl_pct', 0.02),
-            'tp_pct': self.config.get('risk_parameters', {}).get('base_tp_pct', 0.04)
-        }
-
-        # Configuration de la persistance d'état
-        self.state_persistence_enabled = config.get('state_persistence', {}).get('enabled', True) if config else True
-        self.state_save_path = config.get('state_persistence', {}).get('save_path', 'logs/dbe/state') if config else 'logs/dbe/state'
-        self.state_save_interval = config.get('state_persistence', {}).get('save_interval', 100) if config else 100
-
-        logger.info("🚀 Dynamic Behavior Engine initialisé (version avancée)")
-        logger.info(f"Configuration: {json.dumps(self._serialize_config(), indent=2)}")
-        logger.info(f"Persistance d'état: {'Activée' if self.state_persistence_enabled else 'Désactivée'}")
-
-    def _serialize_config(self) -> Dict[str, Any]:
-        """Sérialise la configuration pour le logging."""
-        # Crée une copie profonde pour éviter de modifier la configuration originale
-        config = self.config.copy()
-
-        # Éviter de logger des informations sensibles
-        if 'api_keys' in config:
-            config['api_keys'] = {k: '***' for k in config['api_keys']}
-
-        return config
-
-    def update_state(self, live_metrics: Dict[str, Any]) -> None:
-        """
-        Met à jour l'état interne du DBE avec les dernières métriques.
-
-        Args:
-            live_metrics: Dictionnaire des métriques en temps réel
-        """
-        try:
-            # Mise à jour des métriques de base
-            self.state['current_step'] += 1
-            self.state['volatility'] = live_metrics.get('volatility', 0.0)
-
-            # Détection du régime de marché avec les paramètres individuels pour le cache
-            rsi = live_metrics.get('rsi')
-            adx = live_metrics.get('adx')
-            ema_ratio = live_metrics.get('ema_ratio')
-            atr = live_metrics.get('atr', 0.0)
-            atr_pct = live_metrics.get('atr_pct')
-
-            self.state['market_regime'] = self._detect_market_regime(
-                rsi=rsi, adx=adx, ema_ratio=ema_ratio, atr=atr, atr_pct=atr_pct
-            )
-
-            # Mise à jour des métriques de performance si le gestionnaire financier est disponible
-            if self.finance_manager:
-                portfolio_metrics = self.finance_manager.get_performance_metrics()
-                self.state['winrate'] = portfolio_metrics.get('win_rate', 0.0)
-                self.state['drawdown'] = portfolio_metrics.get('max_drawdown', 0.0) * 100  # En pourcentage
-
-                # Mise à jour de l'historique des trades
-                if 'recent_trades' in portfolio_metrics:
-                    self.trade_history.extend(portfolio_metrics['recent_trades'])
-
-                    # Mise à jour des pertes consécutives
-                    recent_trades = portfolio_metrics['recent_trades']
-                    if recent_trades and not recent_trades[-1].get('is_win', False):
-                        self.state['consecutive_losses'] += 1
-                    else:
-                        self.state['consecutive_losses'] = 0
-
-            # Ajustement du niveau de risque en fonction des performances
-            self._adjust_risk_level()
-
-            # Adaptation du facteur de lissage
-            self._adapt_smoothing_factor()
-
-            # Journalisation de l'état actuel
-            logger.debug(f"État DBE mis à jour - Régime: {self.state['market_regime']}, "
-                       f"Risque: {self.state['current_risk_level']:.2f}, "
-                       f"Winrate: {self.state['winrate']*100:.1f}%")
-
-        except Exception as e:
-            logger.error(f"Erreur lors de la mise à jour de l'état du DBE: {e}", exc_info=True)
-            raise
-
-    def _process_trade_result(self, trade_result: Dict[str, Any]) -> None:
-        """Traite le résultat d'un trade et met à jour les métriques."""
-        self.state['last_trade_pnl'] = trade_result.get('pnl_pct', 0.0)
-
-        # Mise à jour du nombre de pertes consécutives
-        if trade_result.get('pnl_pct', 0) <= 0:
-            self.state['consecutive_losses'] += 1
-        else:
-            self.state['consecutive_losses'] = 0
-
-        # Mise à jour de la durée de position
-        if 'position_duration' in trade_result:
-            self.position_durations.append(trade_result['position_duration'])
-            self.state['position_duration'] = np.mean(self.position_durations[-100:]) if self.position_durations else 0
-
-        # Mise à jour du taux de réussite
-        if 'is_win' in trade_result:
-            self.win_rates.append(1 if trade_result['is_win'] else 0)
-            self.state['winrate'] = np.mean(self.win_rates[-100:]) if self.win_rates else 0.0
-
-        # Mise à jour du drawdown
-        if 'drawdown' in trade_result:
-            self.drawdowns.append(trade_result['drawdown'])
-            self.state['drawdown'] = np.mean(self.drawdowns[-100:]) if self.drawdowns else 0.0
-
-        # Ajout à l'historique des trades
-        self.trade_history.append({
-            'timestamp': datetime.utcnow(),
-            'pnl_pct': trade_result.get('pnl_pct', 0.0),
-            'is_win': trade_result.get('is_win', False),
-            'position_duration': trade_result.get('position_duration', 0),
-            'drawdown': trade_result.get('drawdown', 0.0),
-            'market_regime': self.state['market_regime']
-        })
 
     @property
     def market_regime(self) -> str:
@@ -662,51 +699,49 @@ class DynamicBehaviorEngine:
         """Get current risk level."""
         return self.state.get('current_risk_level', 1.0)
 
-    def save_state(self, filepath: str) -> None:
-        """Save the current state to a file."""
-        state_data = {
-            'state': self.state,
-            'trade_history': self.trade_history,
-            'decision_history': [vars(snapshot) for snapshot in self.decision_history],
-            'win_rates': self.win_rates,
-            'drawdowns': self.drawdowns,
-            'position_durations': self.position_durations
-        }
-
-        with open(filepath, 'wb') as f:
-            pickle.dump(state_data, f)
-
-        logger.info(f"DBE state saved to {filepath}")
-
-    def load_state(self, filepath: str) -> None:
-        """Load state from a file."""
-        with open(filepath, 'rb') as f:
-            state_data = pickle.load(f)
-
-        self.state = state_data['state']
-        self.trade_history = state_data['trade_history']
-        self.decision_history = [DBESnapshot(**snapshot) for snapshot in state_data['decision_history']]
-        self.win_rates = state_data['win_rates']
-        self.drawdowns = state_data['drawdowns']
-        self.position_durations = state_data['position_durations']
-
-        logger.info(f"DBE state loaded from {filepath}")
-
-    def get_status(self) -> str:
-        """Get current status as a formatted string."""
-        return f"DBE Status - Step: {self.current_step}, Regime: {self.market_regime}, Risk: {self.risk_level:.2f}"
 
     def on_trade_closed(self, trade_result: Dict[str, Any]) -> None:
         """Process a closed trade result."""
         self._process_trade_result(trade_result)
 
-    def compute_dynamic_modulation(self) -> Dict[str, Any]:
+    def compute_dynamic_modulation(self, env=None) -> Dict[str, Any]:
         """
         Calcule la modulation dynamique des paramètres de trading.
+
+        Args:
+            env: Environment instance for accessing frequency counts and other data
 
         Returns:
             Dictionnaire contenant les paramètres modulés
         """
+        # Generate correlation_id for this DBE decision
+        correlation_id = str(uuid.uuid4())
+        # Check if state exists, initialize if not
+        if not hasattr(self, 'state') or self.state is None:
+            logger.error(f"[DBE Worker {self.worker_id}] CRITICAL: State lost in compute_dynamic_modulation! Forcing emergency initialization")
+            self.state = {
+                'current_step': 0,
+                'market_regime': 'NEUTRAL',
+                'current_risk_level': 1.0,
+                'winrate': 0.0,
+                'win_rate': 0.0,
+                'drawdown': 0.0,
+                'volatility': 0.0,
+                'consecutive_losses': 0,
+                'position_duration': 0,
+                'last_trade_pnl': 0.0,
+                'trend_strength': 0.0,
+                'last_modulation': {},
+                'performance_metrics': {},
+                'emergency_init': True,
+                'emergency_init_time': time.time()
+            }
+        else:
+            logger.debug(f"[DBE Worker {self.worker_id}] State preserved, step: {self.state.get('current_step', 0)}")
+
+        # Log decision (filtrage fait dans log_info)
+        self.log_info(f"[DBE_DECISION] Computing dynamic modulation - Regime: {self.state.get('market_regime', 'unknown')}, Volatility: {self.state.get('volatility', 0.0)}, Step: {self.state.get('current_step', 0)}")
+
         try:
             # Initialisation des paramètres de base
             mod = {
@@ -727,6 +762,10 @@ class DynamicBehaviorEngine:
 
             # Application des modulations spécifiques au régime de marché
             self._apply_market_regime_modulation(mod)
+
+            # Ajustement agressif de la taille de position basé sur la fréquence
+            if env is not None:
+                self._adjust_position_size_aggressively(mod, env)
 
             # Ajustement des paramètres d'apprentissage
             self._adjust_learning_parameters(mod)
@@ -781,6 +820,58 @@ class DynamicBehaviorEngine:
         mod['tp_pct'] *= mode_config.get('tp_multiplier', 1.0)
         mod['position_size_pct'] *= mode_config.get('position_size_multiplier', 1.0)
         mod['risk_mode'] = regime
+
+    def _adjust_position_size_aggressively(self, mod: Dict[str, Any], env) -> None:
+        """Ajuste la taille de position de manière agressive pour forcer plus de trades."""
+        regime = self.detect_regime()
+
+        # Get frequency configuration and counts
+        frequency_config = env.config.get('trading_rules', {}).get('frequency', {})
+        positions_count = getattr(env, 'positions_count', {})
+        last_trade_step = getattr(env, 'last_trade_step', {})
+        current_step = getattr(env, 'current_step', 0)
+
+        # Base position size
+        base_position_size = mod.get('position_size_pct', 0.1) * 100  # Convert to percentage
+
+        for tf in ['5m', '1h', '4h']:
+            count = positions_count.get(tf, 0)
+            min_pos = frequency_config.get('min_positions', {}).get(tf, 1)
+            steps_since_last_trade = current_step - last_trade_step.get(tf, 0)
+            force_trade_steps = frequency_config.get('force_trade_steps', 50)
+
+            # Aggressive position size adjustments
+            if count < min_pos and regime in ['bull', 'neutral'] and steps_since_last_trade > force_trade_steps:
+                base_position_size = min(base_position_size * 1.3, 100.0)  # Increase by 30%
+                logger.info(f"[DBE_POSITION Worker {getattr(self, 'worker_id', 0)}] Increasing position size by 30% for {tf} - insufficient trades")
+            elif count > frequency_config.get('max_positions', {}).get(tf, 10) and regime == 'bear':
+                base_position_size = max(base_position_size * 0.7, 10.0)  # Decrease by 30%
+                logger.info(f"[DBE_POSITION Worker {getattr(self, 'worker_id', 0)}] Decreasing position size by 30% for {tf} - excessive trades")
+
+        # Update the modulation
+        mod['position_size_pct'] = base_position_size / 100.0  # Convert back to decimal
+
+        # Log the decision
+        logger.info(f"[DBE_DECISION Worker {getattr(self, 'worker_id', 0)}] Step: {current_step} | Regime: {regime} | "
+                   f"SL: {mod.get('sl_pct', 0.02)*100:.2f}% | TP: {mod.get('tp_pct', 0.04)*100:.2f}% | "
+                   f"PosSize: {base_position_size:.1f}% | Counts: {positions_count}")
+
+    def detect_regime(self):
+        """Detect current market regime."""
+        # Simple regime detection - can be enhanced with actual market data
+        if hasattr(self.state, 'market_regime'):
+            return self.state.get('market_regime', 'neutral').lower()
+
+        # Fallback regime detection based on performance
+        performance = self.state.get('performance_metrics', {})
+        winrate = performance.get('win_rate', 50.0)
+
+        if winrate > 60:
+            return 'bull'
+        elif winrate < 40:
+            return 'bear'
+        else:
+            return 'neutral'
 
     def _adjust_learning_parameters(self, mod: Dict[str, Any]) -> None:
         """Ajuste les paramètres d'apprentissage en fonction du risque."""
@@ -883,7 +974,7 @@ class DynamicBehaviorEngine:
             }
         )
 
-        logger.info(
+        self.log_info(
             f"DBE Decision - Step: {snapshot.step} | "
             f"Regime: {snapshot.market_regime} | "
             f"SL: {snapshot.sl_pct*100:.2f}% | "
@@ -953,7 +1044,11 @@ class DynamicBehaviorEngine:
 
             # Récupération des métriques de performance
             portfolio_metrics = self.finance_manager.get_performance_metrics() if self.finance_manager else {}
-            win_rate = portfolio_metrics.get('win_rate', self.state['win_rate'])
+            raw_win_rate = portfolio_metrics.get('win_rate', self.state['win_rate'])
+            # Assurer que le win_rate est entre 0 et 1 (pas en pourcentage)
+            if raw_win_rate > 1.0:  # Si en pourcentage, convertir
+                raw_win_rate = raw_win_rate / 100.0
+            win_rate = min(1.0, max(0.0, raw_win_rate))
             drawdown = portfolio_metrics.get('drawdown', self.state['drawdown'])
 
             # Facteurs d'ajustement du risque
@@ -1061,7 +1156,7 @@ class DynamicBehaviorEngine:
             },
             'trading': {
                 'total_trades': portfolio_metrics.get('trade_count', 0),
-                'win_rate': portfolio_metrics.get('win_rate', 0.0) * 100,  # en pourcentage
+                'win_rate': min(100.0, max(0.0, portfolio_metrics.get('win_rate', 0.0) * 100)),  # en pourcentage, clippé
                 'avg_win_pct': avg_win * 100,  # en pourcentage
                 'avg_loss_pct': avg_loss * 100,  # en pourcentage
                 'win_loss_ratio': win_loss_ratio,
@@ -1103,7 +1198,7 @@ class DynamicBehaviorEngine:
         if std_dev < 1e-9:
             return 0.0
 
-        sharpe = np.mean(excess_returns) / std_dev * np.sqrt(252)
+        sharpe = np.mean(excess_returns) / std_dev * np.sqrt(365)  # 365 days for crypto (24/7 trading)
         return float(sharpe)
 
     @lru_cache(maxsize=128)
@@ -1210,7 +1305,7 @@ class DynamicBehaviorEngine:
             with open(filepath, 'wb') as f:
                 pickle.dump(state, f)
 
-            logger.info(f"État du DBE sauvegardé dans {filepath}")
+            self.log_info(f"État du DBE sauvegardé dans {filepath}")
             return True
 
         except Exception as e:
@@ -1244,7 +1339,7 @@ class DynamicBehaviorEngine:
             dbe.drawdowns = state.get('drawdowns', [])
             dbe.position_durations = state.get('position_durations', [])
 
-            logger.info(f"État du DBE chargé depuis {filepath}")
+            self.log_info(f"État du DBE chargé depuis {filepath}")
             return dbe
 
         except Exception as e:
@@ -1319,51 +1414,28 @@ class DynamicBehaviorEngine:
         if self.finance_manager:
             self.finance_manager.reset()
 
-        logger.info("DBE réinitialisé")
+        self.log_info("DBE réinitialisé")
 
     def reset_for_new_chunk(self, continuity=True):
-        """
-        Réinitialise le DBE pour un nouveau chunk avec contrôle de continuité.
-
-        Args:
-            continuity: Si True, préserve l'historique pour accumulation d'expérience.
-                       Si False, fait un reset complet (ancien comportement).
-        """
         if continuity:
-            logger.info("[DBE CONTINUITY] Garder histoire – Append only, no reset.")
-
-            # Préserver TOUTE l'expérience accumulée (volatility_history, régimes, etc.)
-            # Seulement reset des métriques temporaires du step/chunk actuel
-            self.state['current_step'] = 0
-            self.state['last_trade_pnl'] = 0.0
-            self.state['position_duration'] = 0
-
-            # GARDER: volatility_history, regime, trade_history, win_rates, etc.
-            # GARDER: smoothed_params, current_risk_level pour continuité
-
-            # Étendre l'historique au lieu de le resetter
-            if hasattr(self, 'new_vol_data') and self.new_vol_data:
-                if not hasattr(self, 'volatility_history'):
-                    self.volatility_history = []
-                self.volatility_history.extend(self.new_vol_data)
-                self.new_vol_data = []  # Clear new data after appending
-
-            # Garantir que volatility_history existe
-            if not hasattr(self, 'volatility_history'):
-                self.volatility_history = []
-
-            # Stocker la volatilité actuelle si disponible
-            current_vol = self.state.get('volatility', 0.0)
-            if current_vol > 0.0 and (not self.volatility_history or self.volatility_history[-1] != current_vol):
-                self.volatility_history.append(current_vol)
-                logger.debug(f"[VOL ACCUMULATION] Volatilité ajoutée: {current_vol:.4f}")
-
-            logger.info(f"[DBE CONTINUITY] Histoire préservée. Vol history: {len(getattr(self, 'volatility_history', []))} points")
-
+            # Only log from primary worker to avoid duplication
+            worker_id = getattr(self, 'worker_id', 0)
+            self.log_info("[DBE CONTINUITY] Préservation historique – Append volatility_history.")
+            if hasattr(self, 'new_vol_data'):
+                self.volatility_history.extend(self.new_vol_data)  # Accumule données
+            # Pas de reset pour regime, sl, tp, etc.
         else:
-            # Ancien reset (garder pour hard reset rare)
-            logger.info("[DBE FULL RESET] Reset complet de l'expérience")
-            self._reset_for_new_chunk_legacy()
+            # Réservé pour reset complet (rare)
+            # Only log from primary worker to avoid duplication
+            worker_id = getattr(self, 'worker_id', 0)
+            if hasattr(self, 'smart_logger'):
+                self.smart_logger.smart_warning(logger, "[DBE FULL RESET] Réinitialisation complète – Perte historique.")
+            else:
+                logger.warning(f"[Worker {worker_id}] [DBE FULL RESET] Réinitialisation complète – Perte historique.")
+            self.volatility_history = []
+            self.regime = 'neutral'
+            self.sl_pct = 0.02
+            self.tp_pct = 0.0394
 
     def _reset_for_new_chunk_legacy(self) -> None:
         """
@@ -1384,7 +1456,7 @@ class DynamicBehaviorEngine:
             self.trade_history = []
         self.current_regime = 'neutral'
 
-        logger.info("🔄 DBE: Reset complet effectué (perte d'expérience)")
+        self.log_info("🔄 DBE: Reset complet effectué (perte d'expérience)")
 
     def _adapt_smoothing_factor(self) -> None:
         """
@@ -1468,6 +1540,8 @@ class DynamicBehaviorEngine:
             logger.debug(f"[DBE_CALC] Intervalle d'exposition: min={min_position_pct:.2%}, max={max_position_pct:.2%}")
 
             position_pct = min_position_pct + (max_position_pct - min_position_pct) * aggressivity
+            # Clip PosSize between 5% and 80%
+            position_pct = np.clip(position_pct, 0.05, 0.80)
             logger.debug(f"[DBE_CALC] Taille de position (basée sur l'agressivité): {position_pct:.2%}")
 
             max_position = tier_config.get('max_position_size_pct', 0.5) / 100.0
@@ -1702,16 +1776,12 @@ class DynamicBehaviorEngine:
 
         # Application de la mise à jour
         deep_update(self.config, new_config)
-        logger.info("Configuration du DBE mise à jour")
+        self.log_info("Configuration du DBE mise à jour")
 
         # Mise à jour du niveau de log si nécessaire
         if 'logging' in new_config and 'log_level' in new_config['logging']:
             log_level = new_config['logging']['log_level'].upper()
             logging.getLogger().setLevel(getattr(logging, log_level))
-
-    def __del__(self):
-        if hasattr(self, 'dbe_log_file') and not self.dbe_log_file.closed:
-            self.dbe_log_file.close()
 
     def _compute_risk_parameters(self, state: Dict[str, Any], mod: Dict[str, Any]) -> None:
         """
@@ -1983,7 +2053,7 @@ class DynamicBehaviorEngine:
             'chunk_optimal_pnl': 0.0,
             'position_size_pct': self.config.get('position_sizing', {}).get('base_position_size', 0.1)
         })
-        logger.info("🔄 DBE: Nouveau chunk - réinitialisation des métriques")
+        self.log_info("🔄 DBE: Nouveau chunk - réinitialisation des métriques")
 
     def _log_dbe_state(self, modulation: Dict[str, Any]) -> None:
         """

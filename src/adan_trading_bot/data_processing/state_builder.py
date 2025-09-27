@@ -17,6 +17,14 @@ from typing import Dict, List, Tuple, Any, Optional, Union
 import psutil
 from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
+# Import pour le calcul des indicateurs techniques
+try:
+    import pandas_ta as ta
+    PANDAS_TA_AVAILABLE = True
+except ImportError:
+    PANDAS_TA_AVAILABLE = False
+    logger.warning("pandas_ta non disponible - calcul manuel des indicateurs techniques")
+
 # Imports pour les fonctionnalités avancées
 try:
     from arch import arch_model
@@ -33,6 +41,151 @@ except ImportError:
     logger.warning("pykalman package non disponible - fonctionnalités Kalman désactivées")
 
 logger = logging.getLogger(__name__)
+
+
+def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calcule les indicateurs techniques manquants à partir des données OHLCV.
+
+    Args:
+        df: DataFrame avec au minimum les colonnes OPEN, HIGH, LOW, CLOSE, VOLUME
+
+    Returns:
+        DataFrame avec les indicateurs techniques ajoutés
+    """
+    try:
+        # Copier le DataFrame pour éviter de modifier l'original
+        result_df = df.copy()
+
+        # S'assurer que les colonnes de base existent (vérifier d'abord en minuscules puis majuscules)
+        required_cols = ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']
+        lowercase_cols = ['open', 'high', 'low', 'close', 'volume']
+
+
+
+        # Vérifier les colonnes encore manquantes
+        missing_basic = [col for col in required_cols if col not in result_df.columns]
+
+        if missing_basic:
+            logger.warning(f"Colonnes OHLCV manquantes pour calculer les indicateurs: {missing_basic}")
+            # Utiliser CLOSE comme substitut si disponible
+            if 'CLOSE' in result_df.columns:
+                for col in missing_basic:
+                    if col != 'CLOSE':
+                        result_df[col] = result_df['CLOSE']
+            else:
+                logger.error("Impossible de calculer les indicateurs - aucune donnée de prix disponible")
+                return result_df
+
+        # Calculer RSI (14 périodes)
+        if 'RSI_14' not in result_df.columns:
+            if PANDAS_TA_AVAILABLE:
+                result_df['RSI_14'] = ta.rsi(result_df['CLOSE'], length=14)
+            else:
+                # Calcul manuel du RSI
+                delta = result_df['CLOSE'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss
+                result_df['RSI_14'] = 100 - (100 / (1 + rs))
+
+        # Calculer MACD
+        if 'MACD_HIST_12_26_9' not in result_df.columns:
+            if PANDAS_TA_AVAILABLE:
+                macd_data = ta.macd(result_df['CLOSE'], fast=12, slow=26, signal=9)
+                result_df['MACD_HIST_12_26_9'] = macd_data['MACDh_12_26_9']
+            else:
+                # Calcul manuel MACD
+                ema_12 = result_df['CLOSE'].ewm(span=12).mean()
+                ema_26 = result_df['CLOSE'].ewm(span=26).mean()
+                macd_line = ema_12 - ema_26
+                signal_line = macd_line.ewm(span=9).mean()
+                result_df['MACD_HIST_12_26_9'] = macd_line - signal_line
+
+        # Calculer ATR (14 périodes)
+        if 'ATR_14' not in result_df.columns:
+            if PANDAS_TA_AVAILABLE:
+                result_df['ATR_14'] = ta.atr(result_df['HIGH'], result_df['LOW'], result_df['CLOSE'], length=14)
+            else:
+                # Calcul manuel ATR
+                high_low = result_df['HIGH'] - result_df['LOW']
+                high_close_prev = np.abs(result_df['HIGH'] - result_df['CLOSE'].shift(1))
+                low_close_prev = np.abs(result_df['LOW'] - result_df['CLOSE'].shift(1))
+                true_range = np.maximum(high_low, np.maximum(high_close_prev, low_close_prev))
+                result_df['ATR_14'] = true_range.rolling(window=14).mean()
+
+        # Calculer les Bandes de Bollinger (20 périodes, 2 std)
+        if not all(col in result_df.columns for col in ['BB_UPPER', 'BB_MIDDLE', 'BB_LOWER']):
+            if PANDAS_TA_AVAILABLE:
+                bb_data = ta.bbands(result_df['CLOSE'], length=20, std=2)
+                result_df['BB_UPPER'] = bb_data['BBU_20_2.0']
+                result_df['BB_MIDDLE'] = bb_data['BBM_20_2.0']
+                result_df['BB_LOWER'] = bb_data['BBL_20_2.0']
+            else:
+                # Calcul manuel des Bandes de Bollinger
+                sma_20 = result_df['CLOSE'].rolling(window=20).mean()
+                std_20 = result_df['CLOSE'].rolling(window=20).std()
+                result_df['BB_MIDDLE'] = sma_20
+                result_df['BB_UPPER'] = sma_20 + (2 * std_20)
+                result_df['BB_LOWER'] = sma_20 - (2 * std_20)
+
+        # Calculer EMA 12 périodes
+        if 'EMA_12' not in result_df.columns:
+            if PANDAS_TA_AVAILABLE:
+                result_df['EMA_12'] = ta.ema(result_df['CLOSE'], length=12)
+            else:
+                result_df['EMA_12'] = result_df['CLOSE'].ewm(span=12).mean()
+
+        # Calculer EMA 26 périodes
+        if 'EMA_26' not in result_df.columns:
+            if PANDAS_TA_AVAILABLE:
+                result_df['EMA_26'] = ta.ema(result_df['CLOSE'], length=26)
+            else:
+                result_df['EMA_26'] = result_df['CLOSE'].ewm(span=26).mean()
+
+        # Calculer SMA 20 périodes
+        if 'SMA_20' not in result_df.columns:
+            if PANDAS_TA_AVAILABLE:
+                result_df['SMA_20'] = ta.sma(result_df['CLOSE'], length=20)
+            else:
+                result_df['SMA_20'] = result_df['CLOSE'].rolling(window=20).mean()
+
+        # Calculer ADX 14 périodes
+        if 'ADX_14' not in result_df.columns:
+            if PANDAS_TA_AVAILABLE:
+                adx_data = ta.adx(result_df['HIGH'], result_df['LOW'], result_df['CLOSE'], length=14)
+                result_df['ADX_14'] = adx_data['ADX_14']
+            else:
+                # Calcul manuel simplifié du ADX (approximation)
+                high_low = result_df['HIGH'] - result_df['LOW']
+                high_close = np.abs(result_df['HIGH'] - result_df['CLOSE'].shift(1))
+                low_close = np.abs(result_df['LOW'] - result_df['CLOSE'].shift(1))
+                true_range = np.maximum(high_low, np.maximum(high_close, low_close))
+
+                plus_dm = np.where((result_df['HIGH'].diff() > result_df['LOW'].diff().abs()) & (result_df['HIGH'].diff() > 0),
+                                 result_df['HIGH'].diff(), 0)
+                minus_dm = np.where((result_df['LOW'].diff().abs() > result_df['HIGH'].diff()) & (result_df['LOW'].diff() < 0),
+                                  result_df['LOW'].diff().abs(), 0)
+
+                tr_smooth = pd.Series(true_range).rolling(window=14).mean()
+                plus_di = 100 * (pd.Series(plus_dm).rolling(window=14).mean() / tr_smooth)
+                minus_di = 100 * (pd.Series(minus_dm).rolling(window=14).mean() / tr_smooth)
+
+                dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+                result_df['ADX_14'] = dx.rolling(window=14).mean()
+
+        # Remplacer les NaN par forward fill puis backward fill
+        result_df = result_df.fillna(method='ffill').fillna(method='bfill')
+
+        # Si il reste encore des NaN, les remplacer par 0
+        result_df = result_df.fillna(0)
+
+        logger.debug(f"Indicateurs techniques calculés. Colonnes finales: {result_df.columns.tolist()}")
+        return result_df
+
+    except Exception as e:
+        logger.error(f"Erreur lors du calcul des indicateurs techniques: {str(e)}")
+        return df
 
 
 def _force_canonical_output(market_arr, portfolio_arr, expected_market_shape=None,
@@ -2616,9 +2769,8 @@ class StateBuilder:
             asset_dfs = []
             for asset in data:
                 if tf in data[asset] and not data[asset][tf].empty:
-                    # S'assurer que toutes les colonnes sont en majuscules
+                    # Copier les données sans modifier la casse des colonnes
                     df = data[asset][tf].copy()
-                    df.columns = [col.upper() for col in df.columns]
                     asset_dfs.append(df)
 
             if not asset_dfs:
@@ -2634,31 +2786,48 @@ class StateBuilder:
                            tf, df.shape, df.columns.tolist())
 
                 # 3. Identifier les colonnes manquantes par rapport aux fonctionnalités attendues
-                # Convertir les noms de colonnes en majuscules pour la correspondance
-                df_columns_upper = [str(col).upper() for col in df.columns]
-                df_columns_set = set(df_columns_upper)
+                # Comparaison insensible à la casse
+                df_columns_lower = {str(col).lower(): str(col) for col in df.columns}
+                expected_features_lower = {feat.lower(): feat for feat in expected_features}
 
-                # Créer un mapping entre les noms de colonnes originaux et en majuscules
-                column_mapping = {str(col).upper(): col for col in df.columns}
+                # Identifier les colonnes disponibles et manquantes
+                available_lower = set(expected_features_lower.keys()) & set(df_columns_lower.keys())
+                missing_lower = set(expected_features_lower.keys()) - set(df_columns_lower.keys())
 
-                missing_cols = set(expected_features) - df_columns_set
-                available_cols = set(expected_features) & df_columns_set
+                # Convertir en noms originaux pour les logs
+                available_cols = {expected_features_lower[col_lower] for col_lower in available_lower}
+                missing_cols = {expected_features_lower[col_lower] for col_lower in missing_lower}
 
-                # Journalisation des colonnes manquantes et disponibles
+                # Calculer les indicateurs techniques manquants au lieu de les remplir par des zéros
                 if missing_cols:
-                    logger.warning("Colonnes manquantes dans les données %s: %s. Remplissage par des zéros.",
+                    logger.info("Colonnes manquantes dans les données %s: %s. Calcul des indicateurs techniques...",
                                  tf, missing_cols)
                     logger.debug("Colonnes disponibles: %s", available_cols)
 
+                    # Calculer les indicateurs techniques manquants
+                    df = _calculate_technical_indicators(df)
+
+                    # Mettre à jour les colonnes disponibles après calcul
+                    df_columns_upper = [str(col).upper() for col in df.columns]
+                    df_columns_set = set(df_columns_upper)
+                    missing_cols = set(expected_features) - df_columns_set
+                    available_cols = set(expected_features) & df_columns_set
+
+                    if missing_cols:
+                        logger.warning("Colonnes encore manquantes après calcul des indicateurs %s: %s. Remplissage par des zéros.",
+                                     tf, missing_cols)
+                    else:
+                        logger.info("Tous les indicateurs techniques calculés avec succès pour %s", tf)
+
                 # 4. Exclure le timestamp des features (gestion de la casse)
-                timestamp_col = next((col for col in df.columns if col.upper() == 'TIMESTAMP'), None)
+                timestamp_col = next((col for col in df.columns if col.lower() == 'timestamp'), None)
                 if timestamp_col is not None:
                     timestamps = df[timestamp_col].copy()
                     df = df.drop(columns=[timestamp_col])
                     logger.debug("Timestamp extrait et retiré des features (colonne: %s)", timestamp_col)
                 else:
                     if verbose_log:
-                        logger.warning("Aucune colonne 'timestamp' (insensible à la casse) trouvée dans les données")
+                        logger.debug("Timestamp utilisé depuis l'index DatetimeIndex (pas de colonne timestamp séparée)")
 
                 # 5. Créer un nouveau DataFrame avec les colonnes dans l'ordre attendu
                 # et remplir avec des zéros les colonnes manquantes
@@ -2673,12 +2842,12 @@ class StateBuilder:
                 added_columns = []
 
                 for col in expected_features:
-                    # Vérifier si la colonne existe (en tenant compte de la casse)
-                    col_exists = any(c.upper() == col.upper() for c in df.columns)
+                    # Vérifier si la colonne existe en utilisant le mapping insensible à la casse
+                    col_lower = col.lower()
 
-                    if col_exists:
-                        # Trouver le nom de colonne original (avec la bonne casse)
-                        original_col = next((c for c in df.columns if c.upper() == col.upper()), col)
+                    if col_lower in df_columns_lower:
+                        # Utiliser le nom de colonne original du DataFrame
+                        original_col = df_columns_lower[col_lower]
                         # Copier les données avec conversion en float32
                         processed_data[col] = df[original_col].astype(np.float32)
                         added_columns.append(col)

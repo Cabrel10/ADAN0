@@ -1,624 +1,618 @@
-"""Module implémentant un agent PPO pour le trading algorithmique."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""Agent PPO avec callback d'affichage hiérarchique pour ADAN Trading Bot."""
+
 import logging
 import os
 import time
+import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import torch
-from gym import spaces
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.policies import ActorCriticPolicy
-from stable_baselines3.common.type_aliases import MaybeCallback, Schedule
-from stable_baselines3.common.vec_env import VecEnv
-
-# Suppress unused imports for type checking
-if TYPE_CHECKING:
-    from stable_baselines3.common.vec_env import VecEnv  # noqa: F401
+from stable_baselines3.common.logger import configure as sb3_configure
 
 
-class CustomPPOPolicy(ActorCriticPolicy):
+def setup_logger(log_file: str = "training_log.txt", logger_name: str = 'PPOTraining') -> logging.Logger:
     """
-    Politique personnalisée pour PPO avec vérification des NaN/Inf et journalisation.
-    """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Sera mis à jour par l'agent
-        self._num_timesteps = 0
+    Configuration du logger pour l'entraînement PPO.
 
-    def forward(
+    Args:
+        log_file: Chemin vers le fichier de log
+        logger_name: Nom du logger
+
+    Returns:
+        Logger configuré
+    """
+    logger = logging.getLogger(logger_name)
+
+    # Éviter la duplication des handlers
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(logging.INFO)
+
+    # Handler pour la console
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+
+    # Handler pour le fichier
+    fh = logging.FileHandler(log_file, encoding='utf-8')
+    fh.setLevel(logging.INFO)
+
+    # Format des messages
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    ch.setFormatter(formatter)
+    fh.setFormatter(formatter)
+
+    logger.addHandler(ch)
+    logger.addHandler(fh)
+
+    return logger
+
+
+class HierarchicalTrainingDisplayCallback(BaseCallback):
+    """
+    Callback personnalisé pour un affichage hiérarchique complet de l'entraînement.
+    Affiche les métriques de portfolio, positions, métriques financières et modèle.
+    """
+
+    def __init__(
         self,
-        obs: torch.Tensor,
-        deterministic: bool = False
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        verbose: int = 0,
+        display_freq: int = 1000,
+        total_timesteps: int = 1000000,
+        initial_capital: float = 20.50,
+        log_file: str = "training_log.txt"
+    ):
         """
-        Passe avant avec vérification des NaN/Inf.
-        """
-        # Appel à la méthode forward du parent
-        actions, values, log_prob = super().forward(obs, deterministic)
-
-        # Vérification des NaN/Inf dans les sorties
-        tensors_to_check = [
-            ("features", self.features_extractor(obs)
-             if hasattr(self, 'features_extractor') else None),
-            ("logits", self.action_net(obs)
-             if hasattr(self, 'action_net') else None),
-            ("value", values),
-            ("actions", actions),
-            ("log_prob", log_prob)
-        ]
-
-        for name, tensor in tensors_to_check:
-            if tensor is None:
-                continue
-
-            if torch.isnan(tensor).any() or torch.isinf(tensor).any():
-                logger.error(
-                    f"Policy produced NaN/Inf in {name} at step "
-                    f"(num_timesteps {getattr(self, '_num_timesteps', 'N/A')})"
-                )
-
-                # Sauvegarde des tenseurs pour débogage
-                try:
-                    os.makedirs("nan_debug", exist_ok=True)
-                    timestamp = int(time.time())
-                    np.savez(
-                        f"nan_debug/policy_nan_{name}_{timestamp}.npz",
-                        arr=tensor.detach().cpu().numpy(),
-                        obs=obs.detach().cpu().numpy() if hasattr(obs, 'detach') else obs
-                    )
-                    logger.info(f"Saved debug data to nan_debug/policy_nan_{name}_{timestamp}.npz")
-                except Exception as e:
-                    logger.error(f"Failed to save debug data: {e}")
-
-                # Nettoyage pour éviter les plantages
-                tensor = torch.nan_to_num(tensor, nan=0.0, posinf=1e6, neginf=-1e6)
-
-        return actions, values, log_prob
-
-from ..common.utils import (
-    ensure_dir_exists,
-    get_logger,
-    get_path,
-    safe_serialize,
-    sanitize_ppo_params,
-)
-from .feature_extractors import CustomCNNFeatureExtractor
-
-logger = get_logger(__name__)
-
-def _validate_param(
-    value: Any,
-    name: str,
-    min_val: Optional[float] = None,
-    max_val: Optional[float] = None,
-    default: Optional[float] = None,
-) -> float:
-    """Valide et nettoie un paramètre numérique.
-
-    Args:
-        value: Valeur à valider
-        name: Nom du paramètre pour les messages d'erreur
-        min_val: Valeur minimale autorisée (inclusive)
-        max_val: Valeur maximale autorisée (inclusive)
-        default: Valeur par défaut si la validation échoue
-
-    Returns:
-        float: La valeur validée ou la valeur par défaut
-    """
-    if value is None and default is not None:
-        return float(default)
-    if value is None:
-        raise ValueError(f"{name} cannot be None and no default provided")
-    try:
-        value_float = float(value)
-        if not np.isfinite(value_float):
-            raise ValueError(f"{name} must be a finite number")
-        if min_val is not None and value_float < min_val:
-            logger.warning(
-                "%s (%s) is below minimum value (%s), using %s",
-                name, value_float, min_val, min_val
-            )
-            return float(min_val)
-        if max_val is not None and value_float > max_val:
-            logger.warning(
-                "%s (%s) is above maximum value (%s), using %s",
-                name, value_float, max_val, max_val
-            )
-            return float(max_val)
-        return value_float
-    except (TypeError, ValueError) as e:
-        if default is not None:
-            logger.warning(
-                "Invalid %s: %s. Using default: %s",
-                name, str(e), default
-            )
-            return float(default)
-        raise ValueError(f"Invalid {name}: {e}")
-
-
-
-def _safe_numpy(x: Any) -> Optional[np.ndarray]:
-    """Convert input to numpy array safely, handling various types and NaN/Inf values.
-
-    Args:
-        x: Input to convert (tensor, numpy array, or other)
-    Returns:
-        Numpy array with NaN/Inf values replaced, or None if conversion fails
-    """
-    if x is None:
-        return None
-    try:
-        if isinstance(x, (list, tuple)):
-            x = np.array(x)
-        elif torch.is_tensor(x):
-            x = x.detach().cpu().numpy()
-        elif not isinstance(x, np.ndarray):
-            x = np.array([x])
-        # Replace NaN and Inf with finite values
-        if (np.issubdtype(x.dtype, np.floating) or
-                np.issubdtype(x.dtype, np.complexfloating)):
-            x = np.nan_to_num(x, nan=0.0, posinf=1e6, neginf=-1e6)
-        return x
-    except Exception as e:
-        logger.warning("Failed to convert to numpy: %s", str(e))
-        return None
-
-class NaNMonitorCallback(BaseCallback):
-    """Callback to monitor and debug NaN/Inf values during training.
-    This callback will:
-    1. Check for NaN/Inf in observations, actions, rewards, and model outputs
-    2. Save a snapshot of the training state when NaN/Inf is detected
-    3. Optionally stop training when an issue is found
-    """
-    def __init__(self, save_dir: Union[str, Path], verbose: int = 1, stop_on_nan: bool = False):
-        """Initialize the NaN monitor callback.
-        Args:
-            save_dir: Directory to save debug snapshots
-            verbose: Verbosity level (0: no output, 1: warnings, 2: debug info)
-            stop_on_nan: Whether to stop training when NaN is detected
-        """
-        super().__init__(verbose)
-        self.save_dir = Path(save_dir)
-        self.stop_on_nan = stop_on_nan
-        self.save_dir.mkdir(parents=True, exist_ok=True)
-        # Track NaN sources for better error reporting
-        self.nan_sources = set()
-
-    def _check_tensor(self, name: str, tensor: torch.Tensor, check_finite: bool = True) -> bool:
-        """Vérifie un tenseur pour les valeurs NaN/Inf.
+        Initialise le callback d'affichage hiérarchique.
 
         Args:
-            name: Nom du tenseur pour les logs
-            tensor: Tenseur à vérifier
-            check_finite: Si True, vérifie aussi les valeurs infinies
-
-        Returns:
-            bool: True si le tenseur est valide, False sinon
+            verbose: Niveau de verbosité
+            display_freq: Fréquence d'affichage (en steps)
+            total_timesteps: Nombre total de timesteps pour l'entraînement
+            initial_capital: Capital initial du portfolio
+            log_file: Fichier de log
         """
-        if not isinstance(tensor, torch.Tensor):
-            self.logger.warning(
-                f"{name} is not a torch.Tensor, got {type(tensor)}"
-            )
-            return True
-        has_nan = torch.isnan(tensor).any().item()
-        has_inf = torch.isinf(tensor).any().item() if check_finite else False
-        if has_nan or has_inf:
-            issues = []
-            if has_nan:
-                issues.append("NaN")
-            if has_inf:
-                issues.append("Inf")
-            self.logger.error(
-                f"Invalid values in {name} at step {self.num_timesteps}: "
-                f"{' and '.join(issues)}"
-            )
-            try:
-                os.makedirs("nan_debug", exist_ok=True)
-                dump_path = os.path.join(
-                    "nan_debug", f"{name}_step{self.num_timesteps}.pt"
-                )
-                torch.save({
-                    'tensor': tensor,
-                    'step': self.num_timesteps,
-                    'name': name
-                }, dump_path)
-                self.logger.info(
-                    f"Dumped {name} state to {dump_path}"
-                )
-            except Exception as e:
-                self.logger.error(
-                    f"Failed to dump {name} state: {e}"
-                )
-            return False
-        return True
+        super(HierarchicalTrainingDisplayCallback, self).__init__(verbose)
+        self.display_freq = display_freq
+        self.total_timesteps = total_timesteps
+        self.initial_capital = initial_capital
+        self.correlation_id = str(uuid.uuid4())[:8]
 
-    def _save_debug_snapshot(self, timestep: int) -> None:
-        """Sauvegarde un instantané de débogage lorsqu'une valeur NaN/Inf est détectée.
-        Args:
-            timestep: Numéro du pas de temps actuel
+        # Configurer le logger
+        self.logger = setup_logger(log_file)
+
+        # Métriques de suivi
+        self.episode_rewards = []
+        self.episode_count = 0
+        self.start_time = time.time()
+        self.last_display_time = time.time()
+
+        # Métriques financières
+        self.metrics = {
+            "sharpe": 0.0,
+            "sortino": 0.0,
+            "profit_factor": 0.0,
+            "max_dd": 0.0,
+            "cagr": 0.0,
+            "win_rate": 0.0,
+            "trades": 0,
+            "volatility": 0.0
+        }
+
+        # Positions et portfolio
+        self.positions = {}
+        self.closed_positions = []
+        self.portfolio_value = initial_capital
+        self.drawdown = 0.0
+        self.cash = initial_capital
+
+    def _on_training_start(self) -> None:
+        """Démarrage de l'entraînement avec affichage de la configuration."""
+        self.start_time = time.time()
+        self.last_display_time = self.start_time
+
+        self.logger.info("╭" + "─" * 70 + "╮")
+        self.logger.info("│" + " " * 20 + "🚀 DÉMARRAGE ADAN TRAINING" + " " * 20 + "│")
+        self.logger.info("╰" + "─" * 70 + "╯")
+
+        self.logger.info(f"[TRAINING START] Correlation ID: {self.correlation_id}")
+        self.logger.info(f"[TRAINING START] Total timesteps: {self.total_timesteps:,}")
+        self.logger.info(f"[TRAINING START] Display frequency: {self.display_freq:,} steps")
+        self.logger.info(f"[TRAINING START] Capital initial: ${self.initial_capital:.2f}")
+
+        # Section Configuration Flux Monétaires
+        self.logger.info("╭" + "─" * 25 + " Configuration Flux Monétaires " + "─" * 25 + "╮")
+        self.logger.info(f"│ 💰 Capital Initial: ${self.initial_capital:<40.2f}│")
+        self.logger.info("│ 🎯 Gestion Dynamique des Flux Activée" + " " * 32 + "│")
+        self.logger.info("│ 📊 Monitoring en Temps Réel" + " " * 39 + "│")
+        self.logger.info("│ 🔄 Corrélation ID: " + self.correlation_id + " " * 42 + "│")
+        self.logger.info("╰" + "─" * 82 + "╯")
+
+    def _on_step(self) -> bool:
         """
+        Appelé à chaque étape pour mettre à jour l'affichage et collecter les métriques.
+        """
+        # Collecter les récompenses depuis les informations locales
         try:
-            timestamp = time.strftime("%Y%m%d-%H%M%S")
-            filename = f"nan_debug_{timestamp}_step{timestep}.npz"
-            filepath = os.path.join(self.save_dir, filename)
-            # Préparer les données à sauvegarder
-            data = {
-                'timestep': timestep,
-                'nan_sources': list(self.nan_sources)
-            }
-            # Ajouter les tenseurs disponibles
-            for name in ['obs', 'actions', 'rewards', 'values', 'log_probs']:
-                tensor = self.locals.get(name)
-                tensor_np = _safe_numpy(tensor)
-                if tensor_np is not None:
-                    data[name] = tensor_np
-            # Sauvegarder dans un fichier
-            np.savez_compressed(filepath, **data)
-            if self.verbose > 0:
-                logger.warning(
-                    "NaN/Inf detected in %s. Saved debug snapshot to %s",
-                    ', '.join(self.nan_sources),
-                    filepath
-                )
+            # Récupérer les récompenses depuis les buffers du modèle
+            if hasattr(self.model, 'ep_info_buffer') and len(self.model.ep_info_buffer) > 0:
+                recent_episodes = self.model.ep_info_buffer[-10:]  # 10 derniers épisodes
+                rewards = [ep_info.get('r', 0) for ep_info in recent_episodes if 'r' in ep_info]
+                if rewards:
+                    self.episode_rewards.extend(rewards[-5:])  # Garder les 5 dernières récompenses
+                    if len(self.episode_rewards) > 50:  # Limiter la taille du buffer
+                        self.episode_rewards = self.episode_rewards[-50:]
         except Exception as e:
-            logger.error("Failed to save debug snapshot: %s", e)
+            self.logger.debug(f"Erreur lors de la collecte des récompenses: {e}")
 
-    def _on_step(self) -> bool:
-        """Called at each training step to check for NaN/Inf values."""
-        # Reset nan sources for this step
-        self.nan_sources = set()
-        # Check tensors in locals
-        for name in ['obs', 'actions', 'rewards', 'values', 'log_probs']:
-            tensor = self.locals.get(name)
-            self._check_tensor(name, tensor)
-        # Check model parameters and gradients
-        if hasattr(self.model, 'policy'):
-            for name, param in self.model.policy.named_parameters():
-                if param.grad is not None:
-                    if self._check_tensor(f"grad_{name}", param.grad):
-                        self.nan_sources.add(f"gradient {name}")
-                if self._check_tensor(f"param_{name}", param):
-                    self.nan_sources.add(f"parameter {name}")
-        # If we found any issues, handle them
-        if self.nan_sources:
-            # Get infos from vectorized envs if available
-            infos = self.locals.get('infos', [])
-            if not isinstance(infos, (list, tuple)):
-                infos = [infos]
-            # Add NaN info to environment infos for logging
-            for info in infos:
-                if isinstance(info, dict):
-                    info['nan_detected'] = True
-                    info['nan_sources'] = list(self.nan_sources)
-            # Save debug information
-            self._save_snapshot(infos)
-            # Optionally stop training
-            if self.stop_on_nan:
-                logger.error(f"Stopping training due to NaN/Inf in {', '.join(self.nan_sources)}")
-                return False
+        # Vérifier si un épisode est terminé et afficher la progression
+        if hasattr(self.model, 'ep_info_buffer') and len(self.model.ep_info_buffer) > 0:
+            current_episodes = len(self.model.ep_info_buffer)
+            if current_episodes > self.episode_count:
+                self.episode_count = current_episodes
+                self._display_episode_progress()
+
+        # Affichage hiérarchique périodique
+        if self.num_timesteps % self.display_freq == 0 and self.num_timesteps > 0:
+            self._log_detailed_metrics()
+
         return True
 
-class LearningRateMonitor(BaseCallback):
-    """Callback pour surveiller les taux d'apprentissage pendant l'entraînement."""
-
-    def __init__(self, verbose: int = 0):
-        """Initialise le callback de monitoring du taux d'apprentissage.
-
-        Args:
-            verbose: Niveau de verbosité (0: pas de sortie, 1: avertissements, 2: debug)
-        """
-        super(LearningRateMonitor, self).__init__(verbose)
-
-    def _on_step(self) -> bool:
-        """Appelé à chaque étape d'entraînement pour logger le taux d'apprentissage.
-
-        Returns:
-            bool: Toujours True pour continuer l'entraînement
-        """
-        if self.n_calls % 100 == 0 and hasattr(self.model, 'policy') and \
-           hasattr(self.model.policy, 'optimizer'):
-            for i, g in enumerate(self.model.policy.optimizer.param_groups):
-                logger.debug("LR group %d: %f", i, g['lr'])
-        return True
-
-
-def create_ppo_agent(
-    env: VecEnv,
-    config: Dict[str, Any],
-    policy_kwargs: Optional[Dict[str, Any]] = None,
-    verbose: int = 1,
-    device: str = "auto",
-) -> PPO:
-    """Create and configure a PPO agent with enhanced stability features.
-
-    Args:
-        env: The training environment
-        config: Configuration dictionary containing agent parameters
-        policy_kwargs: Additional arguments to pass to the policy
-        verbose: Verbosity level (0: no output, 1: training info, 2: debug)
-        device: Device to run on ('cpu', 'cuda', 'auto')
-
-    Returns:
-        PPO: Configured PPO agent instance with enhanced stability
-    """
-    # Default policy kwargs with stability enhancements
-    if policy_kwargs is None:
-        policy_kwargs = {}
-    # Get agent config with conservative defaults for stability
-    agent_config = config.get("agent", {})
-    ppo_config = agent_config.get("ppo", {})
-    fx_kwargs_cfg = agent_config.get("features_extractor_kwargs", {})
-
-    # Features extractor configuration
-    features_dim = int(agent_config.get("features_dim", 256))
-    # Pass through cnn_config from YAML if present
-    cnn_config = fx_kwargs_cfg if isinstance(fx_kwargs_cfg, dict) else {}
-    num_input_channels = int(cnn_config.get("input_channels", 3))
-
-    # Ensure policy_kwargs carries extractor settings and sharing
-    policy_kwargs.setdefault("net_arch", {
-        "pi": ppo_config.get("policy_net_arch", [256, 256]),
-        "vf": ppo_config.get("value_net_arch", [256, 256]),
-    })
-    policy_kwargs.setdefault("activation_fn", torch.nn.LeakyReLU)
-    policy_kwargs.setdefault("ortho_init", True)
-    policy_kwargs.setdefault("log_std_init", -0.5)
-    policy_kwargs.setdefault("use_sde", True)
-    policy_kwargs["features_extractor_class"] = CustomCNNFeatureExtractor
-    policy_kwargs["features_extractor_kwargs"] = {
-        "features_dim": features_dim,
-        "num_input_channels": num_input_channels,
-        "cnn_config": cnn_config,
-    }
-    # Unifier: un seul extracteur partagé pour acteur & critique
-    policy_kwargs["share_features_extractor"] = True
-    policy_kwargs.setdefault("optimizer_class", torch.optim.Adam)
-    policy_kwargs.setdefault("optimizer_kwargs", {"eps": 1e-5})
-    policy_kwargs.setdefault("squash_output", False)
-
-    # Get policy type from config (default to MultiInputPolicy for Dict obs)
-    policy_type = agent_config.get('policy_type', None)
-    if policy_type is None:
+    def _display_episode_progress(self) -> None:
+        """Affiche la barre de progression à la fin de chaque épisode."""
         try:
-            from gym import spaces as _spaces
-            if hasattr(env, 'observation_space') and isinstance(env.observation_space, _spaces.Dict):
-                policy_type = 'MultiInputPolicy'
+            progress = (self.num_timesteps / self.total_timesteps) * 100
+
+            # Barre de progression visuelle
+            progress_bar_length = 30
+            filled_length = int(progress_bar_length * progress / 100)
+            bar = "━" * filled_length + "─" * (progress_bar_length - filled_length)
+
+            # Calculer la récompense moyenne récente
+            mean_reward = 0.0
+            if self.episode_rewards:
+                recent_rewards = self.episode_rewards[-10:]
+                mean_reward = np.mean(recent_rewards)
+
+            # Temps écoulé et ETA
+            elapsed = time.time() - self.start_time
+            if progress > 0:
+                eta = (elapsed / progress * 100) - elapsed
+                eta_str = str(timedelta(seconds=int(eta)))
             else:
-                policy_type = 'MlpPolicy'
-        except Exception:
-            policy_type = 'MultiInputPolicy'
+                eta_str = "N/A"
 
-    # Use our custom policy class
-    policy_kwargs["policy_class"] = CustomPPOPolicy
+            self.logger.info(
+                f"🚀 ADAN Training {bar} {progress:.1f}% ({self.num_timesteps:,}/{self.total_timesteps:,}) • "
+                f"Episode {self.episode_count} • Mean Reward: {mean_reward:.3f} • ETA: {eta_str}"
+            )
 
-    # Learning rate warmup and scheduling with validation
-    base_learning_rate = _validate_param(
-        ppo_config.get("learning_rate"),
-        name="learning_rate",
-        min_val=1e-7,
-        max_val=1e-2,
-        default=1e-4
-    )
-    if isinstance(base_learning_rate, (int, float)):
-        # Linear schedule from 1e-5 to learning_rate over first 10% of training
-        def learning_rate_schedule(progress_remaining):
-            warmup_start = 1e-5
-            warmup_end = float(base_learning_rate)
-            progress = 1 - min(progress_remaining, 0.9) / 0.9
-            return warmup_start + (warmup_end - warmup_start) * progress
-        learning_rate = learning_rate_schedule
-    # Clip range annealing with validation
-    clip_range_val = _validate_param(
-        ppo_config.get("clip_range"),
-        name="clip_range",
-        min_val=0.01,
-        max_val=0.3,
-        default=0.1
-    )
-    if isinstance(clip_range_val, (int, float)):
-        # Anneal clip range from initial value to half over training
-        initial_clip = min(0.2, clip_range_val * 2)
-        def clip_range_schedule(progress_remaining):
-            return initial_clip * (0.5 + 0.5 * progress_remaining)
-        clip_range = clip_range_schedule
-    else:
-        clip_range = clip_range_val
+        except Exception as e:
+            self.logger.error(f"Erreur lors de l'affichage de la progression: {e}")
 
-    # Create PPO parameters with validation
-    ppo_params = {
-        "policy": policy_type,
-        "env": env,
-        "learning_rate": learning_rate,
-        "n_steps": _validate_param(
-            ppo_config.get("n_steps"),
-            name="n_steps",
-            min_val=1,
-            max_val=None,
-            default=2048
-        ),
-        "batch_size": _validate_param(
-            ppo_config.get("batch_size"),
-            name="batch_size",
-            min_val=1,
-            max_val=None,
-            default=64
-        ),
-        "n_epochs": _validate_param(
-            ppo_config.get("n_epochs"),
-            name="n_epochs",
-            min_val=1,
-            max_val=50,
-            default=10
-        ),
-        "gamma": _validate_param(
-            ppo_config.get("gamma"),
-            name="gamma",
-            min_val=0.8,
-            max_val=0.9999,
-            default=0.99
-        ),
-        "gae_lambda": _validate_param(
-            ppo_config.get("gae_lambda"),
-            name="gae_lambda",
-            min_val=0.9,
-            max_val=1.0,
-            default=0.95
-        ),
-        "ent_coef": _validate_param(
-            ppo_config.get("ent_coef"),
-            name="ent_coef",
-            min_val=0.0,
-            max_val=0.5,
-            default=0.0
-        ),
-        "vf_coef": _validate_param(
-            ppo_config.get("vf_coef"),
-            name="vf_coef",
-            min_val=0.1,
-            max_val=1.0,
-            default=0.5
-        ),
-        "max_grad_norm": _validate_param(
-            ppo_config.get("max_grad_norm"),
-            name="max_grad_norm",
-            min_val=0.1,
-            max_val=5.0,
-            default=0.5
-        ),
-        "sde_sample_freq": _validate_param(
-            ppo_config.get("sde_sample_freq"),
-            name="sde_sample_freq",
-            min_val=-1,
-            max_val=128,
-            default=-1
-        ),
-        "target_kl": ppo_config.get("target_kl"),
-        "tensorboard_log": os.path.join(get_path('reports'), 'tensorboard_logs'),
-        "policy_kwargs": policy_kwargs,
-        "verbose": 1,
-        "device": device,
-        # Additional stability parameters
-        "create_eval_env": False,  # Don't create separate env for evaluation
-        "monitor_wrapper": True,  # Use Monitor wrapper by default
-        "stats_window_size": 100,  # Larger window for stable statistics
-    }
-    # Sanitize all PPO parameters before agent creation
-    sanitized_params = sanitize_ppo_params(ppo_params)
-    # Log the sanitized parameters for debugging
-    logger.debug("Sanitized PPO parameters:")
-    for key, value in sanitized_params.items():
-        if key not in ['policy_kwargs', 'env']:  # Skip large objects in logs
-            logger.debug(f"  {key}: {value}")
-    # Create and return the PPO agent with sanitized parameters
-    agent = PPO(**sanitized_params)
-    # Add NaN checks and gradient clipping callbacks
-    agent._setup_model()
-    if hasattr(agent, 'policy'):
-        # Enable gradient clipping in the optimizer
-        for param_group in agent.policy.optimizer.param_groups:
-            if 'max_grad_norm' not in param_group:
-                param_group['max_grad_norm'] = 0.5  # Default gradient clipping
-    logger.info(
-        "Created PPO agent with learning_rate=%s, "
-        "batch_size=%s, n_epochs=%s",
-        learning_rate, ppo_params['batch_size'], ppo_params['n_epochs']
-    )
-    return agent
+    def _log_detailed_metrics(self) -> None:
+        """Affichage détaillé des métriques avec structure hiérarchique."""
+        try:
+            self._update_environment_metrics()
+            self._update_model_metrics()
 
-def save_agent(agent, save_path):
-    """
-    Save a trained agent.
-    Args:
-        agent: Trained agent.
-        save_path: Path to save the agent.
-    Returns:
-        str: Path where the agent was saved.
-    """
-    # Ensure directory exists
-    ensure_dir_exists(os.path.dirname(save_path))
-    # Save the agent (PPO n'accepte pas l'argument save_replay_buffer)
-    agent.save(save_path)
-    logger.info("Agent saved to %s", save_path)
-    return save_path
+            # Temps et vitesse
+            elapsed = time.time() - self.start_time
+            steps_per_sec = self.num_timesteps / elapsed if elapsed > 0 else 0.0
+            current_time = time.time()
+            recent_steps_per_sec = self.display_freq / (current_time - self.last_display_time) if current_time > self.last_display_time else 0.0
+            self.last_display_time = current_time
 
-def load_agent(load_path, env=None):
-    """
-    Load a trained agent.
-    Args:
-        load_path: Path to load the agent from.
-        env: Environment to use with the loaded agent.
-    Returns:
-        PPO: Loaded agent.
-    """
-    try:
-        agent = PPO.load(load_path, env=env)
-        logger.info("Agent loaded from %s", load_path)
-        return agent
-    except Exception as e:
-        logger.error("Error loading agent from %s: %s", load_path, e)
-        raise
+            # En-tête de section
+            self.logger.info("╭" + "─" * 80 + "╮")
+            self.logger.info("│" + " " * 25 + f"ÉTAPE {self.num_timesteps:,}" + " " * 25 + "│")
+            self.logger.info("╰" + "─" * 80 + "╯")
 
-class TradingCallback(BaseCallback):
+            # Métriques de portfolio
+            roi = ((self.portfolio_value - self.initial_capital) / self.initial_capital) * 100 if self.initial_capital > 0 else 0
+            self.logger.info(
+                f"📊 PORTFOLIO | Valeur: ${self.portfolio_value:.2f} | Cash: ${self.cash:.2f} | "
+                f"ROI: {roi:+.2f}%"
+            )
+
+            # Métriques de risque
+            self.logger.info(
+                f"⚠️  RISK | Drawdown: {self.drawdown:.2f}% | Max DD: {self.metrics['max_dd']:.2f}% | "
+                f"Volatilité: {self.metrics['volatility']:.2f}%"
+            )
+
+            # Métriques de performance
+            self.logger.info(
+                f"📈 METRICS | Sharpe: {self.metrics['sharpe']:.2f} | Sortino: {self.metrics['sortino']:.2f} | "
+                f"Profit Factor: {self.metrics['profit_factor']:.2f}"
+            )
+
+            self.logger.info(
+                f"📊 TRADING | CAGR: {self.metrics['cagr']:.2f}% | Win Rate: {self.metrics['win_rate']:.1f}% | "
+                f"Trades: {self.metrics['trades']}"
+            )
+
+            # Positions ouvertes
+            self._display_open_positions()
+
+            # Métriques du modèle
+            self._display_model_metrics()
+
+            # Informations temporelles
+            self.logger.info(
+                f"⏱️  TIMING | Elapsed: {elapsed/60:.1f}min | Speed: {steps_per_sec:.1f} steps/s | "
+                f"Recent: {recent_steps_per_sec:.1f} steps/s"
+            )
+
+            self.logger.info("─" * 80)
+
+        except Exception as e:
+            self.logger.error(f"Erreur lors de l'affichage des métriques détaillées: {e}")
+
+    def _update_environment_metrics(self) -> None:
+        """Met à jour les métriques depuis l'environnement."""
+        try:
+            # Essayer de récupérer les métriques via l'environnement vectorisé
+            if hasattr(self.model, 'get_env'):
+                env = self.model.get_env()
+
+                # Pour les environnements vectorisés
+                if hasattr(env, 'envs') and len(env.envs) > 0:
+                    first_env = env.envs[0]
+
+                    # Naviguer à travers les wrappers pour trouver les métriques
+                    current_env = first_env
+                    while hasattr(current_env, 'env'):
+                        if hasattr(current_env, 'get_portfolio_metrics'):
+                            metrics = current_env.get_portfolio_metrics()
+                            if metrics:
+                                self.portfolio_value = metrics.get('portfolio_value', self.initial_capital)
+                                self.drawdown = metrics.get('drawdown', 0.0)
+                                self.cash = metrics.get('cash', self.initial_capital)
+                                self.positions = metrics.get('positions', {})
+                                self.closed_positions = metrics.get('closed_positions', [])
+
+                                # Mettre à jour les métriques financières
+                                self.metrics.update({
+                                    "sharpe": metrics.get('sharpe', 0.0),
+                                    "sortino": metrics.get('sortino', 0.0),
+                                    "profit_factor": metrics.get('profit_factor', 0.0),
+                                    "max_dd": metrics.get('max_dd', 0.0),
+                                    "cagr": metrics.get('cagr', 0.0),
+                                    "win_rate": metrics.get('win_rate', 0.0),
+                                    "trades": metrics.get('trades', 0),
+                                    "volatility": metrics.get('volatility', 0.0)
+                                })
+                                break
+                        current_env = getattr(current_env, 'env', None)
+                        if current_env is None:
+                            break
+
+                # Méthode de fallback avec get_attr si disponible
+                elif hasattr(env, 'get_attr'):
+                    try:
+                        env_infos = env.get_attr('last_info')
+                        if env_infos and len(env_infos) > 0 and env_infos[0]:
+                            info = env_infos[0]
+                            self._extract_info_metrics(info)
+                    except Exception as e:
+                        self.logger.debug(f"Fallback get_attr failed: {e}")
+
+        except Exception as e:
+            self.logger.debug(f"Erreur lors de la mise à jour des métriques d'environnement: {e}")
+
+    def _extract_info_metrics(self, info: Dict[str, Any]) -> None:
+        """Extrait les métriques depuis le dictionnaire info."""
+        self.portfolio_value = info.get('portfolio_value', self.initial_capital)
+        self.drawdown = info.get('drawdown', 0.0)
+        self.cash = info.get('cash', self.initial_capital)
+        self.positions = info.get('positions', {})
+        self.closed_positions = info.get('closed_positions', [])
+
+        # Mettre à jour les métriques financières
+        self.metrics.update({
+            "sharpe": info.get('sharpe', 0.0),
+            "sortino": info.get('sortino', 0.0),
+            "profit_factor": info.get('profit_factor', 0.0),
+            "max_dd": info.get('max_dd', 0.0),
+            "cagr": info.get('cagr', 0.0),
+            "win_rate": info.get('win_rate', 0.0),
+            "trades": info.get('trades', 0),
+            "volatility": info.get('volatility', 0.0)
+        })
+
+    def _update_model_metrics(self) -> None:
+        """Met à jour les métriques du modèle PPO."""
+        try:
+            self.model_metrics = {}
+            if hasattr(self.model, 'logger') and hasattr(self.model.logger, 'name_to_value'):
+                self.model_metrics = self.model.logger.name_to_value
+        except Exception as e:
+            self.logger.debug(f"Erreur lors de la mise à jour des métriques du modèle: {e}")
+
+    def _display_open_positions(self) -> None:
+        """Affiche les positions ouvertes si disponibles."""
+        try:
+            if self.positions and any(self.positions.values()):
+                self.logger.info("╭" + "─" * 28 + " Positions Ouvertes " + "─" * 28 + "╮")
+
+                for asset, pos in self.positions.items():
+                    if isinstance(pos, dict) and pos:
+                        size = pos.get('size', 0)
+                        entry_price = pos.get('entry_price', 0)
+                        current_price = pos.get('current_price', entry_price)
+                        value = pos.get('value', 0)
+                        sl = pos.get('sl', 0)
+                        tp = pos.get('tp', 0)
+                        pnl_unrealized = pos.get('pnl_unrealized', 0)
+
+                        self.logger.info(
+                            f"│ {asset}: Size: {size:.2f} @ {entry_price:.4f} | "
+                            f"Current: {current_price:.4f} | Value: ${value:.2f}"
+                            + " " * (80 - len(f"│ {asset}: Size: {size:.2f} @ {entry_price:.4f} | Current: {current_price:.4f} | Value: ${value:.2f}")) + "│"
+                        )
+
+                        if sl > 0 or tp > 0:
+                            self.logger.info(
+                                f"│   └─ SL: {sl:.4f} | TP: {tp:.4f} | P&L: ${pnl_unrealized:.2f}"
+                                + " " * (80 - len(f"│   └─ SL: {sl:.4f} | TP: {tp:.4f} | P&L: ${pnl_unrealized:.2f}")) + "│"
+                            )
+
+                self.logger.info("╰" + "─" * 78 + "╯")
+            else:
+                self.logger.info("📝 POSITIONS | Aucune position ouverte")
+        except Exception as e:
+            self.logger.error(f"Erreur lors de l'affichage des positions: {e}")
+
+    def _display_model_metrics(self) -> None:
+        """Affiche les métriques du modèle PPO."""
+        try:
+            if hasattr(self, 'model_metrics') and self.model_metrics:
+                total_loss = self.model_metrics.get("train/loss", 0.0)
+                policy_loss = self.model_metrics.get("train/policy_loss", 0.0)
+                value_loss = self.model_metrics.get("train/value_loss", 0.0)
+                entropy = self.model_metrics.get("train/entropy_loss", 0.0)
+                clip_fraction = self.model_metrics.get("train/clip_fraction", 0.0)
+
+                self.logger.info(
+                    f"🧠 MODEL | Loss: {total_loss:.4f} | Policy: {policy_loss:.4f} | "
+                    f"Value: {value_loss:.4f} | Entropy: {entropy:.4f}"
+                )
+
+                if clip_fraction > 0:
+                    self.logger.info(f"🎯 LEARNING | Clip Fraction: {clip_fraction:.3f}")
+            else:
+                self.logger.info("🧠 MODEL | Métriques non disponibles")
+        except Exception as e:
+            self.logger.error(f"Erreur lors de l'affichage des métriques du modèle: {e}")
+
+    def _on_rollout_end(self) -> None:
+        """Appelé à la fin de chaque rollout pour capturer les positions fermées."""
+        try:
+            self._display_closed_positions()
+        except Exception as e:
+            self.logger.error(f"Erreur lors du traitement du rollout: {e}")
+
+    def _display_closed_positions(self) -> None:
+        """Affiche les positions fermées récemment."""
+        try:
+            if self.closed_positions:
+                recent_closed = self.closed_positions[-5:]  # 5 dernières positions fermées
+
+                if recent_closed:
+                    self.logger.info("╭" + "─" * 28 + " Positions Fermées " + "─" * 28 + "╮")
+
+                    for pos in recent_closed:
+                        if isinstance(pos, dict):
+                            asset = pos.get('asset', 'Unknown')
+                            size = pos.get('size', 0)
+                            entry_price = pos.get('entry_price', 0)
+                            exit_price = pos.get('exit_price', 0)
+                            pnl = pos.get('pnl', 0)
+                            pnl_pct = pos.get('pnl_pct', 0)
+                            duration = pos.get('duration_minutes', 0)
+
+                            status_emoji = "🟢" if pnl > 0 else "🔴"
+
+                            self.logger.info(
+                                f"│ {status_emoji} {asset}: Size: {size:.2f} | "
+                                f"Entry: {entry_price:.4f} | Exit: {exit_price:.4f}"
+                                + " " * (80 - len(f"│ {status_emoji} {asset}: Size: {size:.2f} | Entry: {entry_price:.4f} | Exit: {exit_price:.4f}")) + "│"
+                            )
+
+                            self.logger.info(
+                                f"│   └─ P&L: ${pnl:.2f} ({pnl_pct:+.2f}%) | Duration: {duration}min"
+                                + " " * (80 - len(f"│   └─ P&L: ${pnl:.2f} ({pnl_pct:+.2f}%) | Duration: {duration}min")) + "│"
+                            )
+
+                    self.logger.info("╰" + "─" * 78 + "╯")
+
+                    # Clear the closed positions after displaying
+                    self.closed_positions = []
+        except Exception as e:
+            self.logger.error(f"Erreur lors de l'affichage des positions fermées: {e}")
+
+    def _on_training_end(self) -> None:
+        """Fin de l'entraînement avec résumé complet."""
+        try:
+            elapsed = time.time() - self.start_time
+
+            self.logger.info("╭" + "─" * 70 + "╮")
+            self.logger.info("│" + " " * 20 + "✅ ENTRAÎNEMENT TERMINÉ" + " " * 20 + "│")
+            self.logger.info("╰" + "─" * 70 + "╯")
+
+            self.logger.info(f"[TRAINING END] Correlation ID: {self.correlation_id}")
+            self.logger.info(f"[TRAINING END] Total steps: {self.num_timesteps:,}")
+            self.logger.info(f"[TRAINING END] Duration: {elapsed/60:.1f} minutes ({elapsed/3600:.1f} hours)")
+            self.logger.info(f"[TRAINING END] Episodes completed: {self.episode_count}")
+
+            # Résumé final des performances
+            if self.episode_rewards:
+                final_reward = np.mean(self.episode_rewards[-10:]) if len(self.episode_rewards) >= 10 else np.mean(self.episode_rewards)
+                max_reward = np.max(self.episode_rewards)
+                min_reward = np.min(self.episode_rewards)
+
+                self.logger.info(f"[TRAINING END] Final Mean Reward: {final_reward:.3f}")
+                self.logger.info(f"[TRAINING END] Best Episode Reward: {max_reward:.3f}")
+                self.logger.info(f"[TRAINING END] Worst Episode Reward: {min_reward:.3f}")
+
+            # Résumé du portfolio
+            final_roi = ((self.portfolio_value - self.initial_capital) / self.initial_capital) * 100 if self.initial_capital > 0 else 0
+            self.logger.info(f"[TRAINING END] Final Portfolio Value: ${self.portfolio_value:.2f}")
+            self.logger.info(f"[TRAINING END] Final ROI: {final_roi:+.2f}%")
+            self.logger.info(f"[TRAINING END] Max Drawdown: {self.metrics['max_dd']:.2f}%")
+            self.logger.info(f"[TRAINING END] Total Trades: {self.metrics['trades']}")
+
+            # Stats de performance
+            avg_steps_per_sec = self.num_timesteps / elapsed if elapsed > 0 else 0
+            self.logger.info(f"[TRAINING END] Average Speed: {avg_steps_per_sec:.1f} steps/second")
+
+        except Exception as e:
+            self.logger.error(f"Erreur lors du résumé final: {e}")
+
+
+class PPOAgent:
     """
-    Callback for saving the agent during training.
+    Agent PPO avec callback d'affichage hiérarchique intégré.
     """
-    def __init__(self, check_freq, save_path, verbose=1):
+
+    def __init__(self, env, config: Dict[str, Any]):
         """
-        Initialize the callback.
+        Initialise l'agent PPO avec la configuration donnée.
+
         Args:
-            check_freq: Frequency to check for saving.
-            save_path: Path to save the agent.
-            verbose: Verbosity level.
+            env: Environnement d'entraînement
+            config: Configuration de l'agent
         """
-        super(TradingCallback, self).__init__(verbose)
-        self.check_freq = check_freq
-        self.save_path = save_path
-        self.best_mean_reward = -np.inf
+        self.env = env
+        self.config = config
 
-    def _init_callback(self):
-        """
-        Initialize the callback.
-        """
-        # Create folder if needed
-        if self.save_path is not None:
-            ensure_dir_exists(os.path.dirname(self.save_path))
+        # Configuration du réseau de neurones
+        policy_kwargs = {
+            "net_arch": config.get("net_arch", [256, 128]),
+            "features_dim": config.get("features_dim", 256),
+            "activation_fn": torch.nn.ReLU,
+            "ortho_init": True
+        }
 
-    def _on_step(self):
+        # Configuration PPO
+        ppo_params = config.get("ppo_params", {})
+        default_ppo_params = {
+            "learning_rate": 3e-4,
+            "n_steps": 2048,
+            "batch_size": 64,
+            "n_epochs": 10,
+            "gamma": 0.99,
+            "gae_lambda": 0.95,
+            "clip_range": 0.2,
+            "ent_coef": 0.0,
+            "vf_coef": 0.5,
+            "max_grad_norm": 0.5,
+        }
+
+        # Fusionner les paramètres par défaut avec ceux fournis
+        final_ppo_params = {**default_ppo_params, **ppo_params}
+
+        # Créer le modèle PPO
+        self.model = PPO(
+            policy="MultiInputPolicy",
+            env=env,
+            policy_kwargs=policy_kwargs,
+            verbose=0,
+            seed=config.get('seed', 42),
+            device='auto',
+            **final_ppo_params
+        )
+
+        # Configurer le logger SB3 si spécifié
+        if config.get('enable_sb3_logging', True):
+            log_dir = config.get('log_dir', 'logs/sb3')
+            Path(log_dir).mkdir(parents=True, exist_ok=True)
+            new_logger = sb3_configure(str(log_dir), ["stdout", "csv", "tensorboard"])
+            self.model.set_logger(new_logger)
+
+    def learn(
+        self,
+        total_timesteps: int,
+        log_interval: int = 1000,
+        initial_capital: float = 20.50,
+        callback=None,
+        **kwargs
+    ):
         """
-        Called at each step of training.
-        Returns:
-            bool: Whether to continue training.
+        Lance l'entraînement avec le callback hiérarchique.
+
+        Args:
+            total_timesteps: Nombre total de timesteps
+            log_interval: Intervalle d'affichage des logs
+            initial_capital: Capital initial du portfolio
+            callback: Callback additionnel (optionnel)
+            **kwargs: Arguments supplémentaires pour model.learn()
         """
-        if self.n_calls % self.check_freq == 0:
-            # Get current reward
-            try:
-                # Méthode 1: Utiliser les valeurs du logger SB3
-                mean_reward = -np.inf
-                if hasattr(self.model, 'logger') and hasattr(self.model.logger, 'name_to_value'):
-                    latest_values = self.model.logger.name_to_value
-                    if 'rollout/ep_rew_mean' in latest_values:
-                        mean_reward = latest_values['rollout/ep_rew_mean']
-                # Méthode 2: Fallback - calculer manuellement si ep_info_buffer existe
-                if mean_reward == -np.inf and hasattr(self.model, 'ep_info_buffer') and self.model.ep_info_buffer:
-                    rewards = [ep_info["r"] for ep_info in self.model.ep_info_buffer]
-                    if rewards:
-                        mean_reward = np.mean(rewards)
-                if mean_reward != -np.inf:
-                    if self.verbose > 0:
-                        logger.info(f"Num timesteps: {self.num_timesteps}")
-                        logger.info(f"Mean reward: {mean_reward:.2f}")
-                    # Save if better than previous best
-                    if mean_reward > self.best_mean_reward:
-                        self.best_mean_reward = mean_reward
-                        if self.verbose > 0:
-                            logger.info(f"Saving new best model to {self.save_path}")
-                        # Nous supprimons explicitement l'argument save_replay_buffer
-                        self.model.save(self.save_path)
-            except Exception as e:
-                import traceback
-                logger.warning(f"Erreur lors de la récupération des métriques SB3: {e}")
-                logger.warning(f"Trace: {traceback.format_exc()}")
-        return True
+        # Créer le callback hiérarchique
+        hierarchical_callback = HierarchicalTrainingDisplayCallback(
+            display_freq=log_interval,
+            total_timesteps=total_timesteps,
+            initial_capital=initial_capital,
+            log_file=self.config.get('log_file', 'training_log.txt')
+        )
+
+        # Combiner avec d'autres callbacks si fournis
+        if callback is not None:
+            from stable_baselines3.common.callbacks import CallbackList
+            if isinstance(callback, list):
+                all_callbacks = [hierarchical_callback] + callback
+            else:
+                all_callbacks = [hierarchical_callback, callback]
+            final_callback = CallbackList(all_callbacks)
+        else:
+            final_callback = hierarchical_callback
+
+        # Lancer l'entraînement
+        self.model.learn(
+            total_timesteps=total_timesteps,
+            callback=final_callback,
+            progress_bar=False,  # Utiliser notre callback personnalisé
+            **kwargs
+        )
+
+        return self.model
+
+    def predict(self, observation, **kwargs):
+        """Prédiction avec le modèle entraîné."""
+        return self.model.predict(observation, **kwargs)
+
+    def save(self, path: str):
+        """Sauvegarde le modèle."""
+        self.model.save(path)
+
+    @classmethod
+    def load(cls, path: str, env=None, **kwargs):
+        """Charge un modèle sauvegardé."""
+        model = PPO.load(path, env=env, **kwargs)
+
+        # Créer une instance de la classe avec le modèle chargé
+        agent = cls.__new__(cls)
+        agent.model = model
+        agent.env = env
+        agent.config = {}
+
+        return agent
+
+
+# Exemple d'utilisation
+if __name__ == "__main__":
+    """Exemple d'utilisation de l'agent PPO avec callback hiérarchique."""
+    import gym

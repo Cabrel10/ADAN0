@@ -17,8 +17,6 @@ import pandas as pd
 from tqdm import tqdm
 
 from ..common.config_loader import ConfigLoader
-from .data_validator import DataValidator, DataQualityMonitor
-from ..utils.smart_logger import create_smart_logger
 
 # Configuration du logger
 logger = logging.getLogger(__name__)
@@ -50,14 +48,6 @@ class ChunkedDataLoader:
         # Worker ID pour éviter la duplication de logs
         self.worker_id = worker_id
 
-        # Initialiser le SmartLogger pour ce worker
-        self.smart_logger = create_smart_logger(worker_id, total_workers=4, logger_name="data_loader")
-
-        # Cache pour éviter les doublons de logs
-        self._last_logs = {}
-        import time
-        self._time_module = time
-
         # 1) Timeframes à charger
         self.timeframes = self.worker_config.get(
             'timeframes',
@@ -81,10 +71,6 @@ class ChunkedDataLoader:
 
         # Vérifie que tous les timeframes demandés sont pris en charge
         self._validate_timeframes()
-
-        # Initialisation du validateur de données
-        self.data_validator = DataValidator(config, worker_id)
-        self.quality_monitor = DataQualityMonitor(config)
 
         # Configuration de la taille des chunks par timeframe
         # Priorité: worker_config.chunk_sizes > config.data.chunk_sizes > défauts optimisés
@@ -126,10 +112,14 @@ class ChunkedDataLoader:
             f"Chargement des données pour {len(self.assets_list)} actifs et "
             f"{len(self.timeframes)} timeframes en parallèle (max {self.max_workers} workers)"
         )
+        logger.debug(f"Actifs: {self.assets_list}")
+        logger.debug(f"Timeframes: {self.timeframes}")
+        logger.debug(f"Jeu de données: {self.data_split}")
 
-    def log_info(self, message, step=None):
-        """Log un message avec le système intelligent SmartLogger."""
-        self.smart_logger.smart_info(logger, message, step)
+    def log_info(self, message):
+        """Log un message uniquement depuis le worker principal pour éviter les doublons."""
+        if self.worker_id == 0:
+            logger.info(f"[Worker {self.worker_id}] {message}")
 
     def _validate_timeframes(self):
         """
@@ -315,8 +305,10 @@ class ChunkedDataLoader:
                 elif isinstance(features, str):
                     required_cols.append(features.lower())
 
-            # Load all columns from the parquet file to avoid case sensitivity issues
-            df = pd.read_parquet(file_path)
+            # Load only the required columns from the parquet file
+            # Read all columns if required_cols is not properly set, to avoid breaking the app
+            columns_to_load = list(set(required_cols)) if required_cols else None
+            df = pd.read_parquet(file_path, columns=columns_to_load)
 
             # Vérifie que le DataFrame n'est pas vide
             if df.empty:
@@ -333,39 +325,40 @@ class ChunkedDataLoader:
                     f"Colonnes disponibles: {sorted(df.columns)}"
                 )
 
+            # Renommer les colonnes pour s'assurer qu'elles sont en majuscules
+            column_mapping = {
+                'Open': 'OPEN',
+                'High': 'HIGH',
+                'Low': 'LOW',
+                'Close': 'CLOSE',
+                'Volume': 'VOLUME'
+            }
+            df = df.rename(columns=column_mapping)
 
-
-            # Vérifier et corriger les prix de clôture manquants avec interpolation (insensible à la casse)
-            close_col = next((col for col in df.columns if col.lower() == 'close'), None)
-
-            if close_col:
-                nan_count_before = df[close_col].isna().sum()
+            # Vérifier et corriger les prix de clôture manquants avec interpolation
+            if 'CLOSE' in df.columns:
+                nan_count_before = df['CLOSE'].isna().sum()
                 if nan_count_before > 0:
-                    self.log_info(f"[DATA_LOADER] {nan_count_before} prix de clôture manquants détectés pour {asset}/{timeframe}. Correction en cours...")
+                    logger.info(f"[DATA_LOADER] Prix de clôture manquants détectés pour {asset}/{timeframe}: {nan_count_before} valeurs")
 
                     # Étape 1: Interpolation linéaire pour les valeurs intérieures
-                    df[close_col] = df[close_col].interpolate(method='linear')
+                    df['CLOSE'] = df['CLOSE'].interpolate(method='linear')
 
                     # Étape 2: Forward fill puis backward fill pour les bords
-                    df[close_col] = df[close_col].ffill().bfill()
+                    df['CLOSE'] = df['CLOSE'].ffill().bfill()
 
-                    nan_count_after = df[close_col].isna().sum()
+                    nan_count_after = df['CLOSE'].isna().sum()
+                    filled_count = nan_count_before - nan_count_after
+
+                    if filled_count > 0:
+                        logger.info(f"[DATA_LOADER] {filled_count} prix interpolés pour {asset}/{timeframe}")
+
                     if nan_count_after > 0:
-                        logger.warning(f"[DATA_LOADER] {nan_count_after} NaN restants dans {close_col} pour {asset}/{timeframe} après correction. Remplacement par la dernière valeur valide.")
-                        df[close_col] = df[close_col].fillna(method='ffill').fillna(method='bfill')
-                        if df[close_col].isna().any(): # Si toujours des NaN (ex: début de fichier)
-                            df[close_col] = df[close_col].fillna(0) # Remplacer par 0 en dernier recours
-
-                    # Vérification des valeurs aberrantes (prix <= 0)
-                    invalid_prices = (df[close_col] <= 0).sum()
-                    if invalid_prices > 0:
-                        logger.warning(f"[DATA_LOADER] {invalid_prices} prix invalides (<=0) détectés dans {close_col}. Remplacement par NaN puis interpolation.")
-                        df.loc[df[close_col] <= 0, close_col] = np.nan
-                        df[close_col] = df[close_col].interpolate(method='linear').ffill().bfill()
-
-            else:
-                # Ce log ne devrait plus apparaître si vos données sont correctes
-                logger.error(f"Colonne 'close' introuvable pour {asset}/{timeframe} dans le DataLoader !")
+                        logger.warning(f"[DATA_LOADER] {nan_count_after} NaN restants dans CLOSE pour {asset}/{timeframe} après interpolation")
+                        # Fallback: utiliser la dernière valeur valide disponible
+                        last_valid = df['CLOSE'].last_valid_index()
+                        if last_valid is not None:
+                            df['CLOSE'] = df['CLOSE'].fillna(df['CLOSE'].iloc[last_valid])
 
             logger.debug(f"Données chargées pour {asset} {timeframe}: {len(df)} lignes")
             return df
@@ -417,7 +410,6 @@ class ChunkedDataLoader:
     def load_chunk(self, chunk_idx: int = 0) -> Dict[str, Dict[str, pd.DataFrame]]:
         """
         Charge un chunk de données pour tous les actifs et timeframes configurés en parallèle.
-        Applique la validation des données prix vs indicateurs.
 
         Args:
             chunk_idx: Index du chunk à charger (non utilisé, conservé pour compatibilité)
@@ -450,14 +442,16 @@ class ChunkedDataLoader:
                         asset, tf = futures[future]
                         try:
                             asset, tf, df = future.result()
-
+                            # Vérification des NaNs dans la colonne CLOSE
+                            if 'CLOSE' in df.columns and df['CLOSE'].isna().any():
+                                raise ValueError(f"NaN found in CLOSE column for chunk {chunk_idx}, asset {asset}, timeframe {tf}")
                             # Appliquer la taille de chunk cible par timeframe (prend les dernières lignes)
                             logger.debug(f"[DEBUG] Before slicing - Asset: {asset}, Timeframe: {tf}, Original df len: {len(df)}, Target len: {self.chunk_sizes.get(tf, len(df))}")
                             target_len = int(self.chunk_sizes.get(tf, len(df)))
                             if target_len <= 0:
                                 target_len = len(df)
                             if len(df) > target_len:
-                                df = df.iloc[-target_len:]
+                                df = df.iloc[-target_len:].reset_index(drop=True)
                             else:
                                 # Si les données sont plus courtes que la cible, on log un avertissement
                                 logger.warning(
@@ -471,21 +465,6 @@ class ChunkedDataLoader:
                             logger.error(f"Échec du chargement de {asset} {tf}: {str(e)}")
                             failed_loads.append((asset, tf, str(e)))
                             # Continue processing other assets/timeframes even if one fails
-
-            # Validation du chunk avec le nouveau système
-            if data:
-                chunk_start = pd.Timestamp.now() - pd.Timedelta(hours=24)  # Estimation
-                chunk_end = pd.Timestamp.now()
-
-                is_valid, validation_info = self.data_validator.validate_chunk_data(
-                    data, chunk_start, chunk_end
-                )
-
-                if not is_valid:
-                    logger.warning(f"[DATA_LOADER] Chunk {chunk_idx} validation failed: {validation_info['rejection_reasons']}")
-                    # Continue avec les données disponibles mais log l'avertissement
-                else:
-                    logger.info(f"[DATA_LOADER] Chunk {chunk_idx} validation passed: {validation_info['assets_validated']} assets validated")
 
             # Vérifier si tous les chargements ont réussi
             if failed_loads:
@@ -502,22 +481,23 @@ class ChunkedDataLoader:
                     raise RuntimeError(f"Tous les chargements ont échoué:\n{error_msg}")
 
                 # Sinon, on log l'erreur mais on continue
-                self.smart_logger.smart_error(logger, error_msg)
+                if self.worker_id == 0:
+                    logger.error(error_msg)
 
             # Vérifier que toutes les données attendues ont été chargées
             for asset in self.assets_list:
                 if asset not in data or not data[asset]:
-                    self.smart_logger.smart_error(logger, f"[DATA_LOADER] Aucune donnée chargée pour l'actif {asset}")
+                    if self.worker_id == 0:
+                        logger.error(f"[DATA_LOADER] Aucune donnée chargée pour l'actif {asset}")
                     continue
 
                 for tf in self.timeframes:
                     if tf not in data[asset]:
-                        self.smart_logger.smart_warning(logger, f"[DATA_LOADER] Données manquantes pour {asset} {tf}")
+                        if self.worker_id == 0:
+                            logger.warning(f"[DATA_LOADER] Données manquantes pour {asset} {tf}")
 
             duration = time.time() - start_time
-            validation_stats = self.data_validator.get_validation_stats()
-            self.log_info(f"[DATA_LOADER] Chunk {chunk_idx} chargé en {duration:.2f}s | "
-                         f"Validation: {validation_stats['validation_rate']:.2%} success rate")
+            self.log_info(f"[DATA_LOADER] Chunk {chunk_idx} chargé pour {len(self.assets_list)} actifs et {len(self.timeframes)} timeframes en {duration:.2f}s")
 
             return data
 
@@ -537,7 +517,12 @@ class ChunkedDataLoader:
         Returns:
             int: Nombre total de chunks disponibles
         """
-        # Calculer d'abord le nombre de chunks en fonction des données disponibles
+        # Si max_chunks_per_episode est défini dans la configuration, on l'utilise
+        max_chunks = self.config.get('environment', {}).get('max_chunks_per_episode')
+        if max_chunks is not None:
+            return int(max_chunks)
+
+        # Sinon, on calcule le nombre de chunks en fonction des données disponibles
         min_chunks = float('inf')
 
         # Parcourir tous les actifs et timeframes pour trouver le plus petit nombre de chunks
@@ -566,20 +551,10 @@ class ChunkedDataLoader:
             logger.warning(
                 "Impossible de déterminer le nombre de chunks, utilisation de la valeur par défaut (1)"
             )
-            calculated_chunks = 1
-        else:
-            calculated_chunks = min_chunks
-            logger.info(f"Nombre total de chunks calculé : {calculated_chunks}")
+            return 1
 
-        # Prendre le minimum entre la config et les données disponibles
-        max_chunks = self.config.get('environment', {}).get('max_chunks_per_episode')
-        if max_chunks is not None:
-            final_chunks = min(int(max_chunks), calculated_chunks)
-            logger.info(f"Chunks limités par configuration : {calculated_chunks} → {final_chunks}")
-            return final_chunks
-
-        logger.info(f"Nombre de chunks utilisé : {calculated_chunks}")
-        return calculated_chunks
+        logger.info(f"Nombre total de chunks calculé : {min_chunks}")
+        return min_chunks
 
     def get_available_assets(self, split='train'):
         """

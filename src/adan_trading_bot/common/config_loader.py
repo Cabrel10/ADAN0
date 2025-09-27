@@ -28,7 +28,6 @@ class ConfigLoader:
             root_config = config
         if processed is None:
             processed = set()
-            print("[DEBUG] Starting resolution of environment variables")
 
         # Make a deep copy to avoid modifying the original
         config_copy = {k: v for k, v in config.items()}
@@ -39,8 +38,7 @@ class ConfigLoader:
             raise ValueError(f"Circular reference detected in config at {current_key}")
         processed.add(current_key)
 
-        print(f"[DEBUG] Processing config section: {current_key}")
-        print(f"[DEBUG] Current config keys: {list(config_copy.keys())}")
+        # Processing config section silently
 
         # First pass: resolve all environment variables (${ENV_VAR} syntax)
         for key, value in list(config_copy.items()):
@@ -55,7 +53,6 @@ class ConfigLoader:
                 new_value = re.sub(r'\${([A-Z0-9_]+)}', replace_env_var, value)
                 if new_value != value:
                     config_copy[key] = new_value
-                    print(f"[DEBUG] Resolved env var in {parent_key}.{key}: {value} -> {new_value}")
 
         # Second pass: resolve simple variables (non-nested)
         changed = True
@@ -87,16 +84,13 @@ class ConfigLoader:
         # Third pass: resolve nested paths (with dots)
         for key, value in list(config_copy.items()):
             if isinstance(value, str) and '${' in value:
-                print(f"[DEBUG] Resolving nested path in {parent_key}.{key}: {value}")
 
                 def replace_nested_var(match):
                     var_path = match.group(1)
-                    print(f"[DEBUG] Resolving variable path: {var_path}")
 
                     # First try to resolve as a direct environment variable
                     if var_path in os.environ:
                         resolved = os.environ[var_path]
-                        print(f"[DEBUG] Resolved from env var: {var_path} = {resolved}")
                         return resolved
 
                     # Then try to resolve as a nested path in the config
@@ -110,30 +104,24 @@ class ConfigLoader:
                             if isinstance(current, dict) and part in current:
                                 current = current[part]
                                 full_path += f".{part}"
-                                print(f"[DEBUG] Resolved path part: {full_path} = {current}")
                             else:
                                 # If we can't find the path, try to resolve each part
                                 resolved_part = cls._resolve_part(part, root_config, full_path, root_config)
                                 if resolved_part != part:
                                     current = resolved_part
-                                    print(f"[DEBUG] Resolved partial path: {part} -> {resolved_part}")
                                 else:
                                     raise KeyError(part)
 
                         result = str(current)
-                        print(f"[DEBUG] Successfully resolved full path: {var_path} = {result}")
                         return result
 
                     except (KeyError, TypeError) as e:
-                        print(f"[DEBUG] Could not resolve full path, trying part by part: {e}")
                         # If we can't resolve the full path, try to resolve each part
                         resolved_parts = []
                         for part in parts:
                             resolved = cls._resolve_part(part, root_config, f"{full_path}.{part}", root_config)
-                            print(f"[DEBUG] Resolving part '{part}': {resolved}")
 
                             if resolved == part and part not in os.environ:
-                                print(f"[ERROR] Could not resolve part: {part}")
                                 raise ValueError(
                                     f"Undefined variable path in config: {var_path} "
                                     f"(at {parent_key}.{key if parent_key else ''})"
@@ -143,7 +131,6 @@ class ConfigLoader:
                             resolved_parts.append(str(final_value))
 
                         result = '.'.join(resolved_parts)
-                        print(f"[DEBUG] Resolved path part by part: {var_path} -> {result}")
                         return result
 
                 try:
@@ -197,29 +184,20 @@ class ConfigLoader:
         Raises:
             ValueError: If the part cannot be resolved
         """
-        debug = True
-        if debug:
-            print(f"[DEBUG] Resolving part: '{part}' in context: {full_path}")
 
         # 1. Try resolving as environment variable with default
         resolved = cls._resolve_env_or_default(part, root_config or config)
         if resolved is not None:
-            if debug:
-                print(f"[DEBUG] Resolved with default: '{part}' -> '{resolved}'")
             return resolved
 
         # 2. Check if part is a direct environment variable
         if part in os.environ:
             value = os.environ[part]
-            if debug:
-                print(f"[DEBUG] Found env var '{part}': {value}")
             return value
 
         # 3. Try direct lookup in current config
         if part in config:
             value = config[part]
-            if debug:
-                print(f"[DEBUG] Found direct key '{part}' in config")
             return str(value) if not isinstance(value, (dict, list)) else value
 
         # 4. Handle nested paths (with dots)
@@ -227,9 +205,6 @@ class ConfigLoader:
             return cls._resolve_nested_path(part, config, full_path, root_config)
 
         # If we get here, we couldn't resolve the part
-        if debug:
-            print(f"[ERROR] Failed to resolve part: '{part}' in path: '{full_path}'")
-            print(f"[ERROR] Available keys: {list(config.keys())}")
         raise ValueError(f"Undefined variable path in config: {part} (at {full_path})")
 
     @classmethod
@@ -241,7 +216,6 @@ class ConfigLoader:
         root_config: Optional[Dict[str, Any]]
     ) -> Any:
         """Resolve a nested path (with dots) by resolving each part."""
-        debug = True
         root = root_config if root_config is not None else config
 
         # First try direct nested lookup
@@ -271,8 +245,6 @@ class ConfigLoader:
                     f"{full_path}.{current_path}",
                     root
                 )
-                if debug:
-                    print(f"[DEBUG] Resolved part '{part}': {resolved}")
 
                 # If resolution failed, try to get default value
                 if resolved == part and part not in os.environ:
@@ -284,8 +256,6 @@ class ConfigLoader:
                 raise
 
         result = '.'.join(resolved_parts)
-        if debug:
-            print(f"[DEBUG] Resolved path: '{path}' -> '{result}'")
         return result
 
     @classmethod
@@ -302,34 +272,21 @@ class ConfigLoader:
         import os
         import re
 
-        # Debug flag
-        debug = True
-
-        if debug:
-            print(f"[DEBUG] _resolve_env_or_default - part: {part}")
-
         # Check if part matches VAR:-default pattern
         m = re.match(r'^([A-Za-z0-9_]+):-((?:.|\s)*)$', part)
         if m:
             var = m.group(1)
             default = m.group(2).strip("'\"")  # Remove quotes if present
 
-            if debug:
-                print(f"[DEBUG] Matched VAR:-default pattern - var: {var}, default: {default}")
-
             # First try to get from environment variables
             env_val = os.environ.get(var)
             if env_val is not None:
-                if debug:
-                    print(f"[DEBUG] Found in environment: {var}={env_val}")
                 return env_val
 
             # If not in environment, try to resolve as config path
             try:
                 config_val = cls._get_nested_value(root_config, var)
                 if config_val is not None:
-                    if debug:
-                        print(f"[DEBUG] Found in config: {var}={config_val}")
                     return config_val
             except (KeyError, AttributeError):
                 pass  # Continue to use default value

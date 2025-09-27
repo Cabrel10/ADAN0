@@ -1,0 +1,72 @@
+2025-09-20 12:17:46,179 - __main__ - INFO - Processing ETH/USDT 5m...
+2025-09-20 12:21:41,918 - __main__ - INFO - Validating 5m data with 391237 rows
+2025-09-20 12:21:41,968 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:20:00
+2025-09-20 12:21:45,983 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/ETHUSDT/5m.csv
+2025-09-20 12:21:48,761 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/ETHUSDT/5m.parquet
+2025-09-20 12:21:49,090 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/ETHUSDT/5m.parquet
+2025-09-20 12:21:49,090 - __main__ - INFO - Processing ETH/USDT 1h...
+2025-09-20 12:22:05,921 - __main__ - INFO - Validating 1h data with 32604 rows
+2025-09-20 12:22:05,926 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:00:00
+2025-09-20 12:22:06,439 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/ETHUSDT/1h.csv
+2025-09-20 12:22:06,635 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/ETHUSDT/1h.parquet
+2025-09-20 12:22:06,700 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/ETHUSDT/1h.parquet
+2025-09-20 12:22:06,701 - __main__ - INFO - Processing ETH/USDT 4h...
+2025-09-20 12:22:12,028 - __main__ - INFO - Validating 4h data with 8152 rows
+2025-09-20 12:22:12,031 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:00:00
+2025-09-20 12:22:12,160 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/ETHUSDT/4h.csv
+2025-09-20 12:22:12,249 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/ETHUSDT/4h.parquet
+2025-09-20 12:22:12,262 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/ETHUSDT/4h.parquet
+2025-09-20 12:22:12,262 - __main__ - INFO - Processing SOL/USDT 5m...
+2025-09-20 12:25:30,729 - __main__ - INFO - Validating 5m data with 391238 rows
+2025-09-20 12:25:30,760 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:25:00
+2025-09-20 12:25:34,245 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/SOLUSDT/5m.csv
+2025-09-20 12:25:36,697 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/SOLUSDT/5m.parquet
+2025-09-20 12:25:37,048 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/SOLUSDT/5m.parquet
+2025-09-20 12:25:37,048 - __main__ - INFO - Processing SOL/USDT 1h...
+2025-09-20 12:25:53,506 - __main__ - INFO - Validating 1h data with 32604 rows
+2025-09-20 12:25:53,511 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:00:00
+2025-09-20 12:25:53,785 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/SOLUSDT/1h.csv
+2025-09-20 12:25:53,983 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/SOLUSDT/1h.parquet
+2025-09-20 12:25:54,027 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/SOLUSDT/1h.parquet
+2025-09-20 12:25:54,027 - __main__ - INFO - Processing SOL/USDT 4h...
+2025-09-20 12:25:58,391 - __main__ - INFO - Validating 4h data with 8152 rows
+2025-09-20 12:25:58,395 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:00:00
+2025-09-20 12:25:58,501 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/SOLUSDT/4h.csv
+2025-09-20 12:25:58,590 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/SOLUSDT/4h.parquet
+2025-09-20 12:25:58,600 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/SOLUSDT/4h.parquet
+2025-09-20 12:25:58,601 - __main__ - INFO - Processing ADA/USDT 5m...
+2025-09-20 12:29:18,815 - __main__ - INFO - Validating 5m data with 391238 rows
+2025-09-20 12:29:18,847 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:25:00
+2025-09-20 12:29:22,591 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/ADAUSDT/5m.csv
+2025-09-20 12:29:24,883 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/ADAUSDT/5m.parquet
+2025-09-20 12:29:25,182 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/ADAUSDT/5m.parquet
+2025-09-20 12:29:25,182 - __main__ - INFO - Processing ADA/USDT 1h...
+2025-09-20 12:29:42,058 - __main__ - INFO - Validating 1h data with 32604 rows
+2025-09-20 12:29:42,063 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:00:00
+2025-09-20 12:29:42,543 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/ADAUSDT/1h.csv
+2025-09-20 12:29:42,773 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/ADAUSDT/1h.parquet
+2025-09-20 12:29:42,813 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/ADAUSDT/1h.parquet
+2025-09-20 12:29:42,813 - __main__ - INFO - Processing ADA/USDT 4h...
+2025-09-20 12:29:47,289 - __main__ - INFO - Validating 4h data with 8152 rows
+2025-09-20 12:29:47,293 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:00:00
+2025-09-20 12:29:47,398 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/ADAUSDT/4h.csv
+2025-09-20 12:29:47,470 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/ADAUSDT/4h.parquet
+2025-09-20 12:29:47,488 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/ADAUSDT/4h.parquet
+2025-09-20 12:29:47,488 - __main__ - INFO - Processing XRP/USDT 5m...
+2025-09-20 12:33:04,679 - __main__ - INFO - Validating 5m data with 391239 rows
+2025-09-20 12:33:04,722 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:30:00
+2025-09-20 12:33:08,242 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/XRPUSDT/5m.csv
+2025-09-20 12:33:10,967 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/XRPUSDT/5m.parquet
+2025-09-20 12:33:11,322 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/XRPUSDT/5m.parquet
+2025-09-20 12:33:11,322 - __main__ - INFO - Processing XRP/USDT 1h...
+2025-09-20 12:33:27,885 - __main__ - INFO - Validating 1h data with 32604 rows
+2025-09-20 12:33:27,890 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:00:00
+2025-09-20 12:33:28,216 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/XRPUSDT/1h.csv
+2025-09-20 12:33:28,413 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/XRPUSDT/1h.parquet
+2025-09-20 12:33:28,462 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/XRPUSDT/1h.parquet
+2025-09-20 12:33:28,462 - __main__ - INFO - Processing XRP/USDT 4h...
+2025-09-20 12:33:33,147 - __main__ - INFO - Validating 4h data with 8152 rows
+2025-09-20 12:33:33,149 - __main__ - INFO - Data covers 1358 days from 2022-01-01 00:00:00 to 2025-09-20 12:00:00
+2025-09-20 12:33:33,219 - __main__ - INFO - Saved raw data to /home/morningstar/Documents/trading/bot/data/raw/XRPUSDT/4h.csv
+2025-09-20 12:33:33,283 - __main__ - INFO - Saved training data to /home/morningstar/Documents/trading/bot/data/processed/indicators/train/XRPUSDT/4h.parquet
+2025-09-20 12:33:33,295 - __main__ - INFO - Saved validation data to /home/morningstar/Documents/trading/bot/data/processed/indicators/val/XRPUSDT/4h.parquet

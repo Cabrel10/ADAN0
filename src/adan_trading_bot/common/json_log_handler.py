@@ -56,46 +56,72 @@ class JsonLogHandler(RotatingFileHandler):
 
     def format(self, record: logging.LogRecord) -> str:
         """
-        Format the specified record as a JSON string.
+        Format the specified record as a JSON string with hierarchical structure.
 
         Args:
             record: Log record to format
 
         Returns:
-            str: JSON formatted log entry
+            str: JSON formatted log entry with event_type and correlation_id
         """
-        # Extract standard fields
+        message = record.getMessage()
+
+        # Extract event_type from message (e.g., "[STEP]" -> "STEP", "[CHUNK_LOADER]" -> "CHUNK_LOADER")
+        event_type = "general"
+        if message.startswith("[") and "]" in message:
+            try:
+                event_type = message.split("[")[1].split("]")[0].lower()
+            except (IndexError, AttributeError):
+                event_type = "general"
+
+        # Standard log fields that shouldn't be in details
+        standard_keys = {
+            'args', 'asctime', 'created', 'exc_info', 'exc_text',
+            'filename', 'funcName', 'id', 'levelname', 'levelno',
+            'lineno', 'module', 'msecs', 'message', 'msg', 'name',
+            'pathname', 'process', 'processName', 'relativeCreated',
+            'stack_info', 'thread', 'threadName', 'correlation_id',
+            'event_type'
+        }
+
+        # Build hierarchical log structure
         log_record: Dict[str, Any] = {
             'timestamp': datetime.utcfromtimestamp(record.created).isoformat() + 'Z',
+            'event_type': event_type,
+            'correlation_id': getattr(record, 'correlation_id', ''),
             'level': record.levelname,
-            'name': record.name,
-            'message': record.getMessage(),
-            'module': record.module,
-            'function': record.funcName,
-            'line': record.lineno,
-            'process': record.process,
-            'thread': record.thread,
-            'thread_name': record.threadName,
+            'message': message,
+            'details': {
+                'source': {
+                    'name': record.name,
+                    'module': record.module,
+                    'function': record.funcName,
+                    'line': record.lineno,
+                },
+                'process': {
+                    'process': record.process,
+                    'thread': record.thread,
+                    'thread_name': record.threadName,
+                }
+            }
         }
 
         # Add exception info if present
         if record.exc_info:
-            # Use attached formatter if present, otherwise a temporary one
             try:
                 formatter = self.formatter or logging.Formatter()
-                log_record['exception'] = formatter.formatException(record.exc_info)
+                log_record['details']['exception'] = formatter.formatException(record.exc_info)
             except Exception:
-                # Fallback to string conversion
-                log_record['exception'] = str(record.exc_info)
+                log_record['details']['exception'] = str(record.exc_info)
 
-        # Add any extra attributes
+        # Add any extra attributes to details (sub-blocks)
+        extra_details = {}
         for key, value in record.__dict__.items():
-            if key not in ('args', 'asctime', 'created', 'exc_info', 'exc_text',
-                         'filename', 'funcName', 'id', 'levelname', 'levelno',
-                         'lineno', 'module', 'msecs', 'msecs', 'message',
-                         'msg', 'name', 'pathname', 'process', 'processName',
-                         'relativeCreated', 'stack_info', 'thread', 'threadName'):
-                log_record[key] = value
+            if key not in standard_keys:
+                extra_details[key] = value
+
+        if extra_details:
+            log_record['details']['context'] = extra_details
 
         return json.dumps(log_record, ensure_ascii=False)
 
@@ -133,36 +159,62 @@ class JsonLogFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         """
-        Format the specified record as a JSON string.
+        Format the specified record as a JSON string with hierarchical structure.
 
         Args:
             record: Log record to format
 
         Returns:
-            str: JSON formatted log entry
+            str: JSON formatted log entry with event_type and correlation_id
         """
-        # Extract standard fields
+        message = record.getMessage()
+
+        # Extract event_type from message (e.g., "[STEP]" -> "STEP")
+        event_type = "general"
+        if message.startswith("[") and "]" in message:
+            try:
+                event_type = message.split("[")[1].split("]")[0].lower()
+            except (IndexError, AttributeError):
+                event_type = "general"
+
+        # Standard log fields that shouldn't be in details
+        standard_keys = {
+            'args', 'asctime', 'created', 'exc_info', 'exc_text',
+            'filename', 'funcName', 'id', 'levelname', 'levelno',
+            'lineno', 'module', 'msecs', 'message', 'msg', 'name',
+            'pathname', 'process', 'processName', 'relativeCreated',
+            'stack_info', 'thread', 'threadName', 'correlation_id',
+            'event_type'
+        }
+
+        # Build hierarchical log structure
         log_record: Dict[str, Any] = {
             'timestamp': datetime.utcfromtimestamp(record.created).isoformat() + 'Z',
+            'event_type': event_type,
+            'correlation_id': getattr(record, 'correlation_id', ''),
             'level': record.levelname,
-            'name': record.name,
-            'message': record.getMessage(),
-            'module': record.module,
-            'function': record.funcName,
-            'line': record.lineno,
+            'message': message,
+            'details': {
+                'source': {
+                    'name': record.name,
+                    'module': record.module,
+                    'function': record.funcName,
+                    'line': record.lineno,
+                }
+            }
         }
 
         # Add exception info if present
         if record.exc_info:
-            log_record['exception'] = self.formatException(record.exc_info)
+            log_record['details']['exception'] = self.formatException(record.exc_info)
 
-        # Add any extra attributes
+        # Add any extra attributes to details (sub-blocks)
+        extra_details = {}
         for key, value in record.__dict__.items():
-            if key not in ('args', 'asctime', 'created', 'exc_info', 'exc_text',
-                         'filename', 'funcName', 'id', 'levelname', 'levelno',
-                         'lineno', 'module', 'msecs', 'msecs', 'message',
-                         'msg', 'name', 'pathname', 'process', 'processName',
-                         'relativeCreated', 'stack_info', 'thread', 'threadName'):
-                log_record[key] = value
+            if key not in standard_keys:
+                extra_details[key] = value
+
+        if extra_details:
+            log_record['details']['context'] = extra_details
 
         return json.dumps(log_record, ensure_ascii=False)

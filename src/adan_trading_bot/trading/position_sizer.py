@@ -44,7 +44,7 @@ class RiskParameters:
     max_portfolio_risk: float = 0.20  # 20% max total portfolio risk
     risk_free_rate: float = 0.02  # 2% risk-free rate
     confidence_level: float = 0.95  # 95% confidence level
-    lookback_period: int = 252  # 1 year of trading days
+    lookback_period: int = 365  # 1 year - crypto trades 24/7 (365 days instead of 252)
 
 
 class PositionSizer:
@@ -365,11 +365,25 @@ class PositionSizer:
             else:
                 kelly_fraction = 0.1
 
+        # Apply clipping to Kelly fraction (suggestion from analysis)
+        kelly_fraction = min(0.25, max(0.01, kelly_fraction))
+
+        # DBE Integration: Adjust Kelly fraction based on market regime
+        market_regime = market_data.get('market_regime', 'neutral')
+        if market_regime == 'bull':
+            kelly_multiplier = 1.2  # Increase Kelly in bull market
+        elif market_regime == 'bear':
+            kelly_multiplier = 0.7  # Reduce Kelly in bear market
+        else:
+            kelly_multiplier = 1.0  # Neutral market
+
+        kelly_fraction *= kelly_multiplier
+
         # Apply conservative scaling (typically 25-50% of full Kelly)
         conservative_kelly = kelly_fraction * 0.25 * confidence
 
-        # Ensure reasonable bounds
-        conservative_kelly = max(0.01, min(0.3, conservative_kelly))
+        # Ensure reasonable bounds with improved clipping
+        conservative_kelly = min(0.25, max(0.01, conservative_kelly))
         position_value = portfolio_value * conservative_kelly
 
         return {
@@ -379,7 +393,10 @@ class PositionSizer:
                 'conservative_kelly': conservative_kelly,
                 'expected_return': expected_return,
                 'volatility': volatility,
-                'win_rate': win_rate
+                'win_rate': win_rate,
+                'market_regime': market_regime,
+                'kelly_multiplier': kelly_multiplier,
+                'kelly_respected': abs(position_value/portfolio_value - conservative_kelly) < 0.02  # For RL bonus
             }
         }
 
@@ -396,23 +413,30 @@ class PositionSizer:
                 portfolio_value, available_capital, confidence
             )
 
-        volatility = market_data['volatility']
+        volatility = max(market_data['volatility'], 0.01)  # Prevent division by zero
         target_risk = self.risk_params.max_risk_per_trade
 
+        # DBE Integration: Adjust target risk based on market regime
+        market_regime = market_data.get('market_regime', 'neutral')
+        if market_regime == 'bear':
+            target_risk *= 0.8  # Reduce risk in bear market
+        elif market_regime == 'bull':
+            target_risk *= 1.1  # Slightly increase risk in bull market
+
         # Risk parity: position size inversely proportional to volatility
-        if volatility > 0:
-            # Calculate position size to achieve target risk
-            risk_adjusted_size = (target_risk * portfolio_value) / (volatility * current_price)
-            position_value = risk_adjusted_size * current_price * confidence
-        else:
-            position_value = portfolio_value * 0.1 * confidence
+        risk_budget = target_risk / volatility
+        position_risk = min(risk_budget, 1.0)  # Limit to 100% of capital
+        position_value = portfolio_value * position_risk * confidence
 
         return {
             'size': position_value,
             'metadata': {
                 'volatility': volatility,
                 'target_risk': target_risk,
-                'risk_adjusted_size': risk_adjusted_size if volatility > 0 else 0
+                'risk_budget': risk_budget,
+                'position_risk': position_risk,
+                'market_regime': market_regime,
+                'risk_respected': abs(position_risk - target_risk/volatility) < 0.01  # For RL bonus
             }
         }
 

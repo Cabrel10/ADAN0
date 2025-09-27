@@ -11,7 +11,10 @@ from the trading bot's log files.
 # Standard library imports
 import json
 import logging
+import json
+import logging
 import os
+import re
 import time
 from collections import defaultdict, deque
 from datetime import datetime
@@ -75,6 +78,13 @@ class LogMonitor:
                 'episode_return': deque(maxlen=max_points),
                 'episode_time': deque(maxlen=max_points),
                 'episode_trades': deque(maxlen=max_points),
+                'risk_drawdown_value': deque(maxlen=max_points),
+                'risk_drawdown_limit_value': deque(maxlen=max_points),
+                'risk_drawdown_pct': deque(maxlen=max_points),
+                'risk_drawdown_limit_pct': deque(maxlen=max_points),
+                'risk_equity': deque(maxlen=max_points),
+                'risk_cash': deque(maxlen=max_points),
+                'risk_solde_dispo': deque(maxlen=max_points),
                 'parallel_workers': 0,
                 'last_update': time.time()
             }
@@ -165,6 +175,23 @@ class LogMonitor:
         metrics['total_reward'] = float(log_entry.get('total_reward', 0.0))
         metrics['action'] = log_entry.get('action', 0)
         metrics['done'] = bool(log_entry.get('done', False))
+
+        # Extract risk metrics from log message if available
+        if 'message' in log_entry and '[RISK]' in log_entry['message']:
+            risk_message = log_entry['message']
+            # Example: [Worker 0] [RISK] Drawdown actuel: 0.02/0.82 USDT (0.1%/4.0%), Équité: 20.48 USDT, Cash: 4.08 USDT, Solde dispo: 4.08 USDT
+            match = re.search(r'Drawdown actuel: ([\d.]+) / ([\d.]+) USDT \(([\d.]+)% / ([\d.]+)%\), Équité: ([\d.]+) USDT, Cash: ([\d.]+) USDT, Solde dispo: ([\d.]+) USDT', risk_message)
+            if match:
+                metrics['risk_drawdown_value'] = float(match.group(1))
+                metrics['risk_drawdown_limit_value'] = float(match.group(2))
+                metrics['risk_drawdown_pct'] = float(match.group(3))
+                metrics['risk_drawdown_limit_pct'] = float(match.group(4))
+                metrics['risk_equity'] = float(match.group(5))
+                metrics['risk_cash'] = float(match.group(6))
+                metrics['risk_solde_dispo'] = float(match.group(7))
+            else:
+                # Fallback if regex doesn't match, try to get equity from portfolio
+                metrics['risk_equity'] = float(portfolio.get('portfolio_value', 0.0))
 
         # Extract training metrics if available
         training = log_entry.get('training', {})
@@ -812,6 +839,9 @@ def update_dashboard(n: int):
     # Mettre à jour les statistiques globales
     stats = log_monitor.global_stats
 
+    # Get initial balance from config (assuming it's consistent across workers)
+    initial_balance = log_monitor.config.get("environment", {}).get("initial_balance", 20.50) # Default to 20.50 if not found
+
     # Calculer les performances des workers
     table_data = []
     active_workers = 0
@@ -825,11 +855,15 @@ def update_dashboard(n: int):
                 best_reward = current_reward
                 best_worker = worker
             active_workers += 1
-            avg_capital += worker_data['capital'][-1]
 
-            # Calculer les performances
-            current_capital = worker_data['capital'][-1]
-            pnl_pct = (current_capital - 20) / 20 * 100 if current_capital > 0 else 0
+            # Use risk_equity for current capital if available, otherwise fallback to portfolio_value
+            current_capital = worker_data['risk_equity'][-1] if worker_data['risk_equity'] else worker_data['capital'][-1]
+
+            avg_capital += current_capital
+
+            # Calculate PnL % dynamically
+            pnl_pct = ((current_capital - initial_balance) / initial_balance) * 100 if initial_balance > 0 else 0
+
             if pnl_pct > 1:
                 status = "🟢 Performant"
             elif pnl_pct < -1:
@@ -842,11 +876,11 @@ def update_dashboard(n: int):
                 'worker': worker,
                 'capital': current_capital,
                 'pnl_pct': pnl_pct,
-                'drawdown': worker_data['drawdown'][-1] if worker_data['drawdown'] else 0,
+                'drawdown': worker_data['risk_drawdown_pct'][-1] if worker_data['risk_drawdown_pct'] else 0,
                 'sharpe': worker_data['sharpe'][-1] if worker_data['sharpe'] else 0,
                 'avg_reward': np.mean(worker_data['reward']) if worker_data['reward'] else 0,
                 'trades': worker_data['trades'][-1] if worker_data['trades'] else 0,
-                'win_loss_ratio': worker_data['win_loss_ratio'][-1] if worker_data['win_loss_ratio'] else 0,
+                'win_loss_ratio': np.mean(worker_data['win_loss_ratio']) if worker_data['win_loss_ratio'] else 0, # Assuming win_loss_ratio is tracked
                 'status': status
             })
 

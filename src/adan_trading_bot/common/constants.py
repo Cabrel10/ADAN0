@@ -62,25 +62,36 @@ CAPITAL_TIERS = {
         "min": 11.0,
         "max": 30.0,
         "max_position_size_pct": 30,
-        "risk_per_trade_pct": 5.0
+        "risk_per_trade_pct": 5.0,
+        "exposure_range": [5, 25]  # 5% à 25% d'exposition
     },
     "Small": {
         "min": 30.0,
         "max": 100.0,
         "max_position_size_pct": 20,
-        "risk_per_trade_pct": 2.0
+        "risk_per_trade_pct": 2.0,
+        "exposure_range": [8, 35]  # 8% à 35% d'exposition
     },
     "Medium": {
         "min": 100.0,
         "max": 300.0,
         "max_position_size_pct": 15,
-        "risk_per_trade_pct": 1.5
+        "risk_per_trade_pct": 1.5,
+        "exposure_range": [10, 50]  # 10% à 50% d'exposition
     },
     "Large": {
         "min": 300.0,
-        "max": float('inf'),
+        "max": 1000.0,
         "max_position_size_pct": 10,
-        "risk_per_trade_pct": 1.0
+        "risk_per_trade_pct": 1.0,
+        "exposure_range": [15, 70]  # 15% à 70% d'exposition
+    },
+    "Enterprise": {
+        "min": 1000.0,
+        "max": float('inf'),
+        "max_position_size_pct": 8,
+        "risk_per_trade_pct": 0.5,
+        "exposure_range": [20, 90]  # 20% à 90% d'exposition
     }
 }
 
