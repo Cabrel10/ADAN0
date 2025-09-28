@@ -32,6 +32,7 @@ class ExcellenceMetrics:
     recent_pnl_history: List[float] = None
     current_drawdown: float = 0.0
     timeframe_signals: Dict[str, bool] = None
+    chunk_number: int = 0 # MODIFIED: Added to track current chunk for progression penalty
 
     def __post_init__(self):
         if self.recent_pnl_history is None:
@@ -82,6 +83,14 @@ class GuguMarchExcellenceRewards:
         self.consistency_multiplier = self.consistency_config.get(
             "consistency_multiplier", 0.5
         )
+        
+        # Configuration de la pénalité de progression par chunk
+        self.chunk_penalty_config = self.config.get("chunk_progression_penalty", {})
+        self.chunk_penalty_enabled = self.chunk_penalty_config.get("enabled", True)
+        self.chunk_base_penalty = self.chunk_penalty_config.get("base_penalty", 0.01)
+        self.chunk_increase_factor = self.chunk_penalty_config.get("increase_factor", 0.5)
+        self.chunk_max_multiplier = self.chunk_penalty_config.get("max_multiplier", 6.0)
+        self.chunk_start_index = self.chunk_penalty_config.get("start_chunk_index", 0)
 
         # Historique pour le calcul de la consistance
         self.performance_history = []
@@ -92,22 +101,54 @@ class GuguMarchExcellenceRewards:
             f"[GUGU-MARCH] Streak bonus: {self.streak_enabled}, Confluence: {self.confluence_enabled}, Consistency: {self.consistency_enabled}"
         )
 
+    def _calculate_chunk_progression_penalty(self, chunk_number: int) -> float:
+        """
+        Calcule la pénalité de progression par chunk selon la formule approuvée :
+        multiplicateur_brut = 1.0 + (chunk_number * facteur_augmentation_par_chunk)
+        multiplicateur_final = min(multiplicateur_brut, chunk_max_multiplier)
+        pénalité_finale = base_penalty * multiplicateur_final
+
+        Args:
+            chunk_number: Numéro du chunk actuel
+
+        Returns:
+            float: La pénalité calculée
+        """
+        if not self.chunk_penalty_enabled or chunk_number < self.chunk_start_index:
+            return 0.0
+
+        effective_chunk = chunk_number - self.chunk_start_index
+        raw_multiplier = 1.0 + (effective_chunk * self.chunk_increase_factor)
+        final_multiplier = min(raw_multiplier, self.chunk_max_multiplier)
+        penalty = self.chunk_base_penalty * final_multiplier
+
+        logger.debug(
+            f"[GUGU-MARCH] Chunk {chunk_number} penalty: {penalty:.4f} "
+            f"(base: {self.chunk_base_penalty}, multiplier: {final_multiplier:.2f})"
+        )
+        return penalty
+
     def calculate_excellence_bonus(
         self, base_reward: float, metrics: ExcellenceMetrics, trade_won: bool = False
     ) -> Tuple[float, Dict[str, float]]:
         """
         Calcule le bonus d'excellence total à ajouter à la récompense de base
 
-        Args:
             base_reward: Récompense de base du trade/step
             metrics: Métriques de performance actuelles
             trade_won: Si ce step correspond à un trade gagnant
 
         Returns:
-            Tuple de (bonus_total, détail_des_bonus)
+            Tuple[float, Dict[str, float]]: (total_bonus, breakdown) où breakdown est un détail des bonus
         """
         bonus_breakdown = {}
         total_bonus = 0.0
+
+        # Appliquer la pénalité de progression par chunk
+        chunk_penalty = self._calculate_chunk_progression_penalty(metrics.chunk_number)
+        if chunk_penalty > 0:
+            total_bonus -= chunk_penalty
+            bonus_breakdown["chunk_penalty"] = -chunk_penalty
 
         # 1. Bonus de Performance Sharpe (Guide de Gugu)
         sharpe_bonus = self._calculate_sharpe_excellence_bonus(metrics.sharpe_ratio)
@@ -375,6 +416,15 @@ def create_excellence_rewards_system(config: Dict) -> GuguMarchExcellenceRewards
         Instance configurée du système d'excellence
     """
     reward_config = config.get("reward_shaping", {})
+
+    # Injecter la configuration de la pénalité de chunk depuis le bon emplacement
+    chunk_penalty_config = config.get("trading_rules", {}).get("frequency", {}).get("chunk_progression_penalty", {})
+    
+    if "excellence_bonuses" not in reward_config or reward_config["excellence_bonuses"] is None:
+        reward_config["excellence_bonuses"] = {}
+        
+    reward_config["excellence_bonuses"]["chunk_progression_penalty"] = chunk_penalty_config
+
     return GuguMarchExcellenceRewards(reward_config)
 
 

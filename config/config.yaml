@@ -550,7 +550,7 @@ trading_rules:
       4h: 3
       total_daily: 15
     frequency_bonus_weight: 0.3
-    frequency_penalty_weight: 0.01 # Réduit drastiquement de 1.0 à 0.01 pour éviter d'écraser le signal d'apprentissage
+    frequency_penalty_weight: 0.01 # Reverted to original value as requested by user # Réduit drastiquement de 1.0 à 0.01 pour éviter d'écraser le signal d'apprentissage
     action_threshold: 0.3 # Réduit de 0.5 à 0.3 pour plus de trades
     frequency_check_interval: 2000 # Permettre progression à travers plusieurs chunks (1000 steps par chunk)
     force_trade_steps: 50 # Forcer un trade toutes les 50 étapes si en dessous du minimum
@@ -560,6 +560,12 @@ trading_rules:
     daily_steps_5m: 288 # Nombre de steps 5m par jour (24h * 60min / 5min)
     daily_steps_1h: 24 # Nombre de steps 1h par jour
     daily_steps_4h: 6 # Nombre de steps 4h par jour
+    chunk_progression_penalty: # MODIFIED: Added chunk progression penalty as requested by user
+      enabled: true
+      base_penalty: 0.01
+      increase_factor: 0.5
+      max_multiplier: 6.0
+      start_chunk_index: 0
 
 # Paliers de capital
 capital_tiers:
