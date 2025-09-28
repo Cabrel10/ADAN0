@@ -1,88 +1,106 @@
-# GUIDE D'UTILISATION DU PROJET ADAN
+# 🚀 PROJET ADAN - Système de Trading Automatisé
 
-Ce guide explique comment utiliser le projet ADAN de bout en bout, du téléchargement des données brutes à leur traitement pour l'entraînement des modèles.
+ADAN (Autonomous Digital Asset Navigator) est un système avancé de trading algorithmique conçu pour le marché des cryptomonnaies. Cette version (ADAN001_clean) inclut des améliorations majeures en termes de stabilité, de performance et de fonctionnalités.
 
----
+## 🌟 Fonctionnalités principales
 
-## ÉTAPE 1 : TÉLÉCHARGEMENT DES DONNÉES BRUTES
+- **Trading multi-timeframe** (5m, 1h, 4h)
+- **Gestion avancée des risques** avec système de capital progressif
+- **Modèles d'IA** entraînés avec renforcement profond (PPO)
+- **Système de récompenses d'excellence** (GUGU & MARCH)
+- **Optimisation des performances** avec gestion de la mémoire et du GPU
+- **Tableau de bord TensorBoard** pour le suivi des performances
 
-**NOTE IMPORTANTE :** Le script `fetch_data_ccxt.py`, mentionné dans la documentation des scripts, est actuellement manquant. En attendant sa création, les données doivent être téléchargées manuellement.
+## 🚀 Démarrage rapide
 
-Les données brutes sont nécessaires pour que le script de traitement puisse générer les fichiers Parquet avec les indicateurs techniques.
+### Prérequis
 
-### 1. Structure des dossiers
+- Python 3.8+
+- CUDA 11.8 (pour l'accélération GPU)
+- Git
+- Compte Binance (pour le trading en direct)
 
-Assurez-vous que le dossier `ADAN/data/raw/` existe. À l'intérieur, créez des sous-dossiers pour chaque timeframe que vous souhaitez utiliser (par exemple, `5m`, `1h`, `4h`).
+### Installation
 
-La structure attendue est la suivante :
-
-```
-ADAN/
-└── data/
-    └── raw/
-        ├── 5m/
-        │   ├── BTCUSDT.csv
-        │   └── ETHUSDT.csv
-        │   └── ...
-        ├── 1h/
-        │   ├── BTCUSDT.csv
-        │   └── ...
-        └── 4h/
-            ├── BTCUSDT.csv
-            └── ...
-```
-
-### 2. Format des fichiers CSV
-
-Chaque fichier CSV doit contenir les données pour un seul asset et un seul timeframe. Le nom du fichier doit suivre le format `{ASSET}USDT.csv` (par exemple, `BTCUSDT.csv`).
-
-Les colonnes requises dans chaque fichier CSV sont :
-
--   `timestamp`: L'horodatage de la bougie (format : `YYYY-MM-DD HH:MM:SS`).
--   `open`: Le prix d'ouverture.
--   `high`: Le prix le plus haut.
--   `low`: Le prix le plus bas.
--   `close`: Le prix de clôture.
--   `volume`: Le volume des transactions.
-
----
-
-## ÉTAPE 2 : TRAITEMENT DES DONNÉES ET GÉNÉRATION DES INDICATEURS
-
-Une fois les données brutes en place, vous pouvez exécuter le script pour calculer les indicateurs techniques et générer les fichiers Parquet.
-
-### 1. Configuration de l'environnement
-
-Assurez-vous que votre environnement Conda `trading_env` est activé. Cet environnement doit contenir toutes les dépendances nécessaires (listées dans `requirements.txt`).
-
-### 2. Exécution du script
-
-Depuis la racine du projet (`/home/morningstar/Documents/trading/`), exécutez la commande suivante dans votre terminal :
-
+1. Cloner le dépôt :
 ```bash
-conda activate trading_env && python ADAN/scripts/generate_sample_data.py
+git clone https://github.com/Cabrel10/ADAN0.git
+cd ADAN0
+git checkout ADAN001_clean
+git submodule update --init --recursive
 ```
 
-### 3. Résultat du traitement
-
-Le script va :
-
--   Lire les fichiers CSV depuis `ADAN/data/raw/`.
--   Calculer les indicateurs techniques définis dans `ADAN/config/config.yaml`.
--   Sauvegarder les données traitées sous forme de fichiers Parquet dans le dossier `ADAN/data/processed/indicators/`.
-
-Les fichiers de sortie seront organisés par asset, comme ceci :
-
-```
-ADAN/
-└── data/
-    └── processed/
-        └── indicators/
-            ├── ADA/
-            │   ├── 1h.parquet
-            │   ├── 4h.parquet
-            │   └── 5m.parquet
-            └── ...
+2. Installer les dépendances :
+```bash
+pip install -r requirements.txt
+cd bot
+pip install -e .
 ```
 
-Le projet est maintenant prêt pour l'entraînement des modèles d'intelligence artificielle.
+3. Configurer les variables d'environnement :
+```bash
+cp .env.example .env
+# Éditer le fichier .env avec vos clés API
+```
+
+## 📊 Structure du projet
+
+```
+ADAN0/
+├── bot/                     # Code principal du bot de trading
+│   ├── config/             # Fichiers de configuration
+│   ├── scripts/            # Scripts d'entraînement et d'évaluation
+│   └── src/                # Code source Python
+├── data/                   # Données brutes et traitées
+│   ├── raw/               # Données brutes (CSV)
+│   └── processed/         # Données traitées (Parquet)
+├── models/                # Modèles entraînés
+└── logs/                  # Journaux et métriques
+```
+
+## 🛠 Configuration
+
+Consultez le fichier `bot/config/config.yaml` pour personnaliser les paramètres de trading, les stratégies et les modèles.
+
+## 🚦 Exécution
+
+### Entraînement du modèle
+```bash
+cd bot
+python scripts/train_parallel_agents.py
+```
+
+### Backtesting
+```bash
+python scripts/run_backtest.py
+```
+
+### Trading en direct
+```bash
+python scripts/run_live_trading.py
+```
+
+## 📈 Monitoring
+
+Pour visualiser les performances :
+```bash
+tensorboard --logdir=logs/
+```
+
+## 📚 Documentation complète
+
+Consultez les fichiers suivants pour plus de détails :
+- `INSTRUCTIONS_UTILISATION_CORRIGEE.md` : Guide d'utilisation détaillé
+- `RAPPORT_CORRECTIONS_TENSORBOARD_DASHBOARD.md` : Documentation technique
+
+## 📝 Licence
+
+Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
+
+## 👥 Contribution
+
+Les contributions sont les bienvenues ! Veuillez lire les directives de contribution avant de soumettre une pull request.
+
+## 📞 Support
+
+Pour toute question ou problème, veuillez ouvrir une issue sur le dépôt GitHub ou contacter l'équipe de développement.
