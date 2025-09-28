@@ -281,8 +281,13 @@ def train_agent(
     callback_list = []
 
     # Add checkpoint callback
+    training_section = config.get('training', {})
+    checkpointing_section = training_section.get('checkpointing', {})
+    save_freq = checkpointing_section.get('save_freq', training_section.get('save_freq', 10000))
+    logger.info(f"Checkpoint save frequency set to {save_freq} steps.")
+
     checkpoint_callback = CheckpointCallback(
-        save_freq=training_config.save_freq,
+        save_freq=save_freq,
         save_path=training_config.best_model_save_path,
         name_prefix='rl_model'
     )

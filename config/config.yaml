@@ -89,8 +89,10 @@ model:
 data:
   include:
     - btcusdt
+    - xrpusdt
   assets:
     - BTCUSDT
+    - XRPUSDT
   processed_data:
     train: data/processed/train
     validation: data/processed/validation

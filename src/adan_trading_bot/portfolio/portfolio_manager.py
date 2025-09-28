@@ -689,8 +689,9 @@ class PortfolioManager:
         sorted_tiers = sorted(self.capital_tiers, key=lambda x: x["min_capital"])
 
         # Trouver le premier tier où min_capital <= capital_de_référence < next_tier.min_capital
-        # Les tests attendent une sélection basée sur le capital initial
-        current_equity = float(getattr(self, "initial_capital", self.get_portfolio_value()))
+        # FIX: Utiliser la valeur actuelle du portefeuille pour déterminer le palier, et non le capital initial.
+        # L'ancienne méthode bloquait le worker dans son palier de départ.
+        current_equity = self.get_portfolio_value()
 
         for i, tier in enumerate(sorted_tiers):
             # Si c'est le dernier tier, on l'utilise
