@@ -101,6 +101,69 @@ Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
 
 Les contributions sont les bienvenues ! Veuillez lire les directives de contribution avant de soumettre une pull request.
 
+## 🛠 Commandes Utiles
+
+### Configuration initiale
+```bash
+# Cloner le dépôt
+# Initialiser et mettre à jour les sous-modules
+git submodule update --init --recursive
+
+# Installer les dépendances
+pip install -r requirements.txt
+cd bot
+pip install -e .
+```
+
+### Gestion des données
+```bash
+# Générer les indicateurs techniques
+python scripts/generate_parquet_data.py
+
+# Vérifier l'intégrité des données
+python scripts/verify_parquet_data.py
+```
+
+### Entraînement et évaluation
+```bash
+# Lancer l'entraînement
+python scripts/train_parallel_agents.py
+
+# Lancer le backtest
+python scripts/run_backtest.py
+
+# Lancer le trading en direct
+python scripts/run_live_trading.py
+```
+
+### Surveillance et débogage
+```bash
+# Lancer TensorBoard pour visualiser les métriques
+tensorboard --logdir=logs/
+
+# Vérifier les logs en temps réel
+tail -f logs/training.log
+
+# Vérifier l'état des workers
+python scripts/check_workers.py
+```
+
+### Maintenance
+```bash
+# Nettoyer les fichiers temporaires
+make clean
+
+# Mettre à jour le dépôt et les sous-modules
+git pull
+git submodule update --recursive
+
+# Créer un environnement virtuel
+python -m venv venv
+source venv/bin/activate  # Sur Linux/Mac
+# OU
+.\venv\Scripts\activate  # Sur Windows
+```
+
 ## 📞 Support
 
 Pour toute question ou problème, veuillez ouvrir une issue sur le dépôt GitHub ou contacter l'équipe de développement.
