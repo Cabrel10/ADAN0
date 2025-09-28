@@ -93,7 +93,6 @@ Consultez les fichiers suivants pour plus de détails :
 - `INSTRUCTIONS_UTILISATION_CORRIGEE.md` : Guide d'utilisation détaillé
 - `RAPPORT_CORRECTIONS_TENSORBOARD_DASHBOARD.md` : Documentation technique
 
-## 📝 Licence
 
 Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
 
@@ -101,6 +100,74 @@ Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
 
 Les contributions sont les bienvenues ! Veuillez lire les directives de contribution avant de soumettre une pull request.
 
-## 📞 Support
+## 🚀 Commandes Essentielles
 
-Pour toute question ou problème, veuillez ouvrir une issue sur le dépôt GitHub ou contacter l'équipe de développement.
+### 1. Configuration Initiale
+```bash
+# Activer l'environnement conda
+conda activate trading_env
+# OU avec le chemin complet
+/home/morningstar/miniconda3/envs/trading_env/bin/python
+
+# Vérifier l'installation
+tensorboard --version
+```
+
+### 2. Entraînement du Modèle
+```bash
+# Lancer l'entraînement standard (30 secondes de test)
+timeout 30s /home/morningstar/miniconda3/envs/trading_env/bin/python \
+  bot/scripts/train_parallel_agents.py \
+  --config bot/config/config.yaml \
+  --checkpoint-dir bot/checkpoints
+
+# Reprendre un entraînement existant
+--resume
+```
+
+### 3. Monitoring en Temps Réel
+```bash
+# Lancer le dashboard de monitoring
+cd bot/scripts
+python training_dashboard.py
+# Accès : http://localhost:8050
+
+# Visualiser les logs TensorBoard
+tensorboard --logdir=reports/tensorboard_logs
+```
+
+### 4. Gestion des Checkpoints
+```bash
+# Lister les checkpoints disponibles
+ls -lat bot/checkpoints/ | grep checkpoint_
+
+# Valider l'intégrité des checkpoints
+python test_tensorboard_checkpoint_validation.py
+
+# Nettoyer les anciens checkpoints
+find bot/checkpoints -name "checkpoint_*" -type d -mtime +7 -exec rm -rf {} \;
+```
+
+### 5. Surveillance des Performances
+```bash
+# Suivre les logs en temps réel
+tail -f logs/training.log
+
+# Vérifier l'utilisation des ressources
+htop  # ou nvtop pour les GPUs
+
+# Vérifier l'état des workers
+python scripts/check_workers.py
+```
+
+### 6. Maintenance et Dépannage
+```bash
+# Nettoyer les fichiers temporaires
+make clean
+
+# Mettre à jour le dépôt
+git pull
+git submodule update --recursive
+
+# Vérifier les dépendances
+pip list | grep -E "tensorboard|stable-baselines3|gym|numpy"
