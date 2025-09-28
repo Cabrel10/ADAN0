@@ -89,9 +89,20 @@ tensorboard --logdir=logs/
 
 ## 📚 Documentation complète
 
-Consultez les fichiers suivants pour plus de détails :
-- `INSTRUCTIONS_UTILISATION_CORRIGEE.md` : Guide d'utilisation détaillé
-- `RAPPORT_CORRECTIONS_TENSORBOARD_DASHBOARD.md` : Documentation technique
+### Guides principaux
+- `INSTRUCTIONS_UTILISATION_CORRIGEE.md` - Guide d'utilisation complet avec exemples
+- `INSTRUCTIONS_COLAB.md` - Instructions pour exécuter sur Google Colab
+- `ENVIRONMENT_SETUP.md` - Guide d'installation de l'environnement
+
+### Rapports techniques
+- `RAPPORT_CORRECTIONS_TENSORBOARD_DASHBOARD.md` - Corrections du système de monitoring
+- `RAPPORT_CORRECTION_PROBLEME_4_LOGS_WORKERS.md` - Résolution des problèmes de logs
+- `RAPPORT_CORRECTION_PROBLEME_5_METRIQUES_ZERO.md` - Correction des métriques à zéro
+- `RAPPORT_FINAL_BUG_EQUITE_DRAWDOWN.md` - Analyse du bug de drawdown
+
+### Autres documents
+- `CORRECTIONS_APPLIQUEES_BUGS_CRITIQUES.md` - Liste des corrections majeures
+- `CORRECTIONS_WORKER_FREQUENCY.md` - Optimisation de la fréquence des workers
 
 
 Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
