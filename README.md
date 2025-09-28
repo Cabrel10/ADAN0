@@ -93,7 +93,6 @@ Consultez les fichiers suivants pour plus de détails :
 - `INSTRUCTIONS_UTILISATION_CORRIGEE.md` : Guide d'utilisation détaillé
 - `RAPPORT_CORRECTIONS_TENSORBOARD_DASHBOARD.md` : Documentation technique
 
-## 📝 Licence
 
 Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
 
@@ -101,69 +100,74 @@ Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
 
 Les contributions sont les bienvenues ! Veuillez lire les directives de contribution avant de soumettre une pull request.
 
-## 🛠 Commandes Utiles
+## 🚀 Commandes Essentielles
 
-### Configuration initiale
+### 1. Configuration Initiale
 ```bash
-# Cloner le dépôt
-# Initialiser et mettre à jour les sous-modules
-git submodule update --init --recursive
+# Activer l'environnement conda
+conda activate trading_env
+# OU avec le chemin complet
+/home/morningstar/miniconda3/envs/trading_env/bin/python
 
-# Installer les dépendances
-pip install -r requirements.txt
-cd bot
-pip install -e .
+# Vérifier l'installation
+tensorboard --version
 ```
 
-### Gestion des données
+### 2. Entraînement du Modèle
 ```bash
-# Générer les indicateurs techniques
-python scripts/generate_parquet_data.py
+# Lancer l'entraînement standard (30 secondes de test)
+timeout 30s /home/morningstar/miniconda3/envs/trading_env/bin/python \
+  bot/scripts/train_parallel_agents.py \
+  --config bot/config/config.yaml \
+  --checkpoint-dir bot/checkpoints
 
-# Vérifier l'intégrité des données
-python scripts/verify_parquet_data.py
+# Reprendre un entraînement existant
+--resume
 ```
 
-### Entraînement et évaluation
+### 3. Monitoring en Temps Réel
 ```bash
-# Lancer l'entraînement
-python scripts/train_parallel_agents.py
+# Lancer le dashboard de monitoring
+cd bot/scripts
+python training_dashboard.py
+# Accès : http://localhost:8050
 
-# Lancer le backtest
-python scripts/run_backtest.py
-
-# Lancer le trading en direct
-python scripts/run_live_trading.py
+# Visualiser les logs TensorBoard
+tensorboard --logdir=reports/tensorboard_logs
 ```
 
-### Surveillance et débogage
+### 4. Gestion des Checkpoints
 ```bash
-# Lancer TensorBoard pour visualiser les métriques
-tensorboard --logdir=logs/
+# Lister les checkpoints disponibles
+ls -lat bot/checkpoints/ | grep checkpoint_
 
-# Vérifier les logs en temps réel
+# Valider l'intégrité des checkpoints
+python test_tensorboard_checkpoint_validation.py
+
+# Nettoyer les anciens checkpoints
+find bot/checkpoints -name "checkpoint_*" -type d -mtime +7 -exec rm -rf {} \;
+```
+
+### 5. Surveillance des Performances
+```bash
+# Suivre les logs en temps réel
 tail -f logs/training.log
+
+# Vérifier l'utilisation des ressources
+htop  # ou nvtop pour les GPUs
 
 # Vérifier l'état des workers
 python scripts/check_workers.py
 ```
 
-### Maintenance
+### 6. Maintenance et Dépannage
 ```bash
 # Nettoyer les fichiers temporaires
 make clean
 
-# Mettre à jour le dépôt et les sous-modules
+# Mettre à jour le dépôt
 git pull
 git submodule update --recursive
 
-# Créer un environnement virtuel
-python -m venv venv
-source venv/bin/activate  # Sur Linux/Mac
-# OU
-.\venv\Scripts\activate  # Sur Windows
-```
-
-## 📞 Support
-
-Pour toute question ou problème, veuillez ouvrir une issue sur le dépôt GitHub ou contacter l'équipe de développement.
+# Vérifier les dépendances
+pip list | grep -E "tensorboard|stable-baselines3|gym|numpy"
