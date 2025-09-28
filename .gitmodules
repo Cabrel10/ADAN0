@@ -1,0 +1,3 @@
+[submodule "bot"]
+	path = bot
+	url = https://github.com/Cabrel10/ADAN0.git
