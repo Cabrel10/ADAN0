@@ -1,13 +1,14 @@
 # 🚀 PROJET ADAN - Système de Trading Automatisé
 
-ADAN (Autonomous Digital Asset Navigator) est un système avancé de trading algorithmique conçu pour le marché des cryptomonnaies. Cette version (ADAN001_clean) inclut des améliorations majeures en termes de stabilité, de performance et de fonctionnalités.
+ADAN (Autonomous Digital Asset Navigator) est un système avancé de trading algorithmique conçu pour le marché des cryptomonnaies. Cette version (ADAN002_lstm) introduit l'architecture LSTM pour une meilleure modélisation des séries temporelles et une prise de décision contextuelle.
 
 ## 🌟 Fonctionnalités principales
 
-- **Trading multi-timeframe** (5m, 1h, 4h)
+- **Mémoire à long terme** avec architecture LSTM personnalisée
+- **Trading multi-timeframe** (5m, 1h, 4h) avec gestion intelligente
 - **Gestion avancée des risques** avec système de capital progressif
-- **Modèles d'IA** entraînés avec renforcement profond (PPO)
-- **Système de récompenses d'excellence** (GUGU & MARCH)
+- **Modèles d'IA** avec PPO récurrent (RecurrentPPO)
+- **Politique personnalisée** pour observations complexes (MultiInputLstmPolicy)
 - **Optimisation des performances** avec gestion de la mémoire et du GPU
 - **Tableau de bord TensorBoard** pour le suivi des performances
 
@@ -43,11 +44,70 @@ cp .env.example .env
 # Éditer le fichier .env avec vos clés API
 ```
 
+## 🧠 Architecture LSTM
+
+La version ADAN002 introduit une architecture LSTM avancée pour la modélisation des séquences temporelles :
+
+- **Mémoire à long terme** : Capture les dépendances à long terme dans les données de marché
+- **Gestion des observations complexes** : Support natif des espaces d'observation de type dictionnaire
+- **Entraînement parallèle** : Optimisé pour le multi-agents avec synchronisation des poids
+
+### Caractéristiques techniques
+
+- **Algorithme** : RecurrentPPO de sb3-contrib
+- **Politique personnalisée** : `MultiInputLstmPolicy` pour les observations complexes
+- **Taille de la mémoire** : 256 unités par défaut (configurable)
+- **Couches LSTM** : 1 couche par défaut (configurable)
+
+## ⚙️ Configuration avancée
+
+### Configuration de l'entraînement LSTM
+
+Le fichier `bot/config/config.yaml` contient les paramètres spécifiques à l'entraînement LSTM :
+
+```yaml
+agent:
+  policy: "MultiInputLstmPolicy"
+  policy_kwargs:
+    lstm:
+      lstm_hidden_size: 256  # Taille de la couche cachée LSTM
+      n_lstm_layers: 1       # Nombre de couches LSTM empilées
+      enable_critic_lstm: True  # Activer le LSTM pour le critique
+      shared_lstm: False       # Partager les poids LSTM entre l'acteur et le critique
+```
+
+### Exécution de l'entraînement
+
+Pour lancer un entraînement avec la nouvelle architecture LSTM :
+
+```bash
+python bot/scripts/train_parallel_agents.py \
+  --config-path bot/config/config.yaml \
+  --checkpoint-dir bot/checkpoints \
+  --num-envs 4 \
+  --sync-interval 10000
+```
+
+### Surveillance de l'entraînement
+
+1. **TensorBoard** :
+   ```bash
+   tensorboard --logdir=./logs/
+   ```
+
+2. **Métriques clés** :
+   - `loss/policy_gradient_loss` : Perte du gradient de politique
+   - `loss/value_loss` : Perte de la fonction de valeur
+   - `loss/loss` : Perte totale
+   - `rollout/ep_rew_mean` : Récompense moyenne par épisode
+
 ## 📊 Structure du projet
 
 ```
 ADAN0/
 ├── bot/                     # Code principal du bot de trading
+│   ├── src/adan_trading_bot/model/
+│   │   └── custom_policy.py  # Implémentation de MultiInputLstmPolicy
 │   ├── config/             # Fichiers de configuration
 │   ├── scripts/            # Scripts d'entraînement et d'évaluation
 │   └── src/                # Code source Python
