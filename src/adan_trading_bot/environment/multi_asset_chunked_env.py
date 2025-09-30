@@ -270,7 +270,10 @@ class MultiAssetChunkedEnv(gym.Env):
         self._max_cache_size = 1000  # Taille maximale du cache
         self._cache_hits = 0  # Succès du cache
         self._cache_misses = 0  # Échecs du cache
-        self._current_observation = None  # Observation courante
+        self._last_observation = None
+        self._last_market_timestamp: Optional[pd.Timestamp] = None
+        self._last_asset_timestamp: Dict[str, pd.Timestamp] = {}
+        # Observation courante
         # Ensure attribute exists for downstream access in _get_observation
         self._current_obs = None
         self._cache_access = {}  # Suivi de l'utilisation
@@ -2976,7 +2979,7 @@ class MultiAssetChunkedEnv(gym.Env):
 
     def _get_current_prices(self) -> Dict[str, float]:
         """Get the current prices for all assets using correct step_in_chunk indexing."""
-        prices = {}
+        prices: Dict[str, float] = {}
 
         # Debug logging pour diagnostiquer les problèmes
         if self.current_step % 50 == 0:
@@ -2999,7 +3002,10 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.smart_logger.error(f"INDEX_ERROR_PRICE | step_in_chunk={current_idx_in_chunk} >= len(df)={len(asset_data)}. Using last price.",
                                           asset=_asset, dedupe=True)
 
-                    prices[_asset] = float(asset_data.iloc[-1]['close'])
+                    last_row = asset_data.iloc[-1]
+                    prices[_asset] = float(last_row['close'])
+                    if isinstance(last_row.name, pd.Timestamp):
+                        self._last_asset_timestamp[_asset] = last_row.name
 
                     # Compteur de forward-fill pour surveillance
                     if not hasattr(self, '_price_forward_fill_count'):
@@ -3161,14 +3167,34 @@ class MultiAssetChunkedEnv(gym.Env):
             logger.error(f"Unexpected error writing to log: {str(e)}")
 
     def _get_current_timestamp(self) -> pd.Timestamp:
-        """Get the current timestamp."""
-        for _asset, timeframe_data in self.current_data.items():
+        """Get the current timestamp aligned with the current chunk index."""
+        current_idx_in_chunk = getattr(self, "step_in_chunk", self.current_step)
+
+        for asset, timeframe_data in self.current_data.items():
             if not timeframe_data:
                 continue
-            tf = next(iter(timeframe_data.keys()))
-            df = timeframe_data[tf]
-            if not df.empty and self.current_step < len(df):
-                return df.index[self.current_step]
+
+            asset_data = timeframe_data.get("5m")
+            if asset_data is None or asset_data.empty:
+                continue
+
+            timestamp: Optional[pd.Timestamp] = None
+
+            if 0 <= current_idx_in_chunk < len(asset_data):
+                timestamp = asset_data.index[current_idx_in_chunk]
+            elif current_idx_in_chunk >= len(asset_data):
+                timestamp = asset_data.index[-1]
+            else:
+                timestamp = asset_data.index[0]
+
+            if isinstance(timestamp, pd.Timestamp):
+                self._last_asset_timestamp[asset] = timestamp
+                self._last_market_timestamp = timestamp
+                return timestamp
+
+        if self._last_market_timestamp is not None:
+            return self._last_market_timestamp
+
         raise RuntimeError("No timestamp data available")
 
     def _get_safe_timestamp(self) -> Optional[str]:
@@ -4046,263 +4072,116 @@ class MultiAssetChunkedEnv(gym.Env):
     def _execute_trades(
         self, action: np.ndarray, dbe_modulation: Dict[str, float]
     ) -> float:
-        """
-        Exécute les trades en fonction des actions du modèle et de la modulation DBE.
-
-        Args:
-            action: Vecteur d'actions normalisées [-1, 1] pour chaque actif
-            dbe_modulation: Dictionnaire de modulation du DBE
-
-        Returns:
-            float: PnL réalisé lors de cette étape
-        """
         if not hasattr(self, "portfolio_manager"):
-            self.logger.error("Portfolio manager non initialisé")
+            self.logger.error("Portfolio manager non initialisé, impossible d'exécuter le trade.")
             return 0.0
 
-        # Récupérer les prix actuels
+        current_timestamp = None
         try:
             current_prices = self._get_current_prices()
+            try:
+                current_timestamp = self._get_current_timestamp()
+                self._last_market_timestamp = current_timestamp
+            except Exception as timestamp_error:
+                self.logger.error(
+                    f"Impossible de récupérer l'horodatage marché au step {self.current_step}: {timestamp_error}"
+                )
+                current_timestamp = self._last_market_timestamp
+
+            if hasattr(self.portfolio_manager, "register_market_timestamp"):
+                self.portfolio_manager.register_market_timestamp(current_timestamp)
+
             if not current_prices or not self._validate_market_data(current_prices):
-                self.logger.warning("Données de marché invalides, aucun trade exécuté")
+                self.logger.warning(f"[W:{self.worker_id}] Données de marché invalides pour le step {self.current_step}, aucun trade exécuté.")
+                if hasattr(self, "portfolio_manager"):
+                    self.portfolio_manager.update_market_price(current_prices if current_prices else {})
                 return 0.0
         except Exception as e:
-            self.logger.error(f"Erreur lors de la récupération des prix: {str(e)}")
+            self.logger.error(f"Erreur critique lors de la récupération des prix au step {self.current_step}: {e}", exc_info=True)
             return 0.0
 
         realized_pnl = 0.0
-        trade_executed = False
+        trade_executed_this_step = False
 
-        # Parcourir chaque actif et son action correspondante
-        for i, (asset, price) in enumerate(current_prices.items()):
-            if i >= len(action):
-                break
+        # 1. Mettre à jour la valeur des positions ouvertes et vérifier les SL/TP
+        pnl_from_update = self.portfolio_manager.update_market_price(current_prices)
+        if pnl_from_update > 0:
+            realized_pnl += pnl_from_update
+            trade_executed_this_step = True
 
-            action_value = action[i]
+        # 2. Itérer sur les actions de l'agent pour ouvrir ou fermer des positions
+        for i, asset in enumerate(self.assets):
+            if i >= len(action) or asset not in current_prices:
+                continue
+
+            action_value = np.clip(action[i], -1.0, 1.0)
+            price = current_prices[asset]
             position = self.portfolio_manager.positions.get(asset)
+            is_open = position and position.is_open
 
-            # Vérifier si une position est déjà ouverte et ignorer si c'est le cas
-            if position and position.size != 0:
-                continue  # Position déjà ouverte
-
-            # Récupérer la configuration du worker et du palier actuel
-            worker_pref_pct = self.worker_config.get(
-                "pref_position_size_pct", 5.0
-            )  # 5% par défaut
-            current_tier = self.portfolio_manager.get_current_tier()
-
-            # Calculer les paramètres de trade avec la nouvelle méthode du DBE
-            trade_params = self.dynamic_behavior_engine.calculate_trade_parameters(
-                capital=self.portfolio_manager.get_total_value(),
-                worker_pref_pct=worker_pref_pct,
-                tier_config=current_tier,
-                current_price=price,  # Ajouter le prix actuel
-                asset_volatility=self._calculate_asset_volatility(
-                    asset
-                ),  # Ajouter la volatilité
-            )
-
-            # Vérifier si le trade est possible
-            if not trade_params.get("feasible", False):
-                self.logger.warning(
-                    f"Trade non réalisable pour {asset}: {trade_params.get('reason', 'Raison inconnue')}"
-                )
-                continue
-
-            # Appliquer le multiplicateur de risque si présent
-            if dbe_modulation and "risk_multiplier" in dbe_modulation:
-                risk_multiplier = dbe_modulation["risk_multiplier"]
-
-                # Valider le multiplicateur de risque
-                if not isinstance(risk_multiplier, (int, float)):
-                    self.logger.error(
-                        f"Type de risk_multiplier invalide: {type(risk_multiplier)}. "
-                        f"Attendu: float ou int. Utilisation de 1.0 par défaut."
-                    )
-                    risk_multiplier = 1.0
-
-                # Limiter le multiplicateur entre 0.1 et 3.0
-                risk_multiplier = np.clip(risk_multiplier, 0.1, 3.0)
-
-                # Appliquer le multiplicateur et limiter la valeur d'action
-                action_value *= risk_multiplier
-                action_value = np.clip(action_value, -1.0, 1.0)
-
-                self.logger.debug(
-                    f"Application du multiplicateur de risque: {risk_multiplier:.2f}, "
-                    f"Action ajustée: {action_value:.4f}"
-                )
-
-            # Récupérer les paramètres de trade
-            try:
-                position_size = trade_params["position_size_usdt"]
-                stop_loss_pct = trade_params["sl_pct"]
-                take_profit_pct = trade_params.get("tp_pct", None)
-
-                # Log des paramètres de trade
-                self.logger.debug(
-                    "[TRADE PARAMS] asset=%s, action=BUY, price=%.8f, "
-                    "position_size=%.8f USDT, stop_loss=%.2f%%, "
-                    "risk_per_trade=%.2f%%",
-                    asset,
-                    price,
-                    position_size,
-                    stop_loss_pct,
-                    trade_params["risk_per_trade_pct"],
-                )
-
-                # Vérifier si la taille de position est valide
-                if position_size < 11.0:  # Minimum de 11 USDT par trade
-                    self.logger.warning(
-                        f"Taille de position trop faible pour {asset}: "
-                        f"{position_size:.2f} USDT < 11.0 USDT"
-                    )
-                    continue
-
-                # Ouvrir la position si action d'achat
-                if action_value > 0.05:  # Seuil d'achat ajusté pour plus de trades
-                    entry_price = price
-                    size_in_asset_units = position_size / price if price > 0 else 0
-                    if size_in_asset_units > 0:
-                        try:
-                            self.portfolio_manager.open_position(asset.upper(), price, size_in_asset_units)
-                            trade_executed = True
-
-                            # Déterminer la timeframe courante
-                            current_timeframe = self.get_current_timeframe() if hasattr(self, 'get_current_timeframe') else '5m'
-
-                            # Incrémenter les compteurs seulement si trade exécuté
-                            if not hasattr(self, 'positions_count'):
-                                self.positions_count = {'daily_total': 0, '5m': 0, '1h': 0, '4h': 0}
-
-                            self.positions_count[current_timeframe] = self.positions_count.get(current_timeframe, 0) + 1
-                            self.positions_count['daily_total'] = self.positions_count.get('daily_total', 0) + 1
-
-                            self.logger.info(f"[FREQUENCY] Trade exécuté {asset} @ {price} sur {current_timeframe} (count: {self.positions_count[current_timeframe]})")
-
-                        except Exception as e:
-                            self.logger.error(f"[ERREUR] Impossible d'ouvrir une position pour {asset}: {str(e)}")
-                            trade_executed = False
-
-                    # Log de l'exécution
-                    if trade_executed:
-                        self.logger.debug(
-                            "[TRADE EXECUTED] asset=%s, action=BUY, entry_price=%.8f, "
-                            "size=%.8f, value=%.8f, cash_after=%.8f",
-                            asset,
-                            entry_price,
-                            position_size,
-                            position_size * entry_price,
-                            self.portfolio_manager.cash,
-                        )
-                else:
-                    self.logger.debug(
-                        "[%s TRADE SKIPPED] asset=%s, reason=action_value=%.4f <= 0.05",
-                        self.worker_id,
-                        asset,
-                        action_value,
-                    )
-
-            except KeyError as e:
-                self.logger.error(f"Paramètre de trading manquant pour {asset}: {e}")
-                continue
-
-            # Gérer les actions de vente
-            if action_value < -0.05:  # Vendre avec seuil ajusté
-                if not position or not position.is_open:
-                    continue  # Aucune position à fermer
-
-                # Calculer la taille de la position à fermer
-                position_value = position.quantity * price
-
-                # Vérifier si la position est suffisamment importante pour être fermée
-                if position_value < 11.0:  # Minimum de 11 USDT pour fermer une position
-                    self.logger.warning(
-                        f"Position trop petite pour fermer {asset}: "
-                        f"{position_value:.2f} USDT < 11.0 USDT"
-                    )
-                    continue
-
-                # Vérifier le drawdown actuel
-                current_drawdown = (position.entry_price - price) / position.entry_price
-                max_drawdown = (
-                    self.worker_config.get("dbe_config", {})
-                    .get("risk_management", {})
-                    .get("max_drawdown_pct", 4.0)
-                    / 100.0
-                )
-
-                if current_drawdown > max_drawdown:
-                    self.logger.warning(
-                        f"Drawdown dépassé pour {asset}: "
-                        f"{current_drawdown*100:.2f}% > {max_drawdown*100:.2f}%"
-                    )
-
-                # Fermer la position
+            # A. L'agent veut VENDRE (fermer une position)
+            if action_value < -0.5 and is_open:
+                self.logger.info(f"[ACTION] Agent requests CLOSE for {asset} at price {price:.2f}")
                 pnl = self.portfolio_manager.close_position(
-                    asset=asset.upper(), price=price, timestamp=self._get_current_timestamp()
+                    asset=asset.upper(),
+                    price=price,
+                    timestamp=current_timestamp,
+                    current_prices=current_prices,
                 )
-
                 if pnl is not None:
                     realized_pnl += pnl
-                    trade_executed = True
+                    trade_executed_this_step = True
+                    self.logger.info(f"Position {asset} closed. PnL: {pnl:.2f}")
 
-                    # Déterminer la timeframe courante
-                    current_timeframe = self.get_current_timeframe() if hasattr(self, 'get_current_timeframe') else '5m'
+            # B. L'agent veut ACHETER (ouvrir une position)
+            elif action_value > 0.5 and not is_open:
+                self.logger.info(f"[ACTION] Agent requests OPEN for {asset} at price {price:.2f}")
 
-                    # Incrémenter les compteurs seulement si trade exécuté
-                    if not hasattr(self, 'positions_count'):
-                        self.positions_count = {'daily_total': 0, '5m': 0, '1h': 0, '4h': 0}
+                trade_params = self.dbe.calculate_trade_parameters(
+                    capital=self.portfolio_manager.get_total_value(),
+                    worker_pref_pct=action_value,
+                    tier_config=self.portfolio_manager.get_current_tier(),
+                    current_price=price,
+                    asset_volatility=self._calculate_asset_volatility(asset),
+                    dbe_modulation=dbe_modulation
+                )
 
-                    self.positions_count[current_timeframe] = self.positions_count.get(current_timeframe, 0) + 1
-                    self.positions_count['daily_total'] = self.positions_count.get('daily_total', 0) + 1
+                if not trade_params.get("feasible", False):
+                    self.logger.warning(f"Trade non réalisable pour {asset}: {trade_params.get('reason', 'Raison inconnue')}")
+                    continue
 
-                    self.logger.info(f"[FREQUENCY] Trade exécuté {asset} @ {price} sur {current_timeframe} (count: {self.positions_count[current_timeframe]})")
+                position_size_usdt = trade_params.get("position_size_usdt", 0)
+                if position_size_usdt < 11.0: # Seuil minimum de trade
+                    self.logger.warning(f"Taille de position trop faible pour {asset}: {position_size_usdt:.2f} USDT")
+                    continue
 
-                    # Enregistrer les métriques de performance
-                    if hasattr(self, "performance_metrics"):
-                        self.performance_metrics.record_trade(
-                            asset=asset,
-                            action="SELL",
+                size_in_asset_units = position_size_usdt / price if price > 0 else 0
+                if size_in_asset_units > 0:
+                    try:
+                        was_opened = self.portfolio_manager.open_position(
+                            asset=asset.upper(),
                             price=price,
-                            quantity=position.quantity,
-                            pnl=pnl,
-                            timestamp=self._get_current_timestamp(),
+                            size=size_in_asset_units,
+                            stop_loss_pct=trade_params.get("sl_pct"),
+                            take_profit_pct=trade_params.get("tp_pct"),
+                            timestamp=current_timestamp,
+                            current_prices=current_prices,
                         )
+                        if was_opened:
+                            trade_executed_this_step = True
+                            self.logger.info(f"Position {asset} opened. Size: {size_in_asset_units:.4f}")
+                        else:
+                            self.logger.warning(f"Failed to open position for {asset} (insufficient cash or already open)")
+                    except Exception as e:
+                        self.logger.error(f"Impossible d'ouvrir une position pour {asset}: {e}", exc_info=True)
 
-                    self.logger.info(
-                        "[TRADE] Fermeture position %s - Prix: %.8f, PnL: %.2f, "
-                        "Taille: %.2f USDT, Drawdown: %.2f%%",
-                        asset,
-                        price,
-                        pnl,
-                        position_value,
-                        current_drawdown * 100,
-                    )
-                else:
-                    self.logger.error(
-                        "[TRADE FAILED] asset=%s, action=SELL, reason=close_position_returned_none",
-                        asset,
-                    )
+            # C. L'agent veut CONSERVER (HOLD)
+            else:
+                pass
 
-        # Mettre à jour la valeur du portefeuille
-        self.portfolio_manager.update_market_price(current_prices)
-
-        # Mettre à jour l'étape du dernier trade si nécessaire
-        if trade_executed:
-            try:
-                self.last_trade_step = int(self.current_step)
-            except Exception:
-                self.last_trade_step = 0
-
-        # Vérifier les ordres de protection, mais seulement après la période de warmup
-        # ou après l'exécution du premier trade pour éviter les arrêts prématurés
-        warmup = getattr(self, "warmup_steps", 0) or 0
-        if (self.current_step >= max(warmup, 0)) or (
-            self.last_trade_step is not None and self.last_trade_step >= 0
-        ):
-            self.portfolio_manager.check_protection_limits(current_prices)
-            self.portfolio_manager.check_protection_orders(current_prices)
+        # 3. Mettre à jour l'étape du dernier trade si une action a eu lieu
+        if trade_executed_this_step:
+            self.last_trade_step = self.current_step
 
         return realized_pnl
 
@@ -4442,7 +4321,7 @@ class MultiAssetChunkedEnv(gym.Env):
             "positions": position_values,
             "total_position_value": total_position_value,
             "leverage": portfolio_metrics.get("leverage", 0.0),
-            "num_positions": len(position_values),
+            "num_positions": portfolio_metrics.get("open_positions_count", len(position_values)),
 
             # Rewards & Penalties
             "last_reward": last_reward,
@@ -4622,19 +4501,38 @@ class MultiAssetChunkedEnv(gym.Env):
             closed_positions = []
             try:
                 if hasattr(pm, 'trade_log') and pm.trade_log:
-                    closed_trades = [t for t in pm.trade_log if t.get('type') == 'close']
+                    closed_trades = [t for t in pm.trade_log if t.get('action') == 'close']
                     for trade in closed_trades[-3:]:  # Last 3 closed trades
                         pnl = trade.get('pnl', 0.0)
                         pnl_pct = trade.get('pnl_pct', 0.0)
                         asset = trade.get('asset', 'Unknown')
                         size = trade.get('size', 0.0)
                         entry_price = trade.get('entry_price', 0.0)
-                        exit_price = trade.get('exit_price', 0.0)
+                        exit_price = trade.get('exit_price', trade.get('price', 0.0))
+                        opened_at = trade.get('opened_at')
+                        closed_at = trade.get('closed_at')
+                        duration_seconds = trade.get('duration_seconds')
 
-                        # Format détaillé similaire aux positions ouvertes
                         closed_positions.append(
-                            f"│   {asset}: {size:.4f} @ {entry_price:.2f}→{exit_price:.2f} | PnL {pnl:+.2f} ({pnl_pct:+.2f}%)".ljust(65) + "│"
+                            (
+                                f"│   {asset}: {size:.4f} @ {entry_price:.2f}→{exit_price:.2f} | "
+                                f"PnL {pnl:+.2f} ({pnl_pct:+.2f}%)"
+                            ).ljust(65)
+                            + "│"
                         )
+
+                        timing_parts = []
+                        if opened_at:
+                            timing_parts.append(f"ouvert: {opened_at}")
+                        if closed_at:
+                            timing_parts.append(f"fermé: {closed_at}")
+                        if duration_seconds is not None:
+                            timing_parts.append(f"durée: {duration_seconds:.0f}s")
+
+                        if timing_parts:
+                            closed_positions.append(
+                                ("│   " + " | ".join(timing_parts)).ljust(65) + "│"
+                            )
             except Exception as e:
                 closed_positions = [f"│   Error retrieving closed trades: {str(e)}"]
 
@@ -4673,7 +4571,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.positions_count.get('5m', 0),
                     self.positions_count.get('1h', 0),
                     self.positions_count.get('4h', 0),
-                    self.positions_count.get('daily_total', 0)
+                    metrics.get('open_positions_count', self.positions_count.get('daily_total', 0))
                 ).ljust(65) + "│",
                 "│                                                               │",
                 "│ ⚠️  RISQUE                                                     │",
@@ -4683,6 +4581,7 @@ class MultiAssetChunkedEnv(gym.Env):
             ]
 
             if open_positions:
+                # open_positions doit déjà contenir des lignes formatées. On les enrichit si possible
                 summary_lines.extend(open_positions)
             else:
                 summary_lines.append("│   Aucune                                                      │")
@@ -4693,7 +4592,11 @@ class MultiAssetChunkedEnv(gym.Env):
             ])
 
             if closed_positions:
-                summary_lines.extend(closed_positions)
+                # Enrichir l’affichage si le dict contient opened_at/closed_at
+                enriched = []
+                for line in closed_positions:
+                    enriched.append(line)
+                summary_lines.extend(enriched)
             else:
                 summary_lines.append("│   Aucune                                                      │")
 

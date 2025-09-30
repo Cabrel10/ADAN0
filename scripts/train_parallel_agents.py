@@ -47,6 +47,7 @@ import yaml
 from gymnasium.wrappers import FlattenObservation
 from stable_baselines3 import PPO
 from stable_baselines3.common.logger import configure as sb3_logger_configure
+import json
 from stable_baselines3.common.callbacks import (
     BaseCallback,
     CallbackList,
@@ -488,6 +489,231 @@ class HierarchicalTrainingCallback(BaseCallback):
             logger.info(f"[TRAINING END] Final Mean Reward: {final_reward:.2f}")
 
         logger.info(f"[TRAINING END] Correlation ID: {self.correlation_id}")
+
+class WorkerMetricsLogger(BaseCallback):
+    """Journalise les métriques par worker vers TensorBoard et JSONL."""
+
+    def __init__(
+        self,
+        log_dir: str,
+        initial_balance: float,
+        log_interval: int = 500,
+        tensorboard_prefix: str = "workers",
+    ) -> None:
+        super().__init__(verbose=0)
+        self.log_dir = log_dir
+        self.initial_balance = float(initial_balance)
+        self.log_interval = max(1, int(log_interval))
+        self.tensorboard_prefix = tensorboard_prefix.rstrip("/")
+        self.log_path: Optional[str] = None
+        self._log_file = None
+        self._last_worker_step: Dict[str, int] = {}
+
+    def _ensure_log_file(self) -> None:
+        if self._log_file is None and self.log_path:
+            self._log_file = open(self.log_path, "a", encoding="utf-8")
+
+    def _close_log_file(self) -> None:
+        if self._log_file:
+            try:
+                self._log_file.close()
+            finally:
+                self._log_file = None
+
+    def _unwrap_envs(self):
+        env = getattr(self, "training_env", None)
+        if env is None:
+            return []
+        current = env
+        visited = set()
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            if hasattr(current, "envs"):
+                return getattr(current, "envs", [])
+            if hasattr(current, "venv"):
+                current = getattr(current, "venv")
+                continue
+            if hasattr(current, "env"):
+                current = getattr(current, "env")
+                continue
+            break
+        return []
+
+    def _extract_metrics(self, env) -> Optional[Dict[str, Any]]:
+        depth = 0
+        current = env
+        while current is not None and depth < 10:
+            if hasattr(current, "get_portfolio_metrics"):
+                try:
+                    metrics = current.get_portfolio_metrics()
+                    if isinstance(metrics, dict):
+                        return metrics
+                except Exception:
+                    pass
+            current = getattr(current, "env", None)
+            depth += 1
+        return None
+
+    @staticmethod
+    def _extract_worker_id(env, fallback: int) -> int:
+        depth = 0
+        current = env
+        while current is not None and depth < 10:
+            worker_id = getattr(current, "worker_id", None)
+            if worker_id is not None:
+                try:
+                    return int(worker_id)
+                except (TypeError, ValueError):
+                    return fallback
+            current = getattr(current, "env", None)
+            depth += 1
+        return fallback
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    @staticmethod
+    def _to_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return int(default)
+
+    @staticmethod
+    def _sanitize(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: WorkerMetricsLogger._sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [WorkerMetricsLogger._sanitize(v) for v in obj]
+        if isinstance(obj, tuple):
+            return [WorkerMetricsLogger._sanitize(v) for v in obj]
+        if isinstance(obj, np.generic):
+            return obj.item()
+        return obj
+
+    def _write_record(self, record: Dict[str, Any]) -> None:
+        if not self._log_file:
+            return
+        try:
+            self._log_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._log_file.flush()
+        except Exception as exc:
+            logger.error("[WorkerMetricsLogger] Échec d'écriture JSON: %s", exc)
+
+    def _log_tensorboard(
+        self,
+        worker_label: str,
+        portfolio_value: float,
+        penalty: float,
+        inference_count: int,
+        drawdown_pct: float,
+        sharpe_ratio: float,
+        trades: int,
+    ) -> None:
+        if self.logger is None:
+            return
+        base = f"{self.tensorboard_prefix}/{worker_label}"
+        self.logger.record(f"{base}/capital", portfolio_value)
+        self.logger.record(f"{base}/penalty", penalty)
+        self.logger.record(f"{base}/inference_count", float(inference_count))
+        self.logger.record(f"{base}/drawdown_pct", drawdown_pct)
+        self.logger.record(f"{base}/sharpe", sharpe_ratio)
+        self.logger.record(f"{base}/trades", float(trades))
+
+    def _on_training_start(self) -> None:
+        os.makedirs(self.log_dir, exist_ok=True)
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        self.log_path = os.path.join(
+            self.log_dir, f"parallel_training_results_{timestamp}.jsonl"
+        )
+        self._ensure_log_file()
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps % self.log_interval != 0:
+            return True
+        envs = self._unwrap_envs()
+        if not envs:
+            return True
+        timestamp = datetime.utcnow().isoformat()
+        total_workers = len(envs)
+
+        for idx, worker_env in enumerate(envs):
+            metrics = self._extract_metrics(worker_env)
+            if not metrics:
+                continue
+            worker_id = self._extract_worker_id(worker_env, idx)
+            worker_label = f"worker_{worker_id}"
+
+            current_step = self._to_int(metrics.get("step", self.num_timesteps), self.num_timesteps)
+            if self._last_worker_step.get(worker_label) == current_step:
+                continue
+            self._last_worker_step[worker_label] = current_step
+
+            reward_components = metrics.get("reward_components", {}) or {}
+            penalty = self._to_float(
+                reward_components.get("frequency_penalty"), metrics.get("last_penalty", 0.0)
+            )
+            portfolio_value = self._to_float(metrics.get("portfolio_value"), self.initial_balance)
+            cash = self._to_float(metrics.get("cash"), self.initial_balance)
+            drawdown_pct = self._to_float(metrics.get("drawdown"))
+            sharpe_ratio = self._to_float(metrics.get("sharpe"))
+            trades = self._to_int(metrics.get("trades", 0))
+            positions = self._to_int(metrics.get("num_positions", 0))
+            inference_count = self._to_int(metrics.get("step", self.num_timesteps))
+            action_stats = metrics.get("action_stats", {}) or {}
+
+            record = {
+                "timestamp": timestamp,
+                "instance_id": worker_label,
+                "worker_id": worker_id,
+                "step": current_step,
+                "episode": self._to_int(metrics.get("chunk", 0)),
+                "reward": self._to_float(metrics.get("last_reward", 0.0)),
+                "total_reward": self._to_float(metrics.get("cumulative_reward", 0.0)),
+                "penalty": penalty,
+                "positions": positions,
+                "trades": trades,
+                "parallel": {"workers": total_workers, "active": total_workers},
+                "inference": {
+                    "count": inference_count,
+                    "action_mean": self._to_float(action_stats.get("action_mean")),
+                    "action_std": self._to_float(action_stats.get("action_std")),
+                    "action_min": self._to_float(action_stats.get("action_min")),
+                    "action_max": self._to_float(action_stats.get("action_max")),
+                },
+                "portfolio": {
+                    "portfolio_value": portfolio_value,
+                    "cash": cash,
+                    "drawdown": drawdown_pct,
+                    "max_drawdown": self._to_float(metrics.get("max_dd")),
+                    "sharpe": sharpe_ratio,
+                    "sortino": self._to_float(metrics.get("sortino")),
+                    "win_rate": self._to_float(metrics.get("win_rate")),
+                    "leverage": self._to_float(metrics.get("leverage")),
+                },
+                "risk": self._sanitize(metrics.get("risk_metrics", {})),
+                "initial_balance": self.initial_balance,
+            }
+
+            self._write_record(record)
+            self._log_tensorboard(
+                worker_label,
+                portfolio_value,
+                penalty,
+                inference_count,
+                drawdown_pct,
+                sharpe_ratio,
+                trades,
+            )
+
+        return True
+
+    def _on_training_end(self) -> None:
+        self._close_log_file()
 
 
 # Timeout and environment validation
@@ -2649,6 +2875,27 @@ def main(
         callbacks.append(hierarchical_callback)
         logger.info(
             "[TRAINING] Affichage hiérarchique activé avec métriques détaillées"
+        )
+
+        metrics_log_dir = os.path.join(
+            config.get("paths", {}).get("logs_dir", "logs"),
+            "training_metrics",
+        )
+        metrics_log_interval = (
+            config.get("monitoring", {}).get("metrics_log_interval")
+            or config.get("training", {}).get("metrics_log_interval")
+            or 500
+        )
+        worker_metrics_callback = WorkerMetricsLogger(
+            log_dir=metrics_log_dir,
+            initial_balance=initial_capital,
+            log_interval=metrics_log_interval,
+            tensorboard_prefix="workers",
+        )
+        callbacks.append(worker_metrics_callback)
+        logger.info(
+            "[TRAINING] Journalisation des métriques par worker activée (%s)",
+            metrics_log_dir,
         )
 
         # Créer un CallbackList pour gérer plusieurs callbacks

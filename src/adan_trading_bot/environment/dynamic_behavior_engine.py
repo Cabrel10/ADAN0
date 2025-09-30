@@ -1024,91 +1024,90 @@ class DynamicBehaviorEngine:
 
     def _adjust_risk_level(self) -> None:
         """
-        Ajuste dynamiquement le niveau de risque en fonction des performances récentes
-        et des conditions de marché.
+        Ajuste dynamiquement le niveau de risque avec une formule additive robuste.
+        Cette version est conçue pour être stable même avec des métriques d'entrée anormales.
         """
         try:
-            # Récupération des paramètres de risque depuis la configuration
+            # Récupération des configurations avec des valeurs par défaut robustes
             risk_params = self.config.get('risk_parameters', {})
-            min_risk = risk_params.get('min_risk_level', 0.3)
-            max_risk = risk_params.get('max_risk_level', 2.0)
+            min_risk = float(risk_params.get('min_risk_level', 0.3))
+            max_risk = float(risk_params.get('max_risk_level', 2.0))
+            base_risk_level = (min_risk + max_risk) / 2.0  # Point de départ neutre
 
-            # Initialisation de l'état si nécessaire
-            self.state.setdefault('current_risk_level', risk_params.get('initial_risk', 0.5))
-            self.state.setdefault('win_rate', 0.0)
-            self.state.setdefault('drawdown', 0.0)
-            self.state.setdefault('consecutive_losses', 0)
-            self.state.setdefault('sharpe_ratio', 0.0)
-            self.state.setdefault('sortino_ratio', 0.0)
-            self.state.setdefault('volatility', 0.0)
+            # --- 1. Sanitisation des Métriques d'Entrée ---
+            portfolio_metrics = self.finance_manager.get_metrics() if self.finance_manager else {}
+            
+            # S'assurer que le win_rate est un ratio (0-1)
+            raw_win_rate = portfolio_metrics.get('win_rate', self.state.get('win_rate', 0.5))
+            win_rate = raw_win_rate / 100.0 if raw_win_rate > 1.0 else raw_win_rate
+            win_rate = np.clip(win_rate, 0.0, 1.0)
 
-            # Récupération des métriques de performance
-            portfolio_metrics = self.finance_manager.get_performance_metrics() if self.finance_manager else {}
-            raw_win_rate = portfolio_metrics.get('win_rate', self.state['win_rate'])
-            # Assurer que le win_rate est entre 0 et 1 (pas en pourcentage)
-            if raw_win_rate > 1.0:  # Si en pourcentage, convertir
-                raw_win_rate = raw_win_rate / 100.0
-            win_rate = min(1.0, max(0.0, raw_win_rate))
-            drawdown = portfolio_metrics.get('drawdown', self.state['drawdown'])
+            drawdown = np.clip(portfolio_metrics.get('drawdown', self.state.get('drawdown', 0.0)), 0.0, 1.0)
+            
+            sharpe_ratio = portfolio_metrics.get('sharpe_ratio', self.state.get('sharpe_ratio', 0.0))
+            sharpe_ratio = np.nan_to_num(sharpe_ratio, nan=0.0, posinf=2.0, neginf=-2.0) # Contrôler les valeurs extrêmes
 
-            # Facteurs d'ajustement du risque
-            # 1. Facteur basé sur le taux de réussite (win rate)
-            target_win_rate = 0.6  # Cible de 60% de trades gagnants
-            win_rate_factor = (win_rate / target_win_rate) ** 2  # Carré pour un effet non linéaire
+            consecutive_losses = self.state.get('consecutive_losses', 0)
 
-            # 2. Facteur basé sur le drawdown
-            max_allowed_drawdown = risk_params.get('max_drawdown', 0.1)  # 10% par défaut
-            drawdown_factor = 1.0 - min(drawdown / (max_allowed_drawdown * 2), 0.5)  # Réduction jusqu'à 50%
+            # --- 2. Calcul des Scores Normalisés (-1 à +1) ---
 
-            # 3. Facteur basé sur le ratio de Sharpe
-            sharpe_ratio = portfolio_metrics.get('sharpe_ratio', 0.0)
-            sharpe_factor = 1.0 + (sharpe_ratio / 2.0)  # Augmente le risque avec un meilleur Sharpe
+            # Score de Win Rate (centré autour de 55%)
+            win_rate_score = np.clip((win_rate - 0.55) / 0.2, -1.0, 1.0)  # De 35% à 75%
 
-            # 4. Facteur basé sur la volatilité
-            vol_management = self.config.get('volatility_management', {})
-            min_vol = vol_management.get('min_volatility', 0.01)
-            max_vol = vol_management.get('max_volatility', 0.20)
-            current_vol = portfolio_metrics.get('volatility', min_vol)
-            vol_factor = 1.0 - ((current_vol - min_vol) / (max_vol - min_vol + 1e-6)) * 0.5  # Réduction jusqu'à 50%
+            # Score de Drawdown (pénalité non-linéaire)
+            max_allowed_drawdown = float(risk_params.get('max_drawdown', 0.1))
+            drawdown_score = 1.0 - (drawdown / max_allowed_drawdown)**0.5 # Racine carrée pour pénaliser plus fortement au début
+            drawdown_score = np.clip(drawdown_score * 2 - 1, -1.0, 1.0) # Mapper sur [-1, 1]
 
-            # 5. Facteur basé sur les pertes consécutives
-            loss_streak_factor = 1.0 / (1.0 + self.state.get('consecutive_losses', 0) * 0.2)
+            # Score de Sharpe Ratio (borné avec tanh pour la stabilité)
+            sharpe_score = np.tanh(sharpe_ratio / 2.0) # tanh mappe sur [-1, 1], divisé par 2 pour adoucir
 
-            # Calcul du nouveau niveau de risque
-            base_risk = self.state['current_risk_level']
-            new_risk = base_risk * win_rate_factor * drawdown_factor * sharpe_factor * vol_factor * loss_streak_factor
+            # Score des Pertes Consécutives (pénalité exponentielle)
+            loss_streak_score = np.exp(-consecutive_losses / 5.0) * 2 - 1 # De +1 (0 perte) à -1 (beaucoup de pertes)
 
-            # Lissage pour éviter les changements trop brutaux
-            smoothing = self.config.get('smoothing', {})
-            alpha = smoothing.get('adaptation_rate', 0.1)  # Vitesse d'adaptation
-            smoothed_risk = (1.0 - alpha) * base_risk + alpha * new_risk
+            # --- 3. Combinaison Additive Pondérée ---
+            weights = {
+                'win_rate': 0.3,
+                'drawdown': 0.4,
+                'sharpe': 0.2,
+                'loss_streak': 0.1
+            }
+            
+            performance_score = (
+                weights['win_rate'] * win_rate_score +
+                weights['drawdown'] * drawdown_score +
+                weights['sharpe'] * sharpe_score +
+                weights['loss_streak'] * loss_streak_score
+            )
+            performance_score = np.clip(performance_score, -1.0, 1.0)
 
-            # Application des limites
+            # --- 4. Mapper le Score au Niveau de Risque ---
+            risk_range = (max_risk - min_risk) / 2.0
+            target_risk = base_risk_level + performance_score * risk_range
+            
+            # --- 5. Lissage Exponentiel pour la Stabilité ---
+            alpha = self.config.get('smoothing', {}).get('adaptation_rate', 0.1)
+            current_risk = self.state.get('current_risk_level', base_risk_level)
+            smoothed_risk = (1.0 - alpha) * current_risk + alpha * target_risk
+
+            # --- 6. Application Finale des Bornes ---
             self.state['current_risk_level'] = np.clip(smoothed_risk, min_risk, max_risk)
 
-            # Mise à jour des métriques dans l'état
-            self.state.update({
-                'win_rate': win_rate,
-                'drawdown': drawdown,
-                'sharpe_ratio': sharpe_ratio,
-                'volatility': current_vol
-            })
-
-            # Journalisation détaillée
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    f"Ajustement du risque - Niveau: {self.state['current_risk_level']:.2f} | "
-                    f"Win Rate: {win_rate*100:.1f}% | "
-                    f"Drawdown: {drawdown*100:.1f}% | "
-                    f"Sharpe: {sharpe_ratio:.2f} | "
-                    f"Volatilité: {current_vol*100:.1f}% | "
-                    f"Pertes consécutives: {self.state.get('consecutive_losses', 0)}"
+            # --- 7. Journalisation pour le Débogage ---
+            if self.state['current_step'] % 50 == 0: # Log toutes les 50 étapes
+                logger.info(
+                    f"RISK_ADJUST | Step: {self.state['current_step']} | "
+                    f"WinRate: {win_rate:.2f} (Score: {win_rate_score:.2f}) | "
+                    f"Drawdown: {drawdown:.2f} (Score: {drawdown_score:.2f}) | "
+                    f"Sharpe: {sharpe_ratio:.2f} (Score: {sharpe_score:.2f}) | "
+                    f"Perf Score: {performance_score:.2f} -> "
+                    f"Risk Level: {self.state['current_risk_level']:.2f}"
                 )
 
         except Exception as e:
-            logger.error(f"Erreur lors de l'ajustement du niveau de risque: {e}")
-            logger.exception("Détails de l'erreur:")
-            # En cas d'erreur, on conserve le niveau de risque actuel
+            logger.error(f"Erreur lors de l'ajustement du niveau de risque: {e}", exc_info=True)
+            # En cas d'erreur, on revient à un niveau de risque conservateur
+            self.state['current_risk_level'] = min_risk
 
     def get_performance_metrics(self) -> Dict[str, Any]:
         """
@@ -1121,7 +1120,7 @@ class DynamicBehaviorEngine:
             return {}
 
         # Récupération des métriques du gestionnaire financier
-        portfolio_metrics = self.finance_manager.get_performance_metrics()
+        portfolio_metrics = self.finance_manager.get_metrics()
 
         # Calcul des métriques avancées
         if self.trade_history:
@@ -1156,7 +1155,7 @@ class DynamicBehaviorEngine:
             },
             'trading': {
                 'total_trades': portfolio_metrics.get('trade_count', 0),
-                'win_rate': min(100.0, max(0.0, portfolio_metrics.get('win_rate', 0.0) * 100)),  # en pourcentage, clippé
+                'win_rate': portfolio_metrics.get('win_rate', 0.0),  # en pourcentage
                 'avg_win_pct': avg_win * 100,  # en pourcentage
                 'avg_loss_pct': avg_loss * 100,  # en pourcentage
                 'win_loss_ratio': win_loss_ratio,
@@ -1357,7 +1356,7 @@ class DynamicBehaviorEngine:
             portfolio_value = 0.0
             free_cash = 0.0
         else:
-            metrics = self.finance_manager.get_performance_metrics()
+            metrics = self.finance_manager.get_metrics()
             portfolio_value = metrics.get('total_capital', 0.0)
             free_cash = metrics.get('free_capital', 0.0)
 
@@ -1511,6 +1510,7 @@ class DynamicBehaviorEngine:
         tier_config: Optional[Dict[str, Any]] = None,
         current_price: Optional[float] = None,
         asset_volatility: Optional[float] = None,
+        dbe_modulation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, float]:
         """
         Calcule les paramètres de trade en fonction du capital, des préférences du worker
@@ -1525,8 +1525,11 @@ class DynamicBehaviorEngine:
             logger.debug(f"[DBE_CALC] tier_config reçu: {tier_config}")
 
             risk_params = self.compute_dynamic_modulation()
-            aggressivity = risk_params.get('aggressivity', 0.5)
-            logger.debug(f"[DBE_CALC] Agressivité calculée: {aggressivity:.2f}")
+            # The agent's action value (worker_pref_pct) should determine the size.
+            # Normalize from [0.5, 1.0] to [0, 1] to scale within the allowed range.
+            normalized_action = (worker_pref_pct - 0.5) * 2 if worker_pref_pct >= 0.5 else 0
+            aggressivity = risk_params.get('aggressivity', 0.5) # Keep for logging/other potential uses
+            logger.debug(f"[DBE_CALC] Action de l'agent (normalisée): {normalized_action:.2f}, Agressivité DBE: {aggressivity:.2f}")
 
             exposure_range = tier_config.get('exposure_range')
             if not exposure_range or not isinstance(exposure_range, list) or len(exposure_range) != 2:
@@ -1539,7 +1542,8 @@ class DynamicBehaviorEngine:
             max_position_pct = exposure_range[1] / 100.0
             logger.debug(f"[DBE_CALC] Intervalle d'exposition: min={min_position_pct:.2%}, max={max_position_pct:.2%}")
 
-            position_pct = min_position_pct + (max_position_pct - min_position_pct) * aggressivity
+            # Use the normalized agent action to determine position size
+            position_pct = min_position_pct + (max_position_pct - min_position_pct) * normalized_action
             # Clip PosSize between 5% and 80%
             position_pct = np.clip(position_pct, 0.05, 0.80)
             logger.debug(f"[DBE_CALC] Taille de position (basée sur l'agressivité): {position_pct:.2%}")

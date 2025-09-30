@@ -41,10 +41,14 @@ class PerformanceMetrics:
         self.config = config or {}
         self.closed_positions = deque(maxlen=5000)
 
-            # Cache pour éviter les doublons de logs
+        # Cache pour éviter les doublons de logs
         self._last_logs = {}
         import time
         self._time_module = time
+
+        # État courant des positions ouvertes (synchronisé par le portefeuille)
+        self._current_open_positions = []
+        self._current_prices = {}
 
         # Compteurs de fréquence des positions par timeframe
         self.positions_frequency = {
@@ -156,6 +160,21 @@ class PerformanceMetrics:
         self._current_open_positions = open_positions or []
         self._current_prices = current_prices or {}
 
+    def record_equity_snapshot(self, equity: Optional[float]) -> None:
+        """Enregistre la valeur d'équité courante dans la courbe d'équité."""
+        if equity is None:
+            return
+
+        try:
+            equity_value = float(equity)
+        except (TypeError, ValueError):
+            return
+
+        if self.equity_curve and self.equity_curve[-1] == equity_value:
+            return
+
+        self.equity_curve.append(equity_value)
+
     def calculate_sharpe_ratio(self, risk_free_rate: float = 0.0) -> float:
         """Calcule le ratio de Sharpe annualisé."""
         if not self.returns or len(self.returns) < 10:
@@ -204,34 +223,39 @@ class PerformanceMetrics:
         neutrals = total_trades - wins - losses
         winrate = (wins / max(1, total_trades)) * 100 if total_trades > 0 else 0.0
 
-        self.log_info(f"[METRICS DEBUG] Total trades: {total_trades}, Wins: {wins}, Losses: {losses}, Neutrals: {neutrals}")
-        self.log_info(f"[METRICS DEBUG] PnL values: {[trade.get('pnl', 0) for trade in closed_trades]}")
-
-        positions_str = (f"Positions: 5m:{positions_count['5m']}, 1h:{positions_count['1h']}, "
-                        f"4h:{positions_count['4h']}, Total:{positions_count['daily_total']}"
-                        if positions_count else "Positions: N/A")
+        open_positions_count = 0
+        positions_str = "Positions: N/A"
+        if positions_count:
+            open_positions_count = positions_count.get('open_positions', positions_count.get('daily_total', 0))
+            positions_str = (
+                f"Positions: 5m:{positions_count.get('5m', 0)}, 1h:{positions_count.get('1h', 0)}, "
+                f"4h:{positions_count.get('4h', 0)}, Total:{open_positions_count}"
+            )
 
         # Format Max DD with more precision for small values
-        max_dd_value = self.calculate_max_dd()
+        max_dd_value = self.calculate_max_drawdown()
         max_dd_str = f"{max_dd_value:.3f}" if max_dd_value < 1.0 else f"{max_dd_value:.2f}"
 
-        self.log_info(f"[METRICS] Sharpe: {self.calculate_sharpe_ratio():.2f} | Sortino: {self.calculate_sortino_ratio():.2f} | "
-                      f"Profit Factor: {self.calculate_profit_factor():.2f} | Max DD: {max_dd_str}% | "
-                      f"CAGR: {self.calculate_cagr():.2f}% | Win Rate: {winrate:.1f}% | Trades: {total_trades} "
-                      f"({wins}W/{losses}L/{neutrals}N) | {positions_str}")
+        self.log_info(
+            f"[METRICS] Sharpe: {self.calculate_sharpe_ratio():.2f} | Sortino: {self.calculate_sortino_ratio():.2f} | "
+            f"Profit Factor: {self.calculate_profit_factor():.2f} | Max DD: {max_dd_str}% | "
+            f"CAGR: {self.calculate_cagr():.2f}% | Win Rate: {winrate:.1f}% | Trades: {total_trades} "
+            f"({wins}W/{losses}L/{neutrals}N) | {positions_str}"
+        )
 
         return {
             'sharpe': self.calculate_sharpe_ratio(),
             'sortino': self.calculate_sortino_ratio(),
             'profit_factor': self.calculate_profit_factor(),
-            'max_dd': self.calculate_max_dd(),
+            'max_dd': self.calculate_max_drawdown(),
             'cagr': self.calculate_cagr(),
             'winrate': winrate,
             'total_trades': total_trades,
             'wins': wins,
             'losses': losses,
             'neutrals': neutrals,
-            'positions_count': positions_count
+            'positions_count': positions_count,
+            'open_positions_count': open_positions_count
         }
 
     def close_position(self, position, exit_price):
@@ -314,24 +338,6 @@ class PerformanceMetrics:
 
         return profit_factor
 
-    def calculate_max_dd(self) -> float:
-        """Calcule le drawdown maximum en pourcentage."""
-        if not self.equity_curve or len(self.equity_curve) < 2:
-            return 0.0
-
-        equity = np.array(self.equity_curve)
-        peak = np.maximum.accumulate(equity)
-
-        # Check for division by zero
-        peak_safe = np.where(peak == 0, 1, peak)  # Replace 0 with 1 to avoid division by zero
-        drawdown = (peak - equity) / peak_safe * 100
-        max_dd = float(np.max(drawdown))
-
-        # Log the exact calculated value temporarily
-        if max_dd > 0:
-            self.log_info(f"[DEBUG MaxDD EXACT] Calculated Max DD: {max_dd:.6f}%")
-
-        return max_dd
 
     def calculate_cagr(self) -> float:
         """Calcule le CAGR (Compound Annual Growth Rate)."""
@@ -385,70 +391,27 @@ class PerformanceMetrics:
         # Clipper les valeurs extrêmes
         return float(np.clip(calmar, -10.0, 10.0))
 
-    def calculate_max_drawdown(self) -> float:
-        """Calcule le drawdown maximum en pourcentage."""
-        if not self.equity_curve or len(self.equity_curve) < 2:
+    def calculate_max_drawdown(self, equity_curve: Optional[List[float]] = None) -> float:
+        """Calcule le drawdown maximum en pourcentage à partir d'une courbe d'équité."""
+        curve = equity_curve if equity_curve is not None else list(self.equity_curve)
+
+        if not curve or len(curve) < 2:
             return 0.0
 
-        # Check if we have enough trades for meaningful DD calculation
-        total_trades = getattr(self, 'total_trades', 0)
-        if total_trades < 10:
+        equity_array = np.array(curve, dtype=np.float32)
+
+        if not np.all(np.isfinite(equity_array)):
+            logger.warning("Courbe d'équité contient des valeurs non finies, nettoyage en cours.")
+            equity_array = equity_array[np.isfinite(equity_array)]
+
+        if len(equity_array) < 2:
             return 0.0
 
-        # Utiliser np.array pour des calculs vectoriels plus rapides
-        equity_curve = np.array(self.equity_curve)
+        peak_array = np.maximum.accumulate(equity_array)
+        non_zero_peaks = np.where(peak_array == 0, 1.0, peak_array)
+        drawdown_array = (peak_array - equity_array) / non_zero_peaks
+        max_dd = np.max(drawdown_array) if len(drawdown_array) > 0 else 0.0
 
-        # Validation préliminaire pour éviter les calculs aberrants
-        if len(equity_curve) < 2:
-            return 0.0
-
-        # Vérifier si l'équité initiale est valide
-        initial_equity = equity_curve[0]
-        if initial_equity <= 0:
-            return 0.0
-
-        # Pour les petits datasets (moins de 10 points), retourner 0
-        if len(equity_curve) < 10:
-            return 0.0
-
-        # Calculer le pic cumulé (running peak)
-        peak_curve = np.maximum.accumulate(equity_curve)
-
-        # Éviter la division par zéro si le pic est nul
-        if np.any(peak_curve <= 0):
-             # Fallback sur une boucle sécurisée si des pics sont à zéro
-             max_dd = 0.0
-             peak = equity_curve[0]
-             for value in equity_curve[1:]:
-                 if value > peak:
-                     peak = value
-                 if peak > 0:
-                     dd = (peak - value) / peak
-                     if dd > max_dd:
-                         max_dd = dd
-        else:
-             # Calcul vectoriel du drawdown
-             drawdowns = (peak_curve - equity_curve) / peak_curve
-             max_dd = np.max(drawdowns)
-
-        # Validation et clipping strict
-        if max_dd > 1.0:
-            if max_dd > 1.0:  # > 100%
-                if hasattr(self, 'smart_logger'):
-                    self.smart_logger.smart_warning(logger, f"Max DD {max_dd*100:.2f}% exceeds 100%, resetting to 0")
-                else:
-                    logger.warning(f"[Worker {getattr(self, 'worker_id', 0)}] Max DD {max_dd*100:.2f}% exceeds 100%, resetting to 0")
-                max_dd = 0.0  # Reset au lieu de clipper si > 100%
-
-        # Additional validation for small datasets
-        if max_dd < 0:
-            max_dd = 0.0
-
-        # Pour éviter les valeurs aberrantes, limiter à 50% max pour les petits portfolios
-        if len(self.equity_curve) < 50 and max_dd > 0.5:
-            max_dd = 0.0
-
-        # Retourner en pourcentage
         return float(max_dd * 100)
 
     def update_position_frequency(self, timeframe: str, count: int = 1) -> None:
@@ -545,12 +508,6 @@ class PerformanceMetrics:
         total_trades = len(closed_trades)
 
         # Diagnostic détaillé pour comprendre les incohérences
-        if total_trades > 0 and hasattr(self, 'smart_logger'):
-            pnl_values = [t.get('pnl', 0) for t in closed_trades]
-            all_trades_count = len(self.trades)
-            self.log_info(f"[METRICS DEBUG] Closed trades: {total_trades}/{all_trades_count}, Wins: {winning_trades}, Losses: {losing_trades}, Neutral: {neutral_trades}")
-            self.log_info(f"[METRICS DEBUG] Closed PnL values: {pnl_values}")
-
         if total_trades > 0:
             win_rate = (winning_trades / total_trades) * 100
             # Clipper entre 0 et 100%
@@ -605,10 +562,11 @@ class PerformanceMetrics:
         }
 
     def _log_metrics(self, data: Dict) -> None:
-        """Écrit les métriques dans le fichier de log structuré."""
+        """Écrit les métriques dans le fichier de log structuré en gérant la sérialisation."""
         try:
+            serializable_data = json.loads(json.dumps(data, default=str))
             with open(self.metrics_file, 'a') as f:
-                f.write(json.dumps(data) + '\n')
+                f.write(json.dumps(serializable_data) + '\n')
         except Exception as e:
             if hasattr(self, 'smart_logger'):
                 self.smart_logger.smart_error(logger, f"[METRICS] Erreur lors de l'écriture des métriques: {e}")

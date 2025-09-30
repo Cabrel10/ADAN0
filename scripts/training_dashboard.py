@@ -318,21 +318,34 @@ class LogMonitor:
                 logger.warning(f"Le répertoire de logs {self.log_dir} n'existe pas")
                 return
 
-            # Parcourir les fichiers de logs
-            for filename in os.listdir(self.log_dir):
-                if filename.startswith('parallel_training_results_') and filename.endswith('.json'):
-                    file_path = os.path.join(self.log_dir, filename)
+            # Construire la liste des répertoires à scanner
+            scan_dirs = [self.log_dir]
+            tm_dir = os.path.join(self.log_dir, 'training_metrics')
+            if os.path.isdir(tm_dir):
+                scan_dirs.append(tm_dir)
 
-                    # Vérifier si le fichier a été modifié depuis la dernière vérification
-                    mtime = os.path.getmtime(file_path)
-                    if mtime > self.last_modified:
-                        self.update_from_json_file(file_path)
-                        self.last_modified = mtime
+            # Parcourir les fichiers de logs dans chaque dossier
+            for base_dir in scan_dirs:
+                try:
+                    for filename in os.listdir(base_dir):
+                        if not filename.startswith('parallel_training_results_'):
+                            continue
+                        if not (filename.endswith('.json') or filename.endswith('.jsonl')):
+                            continue
+                        file_path = os.path.join(base_dir, filename)
 
-                        # Ajouter le fichier à la liste des fichiers traités
-                        if file_path not in self.processed_files:
-                            self.processed_files.add(file_path)
-                            logger.info(f"Nouveau fichier de log détecté: {filename}")
+                        # Vérifier si le fichier a été modifié depuis la dernière vérification
+                        mtime = os.path.getmtime(file_path)
+                        if mtime > self.last_modified:
+                            self.update_from_json_file(file_path)
+                            self.last_modified = mtime
+
+                            # Ajouter le fichier à la liste des fichiers traités
+                            if file_path not in self.processed_files:
+                                self.processed_files.add(file_path)
+                                logger.info(f"Nouveau fichier de log détecté: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Impossible de scanner {base_dir}: {e}")
 
             # Mettre à jour TensorBoard et checkpoints
             self.tensorboard.refresh()
@@ -839,8 +852,8 @@ def update_dashboard(n: int):
     # Mettre à jour les statistiques globales
     stats = log_monitor.global_stats
 
-    # Get initial balance from config (assuming it's consistent across workers)
-    initial_balance = log_monitor.config.get("environment", {}).get("initial_balance", 20.50) # Default to 20.50 if not found
+    # Capital initial par défaut (si non fourni via logs)
+    initial_balance = 20.50
 
     # Calculer les performances des workers
     table_data = []

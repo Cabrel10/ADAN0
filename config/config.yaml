@@ -421,7 +421,7 @@ environment:
   max_chunks_per_episode: 10
   assets: [btcusdt]
   observation:
-    shape: [3, 20, 15]
+    shape: [3, 20, 16]
     window_sizes:
       5m: 20
       1h: 20
@@ -434,43 +434,45 @@ environment:
         5m:
           [
             RSI_14,
-            STOCH_K_14_3_3,
-            STOCH_D_14_3_3,
+            MACD_12_26_9,
+            MACD_SIGNAL_12_26_9,
             MACD_HIST_12_26_9,
+            BB_PERCENT_B_20_2,
             ATR_14,
-            EMA_5,
-            EMA_12,
-            BB_UPPER,
-            BB_MIDDLE,
-            BB_LOWER,
+            VOLUME_RATIO_20,
+            EMA_20_RATIO,
+            STOCH_K_14_3_3,
+            VWAP_RATIO,
+            PRICE_ACTION,
           ]
         1h:
           [
-            RSI_14,
-            STOCH_K_14_3_3,
-            STOCH_D_14_3_3,
-            MACD_HIST_12_26_9,
+            RSI_21,
+            MACD_21_42_9,
+            MACD_SIGNAL_21_42_9,
+            MACD_HIST_21_42_9,
+            BB_WIDTH_20_2,
             ADX_14,
-            BB_UPPER,
-            BB_MIDDLE,
-            BB_LOWER,
-            EMA_26,
-            EMA_50,
+            OBV_RATIO_20,
+            EMA_50_RATIO,
+            ICHIMOKU_BASE,
+            FIB_RATIO,
+            PRICE_EMA_RATIO_50,
           ]
         4h:
           [
-            RSI_14,
-            MACD_HIST_12_26_9,
-            ADX_14,
-            ATR_14,
-            OBV,
-            EMA_50,
-            EMA_200,
-            SMA_200,
-            STOCH_K_14_3_3,
-            STOCH_D_14_3_3,
+            RSI_28,
+            MACD_26_52_18,
+            MACD_SIGNAL_26_52_18,
+            MACD_HIST_26_52_18,
+            SUPERTREND_10_3,
+            VOLUME_SMA_20_RATIO,
+            EMA_100_RATIO,
+            PIVOT_LEVEL,
+            DONCHIAN_WIDTH_20,
+            MARKET_STRUCTURE,
+            VOLATILITY_RATIO_14_50,
           ]
-
   mode: validation
   base_currency: USDT
   memory:
@@ -1072,107 +1074,32 @@ reward_shaping:
       Large: 0.9
   logging:
     version: 1
-    disable_existing_loggers: true
-    log_dirs:
-      base: logs
-      dbe_replay: ${reward_shaping.logging.log_dirs.base}/dbe_replay
-      metrics: ${reward_shaping.logging.log_dirs.base}/metrics
-      models: ${reward_shaping.logging.log_dirs.base}/models
-      performance: ${reward_shaping.logging.log_dirs.base}/performance
-      data_quality: ${reward_shaping.logging.log_dirs.base}/data_quality
-      memory: ${reward_shaping.logging.log_dirs.base}/memory
+    disable_existing_loggers: false
     formatters:
+      console:
+        format: "[%(levelname)s] %(asctime)s - %(name)s - %(message)s"
+        datefmt: "%Y-%m-%d %H:%M:%S"
       json:
-        "()": pythonjsonlogger.jsonlogger.JsonFormatter
+        (): pythonjsonlogger.jsonlogger.JsonFormatter
         format: "%(asctime)s %(name)s %(levelname)s %(message)s"
-      standard:
-        format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        datefmt: "%Y-%m-%d %H:%M:%S"
-      detailed:
-        format: "%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s"
-        datefmt: "%Y-%m-%d %H:%M:%S"
     handlers:
       console:
-        class: logging.StreamHandler # Active la sortie console
-        level: ERROR # Affiche les erreurs et plus graves
-        formatter: detailed
+        class: logging.StreamHandler
+        level: INFO
+        formatter: console
         stream: ext://sys.stdout
-      file_json_gz:
-        class: logging.NullHandler # Désactive l'écriture dans les fichiers
-        level: CRITICAL # Uniquement CRITICAL
+      main_file:
+        class: logging.handlers.RotatingFileHandler
+        level: INFO
         formatter: json
-        filename: logs/metrics.jsonl.gz.tmp
-        maxBytes: 10485760
-        backupCount: 7
-        encoding: utf-8
-      file_handler:
-        class: logging.NullHandler # Désactive l'écriture dans les fichiers
-        level: CRITICAL # Uniquement CRITICAL
-        formatter: detailed
-        filename: ${reward_shaping.logging.log_dirs.base}/adan_bot.log
-        when: midnight
-        backupCount: 7
-        encoding: utf8
-        utc: true
-      error_file_handler:
-        class: logging.NullHandler # Désactive l'écriture dans les fichiers d'erreur
-        level: CRITICAL # Uniquement CRITICAL
-        formatter: detailed
-        filename: ${reward_shaping.logging.log_dirs.base}/errors.log
+        filename: ${paths.logs_dir}/adan_trading_bot.jsonl
         maxBytes: 10485760
         backupCount: 5
-        encoding: utf8
-    loggers:
-      "":
-        level: ERROR
-        handlers: [console, file_json_gz]
-        propagate: false
-      adan:
-        level: ERROR
-        handlers: [console, file_json_gz]
-        propagate: false
-      tensorflow:
-        level: CRITICAL # Seuls les logs CRITICAL seront capturés
-        handlers: [file_json_gz]
-        propagate: false
-      stable_baselines3:
-        level: WARNING
-        handlers: [file_json_gz]
-        propagate: false
-      urllib3:
-        level: CRITICAL # Seuls les logs CRITICAL seront capturés
-        handlers: [file_json_gz]
-        propagate: false
-      pyarrow:
-        level: CRITICAL # Seuls les logs CRITICAL seront capturés
-        handlers: [file_json_gz]
-        propagate: false
-      adan_trading_bot.portfolio:
-        level: CRITICAL # Seulement les erreurs critiques
-        handlers: [file_json_gz]
-        propagate: false
-      adan_trading_bot.portfolio.portfolio_manager:
-        level: CRITICAL
-        handlers: []
-        propagate: false
-        qualname: adan_trading_bot.portfolio.portfolio_manager
-      adan_trading_bot.data_processing:
-        level: CRITICAL # Seuls les logs CRITICAL seront capturés
-        handlers: [file_json_gz]
-        propagate: false
-      adan_trading_bot.environment:
-        level: CRITICAL # Seuls les logs CRITICAL seront capturés
-        handlers: [file_json_gz]
-        propagate: false
-      adan_trading_bot.environment.multi_asset_chunked_env:
-        level: CRITICAL # Suppression des logs d'initialisation
-        handlers: [file_json_gz]
-        propagate: false
-      adan_trading_bot.common:
-        level: CRITICAL # Seuls les logs CRITICAL seront capturés
-        handlers: [file_json_gz]
-        propagate: false
+        encoding: utf-8
     root:
-      level: CRITICAL # Seuls les logs CRITICAL
-      handlers: [console] # Uniquement la console (qui est un NullHandler)
-      propagate: false
+      level: INFO
+      handlers: [console, main_file]
+    loggers:
+      urllib3: { level: WARNING }
+      matplotlib: { level: WARNING }
+      pyarrow: { level: WARNING }
