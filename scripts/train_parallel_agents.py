@@ -3,39 +3,22 @@
 
 """Script d'entraînement parallèle pour instances ADAN."""
 
+# Standard Library Imports
+import argparse
+import copy
+import json
 import logging
-
-logging.getLogger().setLevel(logging.ERROR)  # Niveau ERROR seulement - très restrictif
-logging.getLogger().propagate = False
-
-# Supprimer tous les logs DEBUG de toutes les bibliothèques
-logging.getLogger("root").setLevel(logging.ERROR)
-logging.getLogger("matplotlib").setLevel(logging.ERROR)
-logging.getLogger("numpy").setLevel(logging.ERROR)
-logging.getLogger("pandas").setLevel(logging.ERROR)
-logging.getLogger("torch").setLevel(logging.ERROR)
-logging.getLogger("stable_baselines3").setLevel(logging.ERROR)
-logging.getLogger("gymnasium").setLevel(logging.ERROR)
-logging.getLogger("gym").setLevel(logging.ERROR)
-logging.getLogger("adan_trading_bot").setLevel(logging.ERROR)
-
 import os
-import warnings
-
-# Désactiver complètement les warnings
-warnings.filterwarnings("ignore")
-import signal
 import sys
-import psutil
 import time
 import traceback
+import uuid
 import warnings
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from threading import Thread
-from typing import Any, Dict, List, Optional, Tuple, Union, Callable
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+# Third-Party Imports
 import gymnasium as gym
 import gymnasium.spaces as spaces
 import numpy as np
@@ -44,31 +27,45 @@ import torch
 import torch as th
 import torch.nn as nn
 import yaml
-from gymnasium.wrappers import FlattenObservation
+from rich.console import Console
+from rich.progress import BarColumn, Progress, TimeElapsedColumn
+from rich.tree import Tree
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.logger import configure as sb3_logger_configure
-import json
-from stable_baselines3.common.callbacks import (
-    BaseCallback,
-    CallbackList,
-    CheckpointCallback,
-    EvalCallback,
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from stable_baselines3.common.vec_env import (
+    DummyVecEnv, SubprocVecEnv, VecNormalize
+)
+
+# Local Application Imports
+from adan_trading_bot.common.custom_logger import setup_logging
+from adan_trading_bot.environment.checkpoint_manager import CheckpointManager
+from adan_trading_bot.environment.multi_asset_chunked_env import (
+    MultiAssetChunkedEnv
 )
 from adan_trading_bot.training.callbacks import CustomTrainingInfoCallback
-from stable_baselines3.common.vec_env import VecEnv
-from typing import Dict, Any, Optional, Union, List, Tuple
-import time
-import numpy as np
-from datetime import datetime, timedelta
-from stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
-import contextlib
-import uuid  # For correlation_id
-from rich.console import Console
-from rich.tree import Tree
-from rich.progress import Progress, BarColumn, TimeElapsedColumn
+from adan_trading_bot.training.trainer import validate_environment
+from adan_trading_bot.utils.timeout_manager import (
+    TimeoutManager,
+    TimeoutException as TMTimeoutException,
+)
 
+# =============================================================================
+# Initial Configuration
+# =============================================================================
+# Configure logging to be less verbose
+logging.getLogger().setLevel(logging.ERROR)
+for logger_name in [
+    "root", "matplotlib", "numpy", "pandas", "torch",
+    "stable_baselines3", "gymnasium", "gym", "adan_trading_bot"
+]:
+    logging.getLogger(logger_name).setLevel(logging.ERROR)
+
+# Suppress all warnings for a cleaner output
+warnings.filterwarnings("ignore")
+
+# Initialize Rich Console
 console = Console()
 
 
@@ -271,8 +268,8 @@ class HierarchicalTrainingCallback(BaseCallback):
     def _display_worker_summary(self, worker_id: int, metrics: dict):
         """Afficher le résumé complet des métriques d'un worker."""
         try:
-            # Métriques de base
-            portfolio_value = metrics.get("portfolio_value", self.initial_capital)
+            # Métriques de base (avec fallback pour compatibilité)
+            portfolio_value = metrics.get("total_value", metrics.get("portfolio_value", self.initial_capital))
             cash = metrics.get("cash", self.initial_capital)
             roi = (
                 ((portfolio_value - self.initial_capital) / self.initial_capital) * 100
@@ -280,10 +277,10 @@ class HierarchicalTrainingCallback(BaseCallback):
                 else 0
             )
             drawdown = metrics.get("drawdown", 0.0)
-            max_dd = metrics.get("max_dd", 0.0)
-            sharpe = metrics.get("sharpe", 0.0)
+            max_dd = metrics.get("max_drawdown", metrics.get("max_dd", 0.0))
+            sharpe = metrics.get("sharpe_ratio", metrics.get("sharpe", 0.0))
             win_rate = metrics.get("win_rate", 0.0)
-            total_trades = metrics.get("trades", 0)
+            total_trades = metrics.get("total_trades", metrics.get("trades", 0))
 
             # Métriques de trading détaillées
             valid_trades = metrics.get("valid_trades", 0)
@@ -1616,8 +1613,6 @@ class TrainingProgressCallback(BaseCallback):
         # Print system info
         print("\nSYSTÈME:")
         try:
-            import psutil
-
             print(f"Utilisation CPU: {psutil.cpu_percent()}%")
             try:
                 process = psutil.Process()
@@ -2066,13 +2061,6 @@ def make_env(
     Returns:
         Un environnement Gym valide
     """
-    # Imports nécessaires pour la création de données factices
-    try:
-        import pandas as pd
-        import numpy as np
-    except ImportError:
-        pd = None
-        np = None
     # Configuration par défaut si config n'est pas fourni
     if config is None:
         config = {}
@@ -2332,7 +2320,7 @@ def make_env(
 def main(
     config_path: str = "bot/config/config.yaml",
     timeout: Optional[int] = None,
-    checkpoint_dir: str = "/mnt/new_data/trading_bot_checkpoints",  # MODIFIED: Changed to a larger disk to avoid filling up the main partition
+    checkpoint_dir: str = "/mnt/new_data/trading_bot_checkpoints",
     shared_model_path: Optional[str] = None,
     resume: bool = False,
     num_envs: int = 4,
@@ -2899,8 +2887,6 @@ def main(
         )
 
         # Créer un CallbackList pour gérer plusieurs callbacks
-        from stable_baselines3.common.callbacks import CallbackList
-
         callback = CallbackList(callbacks)
 
         logger.info(
@@ -3072,8 +3058,6 @@ def main(
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(
         description=(
             "Entraîne un bot de trading ADAN avec support du timeout "
@@ -3081,16 +3065,16 @@ if __name__ == "__main__":
         )
     )
     parser.add_argument(
-        "--config",
+        "-c",
+        "--config-path",
         type=str,
         default="bot/config/config.yaml",
-        help="Chemin vers le fichier de configuration",
+        help="Chemin vers le fichier de configuration YAML",
     )
     parser.add_argument(
         "--timeout",
         type=int,
         default=None,
-        help="Temps maximum d'entraînement en secondes",
     )
     parser.add_argument(
         "--checkpoint-dir",
@@ -3125,7 +3109,7 @@ if __name__ == "__main__":
     try:
         # 1) Appel avec les arguments nommés
         success = main(
-            config_path=args.config,
+            config_path=args.config_path,
             timeout=args.timeout,
             checkpoint_dir=args.checkpoint_dir,
             shared_model_path=args.shared_model,

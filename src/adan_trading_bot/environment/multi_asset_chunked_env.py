@@ -351,6 +351,10 @@ class MultiAssetChunkedEnv(gym.Env):
         # Suivi des récompenses
         self._last_reward = 0.0
         self._cumulative_reward = 0.0
+
+        # Compteurs pour les tentatives de trade
+        self.trade_attempts = 0
+        self.invalid_trade_attempts = 0
         try:
             self._initialize_components()
             self._is_initialized = True
@@ -709,9 +713,11 @@ class MultiAssetChunkedEnv(gym.Env):
     def _get_default_market_conditions(self) -> Dict[str, float]:
         """Retourne des conditions de marché par défaut pour éviter les erreurs."""
         return {
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
             "close": 1.0,
-            "close": 1.0,
-            "VOLUME": 0.0,
+            "volume": 0.0,
             "RSI_14": 50.0,
             "ATR_14": 0.01,
             "ADX_14": 20.0,
@@ -1299,14 +1305,18 @@ class MultiAssetChunkedEnv(gym.Env):
         Raises:
             ValueError: If the observation space cannot be properly configured
         """
-        # Action space: Continuous actions in [-1, 1] for each asset
-        # -1 = max sell, 0 = hold, 1 = max buy
+        # Action space: Continuous actions for position sizing and timeframe selection.
+        # Shape is (num_assets + 1,).
+        # The first `num_assets` values are for position sizes [-1, 1] (sell to buy).
+        # The last value is for timeframe selection [-1, 1], mapped to available timeframes.
+        num_actions = len(self.assets) + 1
         self.action_space = gym.spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(len(self.assets),),  # One action per asset
+            shape=(num_actions,),
             dtype=np.float32,
         )
+        logger.info(f"Action space configured for {len(self.assets)} assets + 1 timeframe selection: {self.action_space}")
 
         # Configure observation space with fixed shape (3 timeframes, 20 window_size, 15 features)
         try:
@@ -1930,6 +1940,22 @@ class MultiAssetChunkedEnv(gym.Env):
         Returns:
             tuple: (observation, reward, terminated, truncated, info)
         """
+        # === START FREQUENCY FIX ===
+        # Decode the action from the agent into position actions and a timeframe selection
+        timeframe_action = action[-1]
+        position_actions = action[:-1]
+
+        # Determine the selected timeframe and store it
+        timeframes = getattr(self, 'timeframes', ['5m', '1h', '4h'])
+        timeframe_idx = int(round((timeframe_action + 1) / 2 * (len(timeframes) - 1)))
+        selected_timeframe = timeframes[timeframe_idx]
+        self.current_timeframe_for_trade = selected_timeframe
+        logger.info(f"[ACTION] Agent selected timeframe: {selected_timeframe}")
+
+        # The rest of the method will now use 'position_actions' as 'action'
+        action = position_actions
+        # === END FREQUENCY FIX ===
+
         # Generate correlation_id for this step
         correlation_id = str(uuid.uuid4())
         # Log uniquement depuis le worker principal pour éviter les duplications
@@ -4122,16 +4148,16 @@ class MultiAssetChunkedEnv(gym.Env):
             # A. L'agent veut VENDRE (fermer une position)
             if action_value < -0.5 and is_open:
                 self.logger.info(f"[ACTION] Agent requests CLOSE for {asset} at price {price:.2f}")
-                pnl = self.portfolio_manager.close_position(
+                receipt = self.portfolio_manager.close_position(
                     asset=asset.upper(),
                     price=price,
                     timestamp=current_timestamp,
                     current_prices=current_prices,
                 )
-                if pnl is not None:
-                    realized_pnl += pnl
+                if receipt:
+                    realized_pnl += receipt.get('pnl', 0.0)
                     trade_executed_this_step = True
-                    self.logger.info(f"Position {asset} closed. PnL: {pnl:.2f}")
+                    self.logger.info(f"Position {asset} closed. PnL: {receipt.get('pnl', 0.0):.2f}")
 
             # B. L'agent veut ACHETER (ouvrir une position)
             elif action_value > 0.5 and not is_open:
@@ -4158,7 +4184,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 size_in_asset_units = position_size_usdt / price if price > 0 else 0
                 if size_in_asset_units > 0:
                     try:
-                        was_opened = self.portfolio_manager.open_position(
+                        receipt = self.portfolio_manager.open_position(
                             asset=asset.upper(),
                             price=price,
                             size=size_in_asset_units,
@@ -4167,7 +4193,7 @@ class MultiAssetChunkedEnv(gym.Env):
                             timestamp=current_timestamp,
                             current_prices=current_prices,
                         )
-                        if was_opened:
+                        if receipt:
                             trade_executed_this_step = True
                             self.logger.info(f"Position {asset} opened. Size: {size_in_asset_units:.4f}")
                         else:
@@ -4666,20 +4692,9 @@ class MultiAssetChunkedEnv(gym.Env):
         return total_reward
 
     def get_current_timeframe(self):
-        """Determine current timeframe based on step or configuration."""
-        # Simple logic: cycle through timeframes or use default
-        if not hasattr(self, '_timeframe_cycle'):
-            self._timeframe_cycle = ['5m', '1h', '4h']
-            self._timeframe_index = 0
-
-        # Return current timeframe (can be made more sophisticated)
-        current_tf = self._timeframe_cycle[self._timeframe_index % len(self._timeframe_cycle)]
-
-        # Advance to next timeframe occasionally
-        if self.current_step % 10 == 0:  # Change timeframe every 10 steps
-            self._timeframe_index = (self._timeframe_index + 1) % len(self._timeframe_cycle)
-
-        return current_tf
+        """Determine current timeframe based on the agent's action."""
+        # This value is set at the beginning of the step() method based on the agent's action.
+        return getattr(self, 'current_timeframe_for_trade', '5m')
 
     def _validate_frequency(self):
         """Log frequency validation information."""

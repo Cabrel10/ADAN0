@@ -849,7 +849,7 @@ regularization:
 # Entraînement
 training:
   num_instances: 4
-  timesteps_per_instance: 1000000
+  timesteps_per_instance: 100000
   batch_size: 64
   save_freq: 10000
   checkpointing:

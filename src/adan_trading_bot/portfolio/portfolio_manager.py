@@ -167,7 +167,7 @@ class PortfolioManager:
         take_profit_pct: float,
         timestamp: Optional[Any] = None,
         current_prices: Optional[Dict[str, float]] = None,
-    ) -> bool:
+    ) -> Optional[Dict[str, Any]]:
         """Ouvre une nouvelle position."""
         asset = asset.upper()
         if asset not in self.positions:
@@ -177,19 +177,19 @@ class PortfolioManager:
         position = self.positions[asset]
         if position.is_open:
             logger.warning(f"Tentative d'ouverture d'une position déjà ouverte pour {asset}. Ignoré.")
-            return False
+            return None
 
         cost = size * price
         if self.cash < cost:
             logger.warning(f"Cash insuffisant pour ouvrir une position de {size} {asset} à ${price:.2f}. Cash: ${self.cash:.2f}, Coût: ${cost:.2f}")
-            return False
+            return None
 
         open_time = self._normalize_timestamp(timestamp) or self._last_market_timestamp
         if open_time is None:
             logger.error(
                 f"[Worker {self.worker_id}] Impossible d'ouvrir {asset}: aucun horodatage marché valide disponible."
             )
-            return False
+            return None
 
         try:
             position.open(
@@ -203,14 +203,22 @@ class PortfolioManager:
             )
         except ValueError as exc:
             logger.error(f"[Worker {self.worker_id}] Ouverture de {asset} impossible: {exc}")
-            return False
+            return None
         self.cash -= cost
         position.current_price = price
         self._update_equity(current_prices)
         self.log_info(
             f"[POSITION OUVERTE] {asset}: {size:.6f} @ {price:.2f} | SL: {stop_loss_pct*100:.2f}% | TP: {take_profit_pct*100:.2f}%"
         )
-        return True
+        receipt = {
+            'asset': asset,
+            'action': 'open',
+            'price': price,
+            'size': size,
+            'timestamp': open_time,
+        }
+        self.trade_log.append(receipt)
+        return receipt
 
     def close_position(
         self,
@@ -218,7 +226,7 @@ class PortfolioManager:
         price: float,
         timestamp: Optional[Any] = None,
         current_prices: Optional[Dict[str, float]] = None,
-    ) -> Optional[float]:
+    ) -> Optional[Dict[str, Any]]:
         """Ferme une position ouverte et retourne le PnL réalisé."""
         asset = asset.upper()
         if asset not in self.positions or not self.positions[asset].is_open:
@@ -271,7 +279,7 @@ class PortfolioManager:
         self.log_info(
             f"[POSITION FERMÉE] {asset}: {size:.6f} @ {entry_price:.2f} -> {price:.2f} | PnL: ${pnl:+.2f}"
         )
-        return pnl
+        return log_entry
 
     def update_market_price(self, current_prices: Dict[str, float]) -> float:
         """Met à jour la valeur des positions et vérifie les SL/TP."""
