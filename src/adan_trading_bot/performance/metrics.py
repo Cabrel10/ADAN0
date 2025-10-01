@@ -213,7 +213,7 @@ class PerformanceMetrics:
             logger.error(f"[Worker {self.worker_id}] [METRICS] Error calculating Sharpe ratio: {e}")
             return 0.0
 
-    def calculate_metrics(self, positions_count=None):
+    def calculate_metrics(self, positions_count=None, trade_attempts=None, invalid_trade_attempts=None):
         """Calculate comprehensive performance metrics with worker identification."""
         # Filtrer les trades fermés
         closed_trades = [trade for trade in self.trades if trade.get('action') == 'close']
@@ -255,7 +255,9 @@ class PerformanceMetrics:
             'losses': losses,
             'neutrals': neutrals,
             'positions_count': positions_count,
-            'open_positions_count': open_positions_count
+            'open_positions_count': open_positions_count,
+            'trade_attempts': trade_attempts,
+            'invalid_trade_attempts': invalid_trade_attempts
         }
 
     def close_position(self, position, exit_price):

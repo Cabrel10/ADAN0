@@ -281,6 +281,8 @@ class HierarchicalTrainingCallback(BaseCallback):
             sharpe = metrics.get("sharpe_ratio", metrics.get("sharpe", 0.0))
             win_rate = metrics.get("win_rate", 0.0)
             total_trades = metrics.get("total_trades", metrics.get("trades", 0))
+            trade_attempts = metrics.get("trade_attempts")
+            invalid_trade_attempts = metrics.get("invalid_trade_attempts")
 
             # Métriques de trading détaillées
             valid_trades = metrics.get("valid_trades", 0)
@@ -318,6 +320,13 @@ class HierarchicalTrainingCallback(BaseCallback):
             logger.info(
                 f"│ 📈 TRADING    | Total: {total_trades:>3d} | Valid: {valid_trades:>3d} | Invalid: {invalid_trades:>3d} | Win Rate: {win_rate:>5.1f}% │"
             )
+
+            # Ligne 3b: Actions de l'agent
+            if trade_attempts is not None and invalid_trade_attempts is not None:
+                invalid_rate = (invalid_trade_attempts / trade_attempts * 100) if trade_attempts > 0 else 0
+                logger.info(
+                    f"│ 🎯 ACTIONS    | Tentatives: {trade_attempts:>4d} | Invalides: {invalid_trade_attempts:>4d} ({invalid_rate:5.1f}%)             │"
+                )
 
             # Ligne 4: Rewards & Penalties
             logger.info(

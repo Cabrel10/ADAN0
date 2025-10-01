@@ -4148,6 +4148,7 @@ class MultiAssetChunkedEnv(gym.Env):
             # A. L'agent veut VENDRE (fermer une position)
             if action_value < -0.5 and is_open:
                 self.logger.info(f"[ACTION] Agent requests CLOSE for {asset} at price {price:.2f}")
+                self.trade_attempts += 1
                 receipt = self.portfolio_manager.close_position(
                     asset=asset.upper(),
                     price=price,
@@ -4157,11 +4158,14 @@ class MultiAssetChunkedEnv(gym.Env):
                 if receipt:
                     realized_pnl += receipt.get('pnl', 0.0)
                     trade_executed_this_step = True
+                else:
+                    self.invalid_trade_attempts += 1
                     self.logger.info(f"Position {asset} closed. PnL: {receipt.get('pnl', 0.0):.2f}")
 
             # B. L'agent veut ACHETER (ouvrir une position)
             elif action_value > 0.5 and not is_open:
                 self.logger.info(f"[ACTION] Agent requests OPEN for {asset} at price {price:.2f}")
+                self.trade_attempts += 1
 
                 trade_params = self.dbe.calculate_trade_parameters(
                     capital=self.portfolio_manager.get_total_value(),
@@ -4174,11 +4178,13 @@ class MultiAssetChunkedEnv(gym.Env):
 
                 if not trade_params.get("feasible", False):
                     self.logger.warning(f"Trade non réalisable pour {asset}: {trade_params.get('reason', 'Raison inconnue')}")
+                    self.invalid_trade_attempts += 1
                     continue
 
                 position_size_usdt = trade_params.get("position_size_usdt", 0)
                 if position_size_usdt < 11.0: # Seuil minimum de trade
                     self.logger.warning(f"Taille de position trop faible pour {asset}: {position_size_usdt:.2f} USDT")
+                    self.invalid_trade_attempts += 1
                     continue
 
                 size_in_asset_units = position_size_usdt / price if price > 0 else 0
@@ -4198,6 +4204,7 @@ class MultiAssetChunkedEnv(gym.Env):
                             self.logger.info(f"Position {asset} opened. Size: {size_in_asset_units:.4f}")
                         else:
                             self.logger.warning(f"Failed to open position for {asset} (insufficient cash or already open)")
+                            self.invalid_trade_attempts += 1
                     except Exception as e:
                         self.logger.error(f"Impossible d'ouvrir une position pour {asset}: {e}", exc_info=True)
 
@@ -4506,7 +4513,7 @@ class MultiAssetChunkedEnv(gym.Env):
             pm = self.portfolio_manager
             # Use performance_metrics with positions_count for synchronized metrics
             if hasattr(self, 'performance_metrics'):
-                metrics = self.performance_metrics.calculate_metrics(positions_count=self.positions_count)
+                metrics = self.performance_metrics.calculate_metrics(positions_count=self.positions_count, trade_attempts=self.trade_attempts, invalid_trade_attempts=self.invalid_trade_attempts)
             else:
                 metrics = {}
 
