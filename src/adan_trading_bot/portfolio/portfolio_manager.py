@@ -7,6 +7,7 @@ Module de gestion de portefeuille pour le bot de trading ADAN.
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import uuid
 
 import numpy as np
 
@@ -167,12 +168,35 @@ class PortfolioManager:
         take_profit_pct: float,
         timestamp: Optional[Any] = None,
         current_prices: Optional[Dict[str, float]] = None,
+        allocated_pct: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
         """Ouvre une nouvelle position."""
         asset = asset.upper()
         if asset not in self.positions:
             logger.warning(f"Actif '{asset}' non trouvé dans le portefeuille. Ajout dynamique.")
             self.positions[asset] = Position()
+
+        # Règle: limiter le nombre de positions ouvertes selon le palier
+        try:
+            tier_cfg = self.get_current_tier()
+            limit = 1
+            if isinstance(tier_cfg, dict):
+                limit = int(tier_cfg.get('max_open_positions', 1))
+            open_count = len(self._get_open_positions())
+            if open_count >= max(1, limit):
+                self.log_info(f"[RISK] Position limit reached ({open_count}/{limit}). Refus d'ouverture pour {asset}.")
+                try:
+                    if hasattr(self, 'metrics') and self.metrics:
+                        self.metrics.record_trade_rejection(
+                            reason='position_limit',
+                            context={'asset': asset, 'open_count': open_count, 'limit': limit},
+                        )
+                except Exception:
+                    pass
+                return None
+        except Exception:
+            # En cas d'erreur de lecture de palier, on continue sans bloquer
+            pass
 
         position = self.positions[asset]
         if position.is_open:
@@ -182,6 +206,14 @@ class PortfolioManager:
         cost = size * price
         if self.cash < cost:
             logger.warning(f"Cash insuffisant pour ouvrir une position de {size} {asset} à ${price:.2f}. Cash: ${self.cash:.2f}, Coût: ${cost:.2f}")
+            try:
+                if hasattr(self, 'metrics') and self.metrics:
+                    self.metrics.record_trade_rejection(
+                        reason='insufficient_cash',
+                        context={'asset': asset, 'cost': cost, 'cash': float(self.cash)},
+                    )
+            except Exception:
+                pass
             return None
 
         open_time = self._normalize_timestamp(timestamp) or self._last_market_timestamp
@@ -210,14 +242,26 @@ class PortfolioManager:
         self.log_info(
             f"[POSITION OUVERTE] {asset}: {size:.6f} @ {price:.2f} | SL: {stop_loss_pct*100:.2f}% | TP: {take_profit_pct*100:.2f}%"
         )
+        # Normalize to picklable primitives
         receipt = {
-            'asset': asset,
-            'action': 'open',
-            'price': price,
-            'size': size,
-            'timestamp': open_time,
+            'event': 'open',
+            'asset': str(asset),
+            'price': float(price),
+            'size': float(size),
+            'notional': float(price * size),
+            **({'allocated_pct': float(allocated_pct)} if allocated_pct is not None else {}),
+            'timestamp': (open_time.isoformat() if isinstance(open_time, datetime) else str(open_time)),
+            'sl': float(stop_loss_pct),
+            'tp': float(take_profit_pct),
+            'order_id': str(uuid.uuid4()),
         }
         self.trade_log.append(receipt)
+        try:
+            # Journaliser l'ouverture auprès des métriques si disponible
+            if hasattr(self, 'metrics') and self.metrics:
+                self.metrics.record_trade_open(receipt)
+        except Exception:
+            pass
         return receipt
 
     def close_position(
@@ -226,6 +270,7 @@ class PortfolioManager:
         price: float,
         timestamp: Optional[Any] = None,
         current_prices: Optional[Dict[str, float]] = None,
+        reason: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Ferme une position ouverte et retourne le PnL réalisé."""
         asset = asset.upper()
@@ -255,18 +300,21 @@ class PortfolioManager:
             logger.error(f"[Worker {self.worker_id}] Fermeture de {asset} impossible: {exc}")
             return None
 
+        # Normalize to picklable primitives
         log_entry = {
-            'asset': asset,
-            'action': 'close',
-            'exit_price': price,
-            'entry_price': entry_price,
-            'size': size,
-            'pnl': pnl,
-            'pnl_pct': pnl_pct,
+            'event': 'close',
+            'asset': str(asset),
+            'exit_price': float(price),
+            'entry_price': float(entry_price),
+            'size': float(size),
+            'pnl': float(pnl),
+            'pnl_pct': float(pnl_pct),
             'timestamp': close_time.isoformat(),
-            'opened_at': open_time.isoformat() if open_time else None,
+            'opened_at': (open_time.isoformat() if open_time else None),
             'closed_at': close_time.isoformat(),
-            'duration_seconds': (close_time - open_time).total_seconds() if (open_time and close_time) else None
+            'duration_seconds': (float((close_time - open_time).total_seconds()) if (open_time and close_time) else None),
+            'order_id': str(uuid.uuid4()),
+            **({'reason': str(reason)} if reason else {}),
         }
 
         self._update_equity(current_prices)
@@ -293,14 +341,17 @@ class PortfolioManager:
                 sl_price = position.entry_price * (1 - position.stop_loss_pct)
                 if price <= sl_price:
                     self.log_info(f"STOP LOSS atteint pour {asset} @ {price:.2f} (SL: {sl_price:.2f})")
-                    pnl = self.close_position(
+                    receipt = self.close_position(
                         asset,
                         price,
                         timestamp=self._last_market_timestamp,
                         current_prices=current_prices,
+                        reason="SL",
                     )
-                    if pnl is not None:
-                        realized_pnl += pnl
+                    if isinstance(receipt, dict):
+                        val = receipt.get('pnl')
+                        if isinstance(val, (int, float)):
+                            realized_pnl += float(val)
                     continue
 
                 # Vérification Take Profit
@@ -308,16 +359,47 @@ class PortfolioManager:
                     tp_price = position.entry_price * (1 + position.take_profit_pct)
                     if price >= tp_price:
                         self.log_info(f"TAKE PROFIT atteint pour {asset} @ {price:.2f} (TP: {tp_price:.2f})")
-                        pnl = self.close_position(
+                        receipt = self.close_position(
                             asset,
                             price,
                             timestamp=self._last_market_timestamp,
                             current_prices=current_prices,
+                            reason="TP",
                         )
-                        if pnl is not None:
-                            realized_pnl += pnl
+                        if isinstance(receipt, dict):
+                            val = receipt.get('pnl')
+                            if isinstance(val, (int, float)):
+                                realized_pnl += float(val)
         
         self._update_equity(current_prices)
+
+        # Vérification Stop Loss global (drawdown global)
+        try:
+            threshold_cfg = (self.config.get("risk_management", {}).get("global_sl_pct")
+                              or self.config.get("risk_management", {}).get("max_drawdown_pct"))
+            if threshold_cfg is not None:
+                thr = float(threshold_cfg)
+                if thr > 1.0:
+                    thr = thr / 100.0
+                dd_ratio = self.calculate_drawdown()
+                if dd_ratio >= thr:
+                    # Fermer toutes les positions ouvertes
+                    for a, pos in list(self.positions.items()):
+                        if pos.is_open:
+                            p = current_prices.get(a, pos.current_price)
+                            _ = self.close_position(
+                                a,
+                                p,
+                                timestamp=self._last_market_timestamp,
+                                current_prices=current_prices,
+                                reason="GlobalSL",
+                            )
+                    # Recalculer equity après clôtures
+                    self._update_equity(current_prices)
+        except Exception as _e:
+            # Ne jamais casser la boucle d'update prix pour une erreur de config
+            pass
+
         return realized_pnl
 
     def _update_equity(self, current_prices: Optional[Dict[str, float]] = None):
@@ -383,25 +465,47 @@ class PortfolioManager:
     def get_portfolio_value(self) -> float:
         return self.portfolio_value
 
+    def get_cash(self) -> float:
+        """Retourne le solde de cash disponible."""
+        return float(self.cash)
+
     def get_metrics(self) -> Dict[str, Any]:
         """Retourne un résumé enrichi des métriques de performance."""
         base_metrics = self.metrics.get_metrics_summary()
 
+        # Agrégats PnL pour clarté Equity vs Capital
+        try:
+            unrealized_pnl_total = 0.0
+            for pos in self._last_positions_snapshot.values():
+                unrealized_pnl_total += float(pos.get("unrealized_pnl", 0.0))
+        except Exception:
+            unrealized_pnl_total = 0.0
+
+        # Somme des PnL réalisés à partir des positions fermées connues
+        try:
+            realized_pnl_total = 0.0
+            if hasattr(self.metrics, 'closed_positions'):
+                for tr in self.metrics.closed_positions:
+                    realized_pnl_total += float(tr.get('pnl', 0.0))
+        except Exception:
+            realized_pnl_total = 0.0
+
         enriched_metrics = dict(base_metrics)
         enriched_metrics.update(
             {
-                "total_value": self.portfolio_value,
-                "equity": self.equity,
-                "cash": self.cash,
+                "total_value": float(self.portfolio_value),
+                "cash": float(self.cash),
+                "unrealized_pnl_total": unrealized_pnl_total,
+                "realized_pnl_total": realized_pnl_total,
                 "drawdown": self.calculate_drawdown() * 100,
                 "max_drawdown": base_metrics.get("max_drawdown", 0.0),
                 "positions": self._last_positions_snapshot,
                 "open_positions_count": len(self._last_positions_snapshot),
                 "equity_curve": list(self.metrics.equity_curve),
                 "closed_positions": list(self.metrics.closed_positions),
-                "last_market_timestamp": self._last_market_timestamp.isoformat()
-                if self._last_market_timestamp
-                else None,
+                "last_market_timestamp": (
+                    self._last_market_timestamp.isoformat() if self._last_market_timestamp else None
+                ),
             }
         )
 
@@ -468,11 +572,28 @@ class PortfolioManager:
         self.tp_pct = risk_params.get('take_profit_pct', getattr(self, 'tp_pct', 0.05))
 
         pos_size = risk_params.get('position_size_pct', getattr(self, 'pos_size_pct', 0.1))
+        # Cap dur par le palier (max_position_size_pct)
         max_pos_size_pct = (tier.get('max_position_size_pct', 90.0) / 100.0) if isinstance(tier, dict) else 0.9
-        self.pos_size_pct = min(max(0.0, pos_size), max_pos_size_pct)
+        capped_pos = min(max(0.0, pos_size), max_pos_size_pct)
+
+        # Harmonisation avec exposure_range du palier si présent (intervale cible)
+        clamped_by_range = None
+        try:
+            exposure_range = tier.get('exposure_range') if isinstance(tier, dict) else None
+            if exposure_range and isinstance(exposure_range, (list, tuple)) and len(exposure_range) == 2:
+                min_pct = float(exposure_range[0]) / 100.0
+                max_pct = float(exposure_range[1]) / 100.0
+                clamped_by_range = min(max(capped_pos, min_pct), max_pct)
+            else:
+                clamped_by_range = capped_pos
+        except Exception:
+            clamped_by_range = capped_pos
+
+        self.pos_size_pct = float(clamped_by_range)
 
         self.log_info(
-            f"[RISK_UPDATE] Palier: {tier.get('name', 'N/A') if isinstance(tier, dict) else 'N/A'}, PosSize: {self.pos_size_pct:.2%}, "
+            f"[RISK_UPDATE] Palier: {tier.get('name', 'N/A') if isinstance(tier, dict) else 'N/A'}, "
+            f"PosSize: {self.pos_size_pct:.2%} (cap≤{max_pos_size_pct:.2%}{', range applied' if isinstance(tier, dict) and tier.get('exposure_range') else ''}), "
             f"SL: {self.sl_pct:.2%}, TP: {self.tp_pct:.2%}"
         )
 
@@ -480,7 +601,7 @@ class PortfolioManager:
         """
         Vérifie les conditions d'urgence nécessitant un reset immédiat.
 
-        Args:
+{{ ... }}
             current_step: L'étape actuelle de l'environnement
 
         Returns:

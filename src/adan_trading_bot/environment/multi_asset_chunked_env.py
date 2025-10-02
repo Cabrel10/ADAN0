@@ -316,6 +316,14 @@ class MultiAssetChunkedEnv(gym.Env):
         self.current_day = 0  # Jour courant pour suivi
         self.last_trade_steps_by_tf = {}  # Dictionnaire des derniers trades par timeframe
 
+        # Tracking timestamps par timeframe pour éviter les doubles comptages
+        self.last_trade_timestamps = {"5m": None, "1h": None, "4h": None}
+        # Buffer circulaire des reçus (limité en taille)
+        self.receipts: List[Dict[str, Any]] = []
+
+        # Dernières infos picklables pour compatibilité SubprocVecEnv
+        self.last_info: Dict[str, Any] = {}
+
         # Initialisation du chargeur de données
         self.data_loader_instance = None
 
@@ -2057,15 +2065,7 @@ class MultiAssetChunkedEnv(gym.Env):
         # This section previously contained duplicate trade counting logic
         # which has been removed to prevent incorrect frequency counting
 
-        # Calculate reward with frequency penalties
-        reward = self._calculate_reward(action)
-
-        # Track rewards for metrics
-        self._last_reward = reward
-        self._cumulative_reward = getattr(self, '_cumulative_reward', 0.0) + reward
-
-        # Validate frequency requirements
-        self._validate_frequency()
+        # Reward calculation is now done after trade execution.
 
         # Log current step and action with detailed information
         chunk_info = (
@@ -2208,6 +2208,14 @@ class MultiAssetChunkedEnv(gym.Env):
 
             trade_start_time = time.time()
             realized_pnl = self._execute_trades(action, dbe_modulation)
+
+            # --- CORRECT REWARD CALCULATION ---
+            # This is the single source of truth for reward calculation,
+            # happening AFTER trades are executed and counters updated.
+            reward = self._calculate_reward(action)
+            self._last_reward = reward
+            self._cumulative_reward = getattr(self, '_cumulative_reward', 0.0) + reward
+            self._validate_frequency()
             trade_end_time = time.time()
             logger.debug(
                 f"_execute_trades took {trade_end_time - trade_start_time:.4f} seconds"
@@ -2446,12 +2454,8 @@ class MultiAssetChunkedEnv(gym.Env):
                         },
                     )
 
-            # Calculate reward using internal shaper (includes risk penalties/tier adjustments)
-            reward = self._calculate_reward(action)
-
-            # Track rewards for metrics
-            self._last_reward = reward
-            self._cumulative_reward = getattr(self, '_cumulative_reward', 0.0) + reward
+            # Reward calculation moved after trade execution for synchronization.
+            reward = getattr(self, '_last_reward', 0.0) # Use the reward calculated after trades
 
             # Mise à jour des métriques de risque
             if hasattr(self, "portfolio_manager"):
@@ -4156,11 +4160,16 @@ class MultiAssetChunkedEnv(gym.Env):
                     current_prices=current_prices,
                 )
                 if receipt:
-                    realized_pnl += receipt.get('pnl', 0.0)
+                    # Keep small buffer of receipts
+                    self.receipts.append(receipt)
+                    if len(self.receipts) > 50:
+                        self.receipts = self.receipts[-50:]
+
+                    realized_pnl += float(receipt.get('pnl', 0.0))
                     trade_executed_this_step = True
                 else:
                     self.invalid_trade_attempts += 1
-                    self.logger.info(f"Position {asset} closed. PnL: {receipt.get('pnl', 0.0):.2f}")
+                    self.logger.info(f"Failed to close position for {asset} (no receipt)")
 
             # B. L'agent veut ACHETER (ouvrir une position)
             elif action_value > 0.5 and not is_open:
@@ -4177,15 +4186,119 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
 
                 if not trade_params.get("feasible", False):
-                    self.logger.warning(f"Trade non réalisable pour {asset}: {trade_params.get('reason', 'Raison inconnue')}")
+                    reason_txt = trade_params.get('reason', 'Raison inconnue')
+                    self.logger.warning(f"Trade non réalisable pour {asset}: {reason_txt}")
+                    # Metrics: tentative rejetée
+                    try:
+                        if hasattr(self.portfolio_manager, 'metrics') and self.portfolio_manager.metrics:
+                            self.portfolio_manager.metrics.record_trade_rejection(
+                                reason=str(reason_txt),
+                                context={
+                                    'asset': asset,
+                                    'timeframe': getattr(self, 'current_timeframe_for_trade', '5m'),
+                                },
+                            )
+                    except Exception:
+                        pass
                     self.invalid_trade_attempts += 1
                     continue
 
                 position_size_usdt = trade_params.get("position_size_usdt", 0)
-                if position_size_usdt < 11.0: # Seuil minimum de trade
-                    self.logger.warning(f"Taille de position trop faible pour {asset}: {position_size_usdt:.2f} USDT")
+                # Harmoniser avec l'intervalle de taille de position du palier (config capital_tiers.exposure_range)
+                try:
+                    tier_cfg = self.portfolio_manager.get_current_tier()
+                    exposure_range = tier_cfg.get("exposure_range") if isinstance(tier_cfg, dict) else None
+                    if exposure_range and isinstance(exposure_range, (list, tuple)) and len(exposure_range) == 2:
+                        min_pct = float(exposure_range[0]) / 100.0
+                        max_pct = float(exposure_range[1]) / 100.0
+                        # Calculer le pourcentage demandé et le contraindre à l'intervalle du palier
+                        if equity > 0:
+                            requested_pct = float(position_size_usdt) / float(equity)
+                            clamped_pct = float(np.clip(requested_pct, min_pct, max_pct))
+                            if clamped_pct != requested_pct:
+                                self.logger.info(
+                                    f"[TIER SIZING] {tier_cfg.get('name', 'Unknown')} range {min_pct*100:.1f}-{max_pct*100:.1f}% | "
+                                    f"Requested={requested_pct*100:.2f}% -> Clamped={clamped_pct*100:.2f}%"
+                                )
+                            position_size_usdt = clamped_pct * float(equity)
+                except Exception as _e:
+                    # En cas d'erreur, on garde la valeur initiale sans interrompre le step
+                    pass
+                # Appliquer un cap dur basé sur l'equity courante et pos_size_pct du portfolio
+                try:
+                    equity = float(self.portfolio_manager.get_equity())
+                except Exception:
+                    equity = float(self.portfolio_manager.get_total_value()) if hasattr(self.portfolio_manager, "get_total_value") else position_size_usdt
+
+                # Taille cible max autorisée: préférer le max d'exposure_range du palier si disponible, sinon pos_size_pct
+                try:
+                    tier_cap_pct = None
+                    if isinstance(tier_cfg, dict):
+                        rng = tier_cfg.get("exposure_range")
+                        if rng and isinstance(rng, (list, tuple)) and len(rng) == 2:
+                            tier_cap_pct = float(rng[1]) / 100.0
+                    fallback_cap = getattr(self.portfolio_manager, 'pos_size_pct', 0.1) or 0.1
+                    pos_cap_pct = float(tier_cap_pct) if tier_cap_pct is not None else float(fallback_cap)
+                except Exception:
+                    pos_cap_pct = getattr(self.portfolio_manager, 'pos_size_pct', 0.1) or 0.1
+                max_notional = max(0.0, equity * pos_cap_pct)
+
+                requested_notional = float(position_size_usdt)
+                capped_notional = min(requested_notional, max_notional)
+
+                if capped_notional < requested_notional:
+                    self.logger.info(
+                        f"[SIZING CAP] Requested={requested_notional:.2f} USDT, Capped={capped_notional:.2f} USDT (cap={pos_cap_pct*100:.1f}% of equity {equity:.2f})"
+                    )
+                # Gate par le cash disponible (pas de downsizing: rejeter si insuffisant)
+                try:
+                    available_cash = float(getattr(self.portfolio_manager, 'get_cash', lambda: 0.0)())
+                except Exception:
+                    available_cash = 0.0
+
+                if available_cash + 1e-9 < capped_notional:
+                    self.logger.warning(
+                        f"[CASH GATE] Required={capped_notional:.2f} USDT, Available={available_cash:.2f} USDT | Rejet de l'ouverture pour {asset}"
+                    )
+                    try:
+                        if hasattr(self.portfolio_manager, 'metrics') and self.portfolio_manager.metrics:
+                            self.portfolio_manager.metrics.record_trade_rejection(
+                                reason='insufficient_liquidity_equity_based',
+                                context={
+                                    'asset': asset,
+                                    'required_usdt': capped_notional,
+                                    'available_cash': available_cash,
+                                    'equity': equity,
+                                },
+                            )
+                    except Exception:
+                        pass
                     self.invalid_trade_attempts += 1
                     continue
+
+                position_size_usdt = capped_notional
+                if position_size_usdt < 11.0: # Seuil minimum de trade
+                    self.logger.warning(f"Taille de position trop faible pour {asset}: {position_size_usdt:.2f} USDT")
+                    # Metrics: tentative rejetée (valide mais trop petite)
+                    try:
+                        if hasattr(self.portfolio_manager, 'metrics') and self.portfolio_manager.metrics:
+                            self.portfolio_manager.metrics.record_trade_rejection(
+                                reason='min_order',
+                                context={
+                                    'asset': asset,
+                                    'requested_usdt': requested_notional,
+                                    'capped_usdt': capped_notional,
+                                    'cash_capped_usdt': cash_capped_notional,
+                                    'available_cash': available_cash,
+                                },
+                            )
+                    except Exception:
+                        pass
+                    self.invalid_trade_attempts += 1
+                    continue
+
+                # Pourcentage effectivement alloué vs equity
+                final_pct = (position_size_usdt / equity) if equity > 0 else 0.0
 
                 size_in_asset_units = position_size_usdt / price if price > 0 else 0
                 if size_in_asset_units > 0:
@@ -4198,9 +4311,42 @@ class MultiAssetChunkedEnv(gym.Env):
                             take_profit_pct=trade_params.get("tp_pct"),
                             timestamp=current_timestamp,
                             current_prices=current_prices,
+                            allocated_pct=final_pct,
                         )
+                        # Metrics: tentative réussie
+                        try:
+                            if receipt and hasattr(self.portfolio_manager, 'metrics') and self.portfolio_manager.metrics:
+                                self.portfolio_manager.metrics.record_trade_attempt(
+                                    valid=True,
+                                    context={
+                                        'asset': asset,
+                                        'notional': position_size_usdt,
+                                        'allocated_pct': final_pct,
+                                        'timeframe': getattr(self, 'current_timeframe_for_trade', '5m'),
+                                    },
+                                )
+                        except Exception:
+                            pass
                         if receipt:
+                            # Keep small buffer of receipts
+                            self.receipts.append(receipt)
+                            if len(self.receipts) > 50:
+                                self.receipts = self.receipts[-50:]
+
                             trade_executed_this_step = True
+                            # Update frequency counters per timeframe using current_timeframe_for_trade
+                            tf = getattr(self, 'current_timeframe_for_trade', '5m')
+                            try:
+                                if tf in self.positions_count:
+                                    self.positions_count[tf] = int(self.positions_count.get(tf, 0)) + 1
+                                # Always update daily total
+                                self.positions_count['daily_total'] = int(self.positions_count.get('daily_total', 0)) + 1
+                                # Update last trade timestamp for tf
+                                if isinstance(current_timestamp, (pd.Timestamp, datetime)):
+                                    ts = current_timestamp.to_pydatetime() if isinstance(current_timestamp, pd.Timestamp) else current_timestamp
+                                    self.last_trade_timestamps[tf] = ts
+                            except Exception as freq_e:
+                                self.logger.debug(f"[FREQUENCY] Failed to update frequency counters: {freq_e}")
                             self.logger.info(f"Position {asset} opened. Size: {size_in_asset_units:.4f}")
                         else:
                             self.logger.warning(f"Failed to open position for {asset} (insufficient cash or already open)")
@@ -4338,6 +4484,8 @@ class MultiAssetChunkedEnv(gym.Env):
             # Portfolio metrics
             "portfolio_value": portfolio_metrics.get("total_value", 0.0),
             "cash": portfolio_metrics.get("cash", 0.0),
+            "unrealized_pnl_total": portfolio_metrics.get("unrealized_pnl_total", 0.0),
+            "realized_pnl_total": portfolio_metrics.get("realized_pnl_total", 0.0),
             "drawdown": portfolio_metrics.get("drawdown", 0.0),
             "max_dd": portfolio_metrics.get("max_drawdown", 0.0),
             "sharpe": portfolio_metrics.get("sharpe_ratio", 0.0),
@@ -4348,6 +4496,11 @@ class MultiAssetChunkedEnv(gym.Env):
             "trades": total_trades,
             "valid_trades": valid_trades,
             "invalid_trades": max(0, total_trades - valid_trades),
+            # Activity counters from PerformanceMetrics
+            "trade_attempts_total": portfolio_metrics.get("trade_attempts_total", portfolio_metrics.get("trade_attempts", 0)),
+            "valid_trade_attempts": portfolio_metrics.get("valid_trade_attempts", 0),
+            "invalid_trade_attempts": portfolio_metrics.get("invalid_trade_attempts", 0),
+            "executed_trades_opened": portfolio_metrics.get("executed_trades_opened", 0),
             "closed_positions": closed_positions,
 
             # Positions actuelles
@@ -4387,7 +4540,33 @@ class MultiAssetChunkedEnv(gym.Env):
                     else 0.0
                 ),
             },
+
+            # Frequency counts (picklable)
+            "frequency": {
+                "counts": {
+                    "5m": int(self.positions_count.get("5m", 0)),
+                    "1h": int(self.positions_count.get("1h", 0)),
+                    "4h": int(self.positions_count.get("4h", 0)),
+                    "daily_total": int(self.positions_count.get("daily_total", 0)),
+                }
+            },
+
+            # Recent receipts (small buffer, picklable primitives)
+            "last_receipts": [
+                {
+                    k: (float(v) if isinstance(v, (np.floating,)) else int(v) if isinstance(v, (np.integer,)) else str(v))
+                    for k, v in rec.items()
+                }
+                for rec in (self.receipts[-5:] if hasattr(self, "receipts") and self.receipts else [])
+            ],
         }
+
+        # Rendre accessible pour toute requête get_attr("last_info") éventuelle
+        try:
+            self.last_info = info
+        except Exception:
+            # Toujours éviter de casser le step si une valeur non sérialisable est ajoutée par erreur
+            pass
 
         return info
 
@@ -4584,7 +4763,9 @@ class MultiAssetChunkedEnv(gym.Env):
             # Safe portfolio values
             capital = pm.get_total_value() if hasattr(pm, 'get_total_value') else 0.0
             equity = pm.get_equity() if hasattr(pm, 'get_equity') else 0.0
-            balance = pm.get_balance() if hasattr(pm, 'get_balance') else 0.0
+            balance = pm.get_cash() if hasattr(pm, 'get_cash') else (
+                getattr(pm, 'cash', 0.0)
+            )
 
             # Utiliser calculate_drawdown() pour obtenir les valeurs correctes
             current_dd = pm.calculate_drawdown() * 100  # calculate_drawdown() retourne un ratio (0.0-1.0)
@@ -4604,7 +4785,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.positions_count.get('5m', 0),
                     self.positions_count.get('1h', 0),
                     self.positions_count.get('4h', 0),
-                    metrics.get('open_positions_count', self.positions_count.get('daily_total', 0))
+                    len([p for p in pm.positions.values() if p.is_open])
                 ).ljust(65) + "│",
                 "│                                                               │",
                 "│ ⚠️  RISQUE                                                     │",
@@ -4691,10 +4872,29 @@ class MultiAssetChunkedEnv(gym.Env):
             if current_step % 20 == 0:
                 self.smart_logger.info(f"[GRACE PERIOD] Step {current_step}/{grace_period_steps} - No frequency penalties applied", rotate=True)
 
-        total_reward = base_reward + frequency_reward
+        # Penalty when exceeding tier open position limit
+        pos_limit_penalty = 0.0
+        try:
+            tier_cfg = self.portfolio_manager.get_current_tier()
+            limit = 1
+            if isinstance(tier_cfg, dict):
+                limit = int(tier_cfg.get('max_open_positions', 1))
+            open_count = 0
+            try:
+                # Prefer portfolio snapshot if available
+                open_count = len([p for p in self.portfolio_manager.positions.values() if getattr(p, 'is_open', False)])
+            except Exception:
+                open_count = 0
+            if open_count > limit:
+                weight = self.config.get('trading_rules', {}).get('position_limit_penalty_weight', 1.0)
+                pos_limit_penalty -= float(weight) * (open_count - limit)
+        except Exception:
+            pass
+
+        total_reward = base_reward + frequency_reward + pos_limit_penalty
 
         logger.info(f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Frequency: {frequency_reward:.4f}, "
-                   f"Total: {total_reward:.4f}, Counts: {self.positions_count}")
+                   f"PosLimit: {pos_limit_penalty:.4f}, Total: {total_reward:.4f}, Counts: {self.positions_count}")
 
         return total_reward
 
