@@ -32,13 +32,13 @@ DBE_LOG_FILE = os.getenv("DBE_LOG_FILE", "dbe_replay.jsonl")
 
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
-        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
-                         np.int16, np.int32, np.int64, np.uint8,
-                         np.uint16, np.uint32, np.uint64)):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8, np.int16, 
+                             np.int32, np.int64, np.uint8, np.uint16, 
+                             np.uint32, np.uint64)):
             return int(obj)
-        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+        elif isinstance(obj, (np.float16, np.float32, np.float64)):
             return float(obj)
-        elif isinstance(obj, (np.ndarray,)):
+        elif isinstance(obj, np.ndarray):
             return obj.tolist()
         return super().default(obj)
 
@@ -1740,18 +1740,29 @@ class DynamicBehaviorEngine:
 
     def __del__(self):
         """Nettoyage à la destruction de l'instance."""
-        status = self.get_status()
-        return (
-            f"DBE Status (Step: {status['step']})\n"
-            f"Portfolio: ${status['portfolio']['total_value']:,.2f} "
-            f"(Return: {status['portfolio']['total_return_pct']:.2f}%)\n"
-            f"Trades: {status['trading']['total_trades']} "
-            f"(Win Rate: {status['trading']['win_rate']:.1f}%)\n"
-            f"Risk: {status['risk']['current_risk_level']:.2f} "
-            f"(Regime: {status['risk']['market_regime']})\n"
-            f"Drawdown: {status['risk']['current_drawdown']:.2f}% | "
-            f"Volatility: {status['risk']['volatility']:.4f}"
-        )
+        try:
+            status = self.get_status()
+            portfolio = status.get('portfolio', {}) if isinstance(status.get('portfolio'), dict) else {}
+            trading = status.get('trading', {}) if isinstance(status.get('trading'), dict) else {}
+            risk = status.get('risk', {}) if isinstance(status.get('risk'), dict) else {}
+            step = status.get('step', 0)
+            total_value = portfolio.get('total_value', 0.0)
+            total_return_pct = portfolio.get('total_return_pct', 0.0)
+            total_trades = trading.get('total_trades', 0)
+            win_rate = trading.get('win_rate', 0.0)
+            current_risk_level = risk.get('current_risk_level', 0.0)
+            market_regime = risk.get('market_regime', 'UNKNOWN')
+            current_drawdown = risk.get('current_drawdown', 0.0)
+            volatility = risk.get('volatility', 0.0)
+            return (
+                f"DBE Status (Step: {step})\n"
+                f"Portfolio: ${total_value:,.2f} (Return: {total_return_pct:.2f}%)\n"
+                f"Trades: {total_trades} (Win Rate: {win_rate:.1f}%)\n"
+                f"Risk: {current_risk_level:.2f} (Regime: {market_regime})\n"
+                f"Drawdown: {current_drawdown:.2f}% | Volatility: {volatility:.4f}"
+            )
+        except Exception:
+            return "DBE destroyed"
 
     def get_config(self) -> Dict[str, Any]:
         """

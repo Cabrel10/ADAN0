@@ -59,6 +59,12 @@ class PerformanceMetrics:
         }
         self.frequency_history = deque(maxlen=1000)  # Historique des fréquences par jour
 
+        # Compteurs d'activités de trading
+        self.trade_attempts_total = 0
+        self.valid_trade_attempts = 0
+        self.invalid_trade_attempts = 0
+        self.executed_trades_opened = 0
+
         # Créer le répertoire des métriques si nécessaire
         self.metrics_dir = Path(metrics_dir)
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
@@ -89,6 +95,48 @@ class PerformanceMetrics:
             "worker_id": self.worker_id,
             **trade_result
         })
+
+    # --- Nouveaux enregistreurs pour tentatives et exécutions ---
+    def record_trade_attempt(self, valid: bool, reason: Optional[str] = None, context: Optional[Dict] = None) -> None:
+        """Enregistre une tentative de trade (valide/invalide)."""
+        self.trade_attempts_total += 1
+        if valid:
+            self.valid_trade_attempts += 1
+        else:
+            self.invalid_trade_attempts += 1
+        payload = {
+            "event": "trade_attempt",
+            "timestamp": datetime.utcnow().isoformat(),
+            "worker_id": self.worker_id,
+            "valid": bool(valid),
+        }
+        if reason:
+            payload["reason"] = str(reason)
+        if context:
+            try:
+                payload.update({k: v for k, v in context.items() if k not in ("prices",)})
+            except Exception:
+                pass
+        self._log_metrics(payload)
+
+    def record_trade_rejection(self, reason: str, context: Optional[Dict] = None) -> None:
+        """Spécialisation: enregistrement d'un rejet de trade (invalide)."""
+        self.record_trade_attempt(valid=False, reason=reason, context=context)
+
+    def record_trade_open(self, receipt: Dict) -> None:
+        """Enregistre l'ouverture effective d'un trade."""
+        self.executed_trades_opened += 1
+        payload = {
+            "event": "trade_opened",
+            "timestamp": datetime.utcnow().isoformat(),
+            "worker_id": self.worker_id,
+        }
+        try:
+            serializable = {k: v for k, v in receipt.items() if k not in ("prices",)}
+            payload.update(serializable)
+        except Exception:
+            pass
+        self._log_metrics(payload)
 
     def calculate_unrealized_pnl(self, open_positions=None, current_prices=None) -> Dict[str, float]:
         """
@@ -256,8 +304,11 @@ class PerformanceMetrics:
             'neutrals': neutrals,
             'positions_count': positions_count,
             'open_positions_count': open_positions_count,
-            'trade_attempts': trade_attempts,
-            'invalid_trade_attempts': invalid_trade_attempts
+            # Tentatives et exécutions
+            'trade_attempts': trade_attempts if trade_attempts is not None else self.trade_attempts_total,
+            'invalid_trade_attempts': invalid_trade_attempts if invalid_trade_attempts is not None else self.invalid_trade_attempts,
+            'valid_trade_attempts': self.valid_trade_attempts,
+            'executed_trades_opened': self.executed_trades_opened,
         }
 
     def close_position(self, position, exit_price):
@@ -560,6 +611,11 @@ class PerformanceMetrics:
             "daily_positions_1h": self.positions_frequency.get('1h', 0),
             "daily_positions_4h": self.positions_frequency.get('4h', 0),
             "daily_positions_total": self.positions_frequency.get('daily_total', 0),
+            # Compteurs d'activité
+            "trade_attempts_total": self.trade_attempts_total,
+            "invalid_trade_attempts": self.invalid_trade_attempts,
+            "valid_trade_attempts": self.valid_trade_attempts,
+            "executed_trades_opened": self.executed_trades_opened,
             **frequency_metrics
         }
 

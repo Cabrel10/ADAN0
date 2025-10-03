@@ -30,6 +30,7 @@ class Position:
         self.current_price = 0.0
         self.opened_at: Optional[datetime] = None
         self.closed_at: Optional[datetime] = None
+        self.timeframe: str = ""  # Ajout du timeframe
 
     def open(
         self,
@@ -40,6 +41,7 @@ class Position:
         open_step: int,
         asset: str,
         open_time: Optional[datetime] = None,
+        timeframe: str = "5m",  # Ajout du timeframe avec une valeur par défaut
     ):
         """Ouvre la position."""
         self.is_open = True
@@ -54,6 +56,7 @@ class Position:
             raise ValueError("open_time must be provided when opening a position")
         self.opened_at = open_time
         self.closed_at = None
+        self.timeframe = timeframe
 
     def close(self, close_time: Optional[datetime] = None):
         """Ferme la position."""
@@ -169,6 +172,7 @@ class PortfolioManager:
         timestamp: Optional[Any] = None,
         current_prices: Optional[Dict[str, float]] = None,
         allocated_pct: Optional[float] = None,
+        timeframe: str = "5m",  # Ajout du timeframe
     ) -> Optional[Dict[str, Any]]:
         """Ouvre une nouvelle position."""
         asset = asset.upper()
@@ -231,7 +235,8 @@ class PortfolioManager:
                 take_profit_pct=take_profit_pct,
                 open_step=getattr(self, 'step_count', 0),
                 asset=asset,
-                open_time=open_time
+                open_time=open_time,
+                timeframe=timeframe
             )
         except ValueError as exc:
             logger.error(f"[Worker {self.worker_id}] Ouverture de {asset} impossible: {exc}")
@@ -254,6 +259,7 @@ class PortfolioManager:
             'sl': float(stop_loss_pct),
             'tp': float(take_profit_pct),
             'order_id': str(uuid.uuid4()),
+            'timeframe': timeframe,
         }
         self.trade_log.append(receipt)
         try:
@@ -329,9 +335,10 @@ class PortfolioManager:
         )
         return log_entry
 
-    def update_market_price(self, current_prices: Dict[str, float]) -> float:
-        """Met à jour la valeur des positions et vérifie les SL/TP."""
+    def update_market_price(self, current_prices: Dict[str, float]) -> tuple[float, list[dict[str, Any]]]:
+        """Met à jour la valeur des positions, vérifie les SL/TP, et retourne le PnL et les reçus."""
         realized_pnl = 0.0
+        closed_receipts = []
         for asset, position in self.positions.items():
             if position.is_open and asset in current_prices:
                 price = current_prices[asset]
@@ -349,6 +356,7 @@ class PortfolioManager:
                         reason="SL",
                     )
                     if isinstance(receipt, dict):
+                        closed_receipts.append(receipt)
                         val = receipt.get('pnl')
                         if isinstance(val, (int, float)):
                             realized_pnl += float(val)
@@ -367,6 +375,7 @@ class PortfolioManager:
                             reason="TP",
                         )
                         if isinstance(receipt, dict):
+                            closed_receipts.append(receipt)
                             val = receipt.get('pnl')
                             if isinstance(val, (int, float)):
                                 realized_pnl += float(val)
@@ -387,20 +396,63 @@ class PortfolioManager:
                     for a, pos in list(self.positions.items()):
                         if pos.is_open:
                             p = current_prices.get(a, pos.current_price)
-                            _ = self.close_position(
+                            receipt = self.close_position(
                                 a,
                                 p,
                                 timestamp=self._last_market_timestamp,
                                 current_prices=current_prices,
                                 reason="GlobalSL",
                             )
+                            if isinstance(receipt, dict):
+                                closed_receipts.append(receipt)
                     # Recalculer equity après clôtures
                     self._update_equity(current_prices)
         except Exception as _e:
             # Ne jamais casser la boucle d'update prix pour une erreur de config
             pass
 
-        return realized_pnl
+        return realized_pnl, closed_receipts
+
+    def get_state_vector(self) -> np.ndarray:
+        """Construit et retourne l'état du portefeuille sous forme de vecteur numpy."""
+        try:
+            metrics = self.get_metrics()
+            total_value = metrics.get("total_value", 0.0)
+            cash = metrics.get("cash", 0.0)
+            pnl_pct = (total_value - self.initial_capital) / self.initial_capital if self.initial_capital > 0 else 0.0
+
+            # 7 features de base
+            state = [
+                cash,
+                total_value,
+                pnl_pct,
+                metrics.get("sharpe_ratio", 0.0),
+                metrics.get("drawdown", 0.0) / 100.0,  # Convertir de % à ratio
+                metrics.get("open_positions_count", 0),
+                (total_value - cash) / total_value if total_value > 0 else 0.0,  # Allocation
+            ]
+
+            # 10 features pour les positions (5 positions * 2 features)
+            sorted_positions = sorted(
+                metrics.get("positions", {}).items(),
+                key=lambda item: abs(item[1].get("size", 0.0) * item[1].get("current_price", 0.0)),
+                reverse=True,
+            )[:5]
+
+            for asset, pos_obj in sorted_positions:
+                state.append(pos_obj.get("size", 0.0))
+                state.append(hash(asset) % 1000 / 1000.0)  # Asset encodé et normalisé
+
+            # Remplir les slots de positions restants avec des zéros
+            num_pos_features = len(sorted_positions) * 2
+            padding_needed = 10 - num_pos_features
+            state.extend([0.0] * padding_needed)
+
+            return np.array(state, dtype=np.float32)
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la construction du vecteur d'état du portefeuille: {e}", exc_info=True)
+            return np.zeros(17, dtype=np.float32)
 
     def _update_equity(self, current_prices: Optional[Dict[str, float]] = None):
         """Met à jour la valeur totale du portefeuille (equity)."""

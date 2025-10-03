@@ -1084,6 +1084,7 @@ class MultiAssetChunkedEnv(gym.Env):
         # Initialiser le StateBuilder avec la configuration des timeframes
         self.state_builder = StateBuilder(
             features_config=features_config,
+            timeframes=self.timeframes, # Assurer que le StateBuilder connaît les timeframes attendus
             window_size=default_window_size,  # Valeur par défaut pour la rétrocompatibilité
             include_portfolio_state=True,
             normalize=True,
@@ -1308,15 +1309,8 @@ class MultiAssetChunkedEnv(gym.Env):
         return self.data_loader
 
     def _setup_spaces(self) -> None:
-        """Set up action and observation spaces.
-
-        Raises:
-            ValueError: If the observation space cannot be properly configured
-        """
-        # Action space: Continuous actions for position sizing and timeframe selection.
-        # Shape is (num_assets + 1,).
-        # The first `num_assets` values are for position sizes [-1, 1] (sell to buy).
-        # The last value is for timeframe selection [-1, 1], mapped to available timeframes.
+        """Configure les espaces d'action et d'observation pour le modèle."""
+        # L'espace d'action reste un vecteur continu pour la taille des positions et le choix du timeframe.
         num_actions = len(self.assets) + 1
         self.action_space = gym.spaces.Box(
             low=-1.0,
@@ -1324,153 +1318,52 @@ class MultiAssetChunkedEnv(gym.Env):
             shape=(num_actions,),
             dtype=np.float32,
         )
-        logger.info(f"Action space configured for {len(self.assets)} assets + 1 timeframe selection: {self.action_space}")
+        logger.info(f"Espace d'action configuré : {self.action_space}")
 
-        # Configure observation space with fixed shape (3 timeframes, 20 window_size, 15 features)
+        # --- NOUVEL ESPACE D'OBSERVATION (MULTI-TIMEFRAME DICT) ---
         try:
-            # Define fixed observation shape
-            self.observation_shape = (3, 20, 15)  # (timeframes, window_size, features)
-            self.portfolio_state_dim = 17  # Fixed portfolio state dimension
+            env_obs_cfg = self.config.get("environment", {}).get("observation", {})
+            window_sizes = env_obs_cfg.get("window_sizes", {"5m": 20, "1h": 10, "4h": 5})
+            
+            # Déterminer le nombre de features à partir de la configuration du StateBuilder
+            first_tf = self.timeframes[0]
+            n_features = len(self.state_builder.get_feature_names(first_tf))
 
-            # Log the dimensions for debugging
-            logger.info(f"Using fixed observation shape: {self.observation_shape}")
-            logger.info(f"Portfolio state dimension: {self.portfolio_state_dim}")
-
-            # Create observation space dictionary
-            self.observation_space = gym.spaces.Dict(
-                {
-                    "observation": gym.spaces.Box(
-                        low=-np.inf,
-                        high=np.inf,
-                        shape=self.observation_shape,
-                        dtype=np.float32,
-                    ),
-                    "portfolio_state": gym.spaces.Box(
-                        low=-np.inf,
-                        high=np.inf,
-                        shape=(self.portfolio_state_dim,),
-                        dtype=np.float32,
-                    ),
-                }
+            # Créer un Box pour chaque timeframe
+            market_spaces = {
+                tf: spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(window_sizes.get(tf, 20), n_features),
+                    dtype=np.float32,
+                )
+                for tf in self.timeframes
+            }
+            
+            # Ajouter l'état du portefeuille
+            portfolio_state_dim = 17
+            market_spaces["portfolio_state"] = spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(portfolio_state_dim,),
+                dtype=np.float32,
             )
 
-            logger.info(f"Observation space configured: {self.observation_space}")
+            self.observation_space = spaces.Dict(market_spaces)
+            logger.info(f"Espace d'observation reconfiguré pour CNN multi-échelle: {self.observation_space}")
 
         except Exception as e:
-            logger.error(f"Error setting up observation space: {str(e)}")
+            logger.error(f"Erreur lors de la configuration du nouvel espace d'observation : {str(e)}", exc_info=True)
             raise
 
     def _get_initial_observation(self) -> Dict[str, np.ndarray]:
-        """Get the initial observation after environment reset.
-
-        This method ensures we have a valid observation before starting the episode,
-        with proper error handling and logging. The observation shape is fixed to (3, 20, 15)
-        where:
-        - 3 timeframes (5m, 1h, 4h)
-        - 20 window size
-        - 15 features per timeframe
-
-        Returns:
-            Dict[str, np.ndarray]: Initial observation dictionary with 'observation' and 'portfolio_state' keys
         """
-        # Define the expected observation shape (timeframes, window_size, features)
-        expected_shape = (3, 20, 15)
-
-        # Initialize default observation with correct shape
-        default_observation = {
-            "observation": np.zeros(expected_shape, dtype=np.float32),
-            "portfolio_state": np.zeros(
-                17, dtype=np.float32
-            ),  # Fixed portfolio state size
-        }
-
-        try:
-            # Get market data for the current chunk using safe loader
-            market_data = self._safe_load_chunk(0)
-
-            # Check for empty or invalid market data
-            if not market_data or not any(market_data[asset] for asset in market_data):
-                logger.error("No valid market data available for initial observation")
-                return default_observation
-
-            # Build observation using state_builder
-            observation_dict = self.state_builder.build_observation(0, market_data)
-
-            # Validate and extract the observation array
-            if (
-                not isinstance(observation_dict, dict)
-                or "observation" not in observation_dict
-            ):
-                logger.error(
-                    "Invalid observation format from state_builder.build_observation()"
-                )
-                return default_observation
-
-            observation = observation_dict["observation"]
-
-            # Ensure observation is a numpy array
-            if not isinstance(observation, np.ndarray):
-                logger.error(
-                    f"Observation is not a numpy array, got {type(observation)}"
-                )
-                return default_observation
-
-            # Log observation statistics
-            logger.info(f"Raw observation shape: {observation.shape}")
-            logger.info(
-                f"Observation min/max/mean: {np.min(observation):.4f}/{np.max(observation):.4f}/{np.mean(observation):.4f}"
-            )
-
-            # Check for all zeros after transformation
-            if np.all(observation == 0):
-                logger.warning(
-                    "Initial observation is entirely zero after transformation"
-                )
-
-            # Ensure observation has the correct shape (3, 20, 15)
-            if observation.shape != expected_shape:
-                # Log observation shape adjustments with rotation
-                self.smart_logger.info(
-                    f"Observation shape auto-adjustment: {observation.shape} -> {expected_shape}. "
-                    f"Features available: {observation.shape[2] if len(observation.shape) > 2 else 0}/15. "
-                    f"System will pad with zeros or truncate as needed.", rotate=True
-                )
-
-                # Create output array with correct shape
-                output = np.zeros(expected_shape, dtype=np.float32)
-
-                # Calculate the slices to copy data safely
-                slices = [
-                    slice(0, min(observation.shape[i], expected_shape[i]))
-                    for i in range(len(expected_shape))
-                ]
-
-                # Copy data with broadcasting
-                output[tuple(slices)] = observation[tuple(slices)]
-                observation = output
-
-            # Ensure data type is float32
-            observation = observation.astype(np.float32)
-
-            # Validate observation values
-            if np.any(np.isnan(observation)) or np.any(np.isinf(observation)):
-                logger.warning(
-                    "Observation contains NaN or Inf values, replacing with zeros"
-                )
-                observation = np.nan_to_num(
-                    observation, nan=0.0, posinf=0.0, neginf=0.0
-                )
-
-            return {
-                "observation": observation,
-                "portfolio_state": np.zeros(
-                    17, dtype=np.float32
-                ),  # Fixed portfolio state size
-            }
-
-        except Exception as e:
-            logger.error(f"Error in _get_initial_observation: {str(e)}", exc_info=True)
-            return default_observation
+        Get the initial observation after environment reset.
+        This method now directly calls _get_observation to ensure consistency
+        with the new multi-timeframe dictionary-based observation space.
+        """
+        self.logger.debug("Redirecting initial observation to main _get_observation method.")
+        return self._get_observation()
 
     def _set_start_step_for_chunk(self):
         """Calculates and sets the starting step within a new chunk to account for indicator warmup."""
@@ -1948,6 +1841,7 @@ class MultiAssetChunkedEnv(gym.Env):
         Returns:
             tuple: (observation, reward, terminated, truncated, info)
         """
+        self._step_closed_receipts = []
         # === START FREQUENCY FIX ===
         # Decode the action from the agent into position actions and a timeframe selection
         timeframe_action = action[-1]
@@ -3420,265 +3314,72 @@ class MultiAssetChunkedEnv(gym.Env):
             # Fallback to minimal DataFrame
             return pd.DataFrame(columns=["timestamp", "close"])
 
-    def _is_valid_observation_structure(self, obs) -> bool:
-        """
-        Robustly check whether `obs` looks like a valid observation:
-          - must be a dict with keys 'observation' and 'portfolio_state'
-          - 'observation' must be array-like; 'portfolio_state' must be 1-D array-like
-        Avoid any `if array` boolean checks here.
-        """
-        if obs is None:
-            return False
+    def _is_valid_observation_structure(self, obs: Dict[str, np.ndarray]) -> bool:
+        """Vérifie si l'observation correspond à l'espace `Dict` attendu."""
         if not isinstance(obs, dict):
             return False
-        if "observation" not in obs or "portfolio_state" not in obs:
+        # Vérifie que toutes les clés de l'espace sont dans l'observation
+        if not all(key in obs for key in self.observation_space.spaces.keys()):
             return False
-        try:
-            arr = np.asarray(obs["observation"])
-            ps = np.asarray(obs["portfolio_state"])
-        except Exception:
-            return False
-        # Loose shape checks (do not rely on exact sizes unless available)
-        if arr.size == 0:
-            return False
-        if ps.ndim != 1:
-            return False
-        # If we have expected shapes cached, check they are compatible
-        if hasattr(self, "observation_shape") and self.observation_shape is not None:
-            try:
-                # allow broadcasting-compatible but check dims
-                if arr.ndim != len(self.observation_shape):
-                    return False
-                for a_dim, expected in zip(arr.shape, self.observation_shape):
-                    # only check when expected is not None
-                    if expected is not None and a_dim != expected:
-                        return False
-            except Exception:
-                return False
-        if (
-            hasattr(self, "portfolio_state_size")
-            and self.portfolio_state_size is not None
-        ):
-            if ps.size != self.portfolio_state_size:
+        # Vérifie que les shapes correspondent
+        for key, space in self.observation_space.spaces.items():
+            if obs[key].shape != space.shape:
                 return False
         return True
 
-    def _default_observation(self):
-        """
-        Return a standard zero-padded observation consistent with the
-        environment's observation_space / shapes previously logged.
-        """
-        # If we have explicit shape info use it, else fall back to conservative defaults seen in logs.
-        obs_shape = getattr(self, "observation_shape", (3, 20, 15))
-        portfolio_size = getattr(self, "portfolio_state_size", 17)
-        return {
-            "observation": np.zeros(obs_shape, dtype=np.float32),
-            "portfolio_state": np.zeros((portfolio_size,), dtype=np.float32),
-        }
-
-    def _summarize_raw_obs(self, raw_obs) -> str:
-        """
-        Generate a string summary of the raw observation structure for debugging.
-
-        Args:
-            raw_obs: The raw observation to summarize
-
-        Returns:
-            str: A string summary of the observation structure
-        """
-        if raw_obs is None:
-            return "None"
-
-        if isinstance(raw_obs, dict):
-            summary = []
-            for k, v in raw_obs.items():
-                if hasattr(v, "shape"):
-                    summary.append(
-                        f"{k}: array{tuple(v.shape)} ({v.dtype if hasattr(v, 'dtype') else '?'})"
-                    )
-                elif isinstance(v, (list, tuple)):
-                    summary.append(f"{k}: {type(v).__name__} of length {len(v)}")
-                else:
-                    summary.append(f"{k}: {type(v).__name__}")
-            return "{" + ", ".join(summary) + "}"
-
-        if hasattr(raw_obs, "shape"):
-            return f"array{tuple(raw_obs.shape)} ({raw_obs.dtype if hasattr(raw_obs, 'dtype') else '?'})"
-
-        if isinstance(raw_obs, (list, tuple)):
-            return f"{type(raw_obs).__name__} of length {len(raw_obs)}"
-
-        return str(type(raw_obs))
+    def _default_observation(self) -> Dict[str, np.ndarray]:
+        """Retourne une observation par défaut (remplie de zéros) correspondant à l'espace."""
+        obs = {}
+        for key, space in self.observation_space.spaces.items():
+            obs[key] = np.zeros(space.shape, dtype=np.float32)
+        return obs
 
     def _build_observation(self) -> Dict[str, np.ndarray]:
         """
-        Build the current observation using the StateBuilder and current data.
-
-        Returns a dict with keys:
-          - 'observation': np.ndarray with shape self.observation_shape (float32)
-          - 'portfolio_state': np.ndarray with shape (self.portfolio_state_dim,) (float32)
+        Construit l'observation pour le pas de temps actuel en utilisant le StateBuilder.
+        Retourne un dictionnaire de tenseurs, un pour chaque timeframe, plus l'état du portefeuille.
         """
         try:
-            # Determine current index within the chunk. Use step_in_chunk which advances with steps
             current_idx = int(getattr(self, "step_in_chunk", 0))
 
-            # Basic guards
             if not hasattr(self, "state_builder") or self.state_builder is None:
-                raise RuntimeError("state_builder not initialized")
-            if (
-                not hasattr(self, "current_data")
-                or self.current_data is None
-                or not isinstance(self.current_data, dict)
-                or len(self.current_data) == 0
-            ):
-                logger.warning(
-                    "No current_data available in _build_observation, returning default"
-                )
+                raise RuntimeError("StateBuilder non initialisé.")
+            if not hasattr(self, "current_data") or self.current_data is None:
+                logger.warning("Données non disponibles, retourne une observation par défaut.")
                 return self._default_observation()
 
-            # Delegate construction to StateBuilder
-            raw = self.state_builder.build_observation(current_idx, self.current_data)
-
-            # Normalize to expected dict format
-            logger.debug(f"Raw observation type: {type(raw)}")
-            if isinstance(raw, dict):
-                logger.debug(f"Raw observation keys: {list(raw.keys())}")
-                if "observation" in raw:
-                    market = np.asarray(raw["observation"], dtype=np.float32)
-                    logger.debug(f"Observation shape from dict: {market.shape}")
-                else:
-                    market = None
-                    logger.debug("No 'observation' key in raw dict")
-                port = raw.get("portfolio_state", None)
-            else:
-                logger.debug(f"Raw observation is not a dict, converting to array")
-                market = np.asarray(raw, dtype=np.float32)
-                logger.debug(f"Converted observation shape: {market.shape}")
-                port = None
-
-            # If market is not directly usable, try aligning from per-timeframe dict
-            if market is None or market.ndim != 3:
-                logger.debug(
-                    f"Market data needs alignment. Shape: {getattr(market, 'shape', 'None')}, Type: {type(market)}"
-                )
-                try:
-                    # raw may actually be a dict of timeframe->2D arrays; try to align
-                    if (
-                        isinstance(raw, dict)
-                        and "observation" not in raw
-                        and hasattr(self.state_builder, "align_timeframe_dims")
-                    ):
-                        logger.debug(
-                            "Attempting to align timeframes with align_timeframe_dims"
-                        )
-                        market = self.state_builder.align_timeframe_dims(raw)
-                        logger.debug(
-                            f"Aligned market data shape: {getattr(market, 'shape', 'None')}"
-                        )
-                except Exception as e:
-                    logger.error(
-                        f"Error in align_timeframe_dims: {str(e)}", exc_info=True
-                    )
-                    market = None
-
-            # Ensure market has expected shape, padding/truncating as needed
-            expected_shape = (3, 20, 15)  # Forcer la forme attendue
-            self.smart_logger.debug(f"Adjusting observation shape to expected {expected_shape}", sample_rate=0.1)
-
-            try:
-                if market is None or market.ndim != 3:
-                    self.smart_logger.info(
-                        f"Market data unavailable or invalid shape: {getattr(market, 'shape', 'None')}, "
-                        f"using zeros with shape {expected_shape}", rotate=True
-                    )
-                    market = np.zeros(expected_shape, dtype=np.float32)
-
-                # Log la forme actuelle avant ajustement
-                self.smart_logger.debug(f"Market data shape before adjustment: {market.shape}", sample_rate=0.1)
-
-                # Créer un nouveau tableau avec la forme exacte attendue
-                out = np.zeros(expected_shape, dtype=np.float32)
-
-                # Copier les données existantes en respectant les dimensions
-                min_timeframes = min(market.shape[0], expected_shape[0])
-                min_steps = min(market.shape[1], expected_shape[1])
-                min_features = min(market.shape[2], expected_shape[2])
-
-                out[:min_timeframes, :min_steps, :min_features] = market[
-                    :min_timeframes, :min_steps, :min_features
-                ]
-
-                market = out.astype(np.float32)
-                self.smart_logger.debug(f"Market data shape after adjustment: {market.shape}", sample_rate=0.1)
-
-            except Exception as e:
-                self.smart_logger.error(f"Error adjusting market data shape: {str(e)}", dedupe=True)
-                market = np.zeros(expected_shape, dtype=np.float32)
-
-            # Normalize portfolio state
-            ps_size = int(getattr(self, "portfolio_state_size", 17))
-            try:
-                ps = np.asarray(
-                    (
-                        port
-                        if port is not None
-                        else np.zeros((ps_size,), dtype=np.float32)
-                    ),
-                    dtype=np.float32,
-                ).reshape(-1)
-                if ps.size != ps_size:
-                    fixed = np.zeros((ps_size,), dtype=np.float32)
-                    fixed[: min(ps_size, ps.size)] = ps[: min(ps_size, ps.size)]
-                    ps = fixed
-            except Exception:
-                ps = np.zeros((ps_size,), dtype=np.float32)
-
-            obs = {"observation": market, "portfolio_state": ps}
-            logger.debug(
-                f"_build_observation -> obs shape={obs['observation'].shape}, ps shape={obs['portfolio_state'].shape}, idx={current_idx}"
+            # Le StateBuilder doit maintenant retourner un dictionnaire de dataframes/arrays
+            market_obs_dict = self.state_builder.build_per_timeframe_observation(
+                current_idx, self.current_data
             )
-            return obs
+
+            # Récupérer le vecteur d'état du portefeuille
+            if hasattr(self.portfolio, 'get_state_vector'):
+                portfolio_state = self.portfolio.get_state_vector()
+            else:
+                portfolio_state = np.zeros(self.observation_space.spaces["portfolio_state"].shape, dtype=np.float32)
+
+            # Combiner les observations du marché et du portefeuille
+            final_obs = {**market_obs_dict}
+            final_obs["portfolio_state"] = portfolio_state.astype(np.float32)
+
+            return final_obs
 
         except Exception as e:
-            logger.error(f"Error in _build_observation: {e}", exc_info=True)
+            logger.error(f"Erreur dans _build_observation: {e}", exc_info=True)
             return self._default_observation()
 
     def _get_observation(self) -> Dict[str, np.ndarray]:
-        """
-        Construit et retourne l'observation actuelle sous forme de dictionnaire.
-
-        Cette méthode est robuste à différents formats d'entrée et inclut un système de cache.
-        Elle gère automatiquement le padding/truncature pour s'assurer que les dimensions
-        correspondent à l'espace d'observation défini.
-
-        Returns:
-            Dict[str, np.ndarray]: Dictionnaire contenant :
-                - 'observation': np.ndarray de forme (timeframes, window_size, features)
-                - 'portfolio_state': np.ndarray de forme (17,) avec les métriques du portefeuille
-        """
+        """Construit et retourne l'observation actuelle."""
         try:
-            # Try to get cached observation first
-            if self._current_obs is not None:
-                if self._is_valid_observation_structure(self._current_obs):
-                    return self._current_obs
-                else:
-                    logger.warning(
-                        "Cached observation failed validation, regenerating..."
-                    )
-
-            # Build new observation
             obs = self._build_observation()
-
-            # Validate the structure
+            # Valider la structure de l'observation finale
             if not self._is_valid_observation_structure(obs):
-                logger.error("Generated observation failed validation, using default")
-                obs = self._default_observation()
-
-            self._current_obs = obs
+                logger.error("L'observation générée a une structure invalide, utilisation d'une observation par défaut.")
+                return self._default_observation()
             return obs
-
         except Exception as e:
-            logger.error(f"Error in _get_observation: {str(e)}")
+            logger.error(f"Erreur critique dans _get_observation: {e}", exc_info=True)
             return self._default_observation()
 
     def _check_and_reset_daily_counters(self) -> None:
@@ -3744,7 +3445,7 @@ class MultiAssetChunkedEnv(gym.Env):
             # Compter les nouveaux trades par timeframe
             for trade in new_trades:
                 trade_type = trade.get('type', '')
-                if trade_type in ['open', 'close']:
+                if trade_type == 'open':
                     self.positions_count[current_timeframe] += 1
                     self.positions_count['daily_total'] += 1
 
@@ -3838,105 +3539,141 @@ class MultiAssetChunkedEnv(gym.Env):
         if valid:
             self.smart_logger.info(f"[FREQUENCY] Tous les counts dans les bornes: {self.positions_count}", rotate=True)
 
+    def calculate_position_limit_penalty(self) -> float:
+        """Calculates the penalty for exceeding the position limit for the current tier."""
+        pos_limit_penalty = 0.0
+        try:
+            tier_cfg = self.portfolio_manager.get_current_tier()
+            limit = 1
+            if isinstance(tier_cfg, dict):
+                limit = int(tier_cfg.get('max_open_positions', 1))
+            open_count = 0
+            try:
+                open_count = len([p for p in self.portfolio_manager.positions.values() if getattr(p, 'is_open', False)])
+            except Exception:
+                open_count = 0
+            if open_count > limit:
+                weight = self.config.get('trading_rules', {}).get('position_limit_penalty_weight', 1.0)
+                pos_limit_penalty -= float(weight) * (open_count - limit)
+        except Exception:
+            pass
+        return pos_limit_penalty
+
+    def calculate_outcome_reward(self) -> float:
+        """Calculates the reward/penalty for trades closed by SL/TP, proportional to PnL."""
+        outcome_reward = 0.0
+        try:
+            reward_config = self.config.get("reward_shaping", {}).get("trade_outcome_rewards", {})
+            tp_multiplier = reward_config.get("take_profit_multiplier", 0.6)
+            sl_multiplier = reward_config.get("stop_loss_multiplier", 0.05)
+
+            if hasattr(self, '_step_closed_receipts'):
+                for receipt in self._step_closed_receipts:
+                    pnl = receipt.get('pnl', 0.0)
+                    if pnl > 0: # Take Profit
+                        outcome_reward += pnl * tp_multiplier
+                    else: # Stop Loss
+                        outcome_reward += pnl * sl_multiplier # pnl is negative, so this is a penalty
+        except Exception as e:
+            self.logger.error(f"Erreur lors du calcul du bonus/malus SL/TP: {e}")
+        return outcome_reward
+
+    def calculate_capacity_based_reward(self) -> float:
+        """Calculates a reward based on the current capital usage."""
+        reward = 0.0
+        if not hasattr(self, 'portfolio_manager'):
+            return reward
+
+        total_value = self.portfolio_manager.get_total_value()
+        cash = self.portfolio_manager.get_cash()
+        
+        if total_value > 0:
+            capacity_usage = (total_value - cash) / total_value
+            
+            if 0.6 <= capacity_usage <= 0.9:
+                reward += 2.0
+            elif capacity_usage > 0.9:
+                reward -= (capacity_usage - 0.9) * 10
+            elif capacity_usage < 0.3:
+                reward -= (0.3 - capacity_usage) * 5
+        
+        return reward
+
+    def has_open_trade(self, timeframe: str) -> bool:
+        """Checks if there is an open trade for the given timeframe."""
+        if not hasattr(self, 'portfolio_manager'):
+            return False
+        
+        for position in self.portfolio_manager.positions.values():
+            if position.is_open and position.timeframe == timeframe:
+                return True
+        return False
+
+    def calculate_duration_penalty(self) -> float:
+        """Calculates the penalty for trades that are open for too long."""
+        penalty = 0.0
+        if not hasattr(self, 'portfolio_manager'):
+            return penalty
+
+        duration_config = self.config.get('trading_rules', {}).get('duration_tracking', {})
+        if not duration_config:
+            return penalty
+
+        for position in self.portfolio_manager.positions.values():
+            if position.is_open:
+                timeframe = position.timeframe
+                if timeframe in duration_config:
+                    max_duration = duration_config[timeframe].get('max_duration_steps')
+                    if max_duration:
+                        current_duration = self.current_step - position.open_step
+                        if current_duration > max_duration:
+                            penalty -= 0.01 * (current_duration - max_duration)
+        return penalty
+
     def _calculate_reward(self, action: np.ndarray) -> float:
         """
         Calcule la récompense pour l'étape actuelle.
-
-        La récompense est calculée comme suit :
-        - Récompense de base : rendement du portefeuille
-        - Pénalité de risque : basée sur le drawdown maximum
-        - Pénalité de transaction : basée sur le turnover
-        - Pénalité de concentration : pénalise les positions trop importantes
-        - Pénalité de régularité des actions : pénalise les changements brusques
-
-        Args:
-            action: Vecteur d'actions du modèle
-
-        Returns:
-            float: Valeur de la récompense
         """
-        if not hasattr(self, "_is_initialized") or not self._is_initialized:
-            raise RuntimeError("Environment not initialized. Call reset() first.")
+        # Progression : ajuster agressivité avec capital
+        initial_capital = self.portfolio_manager.initial_capital
+        aggressiveness = min(1 + (self.portfolio_manager.get_equity() / initial_capital - 1) * 2, 3.0) if initial_capital > 0 else 1.0
 
-        # Récupération des métriques du portefeuille
-        portfolio_metrics = self.portfolio_manager.get_metrics()
-        returns = portfolio_metrics.get("returns", 0.0)
-        max_drawdown = portfolio_metrics.get("max_drawdown", 0.0)
-        reward_config = self.config.get("reward", {})
+        # Base reward (PnL)
+        base_reward = self.calculate_pnl() if hasattr(self, 'calculate_pnl') else 0.0
 
-        # Configuration des paramètres de récompense
-        return_scale = reward_config.get("return_scale", 1.0)
-        risk_aversion = reward_config.get("risk_aversion", 1.5)
+        # Inaction penalty (conditional)
+        current_timeframe = self.get_current_timeframe()
+        if not self.has_open_trade(current_timeframe):
+            base_reward += self.calculate_inaction_penalty() if hasattr(self, 'calculate_inaction_penalty') else 0.0
 
-        # Calcul de la récompense de base
-        base_reward = returns * return_scale
-        risk_penalty = risk_aversion * max_drawdown
+        # Duration penalty
+        duration_penalty = self.calculate_duration_penalty()
 
-        # Calcul de la pénalité de transaction
-        transaction_penalty = 0.0
-        if hasattr(self, "_last_portfolio_value"):
-            last_value = self._last_portfolio_value
-            current_value = portfolio_metrics.get("total_value", 0.0)
-            turnover = abs(current_value - last_value) / max(1.0, last_value)
-            transaction_penalty = (
-                reward_config.get("transaction_cost_penalty", 0.1) * turnover
-            )
-
-        # Calcul de la pénalité de concentration
-        position_concentration = 0.0
-        if portfolio_metrics.get("total_value", 0) > 0:
-            positions = portfolio_metrics.get("positions", {})
-            position_values = [p.get("value", 0) for p in positions.values()]
-            if position_values:
-                max_position = max(position_values)
-                position_concentration = (
-                    max_position / portfolio_metrics["total_value"]
-                ) ** 2
-
-        concentration_penalty = (
-            reward_config.get("concentration_penalty", 0.5) * position_concentration
-        )
-
-        # Calcul de la pénalité de régularité des actions
-        action_smoothness_penalty = 0.0
-        if hasattr(self, "_last_action") and self._last_action is not None:
-            action_diff = np.mean(np.abs(action - self._last_action))
-            action_smoothness_penalty = (
-                reward_config.get("action_smoothness_penalty", 0.2) * action_diff
-            )
-
-        # Vérification et suivi de fréquence des positions
-        self._check_and_reset_daily_counters()
-        self._track_position_frequency()
+        # Frequency reward
         frequency_reward = self._calculate_frequency_reward()
 
-        # Validation des métriques de fréquence
-        self._validate_frequency()
+        # Position limit penalty
+        pos_limit_penalty = self.calculate_position_limit_penalty()
 
-        # Calcul de la récompense totale
+        # Outcome reward
+        outcome_reward = self.calculate_outcome_reward()
+
+        # Capacity-based reward
+        capacity_reward = self.calculate_capacity_based_reward()
+        
         total_reward = (
-            base_reward
-            - risk_penalty
-            - transaction_penalty
-            - concentration_penalty
-            - action_smoothness_penalty
-            + frequency_reward
+            (base_reward * aggressiveness)
+            + (frequency_reward * aggressiveness)
+            + pos_limit_penalty
+            + (outcome_reward * aggressiveness)
+            + duration_penalty
+            + capacity_reward
         )
-
-        # Mise à jour de l'état pour la prochaine itération
-        self._last_portfolio_value = portfolio_metrics.get("total_value", 0.0)
-        self._last_action = action.copy()
 
         # Journalisation des composantes de la récompense pour le débogage
-        self.logger.debug(
-            f"Reward components - Base: {base_reward:.4f}, "
-            f"Risk: -{risk_penalty:.4f}, "
-            f"Transaction: -{transaction_penalty:.4f}, "
-            f"Concentration: -{concentration_penalty:.4f}, "
-            f"Action Smoothness: -{action_smoothness_penalty:.4f}, "
-            f"Frequency: +{frequency_reward:.4f}, "
-            f"Total: {total_reward:.4f}"
-        )
+        self.logger.info(f"[REWARD Worker {self.worker_id}] Aggressiveness: {aggressiveness:.2f} | Base: {base_reward:.4f}, Freq: {frequency_reward:.4f}, "
+                   f"PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, "
+                   f"Duration: {duration_penalty:.4f}, Capacity: {capacity_reward:.4f}, Total: {total_reward:.4f}, Counts: {self.positions_count}")
 
         return total_reward
 
@@ -4134,10 +3871,27 @@ class MultiAssetChunkedEnv(gym.Env):
         trade_executed_this_step = False
 
         # 1. Mettre à jour la valeur des positions ouvertes et vérifier les SL/TP
-        pnl_from_update = self.portfolio_manager.update_market_price(current_prices)
+        pnl_from_update, sl_tp_receipts = self.portfolio_manager.update_market_price(current_prices)
+        if sl_tp_receipts:
+            self._step_closed_receipts.extend(sl_tp_receipts)
         if pnl_from_update > 0:
             realized_pnl += pnl_from_update
             trade_executed_this_step = True
+
+        # OPTIMISATION: Vérification précoce de la liquidité pour éviter des calculs inutiles
+        try:
+            available_cash = float(getattr(self.portfolio_manager, 'get_cash', lambda: 0.0)())
+            min_order_value = self.config.get('trading', {}).get('min_order_value', 11.0)
+
+            if available_cash < min_order_value:
+                self.smart_logger.info(
+                    f"[CASH GATE PRE-CHECK] Available cash {available_cash:.2f} < min order value {min_order_value:.2f}. Skipping trade checks.",
+                    dedupe=True,
+                    dedupe_interval=60
+                )
+                return realized_pnl
+        except Exception:
+            pass
 
         # 2. Itérer sur les actions de l'agent pour ouvrir ou fermer des positions
         for i, asset in enumerate(self.assets):
@@ -4158,8 +3912,10 @@ class MultiAssetChunkedEnv(gym.Env):
                     price=price,
                     timestamp=current_timestamp,
                     current_prices=current_prices,
+                    reason="agent",
                 )
                 if receipt:
+                    self._step_closed_receipts.append(receipt)
                     # Keep small buffer of receipts
                     self.receipts.append(receipt)
                     if len(self.receipts) > 50:
@@ -4312,6 +4068,7 @@ class MultiAssetChunkedEnv(gym.Env):
                             timestamp=current_timestamp,
                             current_prices=current_prices,
                             allocated_pct=final_pct,
+                            timeframe=self.current_timeframe_for_trade,  # Ajout du timeframe
                         )
                         # Metrics: tentative réussie
                         try:
@@ -4759,6 +4516,9 @@ class MultiAssetChunkedEnv(gym.Env):
             winning_trades = metrics.get('wins', 0)
             losing_trades = metrics.get('losses', 0)
             neutral_trades = metrics.get('neutrals', 0)
+            trade_attempts = metrics.get('trade_attempts_total', 0)
+            executed_opens = metrics.get('executed_trades_opened', 0)
+            invalid_attempts = metrics.get('invalid_trade_attempts', 0)
 
             # Safe portfolio values
             capital = pm.get_total_value() if hasattr(pm, 'get_total_value') else 0.0
@@ -4780,7 +4540,8 @@ class MultiAssetChunkedEnv(gym.Env):
                 "│ 📈 MÉTRIQUES                                                  │",
                 "│ Sharpe: {:.2f} | Sortino: {:.2f} | Profit Factor: {:.2f}".format(sharpe, sortino, profit_factor).ljust(65) + "│",
                 "│ Max DD: {:.2f}% | CAGR: {:.2f}% | Win Rate: {:.1f}%".format(max_dd, cagr, win_rate).ljust(65) + "│",
-                "│ Trades: {} ({}W/{}L/{}N)".format(total_trades, winning_trades, losing_trades, neutral_trades).ljust(65) + "│",
+                "│ Trades Clôturés: {} ({}W/{}L/{}N)".format(total_trades, winning_trades, losing_trades, neutral_trades).ljust(65) + "│",
+                "│ Activité: {} tentatives, {} ouverts, {} rejets".format(trade_attempts, executed_opens, invalid_attempts).ljust(65) + "│",
                 "│ Positions: 5m:{}, 1h:{}, 4h:{}, Total:{}".format(
                     self.positions_count.get('5m', 0),
                     self.positions_count.get('1h', 0),
@@ -4891,10 +4652,27 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             pass
 
-        total_reward = base_reward + frequency_reward + pos_limit_penalty
+        # --- NOUVEAU: Bonus/Pénalité pour SL/TP ---
+        outcome_reward = 0.0
+        try:
+            reward_config = self.config.get("reward_shaping", {}).get("trade_outcome_rewards", {})
+            tp_bonus = reward_config.get("take_profit_bonus", 0.5)
+            sl_penalty = reward_config.get("stop_loss_penalty", -1.0)
 
-        logger.info(f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Frequency: {frequency_reward:.4f}, "
-                   f"PosLimit: {pos_limit_penalty:.4f}, Total: {total_reward:.4f}, Counts: {self.positions_count}")
+            if hasattr(self, '_step_closed_receipts'):
+                for receipt in self._step_closed_receipts:
+                    reason = receipt.get('reason')
+                    if reason == 'TP':
+                        outcome_reward += tp_bonus
+                    elif reason == 'SL':
+                        outcome_reward += sl_penalty
+        except Exception as e:
+            self.logger.error(f"Erreur lors du calcul du bonus/malus SL/TP: {e}")
+
+        total_reward = base_reward + frequency_reward + pos_limit_penalty + outcome_reward
+
+        logger.info(f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Freq: {frequency_reward:.4f}, "
+                   f"PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, Total: {total_reward:.4f}, Counts: {self.positions_count}")
 
         return total_reward
 
