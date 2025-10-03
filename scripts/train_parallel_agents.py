@@ -1,11 +1,9 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """Script d'entraînement parallèle pour instances ADAN."""
 
 # Standard Library Imports
 import argparse
-import copy
 import json
 import logging
 import os
@@ -16,7 +14,7 @@ import uuid
 import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 # Third-Party Imports
 import gymnasium as gym
@@ -28,9 +26,10 @@ import torch as th
 import torch.nn as nn
 import yaml
 from rich.console import Console
-from rich.progress import BarColumn, Progress, TimeElapsedColumn
-from rich.tree import Tree
-from stable_baselines3 import PPO
+try:
+    from sb3_contrib import RecurrentPPO
+except Exception as _e:
+    RecurrentPPO = None  # Will raise at runtime if used without sb3-contrib installed
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.logger import configure as sb3_logger_configure
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -44,16 +43,19 @@ from adan_trading_bot.environment.checkpoint_manager import CheckpointManager
 from adan_trading_bot.environment.multi_asset_chunked_env import (
     MultiAssetChunkedEnv
 )
-from adan_trading_bot.training.callbacks import CustomTrainingInfoCallback
-from adan_trading_bot.training.trainer import validate_environment
-from adan_trading_bot.utils.timeout_manager import (
+from adan_trading_bot.training.trainer import (
+    validate_environment,
     TimeoutManager,
     TimeoutException as TMTimeoutException,
 )
+from adan_trading_bot.agent.custom_recurrent_policy import CustomRecurrentPolicy
 
-# =============================================================================
-# Initial Configuration
-# =============================================================================
+
+
+
+# ==============================================================================
+# SECTION: Configuration et exécution du script
+# ==============================================================================
 # Configure logging to be less verbose
 logging.getLogger().setLevel(logging.ERROR)
 for logger_name in [
@@ -67,7 +69,6 @@ warnings.filterwarnings("ignore")
 
 # Initialize Rich Console
 console = Console()
-
 
 class HierarchicalTrainingCallback(BaseCallback):
     """Callback pour affichage hiérarchique de l'entraînement avec métriques détaillées."""
@@ -108,107 +109,33 @@ class HierarchicalTrainingCallback(BaseCallback):
         logger.info(f"[TRAINING START] Total timesteps: {self.total_timesteps:,}")
         logger.info(f"[TRAINING START] Capital initial: ${self.initial_capital:.2f}")
 
-        # Affichage de la configuration des flux monétaires
-        logger.info("╭" + "─" * 50 + " Configuration Flux Monétaires " + "─" * 50 + "╮")
-        logger.info("│ 💰 Capital Initial: $%-40.2f │" % self.initial_capital)
-        logger.info("│ 🎯 Gestion Dynamique des Flux Activée" + " " * 32 + "│")
-        logger.info("│ 📊 Monitoring en Temps Réel" + " " * 39 + "│")
-        logger.info("╰" + "─" * 132 + "╯")
-
     def _on_step(self) -> bool:
         """Appelé à chaque étape pour mettre à jour l'affichage."""
-        # Collecter les récompenses d'épisode
-        if hasattr(self, "locals") and "rewards" in self.locals:
-            if isinstance(self.locals["rewards"], (list, np.ndarray)):
-                self.episode_rewards.extend(self.locals["rewards"])
-            else:
-                self.episode_rewards.append(self.locals["rewards"])
-
-        # À la fin d'un épisode
-        if hasattr(self, "locals") and self.locals.get("dones", [False])[0]:
-            self.episode_count += 1
-            mean_reward = (
-                np.mean(self.episode_rewards[-10:])
-                if len(self.episode_rewards) >= 10
-                else (np.mean(self.episode_rewards) if self.episode_rewards else 0)
-            )
-            progress = self.num_timesteps / self.total_timesteps * 100
-
-            # Barre de progression visuelle
-            progress_bar_length = 30
-            filled_length = int(progress_bar_length * progress // 100)
-            bar = "━" * filled_length + "━" * (progress_bar_length - filled_length)
-
-            logger.info(
-                f"🚀 ADAN Training {bar} {progress:.1f}% ({self.num_timesteps:,}/{self.total_timesteps:,}) • "
-                f"Episode {self.episode_count} • Mean Reward: {mean_reward:.2f}"
-            )
-
-        # Affichage hiérarchique périodique
         if self.num_timesteps % self.display_freq == 0 and self.num_timesteps > 0:
             self._log_detailed_metrics()
-
         return True
 
     def _log_detailed_metrics(self):
-        """Affichage détaillé des métriques pour chaque worker individuellement."""
+        """Affichage détaillé des métriques pour chaque worker (compatible SubprocVecEnv)."""
         try:
-            # En-tête de la section
             logger.info("╭" + "─" * 90 + "╮")
             logger.info(
                 "│" + " " * 30 + f"ÉTAPE {self.num_timesteps:,}" + " " * 30 + "│"
             )
             logger.info("╰" + "─" * 90 + "╯")
 
-            if not hasattr(self.model, "get_env"):
-                logger.info("Impossible d'accéder aux environnements des workers.")
-                return
-
-            env = self.model.get_env()
-
-            # Métriques globales du modèle (une seule fois)
             self._display_model_metrics()
 
-            # Méthode principale pour les environnements vectorisés
-            if hasattr(env, "envs") and len(env.envs) > 0:
-                logger.info(f"📊 WORKERS ANALYSIS | Total: {len(env.envs)} workers")
+            infos = self.locals.get("infos")
+            if isinstance(infos, list) and all(isinstance(i, dict) for i in infos):
+                logger.info(f"📊 WORKERS ANALYSIS | Total: {len(infos)} workers")
                 logger.info("=" * 92)
+                for i, info in enumerate(infos):
+                    final_info = info.get('final_info', info)
+                    self._display_worker_summary(i, final_info)
+            else:
+                logger.info("Impossible de récupérer les 'infos' des workers depuis self.locals.")
 
-                for i, worker_env_wrapper in enumerate(env.envs):
-                    self._display_individual_worker_metrics(i, worker_env_wrapper)
-
-            # Méthode de fallback avec get_attr
-            elif hasattr(env, "get_attr"):
-                try:
-                    all_infos = env.get_attr("last_info")
-                    all_metrics = (
-                        env.get_attr("get_portfolio_metrics")
-                        if hasattr(env, "get_attr")
-                        else None
-                    )
-
-                    if all_infos:
-                        logger.info(
-                            f"📊 WORKERS ANALYSIS | Total: {len(all_infos)} workers"
-                        )
-                        logger.info("=" * 92)
-
-                        for i, info in enumerate(all_infos):
-                            metrics = (
-                                all_metrics[i]
-                                if all_metrics and i < len(all_metrics)
-                                else info
-                            )
-                            if metrics:
-                                self._display_worker_summary(i, metrics)
-                            else:
-                                logger.info(
-                                    f"│ WORKER {i} | ❌ Informations non disponibles."
-                                )
-                except Exception as e:
-                    logger.error(f"Erreur lors de l'accès aux infos workers: {e}")
-
-            # Temps et vitesse globale
             elapsed = time.time() - self.start_time
             steps_per_sec = self.num_timesteps / elapsed if elapsed > 0 else 0
             logger.info("=" * 92)
@@ -220,7 +147,34 @@ class HierarchicalTrainingCallback(BaseCallback):
         except Exception as e:
             logger.error(f"Erreur lors de l'affichage des métriques: {e}")
             import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
+            self._display_model_metrics()
+
+            # Utiliser self.locals['infos'] qui est fourni par SB3 à chaque step
+            # C'est la méthode la plus sûre pour le multiprocessing
+            infos = self.locals.get("infos")
+            if isinstance(infos, list) and all(isinstance(i, dict) for i in infos):
+                logger.info(f"📊 WORKERS ANALYSIS | Total: {len(infos)} workers")
+                logger.info("=" * 92)
+                for i, info in enumerate(infos):
+                    # L'info de l'environnement final (non-wrappé) est souvent sous la clé 'final_info'
+                    final_info = info.get('final_info', info)
+                    self._display_worker_summary(i, final_info)
+            else:
+                logger.info("Impossible de récupérer les 'infos' des workers depuis self.locals.")
+
+            elapsed = time.time() - self.start_time
+            steps_per_sec = self.num_timesteps / elapsed if elapsed > 0 else 0
+            logger.info("=" * 92)
+            logger.info(
+                f"⏱️  GLOBAL TIMING | Elapsed: {elapsed / 60:.1f}min | Speed: {steps_per_sec:.1f} steps/s"
+            )
+            logger.info("─" * 92)
+
+        except Exception as e:
+            logger.error(f"Erreur lors de l'affichage des métriques: {e}")
+            import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
 
     def _display_individual_worker_metrics(self, worker_id: int, worker_env_wrapper):
@@ -444,12 +398,7 @@ class HierarchicalTrainingCallback(BaseCallback):
                             if current_env is None:
                                 break
 
-                    # Méthode de fallback avec get_attr si disponible
-                    elif hasattr(env, "get_attr"):
-                        env_infos = env.get_attr("last_info")
-                        if env_infos and len(env_infos) > 0 and env_infos[0]:
-                            info = env_infos[0]
-                            closed_positions = info.get("closed_positions", [])
+                    # Note: ne pas utiliser get_attr("last_info") en mode Subproc (non picklable / attribut absent)
 
                     if closed_positions:
                         logger.info(
@@ -913,196 +862,11 @@ class GymnasiumToGymWrapper(gym.Wrapper):
     def reset(self, *, seed=None, options=None):
         """Garantit que reset() retourne toujours un tuple (obs, info)."""
         reset_result = super().reset(seed=seed, options=options)
-
-        # Journalisation pour le débogage
-        logger.debug(
-            "GymnasiumToGymWrapper.reset - Type de sortie: %s", type(reset_result)
-        )
-
         if isinstance(reset_result, tuple) and len(reset_result) == 2:
-            # Format gymnasium : (obs, info)
             obs, info = reset_result
-            obs = self._validate_observation(obs)
             return obs, info
-        # Cas où seul obs est retourné (ancienne API gym)
         else:
-            logger.debug(
-                "GymnasiumToGymWrapper.reset - Format obs unique détecté, "
-                "conversion en (obs, {})"
-            )
-            obs = self._validate_observation(reset_result)
-            return obs, {}
-
-    def _validate_observation(self, obs):
-        """Valide et convertit l'observation dans le format attendu.
-
-        Returns:
-            dict: Un dictionnaire avec les clés 'observation' (shape: 3, 20, 16)
-                  et 'portfolio_state' (shape: 17,)
-        """
-        try:
-            # Format de sortie attendu (15 caractéristiques par fenêtre)
-            expected_obs_shape = (3, 20, 15)  # 15 caractéristiques par fenêtre
-            expected_portfolio_shape = (17,)
-
-            # Si c'est déjà un dictionnaire avec les bonnes clés, on le valide
-            if (
-                isinstance(obs, dict)
-                and "observation" in obs
-                and "portfolio_state" in obs
-            ):
-                # Valider la forme de l'observation
-                obs_array = np.asarray(obs["observation"], dtype=np.float32)
-                portfolio_array = np.asarray(obs["portfolio_state"], dtype=np.float32)
-
-                # Vérifier et ajuster les formes si nécessaire
-                if (
-                    obs_array.shape == expected_obs_shape
-                    and portfolio_array.shape == expected_portfolio_shape
-                ):
-                    # Format parfait, pas besoin de modification
-                    logger.debug(f"Observation validée avec succès: {obs_array.shape}")
-                    return {
-                        "observation": obs_array,
-                        "portfolio_state": portfolio_array,
-                    }
-
-                # Ajuster l'observation si nécessaire
-                if len(obs_array.shape) == 3:
-                    # Redimensionner vers la forme attendue
-                    adjusted_obs = np.zeros(expected_obs_shape, dtype=np.float32)
-
-                    # Copier les données en respectant les dimensions minimales
-                    min_timeframes = min(obs_array.shape[0], expected_obs_shape[0])
-                    min_steps = min(obs_array.shape[1], expected_obs_shape[1])
-                    min_features = min(obs_array.shape[2], expected_obs_shape[2])
-
-                    adjusted_obs[:min_timeframes, :min_steps, :min_features] = (
-                        obs_array[:min_timeframes, :min_steps, :min_features]
-                    )
-                    obs_array = adjusted_obs
-                else:
-                    # Si le format est complètement différent, on crée une observation vide
-                    obs_array = np.zeros(expected_obs_shape, dtype=np.float32)
-
-                # Ajuster la forme du portefeuille de manière robuste
-                if portfolio_array.shape != expected_portfolio_shape:
-                    logger.debug(
-                        f"Ajustement de l'état du portefeuille: {portfolio_array.shape} -> {expected_portfolio_shape}"
-                    )
-                    adjusted_portfolio = np.zeros(
-                        expected_portfolio_shape, dtype=np.float32
-                    )
-
-                    if len(portfolio_array.shape) == 1:
-                        # Copier les données disponibles jusqu'à la limite
-                        copy_size = min(
-                            portfolio_array.size, expected_portfolio_shape[0]
-                        )
-                        adjusted_portfolio[:copy_size] = portfolio_array[:copy_size]
-                    elif portfolio_array.size > 0:
-                        # Aplatir et copier si nécessaire
-                        flattened = portfolio_array.flatten()
-                        copy_size = min(flattened.size, expected_portfolio_shape[0])
-                        adjusted_portfolio[:copy_size] = flattened[:copy_size]
-
-                    portfolio_array = adjusted_portfolio
-
-                return {
-                    "observation": obs_array.astype(np.float32),
-                    "portfolio_state": portfolio_array.astype(np.float32),
-                }
-
-            # Si c'est un tuple (obs, info), on extrait l'observation
-            if (
-                isinstance(obs, (tuple, list))
-                and len(obs) >= 2
-                and isinstance(obs[1], dict)
-            ):
-                return self._validate_observation(obs[0])
-
-            # Si c'est un dictionnaire mais pas au bon format
-            if isinstance(obs, dict):
-                logger.warning("Format d'observation inattendu: %s", list(obs.keys()))
-                # Essayer de construire une observation valide à partir des clés disponibles
-                obs_array = np.asarray(
-                    obs.get("observation", np.zeros(expected_obs_shape)),
-                    dtype=np.float32,
-                )
-                portfolio_array = np.asarray(
-                    obs.get("portfolio_state", np.zeros(expected_portfolio_shape)),
-                    dtype=np.float32,
-                )
-
-                # Redimensionner si nécessaire
-                if obs_array.shape != expected_obs_shape:
-                    obs_array = np.zeros(expected_obs_shape, dtype=np.float32)
-                if portfolio_array.shape != expected_portfolio_shape:
-                    portfolio_array = np.zeros(
-                        expected_portfolio_shape, dtype=np.float32
-                    )
-
-                return {"observation": obs_array, "portfolio_state": portfolio_array}
-
-            # Si c'est un ndarray, essayer de le convertir au format attendu
-            if isinstance(obs, np.ndarray):
-                obs_array = obs.astype(np.float32)
-
-                # Si c'est déjà la forme attendue pour l'observation
-                if obs_array.shape == expected_obs_shape:
-                    return {
-                        "observation": obs_array,
-                        "portfolio_state": np.zeros(
-                            expected_portfolio_shape, dtype=np.float32
-                        ),
-                    }
-                # Si c'est une observation plate
-                elif obs_array.size == np.prod(expected_obs_shape):
-                    return {
-                        "observation": obs_array.reshape(expected_obs_shape),
-                        "portfolio_state": np.zeros(
-                            expected_portfolio_shape, dtype=np.float32
-                        ),
-                    }
-                # Si c'est juste l'état du portefeuille
-                elif obs_array.size == expected_portfolio_shape[0]:
-                    return {
-                        "observation": np.zeros(expected_obs_shape, dtype=np.float32),
-                        "portfolio_state": obs_array.reshape(expected_portfolio_shape),
-                    }
-
-            # Si c'est un objet avec une méthode items(), essayer de le convertir en dict
-            if hasattr(obs, "items") and callable(obs.items):
-                try:
-                    obs_dict = dict(obs.items())
-                    return self._validate_observation(obs_dict)
-                except Exception as e:
-                    logger.error("Échec de la conversion en dictionnaire: %s", str(e))
-
-            # Si on arrive ici, on crée une observation par défaut
-            # Log seulement pour le worker principal pour éviter la duplication
-            if getattr(self, "rank", 0) == 0:
-                logger.warning(
-                    f"{getattr(self, 'log_prefix', '[WORKER-0]')} Format d'observation non reconnu, création d'une observation par défaut. "
-                    f"Type: {type(obs)}"
-                )
-            return {
-                "observation": np.zeros(expected_obs_shape, dtype=np.float32),
-                "portfolio_state": np.zeros(expected_portfolio_shape, dtype=np.float32),
-            }
-
-        except Exception as e:
-            # Log seulement pour le worker principal
-            if getattr(self, "rank", 0) == 0:
-                logger.error(
-                    f"{getattr(self, 'log_prefix', '[WORKER-0]')} Erreur lors de la validation de l'observation: %s",
-                    str(e),
-                )
-            # En cas d'erreur, on retourne une observation vide mais valide
-            return {
-                "observation": np.zeros(expected_obs_shape, dtype=np.float32),
-                "portfolio_state": np.zeros(expected_portfolio_shape, dtype=np.float32),
-            }
+            return reset_result, {}
 
     def get_metrics(self):
         """Retourne les métriques actuelles de l'environnement."""
@@ -1134,83 +898,10 @@ class GymnasiumToGymWrapper(gym.Wrapper):
 
     def step(self, action):
         """Convertit le retour de step() de gymnasium (5 valeurs) au format SB3."""
-        out = super().step(action)
-
-        # Journalisation pour le débogage
-        logger.debug("GymnasiumToGymWrapper.step - Type de sortie: %s", type(out))
-        if isinstance(out, tuple):
-            logger.debug("GymnasiumToGymWrapper.step - Longueur du tuple: %d", len(out))
-
-        if isinstance(out, tuple) and len(out) == 5:
-            # Format gymnasium : (obs, reward, terminated, truncated, info)
-            obs, reward, terminated, truncated, info = out
-            done = bool(terminated or truncated)
-
-            # Valider le format de l'observation
-            obs = self._validate_observation(obs)
-
-            # Stocker les informations pour les métriques
-            self.last_info = info.copy() if isinstance(info, dict) else {}
-            self.last_obs = obs
-
-            # Collecter les récompenses d'épisode
-            if hasattr(self, "episode_rewards"):
-                self.episode_rewards.append(float(reward))
-
-            # Compter les épisodes terminés
-            if done:
-                self.episode_count += 1
-
-            # Retourner le format attendu par SB3 avec 5 valeurs (Gymnasium)
-            return obs, float(reward), terminated, truncated, info
-
-        # Si le format est déjà correct (4 valeurs)
-        elif isinstance(out, tuple) and len(out) == 4:
-            obs, reward, done, info = out
-            obs = self._validate_observation(obs)
-
-            # Stocker les informations pour les métriques
-            self.last_info = info.copy() if isinstance(info, dict) else {}
-            self.last_obs = obs
-
-            # Collecter les récompenses d'épisode
-            if hasattr(self, "episode_rewards"):
-                self.episode_rewards.append(float(reward))
-
-            # Compter les épisodes terminés
-            if done:
-                self.episode_count += 1
-
-            # Convertir done en terminated/truncated pour compatibilité Gymnasium
-            return obs, float(reward), done, False, info
-
-        # Si le format est inattendu, essayer de le convertir
-        logger.error("GymnasiumToGymWrapper.step - Format de retour inattendu: %s", out)
-
-        # Si c'est un tuple avec 3 éléments, supposer que c'est (obs, reward, done)
-        if isinstance(out, tuple) and len(out) == 3:
-            obs, reward, done = out
-            obs = self._validate_observation(obs)
-            self.last_obs = obs
-            if hasattr(self, "episode_rewards"):
-                self.episode_rewards.append(float(reward))
-            if done:
-                self.episode_count += 1
-            return obs, float(reward), done, False, {}
-
-        # Si c'est un tuple avec 2 éléments, supposer que c'est (obs, reward)
-        if isinstance(out, tuple) and len(out) == 2:
-            obs, reward = out
-            obs = self._validate_observation(obs)
-            self.last_obs = obs
-            if hasattr(self, "episode_rewards"):
-                self.episode_rewards.append(float(reward))
-            return obs, float(reward), False, False, {}
-
-        # Si c'est juste une observation, retourner avec des valeurs par défaut
-        obs = self._validate_observation(out)
+        obs, reward, terminated, truncated, info = super().step(action)
+        self.last_info = info.copy() if isinstance(info, dict) else {}
         self.last_obs = obs
-        return obs, 0.0, False, False, {}
+        return obs, float(reward), terminated, truncated, info
 
 
 # Gestion des exceptions
@@ -2406,15 +2097,17 @@ def main(
         # Configurer les arguments pour SubprocVecEnv
         vec_env_kwargs = {}
         if use_subproc:
-            # Paramètres optimisés pour les performances et la stabilité
-            vec_env_kwargs.update(
-                {
-                    "start_method": "forkserver",  # Meilleur que 'spawn' pour les performances
-                    "daemon": False,  # Permet aux processus enfants de se terminer correctement
-                }
-            )
+            # Activer les logs de debug du multiprocessing pour voir les erreurs des workers
+            try:
+                import multiprocessing.util as mp_util
+                mp_util.log_to_stderr(logging.INFO)
+            except Exception:
+                pass
+
+            # Utiliser 'spawn' pour éviter l'héritage d'état problématique avec certaines libs
+            vec_env_kwargs.update({"start_method": "spawn"})
             logger.info(
-                f"Utilisation de SubprocVecEnv avec {num_envs} processus parallèles"
+                f"Utilisation de SubprocVecEnv avec {num_envs} processus parallèles (start_method='spawn')"
             )
         else:
             logger.info(f"Utilisation de DummyVecEnv (sans parallélisme réel)")
@@ -2422,77 +2115,97 @@ def main(
         # Créer les fonctions de création d'environnement
         def make_env_fn(rank: int, seed_val: int) -> Callable[[], gym.Env]:
             """Crée une fonction d'initialisation d'environnement pour un rang donné."""
-
             def _init() -> gym.Env:
+                # Worker-specific config
+                worker_config = base_worker_config.copy()
+                worker_config.update({
+                    "rank": rank,
+                    "seed": seed_val,
+                    "worker_id": f"worker_{rank}"
+                })
+
+                # Build required constructor args for MultiAssetChunkedEnv
                 try:
-                    # Configuration spécifique au worker pour éviter les logs dupliqués
-                    worker_config = {
-                        "rank": rank,
-                        "worker_id": clean_worker_id(
-                            f"w{rank}"
-                        ),  # Nettoyer l'ID pour éviter les erreurs JSONL
-                        "log_prefix": f"[WORKER-{rank}]",
-                        **base_worker_config,
-                    }
+                    # Assets and placeholder data dict
+                    assets = config.get("data", {}).get("assets", ["BTCUSDT"]) or ["BTCUSDT"]
+                    data_placeholder = {str(asset): {} for asset in assets}
 
-                    env = make_env(
-                        rank=rank,
-                        seed=seed_val,
-                        config=config,
+                    # Timeframes
+                    tfs = (
+                        config.get("environment", {})
+                              .get("observation", {})
+                              .get("timeframes", config.get("data", {}).get("timeframes", ["5m", "1h", "4h"]))
+                    )
+
+                    # Window size
+                    window_size = config.get("environment", {}).get("window_size", 20)
+
+                    # Features config per timeframe (use observation features lists)
+                    obs_features = (
+                        config.get("environment", {})
+                              .get("observation", {})
+                              .get("features", {})
+                    )
+                    base_feats = obs_features.get("base", []) or ["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]
+                    tf_indicators = obs_features.get("indicators", {})
+                    features_config = {}
+                    for tf in tfs:
+                        tf_inds = tf_indicators.get(tf, [])
+                        # Combine base + tf indicators (keep as-is; only length is used early)
+                        features_config[str(tf)] = list(base_feats) + list(tf_inds)
+
+                    # Environment scalars
+                    env_cfg = config.get("environment", {})
+                    max_steps = env_cfg.get("max_steps", 100000)
+                    initial_balance = env_cfg.get("initial_balance", 10000.0)
+                    commission = env_cfg.get("commission", 0.001)
+                    reward_scaling = env_cfg.get("reward_scaling", 1.0)
+
+                    return MultiAssetChunkedEnv(
+                        data=data_placeholder,
+                        timeframes=tfs,
+                        window_size=int(window_size),
+                        features_config=features_config,
+                        max_steps=int(max_steps),
+                        initial_balance=float(initial_balance),
+                        commission=float(commission),
+                        reward_scaling=float(reward_scaling),
                         worker_config=worker_config,
-                        dbe_registry=_GLOBAL_DBE_REGISTRY,  # Passer le registre global
+                        config=config,
+                        total_workers=num_envs,
                     )
-
-                    # Log seulement pour le worker principal pour éviter la duplication
-                    if rank == 0 or not use_subproc:
-                        logger.info(
-                            f"[WORKER-{rank}] Environnement {rank} initialisé avec succès"
-                        )
-                    return env
                 except Exception as e:
-                    logger.error(
-                        f"[WORKER-{rank}] Erreur lors de la création de l'environnement {rank}: {str(e)}"
-                    )
+                    logger.error(f"[WORKER-{rank}] Failed to build env args: {e}", exc_info=True)
                     raise
-
             return _init
 
-        # Créer les environnements avec des seeds uniques
-        env_fns = []
-        for i in range(num_envs):
-            # Chaque environnement a une seed unique basée sur la seed de base + son rang
-            env_seed = seed + i * 1000 if seed is not None else None
-            env_fns.append(make_env_fn(i, env_seed))
-
-        # Créer l'environnement vectorisé avec la configuration appropriée
+        # Créer l'environnement vectorisé
         try:
-            env = VecEnvClass(env_fns, **vec_env_kwargs)
-            logger.info(f"Environnement vectorisé créé avec succès: {env}")
-        except Exception as e:
-            logger.error(
-                f"Erreur lors de la création de l'environnement vectorisé: {str(e)}"
+            env = SubprocVecEnv(
+                [make_env_fn(i, seed + i * 1000 if seed is not None else None) for i in range(num_envs)],
+                start_method='spawn'
             )
+            logger.info(f"Environnement vectorisé 'SubprocVecEnv' créé avec succès.")
+        except Exception as e:
+            logger.error(f"Erreur lors de la création de l'environnement vectorisé: {e}", exc_info=True)
             raise
 
         # Ajouter la normalisation des observations si nécessaire
         if config.get("normalize_observations", True):
             env = VecNormalize(env, norm_obs=True, norm_reward=True)
-
-        # Le bloc de validation de l'environnement a été supprimé car il était défectueux
-        # et incompatible avec la nouvelle structure d'environnement simplifiée.
-
-        logger.info(f"Environnement vectorisé créé avec {num_envs} environnements")
-
         # Configuration optimisée de l'agent PPO avec MultiInputPolicy pour gérer les espaces d'observation de type dictionnaire
 
         # Vérifier l'espace d'observation
         logger.info(f"Espace d'observation de l'environnement: {env.observation_space}")
 
-        # Configuration du réseau de neurones
+        # Configuration du réseau de neurones pour la politique récurrente
         policy_kwargs = {
-            "net_arch": [dict(pi=[64, 64], vf=[64, 64])],
-            "activation_fn": torch.nn.ReLU,
-            "ortho_init": True,
+            # La dimension des features est définie dans la politique (128 par défaut)
+            # et passée à l'extracteur TemporalFusionExtractor.
+            "lstm_hidden_size": 256, # Taille de l'état caché du LSTM
+            "n_lstm_layers": 2, # Nombre de couches LSTM
+            "net_arch": dict(pi=[128, 64], vf=[128, 64]), # Couches après le LSTM
+            "activation_fn": th.nn.ReLU,
         }
 
         # Créer ou charger le modèle PPO
@@ -2529,11 +2242,13 @@ def main(
                 f"Reprise de l'entraînement depuis le checkpoint: {latest_checkpoint}"
             )
 
-            # Créer un modèle minimal pour le chargement
-            model = PPO(
-                policy="MultiInputPolicy",
+            # Créer un modèle minimal pour le chargement (RecurrentPPO)
+            if RecurrentPPO is None:
+                raise ImportError("sb3-contrib (RecurrentPPO) est requis. Installez-le: pip install sb3-contrib")
+            model = RecurrentPPO(
+                policy=CustomRecurrentPolicy,
                 env=env,
-                policy_kwargs=policy_kwargs,
+                policy_kwargs=policy_kwargs if 'policy_kwargs' in locals() else None,
                 verbose=1,
                 seed=config.get("seed", 42),
                 device="auto",
@@ -2571,8 +2286,10 @@ def main(
         # Si pas de reprise ou échec de chargement, créer un nouveau modèle
         if model is None:
             logger.info("Création d'un nouveau modèle")
-            model = PPO(
-                policy="MultiInputPolicy",
+            if RecurrentPPO is None:
+                raise ImportError("sb3-contrib (RecurrentPPO) est requis. Installez-le: pip install sb3-contrib")
+            model = RecurrentPPO(
+                policy=CustomRecurrentPolicy,
                 env=env,
                 learning_rate=3e-4,
                 n_steps=2048,
@@ -2584,7 +2301,7 @@ def main(
                 ent_coef=0.0,
                 vf_coef=0.5,
                 max_grad_norm=0.5,
-                policy_kwargs=policy_kwargs,
+                policy_kwargs=policy_kwargs if 'policy_kwargs' in locals() else None,
                 verbose=1,
                 seed=config.get("seed", 42),
                 device="auto",
@@ -2624,11 +2341,13 @@ def main(
                         )
                         start_timesteps = 0
                     else:
-                        # Créer un modèle minimal pour le chargement
-                        model = PPO(
-                            policy="MultiInputPolicy",
+                        # Créer un modèle minimal pour le chargement (RecurrentPPO)
+                        if RecurrentPPO is None:
+                            raise ImportError("sb3-contrib (RecurrentPPO) est requis. Installez-le: pip install sb3-contrib")
+                        model = RecurrentPPO(
+                            policy=CustomRecurrentPolicy,
                             env=env,
-                            policy_kwargs=policy_kwargs,
+                            policy_kwargs=policy_kwargs if 'policy_kwargs' in locals() else None,
                             verbose=1,
                             seed=config.get("seed", 42),
                             device="auto",
@@ -2848,19 +2567,7 @@ def main(
         # Initialiser la liste des callbacks avec le checkpoint
         callbacks = [checkpoint_callback]
 
-        # Ajouter le callback de progression personnalisé si activé dans la config
-        use_custom_progress = config.get("training", {}).get(
-            "use_custom_progress", False
-        )
-        if use_custom_progress:
-            # Créer une instance de notre callback personnalisé
-            progress_callback = CustomTrainingInfoCallback(check_freq=1000, verbose=1)
-            callbacks.append(progress_callback)
-            logger.info(
-                "[TRAINING] Barre de progression personnalisée activée pour le suivi de l'entraînement"
-            )
-
-        # Ajouter le callback hiérarchique pour l'affichage structuré
+        # Ajouter le callback hiérarchique pour l'affichage structuré (maintenant compatible Subproc)
         total_timesteps = config.get("training", {}).get("total_timesteps", 1000000)
         initial_capital = config.get("environment", {}).get("initial_balance", 10000.0)
         hierarchical_callback = HierarchicalTrainingCallback(
@@ -2874,26 +2581,48 @@ def main(
             "[TRAINING] Affichage hiérarchique activé avec métriques détaillées"
         )
 
-        metrics_log_dir = os.path.join(
-            config.get("paths", {}).get("logs_dir", "logs"),
-            "training_metrics",
-        )
-        metrics_log_interval = (
-            config.get("monitoring", {}).get("metrics_log_interval")
-            or config.get("training", {}).get("metrics_log_interval")
-            or 500
-        )
-        worker_metrics_callback = WorkerMetricsLogger(
-            log_dir=metrics_log_dir,
-            initial_balance=initial_capital,
-            log_interval=metrics_log_interval,
-            tensorboard_prefix="workers",
-        )
-        callbacks.append(worker_metrics_callback)
-        logger.info(
-            "[TRAINING] Journalisation des métriques par worker activée (%s)",
-            metrics_log_dir,
-        )
+        # En mode non-Subproc, ajouter les autres callbacks intrusifs
+        if not use_subproc:
+            # Ajouter le callback pour la visualisation de l'attention si activé
+            if config.get('model', {}).get('diagnostics', {}).get('save_attention_maps', False):
+                attention_cb = AttentionVisualizerCallback(
+                    viz_cfg=config['model']['diagnostics'],
+                    verbose=1
+                )
+                callbacks.append(attention_cb)
+
+            # Ajouter le callback de progression personnalisé si activé dans la config
+            use_custom_progress = config.get("training", {}).get(
+                "use_custom_progress", False
+            )
+            if use_custom_progress:
+                progress_callback = CustomTrainingInfoCallback(check_freq=1000, verbose=1)
+                callbacks.append(progress_callback)
+                logger.info(
+                    "[TRAINING] Barre de progression personnalisée activée pour le suivi de l'entraînement"
+                )
+
+
+            metrics_log_dir = os.path.join(
+                config.get("paths", {}).get("logs_dir", "logs"),
+                "training_metrics",
+            )
+            metrics_log_interval = (
+                config.get("monitoring", {}).get("metrics_log_interval")
+                or config.get("training", {}).get("metrics_log_interval")
+                or 500
+            )
+            worker_metrics_callback = WorkerMetricsLogger(
+                log_dir=metrics_log_dir,
+                initial_balance=initial_capital,
+                log_interval=metrics_log_interval,
+                tensorboard_prefix="workers",
+            )
+            callbacks.append(worker_metrics_callback)
+            logger.info(
+                "[TRAINING] Journalisation des métriques par worker activée (%s)",
+                metrics_log_dir,
+            )
 
         # Créer un CallbackList pour gérer plusieurs callbacks
         callback = CallbackList(callbacks)
@@ -3067,6 +2796,87 @@ def main(
 
 
 if __name__ == "__main__":
+    class AttentionVisualizerCallback(BaseCallback):
+        """
+        Callback pour la visualisation des cartes d'attention.
+        """
+        def __init__(self, viz_cfg, verbose=0):
+            super().__init__(verbose)
+            self.viz_cfg = viz_cfg
+            self.output_dir = viz_cfg.get('attention_map_dir', 'attention_maps')
+            os.makedirs(self.output_dir, exist_ok=True)
+            self.interval = viz_cfg.get('interval', 1000)
+
+        def _on_step(self) -> bool:
+            if self.num_timesteps % self.interval == 0:
+                try:
+                    # Récupérer l'environnement
+                    env = self.training_env.envs[0] if hasattr(self.training_env, 'envs') else self.training_env
+
+                    # Récupérer l'observation actuelle
+                    obs = env.render(mode='rgb_array')
+
+                    # Récupérer la carte d'attention du modèle
+                    if hasattr(self.model.policy.features_extractor, 'get_attention_map'):
+                        with torch.no_grad():
+                            # Convertir l'observation en tenseur
+                            obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(self.model.device)
+                            attention_map = self.model.policy.features_extractor.get_attention_map(obs_tensor)
+
+                            # Sauvegarder la visualisation
+                            output_path = os.path.join(
+                                self.output_dir,
+                                f'attention_step_{self.num_timesteps}.png'
+                            )
+                            self._save_attention_visualization(obs, attention_map, output_path)
+
+                except Exception as e:
+                    print(f"Erreur lors de la génération de la visualisation d'attention: {e}")
+
+            return True
+
+        def _save_attention_visualization(self, obs, attention_map, output_path):
+            """
+            Sauvegarde la visualisation de l'attention superposée à l'observation.
+            """
+            import matplotlib.pyplot as plt
+            from matplotlib import cm
+            import cv2
+
+            # Créer une figure avec deux sous-graphiques
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+
+            # Afficher l'observation originale
+            ax1.imshow(obs)
+            ax1.set_title('Observation originale')
+            ax1.axis('off')
+
+            # Afficher la carte d'attention
+            if len(attention_map.shape) > 2:
+                attention_map = attention_map.mean(dim=1).squeeze()
+
+            # Redimensionner la carte d'attention pour correspondre à l'observation
+            attention_map_np = attention_map.cpu().numpy()
+            resized_attention = cv2.resize(
+                attention_map_np,
+                (obs.shape[1], obs.shape[0]),
+                interpolation=cv2.INTER_CUBIC
+            )
+
+            # Afficher la carte d'attention
+            im = ax2.imshow(resized_attention, cmap='viridis')
+            ax2.set_title('Carte d\'attention')
+            ax2.axis('off')
+            plt.colorbar(im, ax=ax2)
+
+            # Sauvegarder la figure
+            plt.tight_layout()
+            plt.savefig(output_path, bbox_inches='tight', dpi=150)
+            plt.close()
+
+            if self.verbose > 0:
+                print(f"Carte d'attention sauvegardée: {output_path}")
+
     parser = argparse.ArgumentParser(
         description=(
             "Entraîne un bot de trading ADAN avec support du timeout "
@@ -3123,6 +2933,8 @@ if __name__ == "__main__":
             checkpoint_dir=args.checkpoint_dir,
             shared_model_path=args.shared_model,
             resume=args.resume,
+            num_envs=(args.workers if args.workers is not None else 4),
+            use_subproc=True,
         )
     except Exception as e:
         print(f"Erreur lors de l'exécution: {e}", file=sys.stderr)

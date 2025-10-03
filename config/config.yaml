@@ -208,6 +208,29 @@ workers:
       Medium: 0.035
       High: 0.025
       Enterprise: 0.02
+    specialization:
+      timeframe: '4h'
+      reward_profile:
+        position_size_bonus: 3.0
+        duration_bonus: 2.0
+        premature_penalty: -2.0
+        overexposure_penalty: -3.0
+      tracking_periods:
+        '5m':
+          min_tracking_steps: 4
+          max_tracking_steps: 48
+          optimal_duration: 12
+          grace_period: 2
+        '1h':
+          min_tracking_steps: 2
+          max_tracking_steps: 16
+          optimal_duration: 4
+          grace_period: 1
+        '4h':
+          min_tracking_steps: 1
+          max_tracking_steps: 6
+          optimal_duration: 2
+          grace_period: 1
 
   w2:
     name: Moderate
@@ -246,6 +269,29 @@ workers:
       Medium: 0.045
       High: 0.035
       Enterprise: 0.025
+    specialization:
+      timeframe: '1h'
+      reward_profile:
+        trend_capture_bonus: 4.0
+        swing_efficiency_bonus: 2.0
+        early_exit_penalty: -1.0
+        drift_penalty: -0.8
+      tracking_periods:
+        '5m':
+          min_tracking_steps: 4
+          max_tracking_steps: 48
+          optimal_duration: 12
+          grace_period: 2
+        '1h':
+          min_tracking_steps: 2
+          max_tracking_steps: 16
+          optimal_duration: 4
+          grace_period: 1
+        '4h':
+          min_tracking_steps: 1
+          max_tracking_steps: 6
+          optimal_duration: 2
+          grace_period: 1
 
   w3:
     name: Aggressive
@@ -283,6 +329,29 @@ workers:
       Medium: 0.06
       High: 0.04
       Enterprise: 0.03
+    specialization:
+      timeframe: '5m'
+      reward_profile:
+        speed_bonus: 2.0
+        precision_bonus: 3.0
+        overstay_penalty: -1.0
+        missed_penalty: -0.5
+      tracking_periods:
+        '5m':
+          min_tracking_steps: 4
+          max_tracking_steps: 48
+          optimal_duration: 12
+          grace_period: 2
+        '1h':
+          min_tracking_steps: 2
+          max_tracking_steps: 16
+          optimal_duration: 4
+          grace_period: 1
+        '4h':
+          min_tracking_steps: 1
+          max_tracking_steps: 6
+          optimal_duration: 2
+          grace_period: 1
 
   w4:
     name: Adaptive
@@ -321,6 +390,28 @@ workers:
       Medium: 0.05
       High: 0.035
       Enterprise: 0.025
+    specialization:
+      timeframe: '1h'
+      reward_profile:
+        balance_bonus: 2.0
+        adaptability_bonus: 3.0
+        rigidity_penalty: -1.5
+      tracking_periods:
+        '5m':
+          min_tracking_steps: 4
+          max_tracking_steps: 48
+          optimal_duration: 12
+          grace_period: 2
+        '1h':
+          min_tracking_steps: 2
+          max_tracking_steps: 16
+          optimal_duration: 4
+          grace_period: 1
+        '4h':
+          min_tracking_steps: 1
+          max_tracking_steps: 6
+          optimal_duration: 2
+          grace_period: 1
 
 # Prétraitement des données
 preprocessing:
@@ -570,6 +661,14 @@ trading_rules:
       increase_factor: 0.5
       max_multiplier: 6.0
       start_chunk_index: 0
+
+  duration_tracking:
+    '5m':
+      max_duration_steps: 48
+    '1h':
+      max_duration_steps: 192
+    '4h':
+      max_duration_steps: 288
 
 # Paliers de capital
 capital_tiers:
@@ -960,118 +1059,18 @@ reset_parameters:
   check_interval: 100 # Nombre d'étapes entre les vérifications de réinitialisation
 
 reward_shaping:
-  risk_factor: 0.5
-  volatility_factor: 0.2
-  drawdown_penalty: 0.5
-  sharpe_factor: 0.1
-  position_reward: 0.1
-  commission_reward: -0.1
-  slippage_reward: -0.1
-  profit_factor_bonus: 0.2
-  risk_reward_ratio: 1.5
-  max_position_size: 0.9
-  max_order_size: 0.5
-  min_order_value_usdt: 10.0
-  commission_pct: 0.001
-  commission_penalty: 0.1
-  min_profit_multiplier: 1.5
-  slippage_pct: 0.0005
-  garch_parameters:
-    omega: 1.0e-06
-    alpha: 0.1
-    beta: 0.85
-    initial_volatility: 0.0001
-    noise_std: 0.01
-    noise_clip_range: [-0.05, 0.05]
-    direction_weight: 0.5
-  market_regime_detection:
-    adx_threshold: 25
-    rsi_oversold: 30
-    rsi_overbought: 70
-    regime_confidence_threshold: 0.7
-    volatility_threshold: 0.05
-  tier_weight_configs:
-    sigmoid_steepness: 0.5
-    base_pnl_weight: 0.6
-    max_pnl_weight: 1.0
-    base_calmar_weight: 0.2
-    max_calmar_weight: 0.5
-    constant_sharpe_weight: 0.2
-  tier_parameters:
-    Micro:
-      pnl_multiplier: 1.5
-      commission_penalty: 0.2
-      base_inaction_penalty: -0.02
-      drawdown_threshold: 0.15
-      severity_factor: 1.5
-      stability_factor: 0.1
-      min_profit_multiplier: 2.0
-    Small:
-      pnl_multiplier: 1.2
-      commission_penalty: 0.15
-      base_inaction_penalty: -0.015
-      drawdown_threshold: 0.1
-      severity_factor: 1.2
-      stability_factor: 0.15
-      min_profit_multiplier: 1.8
-    Medium:
-      pnl_multiplier: 1.0
-      commission_penalty: 0.1
-      base_inaction_penalty: -0.01
-      drawdown_threshold: 0.07
-      severity_factor: 1.0
-      stability_factor: 0.2
-      min_profit_multiplier: 1.5
-    Large:
-      pnl_multiplier: 0.8
-      commission_penalty: 0.05
-      base_inaction_penalty: -0.005
-      drawdown_threshold: 0.05
-      severity_factor: 0.8
-      stability_factor: 0.25
-      min_profit_multiplier: 1.2
-  adaptive_inaction:
-    regime_multipliers:
-      volatile: 1.5
-      bear: 0.8
-      bull: 1.2
-      sideways: 0.5
-    capital_observation_threshold: 1000.0
-    observation_phase_ratio: 0.1
-    sigmoid_tier_steepness: 0.8
-  tier_bonuses:
-    stability_bonus_multiplier: 0.1
-    max_stability_bonus: 0.05
-    drawdown_penalty_multiplier: 1.2
-  detailed_logging:
-    log_pnl_simulation: false
-    log_tier_transitions: false
-    log_market_regime_changes: false
-    enable_debug_logs: false
-    log_weight_calculations: false
-    log_component_breakdown: false
-  chunk_performance:
-    optimal_trade_bonus: 0.1
-    performance_threshold: 1.2
-  dbe:
-    initial_risk: 1.0
-    min_risk: 0.5
-    max_risk: 2.0
-    winrate_decay: 0.95
-    drawdown_impact: 1.5
-    cash_utilization_impact: 0.1
-  tier_rewards:
-    promotion_bonus: 0.5
-    demotion_penalty: -0.2
-    checkpoint_on_promotion: true
-    checkpoint_dir: models/checkpoints
-    min_episodes_for_promotion: 5
-    min_profit_for_promotion: 0.05
-    tier_performance_multipliers:
-      Micro: 1.2
-      Small: 1.1
-      Medium: 1.0
-      Large: 0.9
+  pnl_weight: 4.0  # Boost pour les gains
+  frequency_weights:
+    in_range: 2.0  # Bonus fort pour l'activité
+    out_of_range: 0.2  # Pénalité faible pour l'inactivité
+    grace_period_steps: 20  # Période de grâce courte
+  position_limit:
+    penalty_weight: 0.1  # Tolérance pour les positions multiples
+  trade_outcome:
+    take_profit_multiplier: 0.6  # 60% du PNL positif en bonus
+    stop_loss_multiplier: 0.05   # Seulement 5% du PNL négatif en pénalité
+  duration_penalty_weight: 0.005  # Pénalité de durée faible
+  progressive_difficulty: true
   logging:
     version: 1
     disable_existing_loggers: false

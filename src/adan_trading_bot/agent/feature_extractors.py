@@ -614,3 +614,117 @@ class CustomCNNFeatureExtractor(BaseFeaturesExtractor):
             logger.debug(f"Output features shape: {features.shape}")
 
         return features
+
+class MultiTimeframeCNN(nn.Module):
+    """Applique un CNN 1D distinct à chaque timeframe pour extraire les features."""
+    def __init__(self, n_timeframes: int, n_features: int, window_sizes: List[int]):
+        super().__init__()
+        self.n_timeframes = n_timeframes
+        self.n_features = n_features
+        self.window_sizes = window_sizes
+
+        self.tf_convs = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv1d(n_features, 32, kernel_size=3, padding=1),
+                nn.BatchNorm1d(32),
+                nn.ReLU(),
+                nn.Conv1d(32, 64, kernel_size=3, padding=1),
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.AdaptiveAvgPool1d(16),
+                nn.Flatten()
+            ) for _ in range(n_timeframes)
+        ])
+
+    def forward(self, observations: Dict[str, th.Tensor]) -> th.Tensor:
+        """Traite chaque timeframe avec son CNN dédié."""
+        tf_features = []
+        # Itérer sur les timeframes dans un ordre défini pour la cohérence
+        sorted_timeframes = sorted(observations.keys())
+        for i, tf_name in enumerate(sorted_timeframes):
+            # Input shape pour Conv1d: (batch, channels, length)
+            # Notre observation est (batch, length, channels), donc on permute
+            tf_data = observations[tf_name]
+            
+            # Ajoute une dimension de batch si elle est manquante
+            if tf_data.dim() == 2:
+                tf_data = tf_data.unsqueeze(0)
+
+            tf_data = tf_data.permute(0, 2, 1)
+            features = self.tf_convs[i](tf_data)
+            tf_features.append(features)
+        
+        # Concaténer les features de tous les timeframes
+        return th.cat(tf_features, dim=1)
+
+class TemporalFusionExtractor(BaseFeaturesExtractor):
+    """
+    Extracteur de features qui combine un CNN multi-timeframe avec une couche de fusion.
+    Prend en entrée un dictionnaire d'observations (une par timeframe).
+    """
+    def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 128):
+        super().__init__(observation_space, features_dim)
+
+        # Séparer les clés de timeframes et les autres (ex: portfolio_state)
+        self.timeframe_keys = [k for k, v in observation_space.spaces.items() if len(v.shape) == 2]
+        self.portfolio_state_key = 'portfolio_state'
+        
+        if self.portfolio_state_key not in observation_space.spaces:
+            raise ValueError(f"'{self.portfolio_state_key}' not found in observation space.")
+
+        n_timeframes = len(self.timeframe_keys)
+        
+        # S'assurer qu'on a au moins un timeframe
+        if n_timeframes == 0:
+            raise ValueError("No 2D timeframe data found in observation space.")
+
+        # Dimensions des données de marché (on suppose qu'elles sont identiques)
+        sample_tf_space = observation_space.spaces[self.timeframe_keys[0]]
+        n_features = sample_tf_space.shape[1]
+        window_sizes = [observation_space.spaces[tf].shape[0] for tf in self.timeframe_keys]
+
+        # Module CNN Multi-Timeframe
+        self.multitimeframe_cnn = MultiTimeframeCNN(n_timeframes, n_features, window_sizes)
+
+        # Calculer la dimension de sortie du CNN
+        # Chaque CNN sort (64 features * 16 positions temporelles) = 1024
+        cnn_output_dim = n_timeframes * 64 * 16
+
+        # Dimension de l'état du portefeuille
+        portfolio_state_dim = observation_space.spaces[self.portfolio_state_key].shape[0]
+
+        # Couche de fusion pour combiner les features des timeframes et l'état du portefeuille
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(cnn_output_dim + portfolio_state_dim, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, features_dim),
+            nn.LayerNorm(features_dim),
+            nn.ReLU(),
+        )
+
+    def forward(self, observations: Dict[str, th.Tensor]) -> th.Tensor:
+        """
+        Le forward pass de l'extracteur.
+        `observations` est un dictionnaire de tenseurs, une clé par timeframe.
+        """
+        # Séparer les observations du marché de l'état du portefeuille
+        market_observations = {k: observations[k] for k in self.timeframe_keys}
+        portfolio_state = observations[self.portfolio_state_key]
+
+        # 1. Extraction des features par les CNNs
+        cnn_features = self.multitimeframe_cnn(market_observations)
+
+        # 2. Concaténer les features du CNN avec l'état du portefeuille
+        # Assurer que portfolio_state a une dimension de batch si elle est manquante
+        if portfolio_state.dim() == 1:
+            portfolio_state = portfolio_state.unsqueeze(0)
+            
+        combined_features = th.cat([cnn_features, portfolio_state], dim=1)
+
+        # 3. Fusion des features
+        fused_features = self.fusion_layer(combined_features)
+
+        return fused_features
+

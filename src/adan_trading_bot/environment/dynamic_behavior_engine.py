@@ -243,6 +243,9 @@ class DynamicBehaviorEngine:
         # Worker ID pour éviter la duplication de logs
         self.worker_id = worker_id
 
+        # Suivi des traques actives
+        self._active_hunts: Dict[int, Dict[str, Any]] = {}
+
         # Référence au gestionnaire de portefeuille
         self.finance_manager = finance_manager
 
@@ -1374,6 +1377,55 @@ class DynamicBehaviorEngine:
             'total_decisions': len(self.decision_history),
             'total_trades': len(self.trade_history)
         }
+
+    def start_hunt(self, worker_id: int, asset: str, hunting_timeframe: str, duration_steps: int, start_step: int):
+        """
+        Enregistre le début d'une nouvelle traque pour un worker spécifique.
+        """
+        if worker_id not in self._active_hunts:
+            self._active_hunts[worker_id] = {
+                "asset": asset,
+                "hunting_timeframe": hunting_timeframe,
+                "duration_steps": duration_steps,
+                "start_step": start_step,
+                "active": True
+            }
+            self.log_info(f"[HUNT STARTED] Worker {worker_id} starting hunt for {asset} on {hunting_timeframe} for {duration_steps} steps.")
+
+    def end_hunt(self, worker_id: int):
+        """
+        Marque une traque comme terminée pour un worker spécifique.
+        """
+        if worker_id in self._active_hunts:
+            hunt_info = self._active_hunts.pop(worker_id)
+            self.log_info(f"[HUNT ENDED] Worker {worker_id} ended hunt for {hunt_info.get('asset')}.")
+
+    def is_hunting(self, worker_id: int) -> bool:
+        """
+        Vérifie si un worker est actuellement en traque.
+        """
+        hunt_info = self._active_hunts.get(worker_id)
+        if not hunt_info:
+            return False
+
+        # Vérifie si la traque a expiré
+        current_step = self.state.get('current_step', 0)
+        start_step = hunt_info.get('start_step', 0)
+        duration = hunt_info.get('duration_steps', 0)
+        if current_step > start_step + duration:
+            self.log_info(f"[HUNT EXPIRED] Worker {worker_id} hunt for {hunt_info.get('asset')} expired.")
+            self.end_hunt(worker_id)
+            return False
+
+        return True
+
+    def get_hunt_info(self, worker_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Récupère les informations sur la traque en cours pour un worker donné.
+        """
+        if self.is_hunting(worker_id): # Ceci vérifie aussi l'expiration
+            return self._active_hunts.get(worker_id)
+        return None
 
     def reset(self) -> None:
         """Réinitialise l'état interne du DBE."""

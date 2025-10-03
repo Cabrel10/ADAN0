@@ -326,7 +326,7 @@ class PortfolioManager:
 
         # Normalize to picklable primitives
         log_entry = {
-            'event': 'close',
+            'action': 'close',
             'asset': str(asset),
             'exit_price': float(price),
             'entry_price': float(entry_price),

@@ -3941,6 +3941,16 @@ class MultiAssetChunkedEnv(gym.Env):
 
                     realized_pnl += float(receipt.get('pnl', 0.0))
                     trade_executed_this_step = True
+                    # DECREMENT FREQUENCY COUNTERS ON CLOSURE
+                    tf = getattr(self, 'current_timeframe_for_trade', '5m')
+                    try:
+                        if tf in self.positions_count and self.positions_count[tf] > 0:
+                            self.positions_count[tf] -= 1
+                        if self.positions_count['daily_total'] > 0:
+                            self.positions_count['daily_total'] -= 1
+                        self.smart_logger.info(f"[FREQUENCY] Position closed for {asset} on {tf}. Decremented counts. Current: {self.positions_count}", rotate=True)
+                    except Exception as freq_e:
+                        self.logger.debug(f"[FREQUENCY] Failed to decrement frequency counters on close: {freq_e}")
                 else:
                     self.invalid_trade_attempts += 1
                     self.logger.info(f"Failed to close position for {asset} (no receipt)")
@@ -4618,14 +4628,15 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # Grace period: no frequency penalties for the first 100 steps to allow learning
         grace_period_steps = frequency_config.get('grace_period_steps', 100)
-        current_step = getattr(self, 'step_count', 0)
+        current_step = self.current_step
 
         # Only apply frequency penalties after grace period
         if current_step > grace_period_steps:
             for tf in ['5m', '1h', '4h']:
                 count = self.positions_count.get(tf, 0)
-                min_pos = frequency_config.get('min_positions', {}).get(tf, 1)
-                max_pos = frequency_config.get('max_positions', {}).get(tf, 10)
+                tf_config = frequency_config.get(tf, {})
+                min_pos = tf_config.get('min_positions', 1)
+                max_pos = tf_config.get('max_positions', 10)
 
                 if min_pos <= count <= max_pos:
                     # Bonus for being in range
@@ -4640,8 +4651,8 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # Daily total frequency check
             total_count = self.positions_count.get('daily_total', 0)
-            min_total = frequency_config.get('min_positions', {}).get('total_daily', 5)
-            max_total = frequency_config.get('max_positions', {}).get('total_daily', 15)
+            min_total = frequency_config.get('total_daily_min', 5)
+            max_total = frequency_config.get('total_daily_max', 15)
 
             if min_total <= total_count <= max_total:
                 frequency_reward += frequency_config.get('frequency_bonus_weight', 0.3) * (total_count / max_total)

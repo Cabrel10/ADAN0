@@ -13,87 +13,6 @@ from stable_baselines3.common.utils import set_random_seed
 
 from adan_trading_bot.model.custom_cnn import CustomCNN
 
-class AttentionVisualizerCallback(BaseCallback):
-    """
-    Callback pour la visualisation des cartes d'attention.
-    """
-    def __init__(self, viz_cfg, verbose=0):
-        super().__init__(verbose)
-        self.viz_cfg = viz_cfg
-        self.output_dir = viz_cfg.get('attention_map_dir', 'attention_maps')
-        os.makedirs(self.output_dir, exist_ok=True)
-        self.interval = viz_cfg.get('interval', 1000)
-
-    def _on_step(self) -> bool:
-        if self.num_timesteps % self.interval == 0:
-            try:
-                # Récupérer l'environnement
-                env = self.training_env.envs[0] if hasattr(self.training_env, 'envs') else self.training_env
-
-                # Récupérer l'observation actuelle
-                obs = env.render(mode='rgb_array')
-
-                # Récupérer la carte d'attention du modèle
-                if hasattr(self.model.policy.features_extractor, 'get_attention_map'):
-                    with torch.no_grad():
-                        # Convertir l'observation en tenseur
-                        obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(self.model.device)
-                        attention_map = self.model.policy.features_extractor.get_attention_map(obs_tensor)
-
-                        # Sauvegarder la visualisation
-                        output_path = os.path.join(
-                            self.output_dir,
-                            f'attention_step_{self.num_timesteps}.png'
-                        )
-                        self._save_attention_visualization(obs, attention_map, output_path)
-
-            except Exception as e:
-                print(f"Erreur lors de la génération de la visualisation d'attention: {e}")
-
-        return True
-
-    def _save_attention_visualization(self, obs, attention_map, output_path):
-        """
-        Sauvegarde la visualisation de l'attention superposée à l'observation.
-        """
-        import matplotlib.pyplot as plt
-        from matplotlib import cm
-
-        # Créer une figure avec deux sous-graphiques
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
-
-        # Afficher l'observation originale
-        ax1.imshow(obs)
-        ax1.set_title('Observation originale')
-        ax1.axis('off')
-
-        # Afficher la carte d'attention
-        if len(attention_map.shape) > 2:
-            attention_map = attention_map.mean(dim=1).squeeze()
-
-        # Redimensionner la carte d'attention pour correspondre à l'observation
-        import cv2
-        attention_map_np = attention_map.cpu().numpy()
-        resized_attention = cv2.resize(
-            attention_map_np,
-            (obs.shape[1], obs.shape[0]),
-            interpolation=cv2.INTER_CUBIC
-        )
-
-        # Afficher la carte d'attention
-        im = ax2.imshow(resized_attention, cmap='viridis')
-        ax2.set_title('Carte d\'attention')
-        ax2.axis('off')
-        plt.colorbar(im, ax=ax2)
-
-        # Sauvegarder la figure
-        plt.tight_layout()
-        plt.savefig(output_path, bbox_inches='tight', dpi=150)
-        plt.close()
-
-        if self.verbose > 0:
-            print(f"Carte d'attention sauvegardée: {output_path}")
-
 def load_config(config_path):
     """
     Charge la configuration depuis un fichier YAML.
@@ -118,13 +37,6 @@ def create_callbacks(config, eval_env=None):
     )
     callbacks.append(checkpoint_cb)
 
-    # Callback pour la visualisation de l'attention
-    if config['model']['diagnostics']['save_attention_maps']:
-        attention_cb = AttentionVisualizerCallback(
-            viz_cfg=config['model']['diagnostics'],
-            verbose=1
-        )
-        callbacks.append(attention_cb)
 
     # Callback d'évaluation si un environnement d'évaluation est fourni
     if eval_env is not None:

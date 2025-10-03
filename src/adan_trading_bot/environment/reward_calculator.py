@@ -182,7 +182,7 @@ class RewardCalculator:
             logger.error(f"Error logging reward components: {str(e)}")
 
     def calculate(self, portfolio_metrics: Dict[str, Any], trade_pnl: float, action: int,
-                 chunk_id: int = None, optimal_chunk_pnl: float = None, performance_ratio: float = None) -> float:
+                 chunk_id: int = None, optimal_chunk_pnl: float = None, performance_ratio: float = None, is_hunting: bool = False) -> float:
         """
         Calculate the total reward for the current timestep using multi-objective optimization.
 
@@ -280,10 +280,10 @@ class RewardCalculator:
 
                 # Apply inaction penalty for hold actions
                 inaction_penalty = 0.0
-                if action == 0:  # Hold action
+                if action == 0 and not is_hunting:  # Hold action
                     inaction_penalty = self.inaction_penalty
                     composite_score += inaction_penalty
-                    logger.debug(f"Applied inaction penalty: {inaction_penalty:.4f}")
+                    logger.debug(f"Applied inaction penalty (not hunting): {inaction_penalty:.4f}")
 
                 # Log detailed metrics
                 self._log_reward_components({
@@ -313,7 +313,7 @@ class RewardCalculator:
 
                 # Apply inaction penalty for hold actions
                 inaction_penalty = 0.0
-                if action == 0:  # Hold action
+                if action == 0 and not is_hunting:  # Hold action
                     inaction_penalty = self.inaction_penalty
                     final_reward += inaction_penalty
 

@@ -331,96 +331,35 @@ class StateBuilder:
     def __init__(
         self,
         features_config: Dict[str, List[str]] = None,
-        window_size: int = 100,  # Correspond à la configuration dans config.yaml
+        timeframes: List[str] = None,  # Ajout du paramètre
+        window_size: int = 100,
         include_portfolio_state: bool = True,
         normalize: bool = True,
         scaler_path: Optional[str] = None,
         adaptive_window: bool = True,
-        min_window_size: int = 50,  # 50% de window_size par défaut
-        max_window_size: int = 150,  # 150% de window_size par défaut
+        min_window_size: int = 50,
+        max_window_size: int = 150,
         memory_config: Optional[Dict[str, Any]] = None,
         target_observation_size: Optional[int] = None,
     ):
-        """Initialize the StateBuilder according to design specifications.
-
-        Args:
-            features_config: Dictionary mapping timeframes to their feature lists
-            window_size: Base number of time steps to include in each observation
-            include_portfolio_state: Whether to include portfolio state in
-                observations
-            normalize: Whether to normalize the data
-            scaler_path: Path to save/load the scaler
-            adaptive_window: Whether to use adaptive window sizing based on
-                volatility
-            min_window_size: Minimum window size for adaptive mode
-            max_window_size: Maximum window size for adaptive mode
-            memory_config: Configuration for memory optimizations
-            target_observation_size: Target size for the observation space
-        """
+        """Initialize the StateBuilder according to design specifications."""
         # Configuration initiale
-        # Utiliser la configuration exacte de config.yaml
         if features_config is None:
-            features_config = {
-                "5m": [
-                    "OPEN",
-                    "HIGH",
-                    "LOW",
-                    "CLOSE",
-                    "VOLUME",
-                    "RSI_14",
-                    "STOCHk_14_3_3",
-                    "STOCHd_14_3_3",
-                    "MACD_HIST",
-                    "ATR_14",
-                    "EMA_5",
-                    "EMA_12",
-                    "BB_UPPER",
-                    "BB_MIDDLE",
-                    "BB_LOWER"
-                ],
-                "1h": [
-                    "OPEN",
-                    "HIGH",
-                    "LOW",
-                    "CLOSE",
-                    "VOLUME",
-                    "RSI_14",
-                    "STOCHk_14_3_3",
-                    "STOCHd_14_3_3",
-                    "MACD_HIST",
-                    "ADX_14",
-                    "BB_UPPER",
-                    "BB_MIDDLE",
-                    "BB_LOWER",
-                    "EMA_26",
-                    "EMA_50"
-                ],
-                "4h": [
-                    "OPEN",
-                    "HIGH",
-                    "LOW",
-                    "CLOSE",
-                    "VOLUME",
-                    "RSI_14",
-                    "MACD_HIST",
-                    "ADX_14",
-                    "ATR_14",
-                    "OBV",
-                    "EMA_50",
-                    "EMA_200",
-                    "SMA_200",
-                    "STOCHk_14_3_3",
-                    "STOCHd_14_3_3"
-                ]
-            }
+            features_config = {}
         self.features_config = features_config
-        # Ne garder que les timeframes qui ont des features définies
-        self.timeframes = [
-            tf for tf in ["5m", "1h", "4h"] if tf in self.features_config
-        ]
+
+        # Utiliser la liste de timeframes fournie de manière autoritaire
+        if timeframes:
+            self.timeframes = timeframes
+        else:
+            # Fallback sur l'ancienne logique si non fourni
+            self.timeframes = [
+                tf for tf in ["5m", "1h", "4h"] if tf in self.features_config
+            ]
+        
         if not self.timeframes:
             raise ValueError(
-                "Aucun timeframe valide trouvé dans la configuration des fonctionnalités"
+                "Aucun timeframe valide n'a été fourni ou déduit de la configuration."
             )
 
         # Log de la configuration des caractéristiques
@@ -3389,3 +3328,68 @@ class StateBuilder:
         except Exception as e:
             logger.error(f"Erreur dans le calcul de l'exposant de Hurst: {str(e)}")
             return 0.5  # Valeur neutre par défaut
+
+    def build_per_timeframe_observation(self, current_idx: int, data: Dict[str, Dict[str, pd.DataFrame]]) -> Dict[str, np.ndarray]:
+        """
+        Builds a dictionary of observations, one for each timeframe, with correct shapes.
+        This is the new standard method for creating observations for the multi-CNN model.
+        """
+        observations = {}
+        window_sizes = getattr(self, 'window_sizes', {"5m": 20, "1h": 10, "4h": 5})
+
+        # Assume single asset data is passed in the `data` dict for simplicity
+        asset_name = next(iter(data))
+        asset_data = data[asset_name]
+
+        for tf in self.timeframes:
+            try:
+                df = asset_data.get(tf)
+                if df is None or df.empty:
+                    raise ValueError(f"No data for timeframe {tf}")
+
+                features = self.get_feature_names(tf)
+                window_size = window_sizes.get(tf, 20)
+
+                # Ensure all feature columns exist, fill with 0 if not
+                df_features = pd.DataFrame(columns=features, index=df.index)
+                for col in features:
+                    if col in df.columns:
+                        df_features[col] = df[col]
+                    else:
+                        df_features[col] = 0.0
+                
+                # Get the window of data
+                start_idx = max(0, current_idx - window_size + 1)
+                end_idx = current_idx + 1
+                
+                if end_idx > len(df_features):
+                    window_slice = df_features.iloc[-window_size:]
+                else:
+                    window_slice = df_features.iloc[start_idx:end_idx]
+
+                obs_array = window_slice.values.astype(np.float32)
+
+                if obs_array.shape[0] < window_size:
+                    pad_width = ((window_size - obs_array.shape[0], 0), (0, 0))
+                    obs_array = np.pad(obs_array, pad_width, mode='constant', constant_values=0.0)
+                
+                if self.normalize and self.scalers.get(tf):
+                    from sklearn.utils.validation import check_is_fitted
+                    from sklearn.exceptions import NotFittedError
+                    try:
+                        check_is_fitted(self.scalers[tf])
+                    except NotFittedError:
+                        logger.warning(f"Scaler for timeframe {tf} is not fitted. Fitting on the full available data for this timeframe.")
+                        self.scalers[tf].fit(df_features.values)
+
+                    obs_array = self.scalers[tf].transform(obs_array)
+
+                observations[tf] = obs_array
+
+            except Exception as e:
+                logger.error(f"Error building observation for timeframe {tf}: {e}", exc_info=True)
+                window_size = window_sizes.get(tf, 20)
+                n_features = len(self.get_feature_names(tf))
+                observations[tf] = np.zeros((window_size, n_features), dtype=np.float32)
+                
+        return observations
