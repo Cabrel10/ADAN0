@@ -172,7 +172,8 @@ class PortfolioManager:
         timestamp: Optional[Any] = None,
         current_prices: Optional[Dict[str, float]] = None,
         allocated_pct: Optional[float] = None,
-        timeframe: str = "5m",  # Ajout du timeframe
+        timeframe: str = "5m",
+        current_step: int = 0,
     ) -> Optional[Dict[str, Any]]:
         """Ouvre une nouvelle position."""
         asset = asset.upper()
@@ -233,7 +234,7 @@ class PortfolioManager:
                 size=size,
                 stop_loss_pct=stop_loss_pct,
                 take_profit_pct=take_profit_pct,
-                open_step=getattr(self, 'step_count', 0),
+                open_step=current_step,
                 asset=asset,
                 open_time=open_time,
                 timeframe=timeframe
@@ -247,6 +248,16 @@ class PortfolioManager:
         self.log_info(
             f"[POSITION OUVERTE] {asset}: {size:.6f} @ {price:.2f} | SL: {stop_loss_pct*100:.2f}% | TP: {take_profit_pct*100:.2f}%"
         )
+
+        # Démarrer la traque
+        if hasattr(self, 'dbe') and self.dbe:
+            try:
+                duration_config = self.config.get('trading_rules', {}).get('duration_tracking', {})
+                duration_steps = duration_config.get(timeframe, {}).get('max_duration_steps', 48) # 48 par défaut (pour 5m)
+                self.dbe.start_hunt(self.worker_id, asset, timeframe, duration_steps, current_step)
+            except Exception as e:
+                logger.error(f"[HUNT] Échec du démarrage de la traque pour le worker {self.worker_id}: {e}")
+
         # Normalize to picklable primitives
         receipt = {
             'event': 'open',
@@ -305,6 +316,13 @@ class PortfolioManager:
         except ValueError as exc:
             logger.error(f"[Worker {self.worker_id}] Fermeture de {asset} impossible: {exc}")
             return None
+
+        # Terminer la traque
+        if hasattr(self, 'dbe') and self.dbe:
+            try:
+                self.dbe.end_hunt(self.worker_id)
+            except Exception as e:
+                logger.error(f"[HUNT] Échec de la fin de la traque pour le worker {self.worker_id}: {e}")
 
         # Normalize to picklable primitives
         log_entry = {
