@@ -3467,8 +3467,12 @@ class MultiAssetChunkedEnv(gym.Env):
             return 0.0
 
         frequency_reward = 0.0
-        bonus_weight = self.frequency_config.get('frequency_bonus_weight', 0.05)
-        penalty_weight = self.frequency_config.get('frequency_penalty_weight', 0.1)
+        
+        # Get weights from reward_shaping.frequency_weights
+        reward_shaping_config = self.config.get("reward_shaping", {})
+        frequency_weights = reward_shaping_config.get("frequency_weights", {})
+        in_range_weight = frequency_weights.get('in_range', 0.0)
+        out_of_range_weight = frequency_weights.get('out_of_range', 0.0)
 
         # Logique de conscience de la traque
         is_hunting = self.dbe.is_hunting(self.worker_id)
@@ -3493,15 +3497,13 @@ class MultiAssetChunkedEnv(gym.Env):
 
                 if min_pos <= current_count <= max_pos:
                     # Dans les bornes : bonus proportionnel
-                    frequency_reward += bonus_weight * (current_count / max(max_pos, 1))
+                    frequency_reward += in_range_weight * (current_count / max(max_pos, 1))
                 else:
                     # Hors bornes : pénalité progressive et asymétrique
                     if current_count < min_pos:
-                        undertrading_multiplier = 0.5  # Pénalité réduite pour le sous-trading
-                        penalty = penalty_weight * (min_pos - current_count) * undertrading_multiplier
+                        penalty = out_of_range_weight * (min_pos - current_count)
                     else:  # current_count > max_pos
-                        overtrading_multiplier = 1.0  # Pénalité standard pour le sur-trading
-                        penalty = penalty_weight * (current_count - max_pos) * overtrading_multiplier
+                        penalty = out_of_range_weight * (current_count - max_pos)
                     frequency_reward -= penalty
 
         # Vérifier le total journalier
@@ -3511,13 +3513,13 @@ class MultiAssetChunkedEnv(gym.Env):
 
         if total_min <= daily_total <= total_max:
             # Bonus pour être dans les bornes totales
-            frequency_reward += bonus_weight * (daily_total / max(total_max, 1))
+            frequency_reward += in_range_weight * (daily_total / max(total_max, 1))
         else:
             # Pénalité pour être hors bornes totales
             if daily_total < total_min:
-                penalty = penalty_weight * (total_min - daily_total)
+                penalty = out_of_range_weight * (total_min - daily_total)
             else:  # daily_total > total_max
-                penalty = penalty_weight * (daily_total - total_max)
+                penalty = out_of_range_weight * (daily_total - total_max)
             frequency_reward -= penalty
 
         return frequency_reward
@@ -3579,35 +3581,19 @@ class MultiAssetChunkedEnv(gym.Env):
         return pos_limit_penalty
 
     def calculate_outcome_reward(self) -> float:
-        """Calculates the reward/penalty for trades closed, including a bonus for early profitable closes."""
+        """Calculates the reward/penalty for trades closed."""
         outcome_reward = 0.0
         try:
             reward_config = self.config.get("reward_shaping", {}).get("trade_outcome", {})
             tp_multiplier = reward_config.get("take_profit_multiplier", 0.5)
             sl_multiplier = reward_config.get("stop_loss_multiplier", 0.5)
-            early_close_bonus_weight = reward_config.get("early_close_bonus_weight", 0.3)
-
-            duration_config = self.config.get('trading_rules', {}).get('duration_tracking', {})
 
             if hasattr(self, '_step_closed_receipts'):
                 for receipt in self._step_closed_receipts:
                     pnl = receipt.get('pnl', 0.0)
-                    timeframe = receipt.get('timeframe', '5m')
                     
                     if pnl > 0: # Trade profitable
                         outcome_reward += pnl * tp_multiplier
-                        
-                        # Bonus pour fermeture anticipée
-                        duration_seconds = receipt.get('duration_seconds')
-                        if duration_seconds is not None and timeframe in duration_config:
-                            max_duration_steps = duration_config[timeframe].get('max_duration_steps')
-                            if max_duration_steps:
-                                duration_steps = duration_seconds / 300 # Assumant des steps de 5m
-                                if duration_steps < max_duration_steps:
-                                    bonus = early_close_bonus_weight * (max_duration_steps - duration_steps) / max_duration_steps
-                                    outcome_reward += bonus
-                                    self.smart_logger.info(f"[OUTCOME BONUS] Early profitable close for {receipt.get('asset')}. Bonus: {bonus:.2f}", rotate=True)
-
                     else: # Trade perdant
                         outcome_reward += pnl * sl_multiplier
         except Exception as e:
@@ -3645,13 +3631,45 @@ class MultiAssetChunkedEnv(gym.Env):
                 return True
         return False
 
+    def calculate_early_close_bonus(self) -> float:
+        bonus = 0.0
+        
+        reward_shaping_config = self.config.get("reward_shaping", {})
+        worker_name = self.worker_config.get('name', 'Default')
+        worker_profile_config = reward_shaping_config.get('profiles', {}).get(worker_name, {})
+        
+        early_close_bonus_weight = worker_profile_config.get('early_exit_bonus', reward_shaping_config.get('early_close_bonus', 0.0))
+        
+        if not hasattr(self, '_step_closed_receipts'):
+            return bonus
+
+        for receipt in self._step_closed_receipts:
+            pnl_pct = receipt.get('pnl_pct', 0.0)
+            duration_seconds = receipt.get('duration_seconds')
+            timeframe = receipt.get('timeframe', '5m')
+
+            if pnl_pct > 0 and duration_seconds is not None:
+                duration_config = self.config.get('trading_rules', {}).get('duration_tracking', {})
+                if timeframe in duration_config:
+                    optimal_duration_steps = duration_config[timeframe].get('optimal_duration', 0)
+                    # Assuming 5m steps, convert duration_seconds to steps
+                    duration_steps = duration_seconds / 300 # 300 seconds = 5 minutes
+                    
+                    if optimal_duration_steps > 0 and duration_steps < optimal_duration_steps:
+                        # Bonus is proportional to how early it closed relative to optimal
+                        bonus += early_close_bonus_weight * (optimal_duration_steps - duration_steps) / optimal_duration_steps
+                        self.smart_logger.info(f"[OUTCOME BONUS] Early profitable close for {receipt.get('asset')}. Bonus: {bonus:.2f}", rotate=True)
+        return bonus
+
     def calculate_duration_penalty(self) -> float:
-        """Calculates the penalty for trades that are open for too long."""
+        """Calculates the penalty for trades that are open for too long, and rewards for optimal duration."""
         penalty = 0.0
         if not hasattr(self, 'portfolio_manager'):
             return penalty
 
         duration_config = self.config.get('trading_rules', {}).get('duration_tracking', {})
+        overstay_penalty_value = self.config.get('reward_shaping', {}).get('overstay_penalty', 0.0) # Get from new config
+
         if not duration_config:
             return penalty
 
@@ -3659,54 +3677,105 @@ class MultiAssetChunkedEnv(gym.Env):
             if position.is_open:
                 timeframe = position.timeframe
                 if timeframe in duration_config:
-                    max_duration = duration_config[timeframe].get('max_duration_steps')
-                    if max_duration:
+                    config = duration_config[timeframe]
+                    max_duration_steps = config.get('max_duration_steps')
+                    optimal_duration_steps = config.get('optimal_duration', max_duration_steps) # Use max as optimal if not specified
+
+                    if max_duration_steps:
                         current_duration = self.current_step - position.open_step
-                        if current_duration > max_duration:
-                            penalty -= 0.01 * (current_duration - max_duration)
+                        
+                        if current_duration > max_duration_steps:
+                            # Apply overstay penalty
+                            penalty += overstay_penalty_value * (current_duration - max_duration_steps) / max_duration_steps
+                            self.smart_logger.warning(f"[DURATION PENALTY] Overstay penalty for {position.asset}. Duration: {current_duration} > Max: {max_duration_steps}. Penalty: {penalty:.2f}", rotate=True)
+                        elif current_duration < optimal_duration_steps:
+                            # No penalty for closing early if profitable, handled by early_close_bonus
+                            pass
+                        # Add bonus for optimal duration if needed, but user suggested overstay penalty
         return penalty
 
     def _calculate_reward(self, action: np.ndarray) -> float:
         """Calcule la récompense finale alignée pour chaque worker."""
 
+        reward_shaping_config = self.config.get("reward_shaping", {})
+        
+        # --- Load worker-specific reward profile ---
+        worker_name = self.worker_config.get('name', 'Default') # e.g., Conservative, Moderate, Aggressive, Adaptive
+        worker_profile_config = reward_shaping_config.get('profiles', {}).get(worker_name, {})
+
+        # Override global reward shaping parameters with worker-specific ones if they exist
+        pnl_weight = worker_profile_config.get('pnl_weight', reward_shaping_config.get('pnl_weight', 1.0))
+        missed_penalty_value = worker_profile_config.get('missed_opportunity_penalty', reward_shaping_config.get('missed_penalty', 0.0))
+        multi_traque_bonus_value = worker_profile_config.get('multi_traque_bonus', reward_shaping_config.get('multi_traque_bonus', 0.0))
+        invalid_trade_penalty_weight = worker_profile_config.get('invalid_trade_penalty_weight', reward_shaping_config.get('invalid_trade_penalty_weight', 0.5))
+        # Note: early_close_bonus and overstay_penalty are handled in their respective functions, which will need to be updated to use worker_profile_config as well.
+
         # 1. RÉCOMPENSE DE BASE SPÉCIALISÉE (PnL + Résultat)
         pnl = self.calculate_pnl() if hasattr(self, 'calculate_pnl') else 0.0
-        pnl_scaling_factor = 10.0
-        specialized_reward = pnl_scaling_factor * np.tanh(pnl / pnl_scaling_factor)
-        specialized_reward += self.calculate_outcome_reward()
+        base_reward = pnl_weight * np.tanh(pnl / pnl_weight) # Apply pnl_weight
 
-        # Pénalité d'inaction (déjà consciente de la traque et du capital)
-        specialized_reward += self.calculate_inaction_penalty() if hasattr(self, 'calculate_inaction_penalty') else 0.0
+        # Conditional inaction penalty and missed opportunity penalty
+        current_timeframe = self.get_current_timeframe()
+        if not self.dbe.is_hunting(self.worker_id) and not self.has_open_trade(current_timeframe):
+            base_reward += self.calculate_inaction_penalty() # General inaction penalty
+            # Add missed penalty if no open trade and not hunting
+            base_reward += missed_penalty_value # This is a direct penalty, not a function call
+            self.smart_logger.info(f"[REWARD] Missed opportunity penalty applied: {missed_penalty_value:.2f}", rotate=True)
+        elif not self.dbe.is_hunting(self.worker_id) and self.portfolio_manager.get_cash() < self.config.get('trading_rules', {}).get('min_order_value_usdt', 11.0):
+            # If not hunting and not enough cash, still apply inaction penalty if applicable
+            base_reward += self.calculate_inaction_penalty()
 
         # 2. PÉNALITÉS DE GESTION TEMPORELLE
-        temporal_penalties = self.calculate_duration_penalty()
+        # calculate_duration_penalty now includes overstay_penalty
+        duration_penalties = self.calculate_duration_penalty() # This function needs to be updated to use worker-specific overstay_penalty_value
 
-        # 3. RÉCOMPENSE DE CAPACITÉ
-        capacity_reward = 0.0
+        # 3. RÉCOMPENSE DE FRÉQUENCE
+        frequency_reward = self._calculate_frequency_reward() # This method already uses frequency_weights
+
+        # 4. PÉNALITÉ DE LIMITE DE POSITION
+        pos_limit_penalty = self.calculate_position_limit_penalty()
+
+        # 5. RÉCOMPENSE DE RÉSULTAT DE TRADE (inclut bonus early close)
+        outcome_reward = self.calculate_outcome_reward() + self.calculate_early_close_bonus() # calculate_early_close_bonus needs to be updated to use worker-specific early_close_bonus
+
+        # 6. PÉNALITÉ POUR TENTATIVES DE TRADE INVALIDE
+        invalid_trade_attempt_penalty = -invalid_trade_penalty_weight * self.invalid_trade_attempts
+        self.invalid_trade_attempts = 0 # Reset counter after use
+
+        # 7. BONUS MULTI-TRAQUE (si capital élevé)
+        multi_bonus = 0.0
         if hasattr(self, 'portfolio_manager'):
-            total_value = self.portfolio_manager.get_total_value()
-            cash = self.portfolio_manager.get_cash()
-            if total_value > 0:
-                capacity_usage = (total_value - cash) / total_value
-                if 0.6 <= capacity_usage <= 0.9:  # Zone optimale
-                    capacity_reward += 2.0
-                elif capacity_usage > 0.9:  # Sur-utilisation
-                    capacity_reward -= (capacity_usage - 0.9) * 10
-                elif capacity_usage < 0.3:  # Sous-utilisation
-                    capacity_reward -= (0.3 - capacity_usage) * 5
+            initial_capital = self.portfolio_manager.initial_capital
+            current_equity = self.portfolio_manager.get_equity()
+            open_trades_count = len([p for p in self.portfolio_manager.positions.values() if p.is_open])
 
-        # 4. BONUS COLLABORATIF (Placeholder pour future implémentation)
-        collaborative_bonus = 0.0
+            multi_bonus_threshold_factor = reward_shaping_config.get('multi_traque_bonus_threshold_factor', 1.5) # This should be configurable per worker or globally
+            multi_bonus_min_open_trades = reward_shaping_config.get('multi_traque_bonus_min_open_trades', 2) # This should be configurable per worker or globally
 
-        # 5. APPLICATION DE LA DIFFICULTÉ (Placeholder pour future implémentation)
-        base_total = (specialized_reward + temporal_penalties + capacity_reward + collaborative_bonus)
-        final_reward = base_total # La logique de difficulté sera ajoutée ici
+            if current_equity > initial_capital * multi_bonus_threshold_factor and open_trades_count >= multi_bonus_min_open_trades:
+                multi_bonus += multi_traque_bonus_value * open_trades_count
+                self.smart_logger.info(f"[REWARD] Multi-hunt bonus applied: {multi_bonus:.2f}", rotate=True)
+
+        # Somme de toutes les composantes
+        total_reward = base_reward + frequency_reward + pos_limit_penalty + outcome_reward + duration_penalties + invalid_trade_attempt_penalty + multi_bonus
 
         # Clipping asymétrique pour favoriser les gains
-        final_reward = np.clip(final_reward, -3.0, 10.0)
+        final_reward = np.clip(total_reward, -3.0, 10.0)
 
         # Journalisation pour debug
-        self.logger.info(f"[REWARD Worker {self.worker_id}] Spec: {specialized_reward:.2f}, Temp: {temporal_penalties:.2f}, Cap: {capacity_reward:.2f}, Total: {final_reward:.2f}")
+        self.logger.info(f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Freq: {frequency_reward:.4f}, PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, Duration: {duration_penalties:.4f}, InvalidTrade: {invalid_trade_attempt_penalty:.4f}, MultiHunt: {multi_bonus:.4f}, Total: {final_reward:.4f}, Counts: {self.positions_count}")
+
+        # Store reward components for info dict
+        self._last_reward_components = {
+            "base_reward": float(base_reward),
+            "frequency_reward": float(frequency_reward),
+            "pos_limit_penalty": float(pos_limit_penalty),
+            "outcome_reward": float(outcome_reward),
+            "duration_penalties": float(duration_penalties),
+            "invalid_trade_attempt_penalty": float(invalid_trade_attempt_penalty),
+            "multi_bonus": float(multi_bonus),
+            "total_reward": float(final_reward),
+        }
 
         return final_reward
 
@@ -4691,10 +4760,16 @@ class MultiAssetChunkedEnv(gym.Env):
         # Pénalité de durée pour les trades ouverts trop longtemps
         duration_penalty = self.calculate_duration_penalty()
 
-        total_reward = base_reward + frequency_reward + pos_limit_penalty + outcome_reward + duration_penalty
+        # Nouvelle pénalité pour les tentatives de trade invalides (CASH GATE, min_order, etc.)
+        invalid_trade_penalty_weight = self.config.get('reward_shaping', {}).get('invalid_trade_penalty_weight', 0.5)
+        invalid_trade_attempt_penalty = -invalid_trade_penalty_weight * self.invalid_trade_attempts
+        # Réinitialiser le compteur après utilisation pour qu'il ne pénalise que les tentatives de ce step
+        self.invalid_trade_attempts = 0
+
+        total_reward = base_reward + frequency_reward + pos_limit_penalty + outcome_reward + duration_penalty + invalid_trade_attempt_penalty
 
         logger.info(f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Freq: {frequency_reward:.4f}, "
-                   f"PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, Duration: {duration_penalty:.4f}, Total: {total_reward:.4f}, Counts: {self.positions_count}")
+                   f"PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, Duration: {duration_penalty:.4f}, InvalidTrade: {invalid_trade_attempt_penalty:.4f}, Total: {total_reward:.4f}, Counts: {self.positions_count}")
 
         return total_reward
 
@@ -4770,15 +4845,6 @@ class MultiAssetChunkedEnv(gym.Env):
 
     def calculate_inaction_penalty(self):
         """Calculate penalty for inaction."""
-        # Ne pas pénaliser pour l'inaction si l'agent est en traque ou n'a pas assez de capital
-        if self.dbe.is_hunting(self.worker_id):
-            return 0.0
-        
-        min_trade_value = self.config.get('trading_rules', {}).get('min_order_value_usdt', 11.0)
-        if self.portfolio.get_cash() < min_trade_value:
-            return 0.0 # Pas assez de capital pour trader, donc pas de pénalité
-
-        # Simple inaction penalty based on time since last trade
         penalty = 0.0
         current_tf = self.get_current_timeframe()
         steps_since_trade = self.current_step - getattr(self, 'last_trade_steps_by_tf', {}).get(current_tf, 0)
