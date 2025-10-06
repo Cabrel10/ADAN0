@@ -9,7 +9,7 @@ import copy
 import gc
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import BaseCallback
 from optuna.pruners import MedianPruner
 
@@ -93,12 +93,13 @@ def objective(trial: optuna.Trial) -> float:
 
         # Suggest hyperparameters for reward shaping
         reward_params = {
-            "stop_loss_penalty": trial.suggest_float("stop_loss_penalty", -2.0, -0.5),
-            "take_profit_bonus": trial.suggest_float("take_profit_bonus", 0.2, 1.5),
-            "missed_opportunity_penalty": trial.suggest_float("missed_opportunity_penalty", -1.0, -0.1),
-            "overstay_penalty": trial.suggest_float("overstay_penalty", -2.0, -0.5),
+            "stop_loss_penalty": trial.suggest_float("stop_loss_penalty", -6.5, -0.65),
+            "take_profit_bonus": trial.suggest_float("take_profit_bonus", 1.0, 10.0),
+            "passivity_penalty": trial.suggest_float("passivity_penalty", -13.0, -3.25),
+            "missed_opportunity_penalty": trial.suggest_float("missed_opportunity_penalty", -0.65, -0.065),
+            "overstay_penalty": trial.suggest_float("overstay_penalty", -6.5, -0.65),
             "multi_traque_bonus": trial.suggest_float("multi_traque_bonus", 0.5, 3.0),
-            "pnl_weight": trial.suggest_float("pnl_weight", 1.0, 10.0),
+            "pnl_weight": trial.suggest_float("pnl_weight", 5.0, 50.0),
             "frequency_min_positions_5m": trial.suggest_int("frequency_min_positions_5m", 1, 10),
             "frequency_max_positions_5m": trial.suggest_int("frequency_max_positions_5m", 10, 30),
             "frequency_min_positions_1h": trial.suggest_int("frequency_min_positions_1h", 1, 5),
@@ -150,6 +151,8 @@ def objective(trial: optuna.Trial) -> float:
                 temp_config["agent"][param] = value
             elif param == "initial_position_size":
                 temp_config["environment"]["risk_management"]["position_sizing"]["initial_position_size"] = value
+            elif param == "passivity_penalty":
+                temp_config["reward_shaping"]["passivity_penalty"] = value
             elif param in ["stop_loss_penalty", "take_profit_bonus", "missed_opportunity_penalty", "overstay_penalty", "multi_traque_bonus", "pnl_weight"]:
                 temp_config["reward_shaping"]["profiles"]['Conservative'][param] = value
             elif param.startswith("dbe_"):
@@ -199,7 +202,7 @@ def objective(trial: optuna.Trial) -> float:
             }
             env_fns.append(lambda: MultiAssetChunkedEnv(**env_kwargs))
         
-        env = SubprocVecEnv(env_fns)
+        env = DummyVecEnv(env_fns)
 
         pruning_callback = OptunaPruningCallback(trial, eval_env=env, eval_freq=10000)
 
@@ -281,7 +284,7 @@ if __name__ == "__main__":
     # Create an Optuna study to maximize Sharpe Ratio with a Pruner
     study = optuna.create_study(
         direction="maximize",
-        storage="sqlite:///hyperparam_optimization.db",
+        storage="sqlite:////home/morningstar/Documents/trading/bot/hyperparam_optimization.db",
         study_name="adan_trading_bot_hyperparam_optimization",
         pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=10000),
         load_if_exists=True,
@@ -290,7 +293,7 @@ if __name__ == "__main__":
     # Run the optimization for a specified number of trials
     n_trials = 100 # Start with a small number for testing
     try:
-        study.optimize(objective, n_trials=n_trials, n_jobs=2, gc_after_trial=True)
+        study.optimize(objective, n_trials=n_trials, n_jobs=1, gc_after_trial=True)
     except Exception as e:
         logger.error(f"Optimization failed: {e}", exc_info=True)
     

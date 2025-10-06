@@ -11,10 +11,10 @@ general:
 # Chemins des dossiers
 paths:
   base_dir: /home/morningstar/Documents/trading/bot
-  data_dir: /home/morningstar/Documents/trading/data
+  data_dir: ${paths.base_dir}/data
   raw_data_dir: ${paths.data_dir}/raw
-  processed_data_dir: ${paths.data_dir}/processed
-  indicators_data_dir: ${paths.processed_data_dir}/indicators
+  processed_data_dir: ${paths.base_dir}/data/processed
+  indicators_data_dir: ${paths.base_dir}/data/processed/indicators
   final_data_dir: ${paths.data_dir}/final
   models_dir: ${paths.base_dir}/models
   trained_models_dir: ${paths.models_dir}/rl_agents
@@ -102,7 +102,7 @@ data:
     - 1h
     - 4h
   data_dirs:
-    base: ${paths.processed_data_dir}/indicators
+    base: ${paths.base_dir}/data/processed/indicators
     train: ${data.data_dirs.base}/train
     val: ${data.data_dirs.base}/val
     test: ${data.data_dirs.base}/test
@@ -221,17 +221,17 @@ workers:
         missed_penalty: -0.5
       tracking_periods:
         '5m':
-          min_tracking_steps: 4
+          min_tracking_steps: 10
           max_tracking_steps: 48
           optimal_duration: 12
           grace_period: 2
         '1h':
-          min_tracking_steps: 2
+          min_tracking_steps: 10
           max_tracking_steps: 16
           optimal_duration: 4
           grace_period: 1
         '4h':
-          min_tracking_steps: 1
+          min_tracking_steps: 10
           max_tracking_steps: 6
           optimal_duration: 2
           grace_period: 1
@@ -286,21 +286,20 @@ workers:
         missed_penalty: -0.5
       tracking_periods:
         '5m':
-          min_tracking_steps: 4
+          min_tracking_steps: 10
           max_tracking_steps: 48
           optimal_duration: 12
           grace_period: 2
         '1h':
-          min_tracking_steps: 2
+          min_tracking_steps: 10
           max_tracking_steps: 16
           optimal_duration: 4
           grace_period: 1
         '4h':
-          min_tracking_steps: 1
+          min_tracking_steps: 10
           max_tracking_steps: 6
           optimal_duration: 2
           grace_period: 1
-
   w3:
     name: Aggressive
     description: High risk, high returns
@@ -346,17 +345,17 @@ workers:
         missed_penalty: -0.5
       tracking_periods:
         '5m':
-          min_tracking_steps: 4
+          min_tracking_steps: 10
           max_tracking_steps: 48
           optimal_duration: 12
           grace_period: 2
         '1h':
-          min_tracking_steps: 2
+          min_tracking_steps: 10
           max_tracking_steps: 16
           optimal_duration: 4
           grace_period: 1
         '4h':
-          min_tracking_steps: 1
+          min_tracking_steps: 10
           max_tracking_steps: 6
           optimal_duration: 2
           grace_period: 1
@@ -410,17 +409,17 @@ workers:
         missed_penalty: -0.5
       tracking_periods:
         '5m':
-          min_tracking_steps: 4
+          min_tracking_steps: 10
           max_tracking_steps: 48
           optimal_duration: 12
           grace_period: 2
         '1h':
-          min_tracking_steps: 2
+          min_tracking_steps: 10
           max_tracking_steps: 16
           optimal_duration: 4
           grace_period: 1
         '4h':
-          min_tracking_steps: 1
+          min_tracking_steps: 10
           max_tracking_steps: 6
           optimal_duration: 2
           grace_period: 1
@@ -676,11 +675,11 @@ trading_rules:
 
   duration_tracking:
     '5m':
-      max_duration_steps: 48
+      max_duration_steps: 28
     '1h':
-      max_duration_steps: 192
+      max_duration_steps: 48
     '4h':
-      max_duration_steps: 288
+      max_duration_steps: 57
 
 # Paliers de capital
 capital_tiers:
@@ -1075,7 +1074,7 @@ reward_shaping:
   frequency_weights: {in_range: 2.0, out_of_range: 0.2}
   trade_outcome: {take_profit_multiplier: 0.6, stop_loss_multiplier: 0.05}
   duration_penalty_weight: 0.01
-  invalid_trade_penalty_weight: 0.5
+  invalid_trade_penalty_weight: 0.00005
   missed_penalty: -0.5
   early_close_bonus: 0.3
   overstay_penalty: -1.0

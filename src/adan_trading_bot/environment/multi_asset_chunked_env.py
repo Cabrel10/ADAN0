@@ -2067,7 +2067,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Update portfolio with current prices and enforce protection limits
                 if hasattr(self, "portfolio_manager"):
                     positions_before = {k: v.is_open for k, v in self.portfolio_manager.positions.items()}
-                    self.portfolio_manager.update_market_price(current_prices)
+                    self.portfolio_manager.update_market_price(current_prices, self.current_step)
                     positions_after = {k: v.is_open for k, v in self.portfolio_manager.positions.items()}
 
                     # Check for closed positions and log them
@@ -3609,14 +3609,21 @@ class MultiAssetChunkedEnv(gym.Env):
         """Calculates the reward/penalty for trades closed."""
         outcome_reward = 0.0
         try:
-            reward_config = self.config.get("reward_shaping", {}).get("trade_outcome", {})
-            tp_multiplier = reward_config.get("take_profit_multiplier", 0.5)
-            sl_multiplier = reward_config.get("stop_loss_multiplier", 0.5)
+            reward_config = self.config.get("reward_shaping", {})
+            trade_outcome_config = reward_config.get("trade_outcome", {})
+            tp_multiplier = trade_outcome_config.get("take_profit_multiplier", 0.5)
+            sl_multiplier = trade_outcome_config.get("stop_loss_multiplier", 0.5)
+            passivity_penalty = reward_config.get("passivity_penalty", -5.0) # Get new penalty
 
             if hasattr(self, '_step_closed_receipts'):
                 for receipt in self._step_closed_receipts:
                     pnl = receipt.get('pnl', 0.0)
-                    
+
+                    # Apply passivity penalty if trade was force-closed
+                    if receipt.get('reason') == 'MaxDuration':
+                        outcome_reward += passivity_penalty
+                        self.smart_logger.warning(f"[REWARD] Passivity penalty applied for MaxDuration closure: {passivity_penalty:.2f}", rotate=True)
+
                     if pnl > 0: # Trade profitable
                         outcome_reward += pnl * tp_multiplier
                     else: # Trade perdant
@@ -3998,7 +4005,7 @@ class MultiAssetChunkedEnv(gym.Env):
         trade_executed_this_step = False
 
         # 1. Mettre à jour la valeur des positions ouvertes et vérifier les SL/TP
-        pnl_from_update, sl_tp_receipts = self.portfolio_manager.update_market_price(current_prices)
+        pnl_from_update, sl_tp_receipts = self.portfolio_manager.update_market_price(current_prices, self.current_step)
         if sl_tp_receipts:
             self._step_closed_receipts.extend(sl_tp_receipts)
         if pnl_from_update > 0:
@@ -4829,7 +4836,7 @@ class MultiAssetChunkedEnv(gym.Env):
 
                     # Trop court - pénalité pour impatience
                     if duration < min_steps:
-                        penalty -= (min_steps - duration) * 0.5
+                        penalty -= (min_steps - duration) * 0.1
                         self.smart_logger.info(f"[DURATION PENALTY] Impatience penalty for {position.asset}. Duration: {duration} < Min: {min_steps}", rotate=True)
                     # Trop long - pénalité pour inefficacité
                     elif duration > max_steps:

@@ -370,7 +370,7 @@ class PortfolioManager:
         )
         return log_entry
 
-    def update_market_price(self, current_prices: Dict[str, float]) -> tuple[float, list[dict[str, Any]]]:
+    def update_market_price(self, current_prices: Dict[str, float], current_step: int) -> tuple[float, list[dict[str, Any]]]:
         """Met à jour la valeur des positions, vérifie les SL/TP, et retourne le PnL et les reçus."""
         realized_pnl = 0.0
         closed_receipts = []
@@ -414,6 +414,32 @@ class PortfolioManager:
                             val = receipt.get('pnl')
                             if isinstance(val, (int, float)):
                                 realized_pnl += float(val)
+                        continue
+
+                # Vérification de la durée maximale de la position
+                duration_config = self.config.get('trading_rules', {}).get('duration_tracking', {})
+                timeframe = position.timeframe or '5m'
+                max_duration = duration_config.get(timeframe, {}).get('max_duration_steps', 144)
+
+                current_duration = current_step - position.open_step
+                is_overstay = current_duration > max_duration
+                logger.error(f"[DEBUG DURATION] Asset: {asset}, TF: {timeframe}, Current Duration: {current_duration}, Max: {max_duration}, Overstay: {is_overstay}")
+
+                if is_overstay:
+                    self.log_info(f"MAX DURATION atteinte pour {asset} @ {price:.2f} (durée: {current_duration} > {max_duration})")
+                    receipt = self.close_position(
+                        asset,
+                        price,
+                        timestamp=self._last_market_timestamp,
+                        current_prices=current_prices,
+                        reason="MaxDuration",
+                    )
+                    if isinstance(receipt, dict):
+                        closed_receipts.append(receipt)
+                        val = receipt.get('pnl')
+                        if isinstance(val, (int, float)):
+                            realized_pnl += float(val)
+                    continue
         
         self._update_equity(current_prices)
 
