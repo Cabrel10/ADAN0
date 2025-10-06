@@ -9,7 +9,7 @@ import copy
 import gc
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
 from stable_baselines3.common.callbacks import BaseCallback
 from optuna.pruners import MedianPruner
 
@@ -29,7 +29,7 @@ setup_logging()
 class OptunaPruningCallback(BaseCallback):
     """Stop training if the trial is pruned."""
 
-    def __init__(self, trial: optuna.Trial, eval_env: SubprocVecEnv, eval_freq: int = 10000):
+    def __init__(self, trial: optuna.Trial, eval_env: VecEnv, eval_freq: int = 10000):
         super().__init__(verbose=0)
         self.trial = trial
         self.eval_env = eval_env
