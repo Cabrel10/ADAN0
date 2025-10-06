@@ -131,6 +131,23 @@ class PortfolioManager:
 
         self.log_info(f"Portefeuille réinitialisé. Capital initial: ${self.initial_equity:.2f}")
 
+    def __getstate__(self):
+        """Préparer l'état pour le pickling, en excluant le logger."""
+        state = self.__dict__.copy()
+        # Exclure le logger de la sérialisation de manière sécurisée
+        state.pop('smart_logger', None)
+        return state
+
+    def __setstate__(self, state):
+        """Restaurer l'état après le unpickling et ré-initialiser le logger."""
+        self.__dict__.update(state)
+        # Ré-initialiser le logger dans le nouveau processus
+        self.smart_logger = create_smart_logger(
+            getattr(self, 'worker_id', 0), 
+            total_workers=4, 
+            logger_name="portfolio_manager"
+        )
+
     @staticmethod
     def _normalize_timestamp(timestamp: Optional[Any]) -> Optional[datetime]:
         """Convertit différents formats de timestamps en datetime natif."""

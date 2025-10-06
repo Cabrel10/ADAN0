@@ -75,6 +75,32 @@ class PerformanceMetrics:
         # En-tête du fichier de métriques
         self._log_metrics({"event": "initialization", "timestamp": self.start_time.isoformat()})
 
+    def __getstate__(self):
+        """Préparer l'état pour le pickling, en excluant les loggers et modules."""
+        state = self.__dict__.copy()
+        # Exclure les attributs non-sérialisables de manière sécurisée
+        state.pop('smart_logger', None)
+        state.pop('_time_module', None)
+        if 'metrics_file' in state:
+            state['_metrics_file_path'] = str(state.pop('metrics_file'))
+        return state
+
+    def __setstate__(self, state):
+        """Restaurer l'état après le unpickling et ré-initialiser les loggers."""
+        if '_metrics_file_path' in state:
+            state['metrics_file'] = Path(state['_metrics_file_path'])
+            del state['_metrics_file_path']
+
+        self.__dict__.update(state)
+        
+        self.smart_logger = create_smart_logger(
+            getattr(self, 'worker_id', 0), 
+            total_workers=4, 
+            logger_name="performance_metrics"
+        )
+        import time
+        self._time_module = time
+
     def log_info(self, message, step=None):
         """Log un message avec le système intelligent SmartLogger."""
         self.smart_logger.smart_info(logger, message, step)

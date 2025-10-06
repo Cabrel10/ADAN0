@@ -272,6 +272,32 @@ class DynamicBehaviorEngine:
         import time
         self._time_module = time
 
+    def __getstate__(self):
+        """Préparer l'état pour le pickling, en excluant les loggers et modules."""
+        state = self.__dict__.copy()
+        # Exclure les attributs non-sérialisables de manière sécurisée
+        state.pop('smart_logger', None)
+        state.pop('logger', None)
+        state.pop('_time_module', None)
+        state.pop('env', None)  # Casser la référence circulaire
+        return state
+
+    def __setstate__(self, state):
+        """Restaurer l'état après le unpickling et ré-initialiser les loggers."""
+        self.__dict__.update(state)
+        # Ré-initialiser les loggers dans le nouveau processus
+        self.smart_logger = create_smart_logger(
+            getattr(self, 'worker_id', 0), 
+            total_workers=4, 
+            logger_name="dynamic_behavior_engine"
+        )
+        self.logger = logging.getLogger(f"dbe.{self.__class__.__name__}")
+        if not isinstance(self.logger, DBELogger):
+            self.logger.__class__ = DBELogger
+        # Ré-importer le module time
+        import time
+        self._time_module = time
+
     def log_info(self, message, step=None):
         """Log un message avec le système intelligent SmartLogger."""
         self.smart_logger.smart_info(logger, message, step)

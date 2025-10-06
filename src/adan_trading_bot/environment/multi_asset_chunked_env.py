@@ -370,6 +370,31 @@ class MultiAssetChunkedEnv(gym.Env):
             self.logger.error("Erreur lors de l'initialisation: %s", str(e))
             raise
 
+    def __getstate__(self):
+        """Préparer l'état pour le pickling, en excluant les objets non-sérialisables."""
+        state = self.__dict__.copy()
+        # Exclure les loggers, locks, et autres objets non-sérialisables
+        state.pop('logger', None)
+        state.pop('smart_logger', None)
+        state.pop('logger_lock', None)
+        # Casser la référence circulaire avec DBE pour le pickling
+        if 'dbe' in state and hasattr(state['dbe'], 'env'):
+             state['dbe'].env = None
+        return state
+
+    def __setstate__(self, state):
+        """Restaurer l'état après le unpickling et ré-initialiser les objets."""
+        self.__dict__.update(state)
+        
+        # Ré-initialiser les objets non-sérialisables
+        self.logger = logging.getLogger(__name__)
+        self.logger_lock = threading.Lock()
+        self.smart_logger = create_smart_logger(self.logger, getattr(self, 'worker_id', 0), 4)
+        configure_smart_logger(self.smart_logger, 'training')
+        # Rétablir la référence circulaire si DBE existe
+        if hasattr(self, 'dbe') and hasattr(self.dbe, 'set_env_reference'):
+            self.dbe.set_env_reference(self)
+
     def _epoch_reset(self, force: bool = False, new_epoch: bool = False):
         """
         Centralized call to portfolio.reset(...) with config-driven threshold.
