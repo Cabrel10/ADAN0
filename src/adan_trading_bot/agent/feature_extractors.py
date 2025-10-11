@@ -631,7 +631,7 @@ class MultiTimeframeCNN(nn.Module):
                 nn.Conv1d(32, 64, kernel_size=3, padding=1),
                 nn.BatchNorm1d(64),
                 nn.ReLU(),
-                nn.AdaptiveAvgPool1d(16),
+                nn.AdaptiveAvgPool1d(1),
                 nn.Flatten()
             ) for _ in range(n_timeframes)
         ])
@@ -688,14 +688,21 @@ class TemporalFusionExtractor(BaseFeaturesExtractor):
 
         # Calculer la dimension de sortie du CNN
         # Chaque CNN sort (64 features * 16 positions temporelles) = 1024
-        cnn_output_dim = n_timeframes * 64 * 16
+        cnn_output_dim = n_timeframes * 64
 
         # Dimension de l'état du portefeuille
         portfolio_state_dim = observation_space.spaces[self.portfolio_state_key].shape[0]
 
-        # Couche de fusion pour combiner les features des timeframes et l'état du portefeuille
+        # Couche de fusion intermédiaire pour apprendre les interactions entre les timeframes
+        self.inter_timeframe_fusion_layer = nn.Sequential(
+            nn.Linear(cnn_output_dim, 128),
+            nn.ReLU(),
+            nn.LayerNorm(128),
+        )
+
+        # Couche de fusion finale pour combiner les features des timeframes et l'état du portefeuille
         self.fusion_layer = nn.Sequential(
-            nn.Linear(cnn_output_dim + portfolio_state_dim, 256),
+            nn.Linear(128 + portfolio_state_dim, 256),
             nn.LayerNorm(256),
             nn.ReLU(),
             nn.Dropout(0.2),
@@ -713,15 +720,18 @@ class TemporalFusionExtractor(BaseFeaturesExtractor):
         market_observations = {k: observations[k] for k in self.timeframe_keys}
         portfolio_state = observations[self.portfolio_state_key]
 
-        # 1. Extraction des features par les CNNs
+        # 1. Extraction des features par les CNNs pour chaque timeframe
         cnn_features = self.multitimeframe_cnn(market_observations)
 
-        # 2. Concaténer les features du CNN avec l'état du portefeuille
+        # 2. Fusion intermédiaire des features des différents timeframes
+        timeframe_fused_features = self.inter_timeframe_fusion_layer(cnn_features)
+
+        # 3. Concaténer les features fusionnées avec l'état du portefeuille
         # Assurer que portfolio_state a une dimension de batch si elle est manquante
         if portfolio_state.dim() == 1:
             portfolio_state = portfolio_state.unsqueeze(0)
             
-        combined_features = th.cat([cnn_features, portfolio_state], dim=1)
+        combined_features = th.cat([timeframe_fused_features, portfolio_state], dim=1)
 
         # 3. Fusion des features
         fused_features = self.fusion_layer(combined_features)
