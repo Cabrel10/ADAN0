@@ -326,7 +326,7 @@ def objective(trial: optuna.Trial) -> float:
                 temp_config["environment"]["observation"]["window_sizes"][tf] = value
 
         temp_config["data"]["data_split_override"] = "train"
-        temp_config["environment"]["max_chunks_per_episode"] = 1
+        temp_config["environment"]["max_chunks_per_episode"] = 5
         temp_config["environment"]["max_steps"] = 50000
 
         worker_config = temp_config["workers"]["w3"]
