@@ -666,15 +666,14 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
                 return 0.15  # Valeur par défaut raisonnable
 
-            asset_lower = asset.lower()
             # Récupérer les données de prix pour l'actif
-            if asset_lower not in self.current_data:
+            if asset not in self.current_data:
                 self.logger.warning(f"Données manquantes pour l'actif {asset}")
                 return 0.15
 
             # Prendre le premier intervalle de temps disponible
-            tf = next(iter(self.current_data[asset_lower].keys()))
-            df = self.current_data[asset_lower][tf]
+            tf = next(iter(self.current_data[asset].keys()))
+            df = self.current_data[asset][tf]
 
             # Vérifier si on a assez de données
             if len(df) < lookback + 1:
