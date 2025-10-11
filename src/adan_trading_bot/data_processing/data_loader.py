@@ -73,12 +73,15 @@ class ChunkedDataLoader:
         )
 
         # 3) Actifs (permet override si besoin)
-        self.assets_list = self.worker_config.get(
-            "assets",  # Utilise directement 'assets' du worker_config
-            self.config.get("environment", {}).get(
-                "assets", []
-            ),  # Fallback sur la config environment
-        )
+        self.assets_list = [
+            asset.upper()
+            for asset in self.worker_config.get(
+                "assets",  # Utilise directement 'assets' du worker_config
+                self.config.get("environment", {}).get(
+                    "assets", []
+                ),  # Fallback sur la config environment
+            )
+        ]
 
         # Initialise le dictionnaire des features par timeframe
         self.features_by_timeframe = self._init_features_by_timeframe()
@@ -261,7 +264,7 @@ class ChunkedDataLoader:
             logger.debug(f"Recherche des données dans: {data_dir}")
 
             # Nettoyer le nom de l'actif (supprimer / et -) et forcer en minuscules
-            clean_asset = asset.replace("/", "").replace("-", "").lower()
+            clean_asset = asset.replace("/", "").replace("-", "")
 
             # Extraire le timeframe de base (sans les combinaisons)
             base_timeframe = timeframe.split("_")[0] if "_" in timeframe else timeframe
@@ -269,8 +272,8 @@ class ChunkedDataLoader:
 
             # Liste des variantes de casse à essayer pour l'actif
             asset_variants = [
-                clean_asset.lower(),  # Tout en minuscules (ex: btcusdt) - structure actuelle
-                clean_asset.upper(),  # Tout en majuscules (ex: BTCUSDT)
+                clean_asset.upper(),  # Tout en majuscules (ex: BTCUSDT) - nouvelle structure préférée
+                clean_asset.lower(),  # Tout en minuscules (ex: btcusdt) - pour compatibilité
                 clean_asset,  # Cas d'origine
             ]
 
