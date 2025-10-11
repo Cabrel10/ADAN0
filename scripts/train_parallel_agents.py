@@ -12,6 +12,7 @@ import time
 import traceback
 import uuid
 import warnings
+from datetime import datetime
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -89,16 +90,10 @@ class HierarchicalTrainingCallback(BaseCallback):
         self.last_step_summary = 0
         self.episode_rewards = []
         self.episode_count = 0
-        self.positions = {}
-        self.metrics = {
-            "sharpe": 0.0,
-            "sortino": 0.0,
-            "profit_factor": 0.0,
-            "max_dd": 0.0,
-            "cagr": 0.0,
-            "win_rate": 0.0,
-            "trades": 0,
-        }
+        
+        # Dictionnaires pour suivre les métriques par worker
+        self.worker_metrics = {}
+        self.daily_metrics = {}
 
     def _on_training_start(self):
         """Démarrage de l'entraînement avec affichage de la configuration."""
@@ -110,9 +105,19 @@ class HierarchicalTrainingCallback(BaseCallback):
         logger.info(f"[TRAINING START] Capital initial: ${self.initial_capital:.2f}")
 
     def _on_step(self) -> bool:
-        """Appelé à chaque étape pour mettre à jour l'affichage."""
+        """Appelé à chaque étape pour mettre à jour l'affichage et les résumés."""
+        # Log détaillé périodique
         if self.num_timesteps % self.display_freq == 0 and self.num_timesteps > 0:
             self._log_detailed_metrics()
+
+        # Vérification de la fin d'un épisode pour chaque worker
+        infos = self.locals.get("infos", [])
+        for i, info in enumerate(infos):
+            # La clé 'final_info' est présente quand un épisode se termine
+            if info.get("final_info") is not None:
+                final_info = info["final_info"]
+                self._log_episode_summary(i, final_info)
+                
         return True
 
     def _log_detailed_metrics(self):
@@ -220,130 +225,79 @@ class HierarchicalTrainingCallback(BaseCallback):
             )
 
     def _display_worker_summary(self, worker_id: int, metrics: dict):
-        """Afficher le résumé complet des métriques d'un worker."""
+        """Afficher le résumé complet des métriques d'un worker avec suivi journalier."""
         try:
-            # Métriques de base (avec fallback pour compatibilité)
+            # Initialiser les métriques pour un nouveau worker
+            if worker_id not in self.worker_metrics:
+                self.worker_metrics[worker_id] = {
+                    "current_date": None,
+                    "daily_trades": 0,
+                    "daily_pnl": 0.0,
+                    "last_total_trades": 0,
+                }
+
+            worker_data = self.worker_metrics[worker_id]
+            current_date_from_env = metrics.get("current_date")
+            
+            # Détection du changement de jour
+            if current_date_from_env and isinstance(current_date_from_env, (datetime, pd.Timestamp)):
+                new_day = current_date_from_env.date()
+                if worker_data["current_date"] != new_day:
+                    worker_data["current_date"] = new_day
+                    worker_data["daily_trades"] = 0
+                    worker_data["daily_pnl"] = 0.0
+                    worker_data["last_total_trades"] = metrics.get("total_trades", 0)
+
+            # Mise à jour des métriques journalières
+            total_trades = metrics.get("total_trades", 0)
+            if total_trades > worker_data["last_total_trades"]:
+                new_trades = total_trades - worker_data["last_total_trades"]
+                worker_data["daily_trades"] += new_trades
+                
+                # Estimer le PnL des nouveaux trades
+                closed_positions = metrics.get("closed_positions", [])
+                if closed_positions:
+                    # Somme du PnL des N derniers trades
+                    new_pnl = sum(trade.get("profit", 0) for trade in closed_positions[-new_trades:])
+                    worker_data["daily_pnl"] += new_pnl
+                
+                worker_data["last_total_trades"] = total_trades
+
+            # --- Récupération des métriques (comme avant) ---
             portfolio_value = metrics.get("total_value", metrics.get("portfolio_value", self.initial_capital))
             cash = metrics.get("cash", self.initial_capital)
-            roi = (
-                ((portfolio_value - self.initial_capital) / self.initial_capital) * 100
-                if self.initial_capital > 0
-                else 0
-            )
+            roi = (((portfolio_value - self.initial_capital) / self.initial_capital) * 100) if self.initial_capital > 0 else 0
             drawdown = metrics.get("drawdown", 0.0)
             max_dd = metrics.get("max_drawdown", metrics.get("max_dd", 0.0))
             sharpe = metrics.get("sharpe_ratio", metrics.get("sharpe", 0.0))
             win_rate = metrics.get("win_rate", 0.0)
-            total_trades = metrics.get("total_trades", metrics.get("trades", 0))
-            trade_attempts = metrics.get("trade_attempts")
-            invalid_trade_attempts = metrics.get("invalid_trade_attempts")
-
-            # Métriques de trading détaillées
-            valid_trades = metrics.get("valid_trades", 0)
-            invalid_trades = (
-                total_trades - valid_trades if total_trades > valid_trades else 0
-            )
             current_positions = metrics.get("positions", {})
-            closed_positions = metrics.get("closed_positions", [])
+            
+            # --- Affichage ---
+            logger.info(f"╭─── WORKER {worker_id} ────────────────────────────────────────────────────────────────╮")
+            logger.info(f"│ 📊 PORTFOLIO  | Valeur: ${portfolio_value:>10.2f} | Cash: ${cash:>10.2f} | ROI Global: {roi:>+7.2f}% │")
+            logger.info(f"│ ⚠️  RISK      | Drawdown: {drawdown:>6.2f}% | Max DD: {max_dd:>6.2f}% | Sharpe Global: {sharpe:>6.2f}     │")
+            
+            # Ligne de trading journalier
+            date_str = worker_data['current_date'].strftime('%Y-%m-%d') if worker_data['current_date'] else "N/A"
+            logger.info(f"│ 📅 JOUR ({date_str}) | Trades: {worker_data['daily_trades']:>3d} | PnL Jour: ${worker_data['daily_pnl']:>+8.2f} | Positions Ouvertes: {len(current_positions):>2d} │")
 
-            # Informations de récompense et pénalités
-            last_reward = metrics.get("last_reward", 0.0)
-            last_penalty = metrics.get("last_penalty", 0.0)
-            cumulative_reward = metrics.get("cumulative_reward", 0.0)
+            # Ligne de trading global
+            logger.info(f"│ 📈 GLOBAL     | Trades: {total_trades:>4d} | Win Rate: {win_rate:>5.1f}% | PnL Total: ${metrics.get('total_pnl', 0.0):>+9.2f} │")
 
-            # Dates et actifs
-            current_date = metrics.get("current_date", "N/A")
-            active_assets = list(current_positions.keys()) if current_positions else []
-
-            # En-tête du worker
-            logger.info(
-                f"╭─── WORKER {worker_id} ────────────────────────────────────────────────────────────────╮"
-            )
-
-            # Ligne 1: Portfolio et Performance
-            logger.info(
-                f"│ 📊 PORTFOLIO  | Valeur: ${portfolio_value:>10.2f} | Cash: ${cash:>10.2f} | ROI: {roi:>+7.2f}% │"
-            )
-
-            # Ligne 2: Risk Management
-            logger.info(
-                f"│ ⚠️  RISK      | Drawdown: {drawdown:>6.2f}% | Max DD: {max_dd:>6.2f}% | Sharpe: {sharpe:>6.2f}     │"
-            )
-
-            # Ligne 3: Trading Statistics
-            logger.info(
-                f"│ 📈 TRADING    | Total: {total_trades:>3d} | Valid: {valid_trades:>3d} | Invalid: {invalid_trades:>3d} | Win Rate: {win_rate:>5.1f}% │"
-            )
-
-            # Ligne 3b: Actions de l'agent
-            if trade_attempts is not None and invalid_trade_attempts is not None:
-                invalid_rate = (invalid_trade_attempts / trade_attempts * 100) if trade_attempts > 0 else 0
-                logger.info(
-                    f"│ 🎯 ACTIONS    | Tentatives: {trade_attempts:>4d} | Invalides: {invalid_trade_attempts:>4d} ({invalid_rate:5.1f}%)             │"
-                )
-
-            # Ligne 4: Rewards & Penalties
-            logger.info(
-                f"│ 🎯 REWARDS    | Last: {last_reward:>+8.4f} | Penalty: {last_penalty:>+8.4f} | Cumul: {cumulative_reward:>+8.2f}   │"
-            )
-
-            # Ligne 5: Temporal & Assets
-            date_str = str(current_date)[:10] if current_date != "N/A" else "N/A"
-            assets_str = ", ".join(active_assets[:3]) if active_assets else "Aucun"
-            if len(active_assets) > 3:
-                assets_str += f"+{len(active_assets) - 3}"
-            logger.info(
-                f"│ 📅 CONTEXT    | Date: {date_str:>10s} | Active Assets: {assets_str:<25s}              │"
-            )
-
-            # Positions ouvertes détaillées (si présentes)
+            # Affichage des positions ouvertes (simplifié)
             if current_positions:
-                logger.info("│ ├─ POSITIONS OUVERTES:" + " " * 54 + "│")
-                for asset, pos in list(current_positions.items())[
-                    :3
-                ]:  # Max 3 pour l'affichage
-                    if isinstance(pos, dict):
-                        size = pos.get("size", 0)
-                        entry_price = pos.get("entry_price", 0)
-                        current_value = pos.get("value", 0)
-                        pnl = pos.get("unrealized_pnl", 0)
-                        logger.info(
-                            f"│ │  {asset:<8s} | Size: {size:>6.2f} @ {entry_price:>8.4f} | Val: ${current_value:>7.2f} | PnL: {pnl:>+6.2f} │"
-                        )
+                assets_str = ", ".join(list(current_positions.keys())[:4])
+                if len(current_positions) > 4:
+                    assets_str += f" (+{len(current_positions) - 4})"
+                logger.info(f"│ ├─ Positions: {assets_str}" + " " * (68 - len(assets_str)) + "│")
 
-                remaining = len(current_positions) - 3
-                if remaining > 0:
-                    logger.info(
-                        f"│ │  ... et {remaining} autres positions" + " " * 44 + "│"
-                    )
-
-            # Derniers trades fermés (si disponibles)
-            if closed_positions:
-                recent_closed = (
-                    closed_positions[-2:]
-                    if len(closed_positions) >= 2
-                    else closed_positions
-                )
-                logger.info("│ ├─ DERNIERS TRADES FERMÉS:" + " " * 48 + "│")
-                for trade in recent_closed:
-                    if isinstance(trade, dict):
-                        asset = trade.get("asset", "N/A")
-                        profit = trade.get("profit", 0)
-                        duration = trade.get("duration", "N/A")
-                        close_reason = trade.get("reason", "N/A")[:8]
-                        logger.info(
-                            f"│ │  {asset:<8s} | Profit: {profit:>+8.2f} | Durée: {str(duration):<6s} | Raison: {close_reason:<8s}  │"
-                        )
-
-            logger.info(
-                f"╰──────────────────────────────────────────────────────────────────────────────────╯"
-            )
+            logger.info(f"╰──────────────────────────────────────────────────────────────────────────────────╯")
 
         except Exception as e:
-            logger.error(
-                f"Erreur lors de l'affichage des métriques du worker {worker_id}: {e}"
-            )
-            logger.info(f"│ WORKER {worker_id} | ❌ Erreur d'affichage des métriques.")
+            logger.error(f"Erreur lors de l'affichage des métriques du worker {worker_id}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
     def _display_model_metrics(self):
         """Afficher les métriques globales du modèle PPO."""
@@ -372,6 +326,37 @@ class HierarchicalTrainingCallback(BaseCallback):
 
         except Exception as e:
             logger.error(f"Erreur lors de l'affichage des métriques du modèle: {e}")
+
+    def _log_episode_summary(self, worker_id: int, final_info: dict):
+        """Affiche un résumé à la fin d'un épisode (chunk) pour un worker."""
+        try:
+            episode_pnl = final_info.get("total_pnl", 0.0)
+            episode_trades = final_info.get("total_trades", 0)
+            win_rate = final_info.get("win_rate", 0.0)
+            final_value = final_info.get("portfolio_value", self.initial_capital)
+            chunk_id = final_info.get("chunk_id", "N/A")
+
+            summary_bar = "=" * 92
+            logger.info(summary_bar)
+            logger.info(f"🏁 FIN D'ÉPISODE (CHUNK {chunk_id}) POUR WORKER {worker_id}")
+            logger.info(f"   - Valeur Finale du Portefeuille: ${final_value:,.2f}")
+            logger.info(f"   - PnL de l'Épisode: ${episode_pnl:,.2f}")
+            logger.info(f"   - Trades dans l'Épisode: {episode_trades}")
+            logger.info(f"   - Win Rate de l'Épisode: {win_rate:.2%}")
+            logger.info(summary_bar)
+
+            # Réinitialiser les métriques pour ce worker
+            if worker_id in self.worker_metrics:
+                self.worker_metrics[worker_id] = {
+                    "current_date": None,
+                    "daily_trades": 0,
+                    "daily_pnl": 0.0,
+                    "last_total_trades": 0,
+                }
+
+        except Exception as e:
+            logger.error(f"Erreur lors du résumé de l'épisode pour le worker {worker_id}: {e}")
+
 
     def _on_rollout_end(self):
         """Appelé à la fin de chaque rollout pour capturer les positions fermées."""

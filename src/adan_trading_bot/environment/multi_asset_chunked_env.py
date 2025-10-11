@@ -6,6 +6,7 @@ Environnement de trading multi-actifs avec chargement par morceaux.
 Ce module implémente un environnement de trading pour plusieurs actifs
 avec chargement efficace des données par lots.
 """
+
 # Standard library imports
 import json
 from typing import Dict, List, Optional
@@ -63,11 +64,12 @@ def clean_worker_id(worker_id):
 
     if isinstance(worker_id, str):
         import re
+
         # Nettoyer la chaîne: supprimer les crochets, espaces, etc.
         clean_str = worker_id.strip().upper()
 
         # Extraire tous les nombres de la chaîne
-        numbers = re.findall(r'\d+', clean_str)
+        numbers = re.findall(r"\d+", clean_str)
 
         if numbers:
             try:
@@ -78,9 +80,9 @@ def clean_worker_id(worker_id):
 
         # Si aucun nombre trouvé, essayer des patterns spécifiques
         patterns = [
-            r'^W(\d+)$',           # W0, W1, etc.
-            r'^WORKER[-_]?(\d+)$', # WORKER0, WORKER-1, WORKER_2, etc.
-            r'^RANK[-_]?(\d+)$',   # RANK0, RANK-1, etc.
+            r"^W(\d+)$",  # W0, W1, etc.
+            r"^WORKER[-_]?(\d+)$",  # WORKER0, WORKER-1, WORKER_2, etc.
+            r"^RANK[-_]?(\d+)$",  # RANK0, RANK-1, etc.
         ]
 
         for pattern in patterns:
@@ -103,11 +105,11 @@ def clean_worker_id(worker_id):
     except Exception:
         return 0
 
-
     from adan_trading_bot.environment.state_builder import (
         StateBuilder,
         TimeframeConfig,
     )  # pragma: no cover
+
 
 # Type variables for generics
 T = TypeVar("T")
@@ -138,7 +140,9 @@ logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
@@ -154,14 +158,14 @@ if not logging.root.handlers:
 logger.propagate = False
 
 
-
 # Patch Gugu & March - Système d'Excellence
 try:
     from ..patches.gugu_march_excellence_rewards import (
         GuguMarchExcellenceRewards,
         ExcellenceMetrics,
-        create_excellence_rewards_system
+        create_excellence_rewards_system,
     )
+
     EXCELLENCE_SYSTEM_AVAILABLE = True
     logger.info("[GUGU-MARCH] Excellence rewards system loaded successfully")
 except ImportError as e:
@@ -224,6 +228,7 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # DIAGNOSTIC: Tracer les instances d'environnement pour identifier les recréations
         import uuid
+
         self.env_instance_id = str(uuid.uuid4())[:8]
 
         # Initialize logger lock for thread-safe logging
@@ -234,21 +239,31 @@ class MultiAssetChunkedEnv(gym.Env):
         self.config = kwargs.get("config", {})
 
         # Get worker ID for synchronized logging (nettoyé pour éviter les erreurs JSONL)
-        raw_worker_id = self.worker_config.get("worker_id", self.worker_config.get("rank", "W0"))
+        raw_worker_id = self.worker_config.get(
+            "worker_id", self.worker_config.get("rank", "W0")
+        )
         self.worker_id = clean_worker_id(raw_worker_id)
 
         # SOLUTION IMMORTALITÉ ADAN: Stocker le DBE externe s'il est fourni
         self.external_dbe = external_dbe
         if external_dbe is not None:
-            self.logger.critical(f"🔄 RÉCEPTION DBE IMMORTEL: ENV_ID={self.env_instance_id}, Worker={self.worker_id}, DBE_ID={id(external_dbe)}")
+            self.logger.critical(
+                f"🔄 RÉCEPTION DBE IMMORTEL: ENV_ID={self.env_instance_id}, Worker={self.worker_id}, DBE_ID={id(external_dbe)}"
+            )
 
         # DIAGNOSTIC: Log critique pour tracer la création d'instances
-        self.logger.critical(f"🆕 NOUVELLE INSTANCE ENV CRÉÉE: ID={self.env_instance_id}, Worker={self.worker_id}")
+        self.logger.critical(
+            f"🆕 NOUVELLE INSTANCE ENV CRÉÉE: ID={self.env_instance_id}, Worker={self.worker_id}"
+        )
 
         # Initialize smart logger for intelligent multi-worker logging (after worker_id is set)
-        total_workers = kwargs.get('total_workers', 4)  # Default to 4 workers
-        self.smart_logger = create_smart_logger(self.logger, self.worker_id, total_workers)
-        configure_smart_logger(self.smart_logger, 'training')  # Use training configuration
+        total_workers = kwargs.get("total_workers", 4)  # Default to 4 workers
+        self.smart_logger = create_smart_logger(
+            self.logger, self.worker_id, total_workers
+        )
+        configure_smart_logger(
+            self.smart_logger, "training"
+        )  # Use training configuration
 
         # Initialize risk parameters
         self.risk_params = self.worker_config.get("risk_parameters", {})
@@ -298,16 +313,15 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # Compteurs pour surveiller le forward fill de prix
         self.interpolation_count = 0  # Nombre de forward fills effectués (legacy name)
-        self.total_steps_with_price_check = 0  # Nombre total d'étapes avec vérification de prix
+        self.total_steps_with_price_check = (
+            0  # Nombre total d'étapes avec vérification de prix
+        )
 
         # Configuration et compteurs de fréquence des positions
-        self.frequency_config = self.config.get("trading_rules", {}).get("frequency", {})
-        self.positions_count = {
-            '5m': 0,
-            '1h': 0,
-            '4h': 0,
-            'daily_total': 0
-        }
+        self.frequency_config = self.config.get("trading_rules", {}).get(
+            "frequency", {}
+        )
+        self.positions_count = {"5m": 0, "1h": 0, "4h": 0, "daily_total": 0}
 
         # Tracking des trades pour éviter de compter les duplicatas
         self.last_trade_ids = set()
@@ -374,25 +388,27 @@ class MultiAssetChunkedEnv(gym.Env):
         """Préparer l'état pour le pickling, en excluant les objets non-sérialisables."""
         state = self.__dict__.copy()
         # Exclure les loggers, locks, et autres objets non-sérialisables
-        state.pop('logger', None)
-        state.pop('smart_logger', None)
-        state.pop('logger_lock', None)
+        state.pop("logger", None)
+        state.pop("smart_logger", None)
+        state.pop("logger_lock", None)
         # Casser la référence circulaire avec DBE pour le pickling
-        if 'dbe' in state and hasattr(state['dbe'], 'env'):
-             state['dbe'].env = None
+        if "dbe" in state and hasattr(state["dbe"], "env"):
+            state["dbe"].env = None
         return state
 
     def __setstate__(self, state):
         """Restaurer l'état après le unpickling et ré-initialiser les objets."""
         self.__dict__.update(state)
-        
+
         # Ré-initialiser les objets non-sérialisables
         self.logger = logging.getLogger(__name__)
         self.logger_lock = threading.Lock()
-        self.smart_logger = create_smart_logger(self.logger, getattr(self, 'worker_id', 0), 4)
-        configure_smart_logger(self.smart_logger, 'training')
+        self.smart_logger = create_smart_logger(
+            self.logger, getattr(self, "worker_id", 0), 4
+        )
+        configure_smart_logger(self.smart_logger, "training")
         # Rétablir la référence circulaire si DBE existe
-        if hasattr(self, 'dbe') and hasattr(self.dbe, 'set_env_reference'):
+        if hasattr(self, "dbe") and hasattr(self.dbe, "set_env_reference"):
             self.dbe.set_env_reference(self)
 
     def _epoch_reset(self, force: bool = False, new_epoch: bool = False):
@@ -405,9 +421,7 @@ class MultiAssetChunkedEnv(gym.Env):
         """
         min_cap = getattr(self, "config", {}).get("min_capital_before_reset", 11.0)
         self.portfolio.reset(
-            new_epoch=new_epoch,
-            force=force,
-            min_capital_before_reset=min_cap
+            new_epoch=new_epoch, force=force, min_capital_before_reset=min_cap
         )
 
     def update_risk_parameters(self, market_conditions=None):
@@ -435,7 +449,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     first_asset = next(iter(current_prices))
                     market_conditions = {
                         "close": current_prices[first_asset],
-                        "asset": first_asset
+                        "asset": first_asset,
                     }
                     # Compléter avec les indicateurs techniques si disponibles
                     try:
@@ -451,7 +465,11 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # Vérification que nous avons au moins un prix de clôture
             close_price = market_conditions.get("close")
-            if close_price is None or not isinstance(close_price, (int, float)) or close_price <= 0:
+            if (
+                close_price is None
+                or not isinstance(close_price, (int, float))
+                or close_price <= 0
+            ):
                 # Utiliser des conditions par défaut
                 market_conditions = self._get_default_market_conditions()
                 close_price = market_conditions.get("close", 50000.0)
@@ -470,32 +488,61 @@ class MultiAssetChunkedEnv(gym.Env):
                 try:
                     self.portfolio.update_risk_parameters(risk_params)
                 except AttributeError:
-                    logger.warning("[FALLBACK] update_risk_parameters absent – Valeurs par défaut.")
-                    self.portfolio.sl_pct = risk_params.get('sl', 0.02)
-                    self.portfolio.pos_size_pct = min(risk_params.get('pos_size', 0.825), 0.9)  # Clip à 90%
+                    logger.warning(
+                        "[FALLBACK] update_risk_parameters absent – Valeurs par défaut."
+                    )
+                    self.portfolio.sl_pct = risk_params.get("sl", 0.02)
+                    self.portfolio.pos_size_pct = min(
+                        risk_params.get("pos_size", 0.825), 0.9
+                    )  # Clip à 90%
                     logging.warning("update_risk_parameters manquant - Ajouté fallback")
                     # Fallback direct pour éviter le crash
-                    if hasattr(self.portfolio, 'sl_pct'):
-                        self.portfolio.sl_pct = risk_params.get('sl', 0.02)
-                    if hasattr(self.portfolio, 'tp_pct'):
-                        self.portfolio.tp_pct = risk_params.get('tp', 0.04)
+                    if hasattr(self.portfolio, "sl_pct"):
+                        self.portfolio.sl_pct = risk_params.get("sl", 0.02)
+                    if hasattr(self.portfolio, "tp_pct"):
+                        self.portfolio.tp_pct = risk_params.get("tp", 0.04)
 
                 # Journalisation des changements significatifs
                 if hasattr(self, "last_risk_params") and self.last_risk_params:
                     changed = []
                     for k, v in risk_params.items():
                         if k in self.last_risk_params:
-                            # Gestion explicite des types pour éviter DTypePromotionError
-                            if isinstance(v, (int, float)) and isinstance(self.last_risk_params[k], (int, float)):
-                                # Comparaison numérique avec np.isclose
-                                if not np.isclose(v, self.last_risk_params[k], rtol=1e-3):
+                            try:
+                                # Gestion explicite des types pour éviter DTypePromotionError
+                                old_val = self.last_risk_params[k]
+                                new_val = v
+
+                                # Vérification stricte des types numériques
+                                if (
+                                    isinstance(new_val, (int, float, np.number))
+                                    and isinstance(old_val, (int, float, np.number))
+                                    and not isinstance(new_val, (str, bool))
+                                    and not isinstance(old_val, (str, bool))
+                                ):
+                                    # Conversion explicite en float pour éviter les problèmes de dtype
+                                    new_val_float = float(new_val)
+                                    old_val_float = float(old_val)
+
+                                    # Comparaison numérique avec np.isclose
+                                    if not np.isclose(
+                                        new_val_float, old_val_float, rtol=1e-3
+                                    ):
+                                        changed.append(
+                                            f"{k}: {old_val_float:.4f}→{new_val_float:.4f}"
+                                        )
+                                else:
+                                    # Comparaison directe pour chaînes et autres types
+                                    if str(new_val) != str(old_val):
+                                        changed.append(f"{k}: {old_val}→{new_val}")
+                            except Exception as e:
+                                # Fallback en cas d'erreur de type
+                                self.logger.warning(
+                                    f"Erreur comparaison param {k}: {e}"
+                                )
+                                if str(v) != str(self.last_risk_params[k]):
                                     changed.append(
-                                        f"{k}: {self.last_risk_params[k]:.4f}→{v:.4f}"
+                                        f"{k}: {self.last_risk_params[k]}→{v}"
                                     )
-                            else:
-                                # Comparaison directe pour chaînes et autres types
-                                if v != self.last_risk_params[k]:
-                                    changed.append(f"{k}: {self.last_risk_params[k]}→{v}")
 
                     if changed:
                         self.logger.info(
@@ -511,13 +558,13 @@ class MultiAssetChunkedEnv(gym.Env):
                 with self.logger_lock:
                     self.logger.error(
                         f"[{self.worker_id}] RISK UPDATE ERROR: Failed to update risk parameters: {e}",
-                        exc_info=True
+                        exc_info=True,
                     )
             except AttributeError:
                 # Fallback si logger_lock n'existe pas encore
                 self.logger.error(
                     f"[{self.worker_id}] RISK UPDATE ERROR: Failed to update risk parameters: {e}",
-                    exc_info=True
+                    exc_info=True,
                 )
 
     def _get_last_valid_price(self, max_age_minutes: int = 15):
@@ -538,47 +585,67 @@ class MultiAssetChunkedEnv(gym.Env):
             max_age = pd.Timedelta(minutes=max_age_minutes)
 
             # Essayer d'utiliser les données du chunk actuel
-            if hasattr(self, 'current_data') and self.current_data is not None:
+            if hasattr(self, "current_data") and self.current_data is not None:
                 for asset_data in self.current_data.values():
                     if isinstance(asset_data, dict):
                         for timeframe_data in asset_data.values():
-                            if hasattr(timeframe_data, 'iloc') and len(timeframe_data) > 0:
+                            if (
+                                hasattr(timeframe_data, "iloc")
+                                and len(timeframe_data) > 0
+                            ):
                                 # Trouver la colonne close
                                 close_col = None
-                                for col in ['close', 'CLOSE', 'Close']:
+                                for col in ["close", "CLOSE", "Close"]:
                                     if col in timeframe_data.columns:
                                         close_col = col
                                         break
 
                                 if close_col is not None:
                                     # FORWARD FILL SEULEMENT - pas d'interpolation
-                                    last_valid_prices = timeframe_data[close_col].dropna()
+                                    last_valid_prices = timeframe_data[
+                                        close_col
+                                    ].dropna()
                                     if len(last_valid_prices) > 0:
                                         last_price = float(last_valid_prices.iloc[-1])
 
                                         # Vérifier l'âge du prix si timestamp disponible
-                                        if 'timestamp' in timeframe_data.columns:
-                                            last_timestamp = timeframe_data[timeframe_data[close_col].notna()].iloc[-1]['timestamp']
+                                        if "timestamp" in timeframe_data.columns:
+                                            last_timestamp = timeframe_data[
+                                                timeframe_data[close_col].notna()
+                                            ].iloc[-1]["timestamp"]
                                             if isinstance(last_timestamp, (int, float)):
-                                                last_timestamp = pd.Timestamp(last_timestamp, unit='ms')
-                                            elif not isinstance(last_timestamp, pd.Timestamp):
-                                                last_timestamp = pd.Timestamp(last_timestamp)
+                                                last_timestamp = pd.Timestamp(
+                                                    last_timestamp, unit="ms"
+                                                )
+                                            elif not isinstance(
+                                                last_timestamp, pd.Timestamp
+                                            ):
+                                                last_timestamp = pd.Timestamp(
+                                                    last_timestamp
+                                                )
 
                                             age = current_time - last_timestamp
                                             if age > max_age:
-                                                self.logger.warning(f"PRICE_TOO_OLD | last_price={last_price} | age={age} | max_age={max_age}")
+                                                self.logger.warning(
+                                                    f"PRICE_TOO_OLD | last_price={last_price} | age={age} | max_age={max_age}"
+                                                )
                                                 continue
 
                                         return last_price
 
             # Fallback: utiliser le dernier prix connu stocké
-            if hasattr(self, '_last_known_price') and self._last_known_price is not None:
+            if (
+                hasattr(self, "_last_known_price")
+                and self._last_known_price is not None
+            ):
                 return float(self._last_known_price)
 
             return None
 
         except Exception as e:
-            self.logger.debug(f"Erreur lors de la récupération du dernier prix valide: {e}")
+            self.logger.debug(
+                f"Erreur lors de la récupération du dernier prix valide: {e}"
+            )
             return None
 
     def _calculate_asset_volatility(self, asset: str, lookback: int = 21) -> float:
@@ -646,14 +713,18 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # Debug logging for observation
             if market_observation is not None:
-                self.logger.info(f"[ENV_DEBUG] Observation shape: {market_observation.shape}, "
-                              f"dtype: {market_observation.dtype}, "
-                              f"NaNs: {np.isnan(market_observation).sum()}")
+                self.logger.info(
+                    f"[ENV_DEBUG] Observation shape: {market_observation.shape}, "
+                    f"dtype: {market_observation.dtype}, "
+                    f"NaNs: {np.isnan(market_observation).sum()}"
+                )
             else:
                 self.logger.info("[ENV_DEBUG] market_observation is None")
 
             if market_observation is None or market_observation.size == 0:
-                self.logger.warning("Observation de marché vide ou invalide pour les indicateurs.")
+                self.logger.warning(
+                    "Observation de marché vide ou invalide pour les indicateurs."
+                )
                 return {}
 
             # Extraire les indicateurs du timeframe 5m (le plus granulaire)
@@ -661,18 +732,36 @@ class MultiAssetChunkedEnv(gym.Env):
             # Le timeframe 5m est généralement en premier (index 0)
 
             # Récupérer les noms des features pour le timeframe 5m
-            features_5m = self.state_builder.get_feature_names('5m')
+            features_5m = self.state_builder.get_feature_names("5m")
 
             # Vérifications robustes de la structure des données
             if len(features_5m) == 0:
-                self.logger.debug("Aucune feature configurée pour 5m, utilisation de valeurs par défaut")
-                features_5m = ["OPEN", "HIGH", "LOW", "close", "VOLUME", "RSI_14", "STOCH_K_14_3_3",
-                              "STOCH_D_14_3_3", "MACD_HIST_12_26_9", "ATR_14", "EMA_5", "EMA_12",
-                              "BB_UPPER", "BB_MIDDLE", "BB_LOWER"]
+                self.logger.debug(
+                    "Aucune feature configurée pour 5m, utilisation de valeurs par défaut"
+                )
+                features_5m = [
+                    "OPEN",
+                    "HIGH",
+                    "LOW",
+                    "close",
+                    "VOLUME",
+                    "RSI_14",
+                    "STOCH_K_14_3_3",
+                    "STOCH_D_14_3_3",
+                    "MACD_HIST_12_26_9",
+                    "ATR_14",
+                    "EMA_5",
+                    "EMA_12",
+                    "BB_UPPER",
+                    "BB_MIDDLE",
+                    "BB_LOWER",
+                ]
 
             # Vérification de la forme de l'observation
             if market_observation.ndim != 3:
-                self.logger.warning(f"Forme d'observation incorrecte: {market_observation.shape}, attendu 3D (timeframes, window, features)")
+                self.logger.warning(
+                    f"Forme d'observation incorrecte: {market_observation.shape}, attendu 3D (timeframes, window, features)"
+                )
                 return self._get_default_market_conditions()
 
             if market_observation.shape[0] == 0 or market_observation.shape[1] == 0:
@@ -681,9 +770,13 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # Récupérer la dernière ligne de données du timeframe 5m dans l'observation
             try:
-                current_5m_data = market_observation[0, -1, :] # Premier timeframe, dernière ligne de la fenêtre
+                current_5m_data = market_observation[
+                    0, -1, :
+                ]  # Premier timeframe, dernière ligne de la fenêtre
             except IndexError as e:
-                self.logger.error(f"Erreur d'indexation lors de l'extraction des données 5m: {e}")
+                self.logger.error(
+                    f"Erreur d'indexation lors de l'extraction des données 5m: {e}"
+                )
                 return self._get_default_market_conditions()
 
             indicators = {}
@@ -693,24 +786,45 @@ class MultiAssetChunkedEnv(gym.Env):
                     val = float(current_5m_data[i])
                     # Remplacer NaN ou Inf par des valeurs par défaut
                     if np.isnan(val) or np.isinf(val):
-                        if "RSI" in feature_name.upper(): val = 50.0
-                        elif "ADX" in feature_name.upper(): val = 20.0
-                        elif "ATR" in feature_name.upper(): val = 0.01
-                        elif "EMA" in feature_name.upper(): val = 1.0
-                        elif "MACD_HIST" in feature_name.upper(): val = 0.0
-                        elif "close" in feature_name.upper(): val = 1.0
-                        elif "BB_" in feature_name.upper(): val = 1.0
-                        elif "STOCH" in feature_name.upper(): val = 50.0
-                        else: val = 0.0
-                        self.logger.debug(f"NaN/Inf détecté pour {feature_name} (index {i}), remplacé par {val}")
+                        if "RSI" in feature_name.upper():
+                            val = 50.0
+                        elif "ADX" in feature_name.upper():
+                            val = 20.0
+                        elif "ATR" in feature_name.upper():
+                            val = 0.01
+                        elif "EMA" in feature_name.upper():
+                            val = 1.0
+                        elif "MACD_HIST" in feature_name.upper():
+                            val = 0.0
+                        elif "close" in feature_name.upper():
+                            val = 1.0
+                        elif "BB_" in feature_name.upper():
+                            val = 1.0
+                        elif "STOCH" in feature_name.upper():
+                            val = 50.0
+                        else:
+                            val = 0.0
+                        self.logger.debug(
+                            f"NaN/Inf détecté pour {feature_name} (index {i}), remplacé par {val}"
+                        )
 
                     indicators[feature_name.upper()] = val
                     self.logger.debug(f"Feature {i}: {feature_name.upper()} = {val}")
                 else:
                     # Si la feature n'est pas disponible, utiliser une valeur par défaut
-                    default_val = 50.0 if "RSI" in feature_name.upper() or "STOCH" in feature_name.upper() else 1.0 if "close" in feature_name.upper() or "EMA" in feature_name.upper() else 0.0
+                    default_val = (
+                        50.0
+                        if "RSI" in feature_name.upper()
+                        or "STOCH" in feature_name.upper()
+                        else 1.0
+                        if "close" in feature_name.upper()
+                        or "EMA" in feature_name.upper()
+                        else 0.0
+                    )
                     indicators[feature_name.upper()] = default_val
-                    self.logger.debug(f"Feature manquante {feature_name} (index {i}), valeur par défaut: {default_val}")
+                    self.logger.debug(
+                        f"Feature manquante {feature_name} (index {i}), valeur par défaut: {default_val}"
+                    )
 
             # Assurer la présence des clés essentielles pour le DBE
             essential_indicators = {
@@ -726,9 +840,13 @@ class MultiAssetChunkedEnv(gym.Env):
                 "EMA_26": indicators.get("EMA_26", indicators.get("close", 1.0)),
                 "EMA_50": indicators.get("EMA_50", indicators.get("close", 1.0)),
                 "MACD_HIST_12_26_9": indicators.get("MACD_HIST_12_26_9", 0.0),
-                "BB_UPPER": indicators.get("BB_UPPER", indicators.get("close", 1.0) * 1.02),
+                "BB_UPPER": indicators.get(
+                    "BB_UPPER", indicators.get("close", 1.0) * 1.02
+                ),
                 "BB_MIDDLE": indicators.get("BB_MIDDLE", indicators.get("close", 1.0)),
-                "BB_LOWER": indicators.get("BB_LOWER", indicators.get("close", 1.0) * 0.98),
+                "BB_LOWER": indicators.get(
+                    "BB_LOWER", indicators.get("close", 1.0) * 0.98
+                ),
                 "STOCH_K_14_3_3": indicators.get("STOCH_K_14_3_3", 50.0),
                 "STOCH_D_14_3_3": indicators.get("STOCH_D_14_3_3", 50.0),
             }
@@ -736,11 +854,16 @@ class MultiAssetChunkedEnv(gym.Env):
             # Ajouter tous les autres indicateurs extraits
             essential_indicators.update(indicators)
 
-            self.logger.debug(f"Indicateurs finaux extraits: {len(essential_indicators)} items")
+            self.logger.debug(
+                f"Indicateurs finaux extraits: {len(essential_indicators)} items"
+            )
             return essential_indicators
 
         except Exception as e:
-            self.logger.error(f"Erreur lors de la récupération des indicateurs de marché: {str(e)}", exc_info=True)
+            self.logger.error(
+                f"Erreur lors de la récupération des indicateurs de marché: {str(e)}",
+                exc_info=True,
+            )
             return self._get_default_market_conditions()
 
     def _get_default_market_conditions(self) -> Dict[str, float]:
@@ -871,7 +994,9 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # Limites pour les stop loss et take profit
             risk_params["stop_loss_pct"] = np.clip(
-                risk_params["stop_loss_pct"], 0.005, 0.10  # 0.5% minimum  # 10% maximum
+                risk_params["stop_loss_pct"],
+                0.005,
+                0.10,  # 0.5% minimum  # 10% maximum
             )
 
             risk_params["take_profit_pct"] = np.clip(
@@ -938,15 +1063,42 @@ class MultiAssetChunkedEnv(gym.Env):
         else:
             # Valeurs par défaut basées sur le profil du worker
             profile = self.worker_config.get("profile", "moderate")
+            # Get position size limits from configuration
+            risk_mgmt_config = (
+                self.config.get("environment", {})
+                .get("risk_management", {})
+                .get("position_sizing", {})
+            )
+
+            # Try to get current tier limits first
+            current_tier = None
+            if hasattr(self, "portfolio") and hasattr(
+                self.portfolio, "get_current_tier"
+            ):
+                try:
+                    current_tier = self.portfolio.get_current_tier()
+                except:
+                    current_tier = None
+
+            if current_tier and isinstance(current_tier, dict):
+                # Use tier-specific limits
+                self.max_position_size = (
+                    current_tier.get("max_position_size_pct", 25) / 100.0
+                )
+                self.min_position_size = 0.01  # 1% minimum for all tiers
+            else:
+                # Fall back to environment configuration
+                self.max_position_size = risk_mgmt_config.get("max_position_size", 0.25)
+                self.min_position_size = (
+                    risk_mgmt_config.get("initial_position_size", 0.1) * 0.5
+                )  # Half of initial as minimum
+
+            # Profile-based adjustments (multiplicative factors)
             if profile == "conservative":
-                self.min_position_size = 0.03  # 3%
-                self.max_position_size = 0.15  # 15%
+                self.max_position_size *= 0.6  # Reduce max by 40%
             elif profile == "aggressive":
-                self.min_position_size = 0.08  # 8%
-                self.max_position_size = 0.30  # 30%
-            else:  # moderate ou par défaut
-                self.min_position_size = 0.05  # 5%
-                self.max_position_size = 0.25  # 25%
+                self.max_position_size *= 1.2  # Increase max by 20%
+            # moderate keeps the base values
 
         # 3. Paramètres de gestion du risque
         self.max_drawdown_pct = self.risk_params.get("max_drawdown_pct", 0.25)
@@ -1002,17 +1154,19 @@ class MultiAssetChunkedEnv(gym.Env):
         # Journalisation des paramètres
         self.logger.info(
             f"Paramètres de risque initialisés - "
-            f"Taille position: {self.base_position_size*100:.1f}% "
-            f"({self.min_position_size*100:.1f}%-{self.max_position_size*100:.1f}%), "
+            f"Taille position: {self.base_position_size * 100:.1f}% "
+            f"({self.min_position_size * 100:.1f}%-{self.max_position_size * 100:.1f}%), "
             f"Risque/trade: {self.risk_per_trade:.2f}%, "
-            f"Drawdown max: {self.max_drawdown_pct*100:.1f}%, "
+            f"Drawdown max: {self.max_drawdown_pct * 100:.1f}%, "
             f"Trades conc.: {self.max_concurrent_trades}"
         )
 
     def _initialize_components(self) -> None:
         """Initialize all environment components in the correct order."""
         # DIAGNOSTIC: Tracer les appels à _initialize_components
-        self.logger.critical(f"📋 APPEL _initialize_components pour ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}")
+        self.logger.critical(
+            f"📋 APPEL _initialize_components pour ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}"
+        )
 
         # Initialize data loader FIRST to know the data structure
         if (
@@ -1060,13 +1214,16 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # Initialize PerformanceMetrics first (to be shared with PortfolioManager)
         from ..performance.metrics import PerformanceMetrics
+
         self.performance_metrics = PerformanceMetrics(
             config=self.config, worker_id=self.worker_id
         )
 
         # Initialize portfolio with mapped asset names, worker_id and shared PerformanceMetrics
         self.portfolio = PortfolioManager(
-            config=portfolio_config, worker_id=self.worker_id, performance_metrics=self.performance_metrics
+            config=portfolio_config,
+            worker_id=self.worker_id,
+            performance_metrics=self.performance_metrics,
         )
         # Create alias for backward compatibility
         self.portfolio_manager = self.portfolio
@@ -1109,7 +1266,7 @@ class MultiAssetChunkedEnv(gym.Env):
         # Initialiser le StateBuilder avec la configuration des timeframes
         self.state_builder = StateBuilder(
             features_config=features_config,
-            timeframes=self.timeframes, # Assurer que le StateBuilder connaît les timeframes attendus
+            timeframes=self.timeframes,  # Assurer que le StateBuilder connaît les timeframes attendus
             window_size=default_window_size,  # Valeur par défaut pour la rétrocompatibilité
             include_portfolio_state=True,
             normalize=True,
@@ -1146,29 +1303,42 @@ class MultiAssetChunkedEnv(gym.Env):
         dbe_config.setdefault("risk_parameters", {})
 
         # Inject position_sizing config into DBE config if not present
-        if 'position_sizing' not in dbe_config:
-            env_risk_management = self.config.get('environment', {}).get('risk_management', {})
-            if 'position_sizing' in env_risk_management:
-                dbe_config['position_sizing'] = env_risk_management['position_sizing']
+        if "position_sizing" not in dbe_config:
+            env_risk_management = self.config.get("environment", {}).get(
+                "risk_management", {}
+            )
+            if "position_sizing" in env_risk_management:
+                dbe_config["position_sizing"] = env_risk_management["position_sizing"]
             else:
-                dbe_config['position_sizing'] = {}
+                dbe_config["position_sizing"] = {}
 
         # 8. PerformanceMetrics already initialized above (shared with PortfolioManager)
 
         # SOLUTION IMMORTALITÉ ADAN: Utiliser le DBE externe ou en créer un nouveau
-        if hasattr(self, 'external_dbe') and self.external_dbe is not None:
+        if hasattr(self, "external_dbe") and self.external_dbe is not None:
             # Réutiliser le DBE immortel fourni lors de la création
             self.dynamic_behavior_engine = self.external_dbe
-            self.logger.critical(f"👑 DBE IMMORTEL RÉUTILISÉ pour ENV_ID={self.env_instance_id}, DBE_ID={id(self.external_dbe)}")
-        elif not hasattr(self, 'dynamic_behavior_engine') or self.dynamic_behavior_engine is None:
+            self.logger.critical(
+                f"👑 DBE IMMORTEL RÉUTILISÉ pour ENV_ID={self.env_instance_id}, DBE_ID={id(self.external_dbe)}"
+            )
+        elif (
+            not hasattr(self, "dynamic_behavior_engine")
+            or self.dynamic_behavior_engine is None
+        ):
             # Créer un nouveau DBE uniquement si aucun n'existe
             self.dynamic_behavior_engine = DynamicBehaviorEngine(
-                config=dbe_config, finance_manager=self.portfolio_manager, worker_id=self.worker_id
+                config=dbe_config,
+                finance_manager=self.portfolio_manager,
+                worker_id=self.worker_id,
             )
-            self.logger.critical(f"🧠 NOUVEAU DBE CRÉÉ pour ENV_ID={self.env_instance_id}")
+            self.logger.critical(
+                f"🧠 NOUVEAU DBE CRÉÉ pour ENV_ID={self.env_instance_id}"
+            )
         else:
             # Cas très rare : DBE déjà existant dans la même instance
-            self.logger.critical(f"🔄 DBE EXISTANT PRÉSERVÉ pour ENV_ID={self.env_instance_id}")
+            self.logger.critical(
+                f"🔄 DBE EXISTANT PRÉSERVÉ pour ENV_ID={self.env_instance_id}"
+            )
 
         # Création d'un alias pour la rétrocompatibilité
         self.dbe = self.dynamic_behavior_engine
@@ -1177,7 +1347,7 @@ class MultiAssetChunkedEnv(gym.Env):
         self.portfolio_manager.dbe = self.dbe
 
         # Connecter le DBE à l'environnement pour accès aux compteurs de fréquence
-        if hasattr(self.dbe, 'set_env_reference'):
+        if hasattr(self.dbe, "set_env_reference"):
             self.dbe.set_env_reference(self)
             self.logger.info("DBE connecté à l'environnement pour suivi de fréquence")
 
@@ -1275,7 +1445,9 @@ class MultiAssetChunkedEnv(gym.Env):
 
         return self.data_loader
 
-    def _safe_load_chunk(self, chunk_idx: int, fallback_enabled: bool = True) -> Dict[str, Any]:
+    def _safe_load_chunk(
+        self, chunk_idx: int, fallback_enabled: bool = True
+    ) -> Dict[str, Any]:
         """Safely load a chunk with retry mechanism and fallback.
 
         Args:
@@ -1292,20 +1464,28 @@ class MultiAssetChunkedEnv(gym.Env):
 
         for attempt in range(MAX_RELOAD_ATTEMPTS):
             try:
-                self.smart_logger.info(f"[CHUNK_LOADER] Attempting to load chunk {chunk_idx} (attempt {attempt + 1}/{MAX_RELOAD_ATTEMPTS})", rotate=True)
+                self.smart_logger.info(
+                    f"[CHUNK_LOADER] Attempting to load chunk {chunk_idx} (attempt {attempt + 1}/{MAX_RELOAD_ATTEMPTS})",
+                    rotate=True,
+                )
                 chunk_data = self.data_loader.load_chunk(chunk_idx)
-
-
 
                 # Validate chunk data
                 if chunk_data and any(chunk_data.get(asset) for asset in chunk_data):
-                    self.smart_logger.info(f"[CHUNK_LOADER] Successfully loaded chunk {chunk_idx} on attempt {attempt + 1}", rotate=True)
+                    self.smart_logger.info(
+                        f"[CHUNK_LOADER] Successfully loaded chunk {chunk_idx} on attempt {attempt + 1}",
+                        rotate=True,
+                    )
                     return chunk_data
                 else:
-                    self.smart_logger.warning(f"[CHUNK_LOADER] Chunk {chunk_idx} loaded but contains no valid data (attempt {attempt + 1})")
+                    self.smart_logger.warning(
+                        f"[CHUNK_LOADER] Chunk {chunk_idx} loaded but contains no valid data (attempt {attempt + 1})"
+                    )
 
             except Exception as e:
-                self.smart_logger.error(f"[CHUNK_LOADER] Failed to load chunk {chunk_idx} on attempt {attempt + 1}: {str(e)}")
+                self.smart_logger.error(
+                    f"[CHUNK_LOADER] Failed to load chunk {chunk_idx} on attempt {attempt + 1}: {str(e)}"
+                )
 
                 # Wait before retry (except on last attempt)
                 if attempt < MAX_RELOAD_ATTEMPTS - 1:
@@ -1313,19 +1493,32 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # All attempts failed, try fallback if enabled
         if fallback_enabled and chunk_idx != RELOAD_FALLBACK_CHUNK:
-            self.smart_logger.warning(f"[CHUNK_LOADER] All attempts failed for chunk {chunk_idx}, falling back to chunk {RELOAD_FALLBACK_CHUNK}")
+            self.smart_logger.warning(
+                f"[CHUNK_LOADER] All attempts failed for chunk {chunk_idx}, falling back to chunk {RELOAD_FALLBACK_CHUNK}"
+            )
             try:
                 fallback_data = self.data_loader.load_chunk(RELOAD_FALLBACK_CHUNK)
-                if fallback_data and any(fallback_data.get(asset) for asset in fallback_data):
-                    self.smart_logger.info(f"[CHUNK_LOADER] Successfully loaded fallback chunk {RELOAD_FALLBACK_CHUNK}", rotate=True)
+                if fallback_data and any(
+                    fallback_data.get(asset) for asset in fallback_data
+                ):
+                    self.smart_logger.info(
+                        f"[CHUNK_LOADER] Successfully loaded fallback chunk {RELOAD_FALLBACK_CHUNK}",
+                        rotate=True,
+                    )
                     return fallback_data
                 else:
-                    self.smart_logger.error(f"[CHUNK_LOADER] Fallback chunk {RELOAD_FALLBACK_CHUNK} is also empty or invalid")
+                    self.smart_logger.error(
+                        f"[CHUNK_LOADER] Fallback chunk {RELOAD_FALLBACK_CHUNK} is also empty or invalid"
+                    )
             except Exception as e:
-                self.smart_logger.error(f"[CHUNK_LOADER] Fallback chunk {RELOAD_FALLBACK_CHUNK} also failed to load: {str(e)}")
+                self.smart_logger.error(
+                    f"[CHUNK_LOADER] Fallback chunk {RELOAD_FALLBACK_CHUNK} also failed to load: {str(e)}"
+                )
 
         # If we get here, everything failed
-        raise RuntimeError(f"Failed to load chunk {chunk_idx} after {MAX_RELOAD_ATTEMPTS} attempts and fallback failed")
+        raise RuntimeError(
+            f"Failed to load chunk {chunk_idx} after {MAX_RELOAD_ATTEMPTS} attempts and fallback failed"
+        )
         logger.info(
             f"Initialized data loader with {len(mapped_assets)} assets: {', '.join(mapped_assets)}"
         )
@@ -1340,19 +1533,28 @@ class MultiAssetChunkedEnv(gym.Env):
         """Configure les espaces d'action et d'observation pour le modèle."""
         # L'espace d'action reste un vecteur continu pour la taille des positions et le choix du timeframe.
         num_actions = len(self.assets) + 1
-        self.action_space = gym.spaces.Box(
-            low=-1.0,
-            high=1.0,
-            shape=(num_actions,),
-            dtype=np.float32,
+        # Solution pragmatique: maintenir 5 actifs pour compatibilité avec anciens modèles PPO
+        # Les actifs non utilisés seront ignorés dans _execute_trades
+        self.action_space = spaces.Box(
+            low=-1,
+            high=1,
+            shape=(15,),
+            dtype=np.float32,  # 5 actifs × 3 = 15 dimensions
         )
         logger.info(f"Espace d'action configuré : {self.action_space}")
+        logger.info(f"Actifs configurés : {len(self.assets)}/5 actifs ({self.assets})")
+        if len(self.assets) < 5:
+            logger.info(
+                f"🔧 Mode compatibilité : {5 - len(self.assets)} actifs non utilisés seront ignorés"
+            )
 
         # --- NOUVEL ESPACE D'OBSERVATION (MULTI-TIMEFRAME DICT) ---
         try:
             env_obs_cfg = self.config.get("environment", {}).get("observation", {})
-            window_sizes = env_obs_cfg.get("window_sizes", {"5m": 20, "1h": 10, "4h": 5})
-            
+            window_sizes = env_obs_cfg.get(
+                "window_sizes", {"5m": 20, "1h": 10, "4h": 5}
+            )
+
             # Déterminer le nombre de features à partir de la configuration du StateBuilder
             first_tf = self.timeframes[0]
             n_features = len(self.state_builder.get_feature_names(first_tf))
@@ -1367,9 +1569,11 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
                 for tf in self.timeframes
             }
-            
+
             # Ajouter l'état du portefeuille
-            portfolio_state_dim = 17
+            portfolio_state_dim = (
+                20  # Mis à jour pour inclure les flux de fonds (deposits/withdrawals)
+            )
             market_spaces["portfolio_state"] = spaces.Box(
                 low=-np.inf,
                 high=np.inf,
@@ -1378,10 +1582,15 @@ class MultiAssetChunkedEnv(gym.Env):
             )
 
             self.observation_space = spaces.Dict(market_spaces)
-            logger.info(f"Espace d'observation reconfiguré pour CNN multi-échelle: {self.observation_space}")
+            logger.info(
+                f"Espace d'observation reconfiguré pour CNN multi-échelle: {self.observation_space}"
+            )
 
         except Exception as e:
-            logger.error(f"Erreur lors de la configuration du nouvel espace d'observation : {str(e)}", exc_info=True)
+            logger.error(
+                f"Erreur lors de la configuration du nouvel espace d'observation : {str(e)}",
+                exc_info=True,
+            )
             raise
 
     def _get_initial_observation(self) -> Dict[str, np.ndarray]:
@@ -1390,7 +1599,9 @@ class MultiAssetChunkedEnv(gym.Env):
         This method now directly calls _get_observation to ensure consistency
         with the new multi-timeframe dictionary-based observation space.
         """
-        self.logger.debug("Redirecting initial observation to main _get_observation method.")
+        self.logger.debug(
+            "Redirecting initial observation to main _get_observation method."
+        )
         return self._get_observation()
 
     def _set_start_step_for_chunk(self):
@@ -1424,7 +1635,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
             else:
                 # For very small chunks, start near the beginning
-                self.step_in_chunk = min(10, min_len - 5) if min_len and min_len > 10 else 1
+                self.step_in_chunk = (
+                    min(10, min_len - 5) if min_len and min_len > 10 else 1
+                )
                 logger.warning(
                     f"Small chunk detected (min_len={min_len}), starting at step {self.step_in_chunk}"
                 )
@@ -1432,7 +1645,10 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception as e:
             logger.warning(f"Failed to set warmup step_in_chunk: {e}")
             self.step_in_chunk = 1  # Safe fallback
-    def _calculate_excellence_bonus(self, base_reward: float, worker_id: int = 0) -> float:
+
+    def _calculate_excellence_bonus(
+        self, base_reward: float, worker_id: int = 0
+    ) -> float:
         """Calcule les bonus d'excellence Gugu & March"""
         if not self.excellence_rewards or not EXCELLENCE_SYSTEM_AVAILABLE:
             return 0.0
@@ -1442,13 +1658,17 @@ class MultiAssetChunkedEnv(gym.Env):
             metrics = self._build_excellence_metrics(worker_id)
 
             # Calculer les bonus d'excellence
-            total_bonus, bonus_breakdown = self.excellence_rewards.calculate_excellence_bonus(
-                base_reward, metrics, trade_won=(base_reward > 0)
+            total_bonus, bonus_breakdown = (
+                self.excellence_rewards.calculate_excellence_bonus(
+                    base_reward, metrics, trade_won=(base_reward > 0)
+                )
             )
 
             # Logger si bonus significatif
             if total_bonus > 0.01:
-                logger.debug(f"[GUGU-MARCH] Worker {worker_id} excellence bonus: {total_bonus:.4f}")
+                logger.debug(
+                    f"[GUGU-MARCH] Worker {worker_id} excellence bonus: {total_bonus:.4f}"
+                )
 
             return total_bonus
 
@@ -1456,10 +1676,11 @@ class MultiAssetChunkedEnv(gym.Env):
             logger.warning(f"[GUGU-MARCH] Error calculating excellence bonus: {e}")
             return 0.0
 
-    def _build_excellence_metrics(self, worker_id: int = 0) -> 'ExcellenceMetrics':
+    def _build_excellence_metrics(self, worker_id: int = 0) -> "ExcellenceMetrics":
         """Construit les métriques d'excellence pour un worker"""
         if not EXCELLENCE_SYSTEM_AVAILABLE:
             from dataclasses import dataclass
+
             @dataclass
             class DummyMetrics:
                 sharpe_ratio: float = 0.0
@@ -1467,12 +1688,21 @@ class MultiAssetChunkedEnv(gym.Env):
                 win_rate: float = 0.5
                 winning_streak: int = 0
                 total_trades: int = 0
+
             return DummyMetrics()
 
         try:
             # Récupérer les métriques depuis le portfolio manager
-            portfolio = self.portfolio_managers[worker_id] if hasattr(self, 'portfolio_managers') else self.portfolio_manager
-            perf_metrics = self.performance_metrics[worker_id] if hasattr(self, 'performance_metrics') else self.performance_metrics
+            portfolio = (
+                self.portfolio_managers[worker_id]
+                if hasattr(self, "portfolio_managers")
+                else self.portfolio_manager
+            )
+            perf_metrics = (
+                self.performance_metrics[worker_id]
+                if hasattr(self, "performance_metrics")
+                else self.performance_metrics
+            )
 
             metrics_summary = perf_metrics.get_metrics_summary() if perf_metrics else {}
 
@@ -1480,13 +1710,15 @@ class MultiAssetChunkedEnv(gym.Env):
             timeframe_signals = self._analyze_current_confluence(worker_id)
 
             return ExcellenceMetrics(
-                sharpe_ratio=metrics_summary.get('sharpe_ratio', 0.0),
-                profit_factor=metrics_summary.get('profit_factor', 1.0),
-                win_rate=metrics_summary.get('win_rate', 0.5),
-                winning_streak=getattr(self.excellence_rewards, 'last_winning_streak', 0),
-                total_trades=metrics_summary.get('total_trades', 0),
+                sharpe_ratio=metrics_summary.get("sharpe_ratio", 0.0),
+                profit_factor=metrics_summary.get("profit_factor", 1.0),
+                win_rate=metrics_summary.get("win_rate", 0.5),
+                winning_streak=getattr(
+                    self.excellence_rewards, "last_winning_streak", 0
+                ),
+                total_trades=metrics_summary.get("total_trades", 0),
                 current_drawdown=portfolio.current_drawdown_pct if portfolio else 0.0,
-                timeframe_signals=timeframe_signals
+                timeframe_signals=timeframe_signals,
             )
 
         except Exception as e:
@@ -1500,15 +1732,19 @@ class MultiAssetChunkedEnv(gym.Env):
             confluence = {"5m": False, "1h": False, "4h": False}
 
             # Exemple: vérifier si les indicateurs sont alignés
-            if hasattr(self, 'current_observations') and self.current_observations:
-                obs = self.current_observations[worker_id] if isinstance(self.current_observations, list) else self.current_observations
+            if hasattr(self, "current_observations") and self.current_observations:
+                obs = (
+                    self.current_observations[worker_id]
+                    if isinstance(self.current_observations, list)
+                    else self.current_observations
+                )
 
                 # Logique simplifiée de confluence (à personnaliser)
                 # Par exemple, vérifier RSI et MACD sur différents TF
-                for tf in ['5m', '1h', '4h']:
-                    if f'rsi_{tf}' in obs:
-                        rsi = obs[f'rsi_{tf}']
-                        macd = obs.get(f'macd_{tf}', 0)
+                for tf in ["5m", "1h", "4h"]:
+                    if f"rsi_{tf}" in obs:
+                        rsi = obs[f"rsi_{tf}"]
+                        macd = obs.get(f"macd_{tf}", 0)
                         # Signal haussier si RSI < 70 et MACD > 0
                         confluence[tf] = (20 < rsi < 70) and (macd > -0.1)
 
@@ -1517,7 +1753,6 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception as e:
             logger.debug(f"[GUGU-MARCH] Error in confluence analysis: {e}")
             return {"5m": False, "1h": False, "4h": False}
-
 
     def reset(self, *, seed=None, options=None):
         """Reset the environment to start a new episode.
@@ -1530,7 +1765,9 @@ class MultiAssetChunkedEnv(gym.Env):
             tuple: (observation, info) containing the initial observation and info
         """
         # DIAGNOSTIC: Tracer les appels à reset
-        self.logger.critical(f"🔄 RESET appelé pour ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}, Worker={getattr(self, 'worker_id', 'UNKNOWN')}, DBE_ID={id(self.dbe) if hasattr(self, 'dbe') else 'NONE'}")
+        self.logger.critical(
+            f"🔄 RESET appelé pour ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}, Worker={getattr(self, 'worker_id', 'UNKNOWN')}, DBE_ID={id(self.dbe) if hasattr(self, 'dbe') else 'NONE'}"
+        )
         super().reset(seed=seed)
 
         # Reset episode-specific variables
@@ -1540,12 +1777,7 @@ class MultiAssetChunkedEnv(gym.Env):
         self.step_in_chunk = 0
 
         # Reset frequency tracking counters
-        self.positions_count = {
-            '5m': 0,
-            '1h': 0,
-            '4h': 0,
-            'daily_total': 0
-        }
+        self.positions_count = {"5m": 0, "1h": 0, "4h": 0, "daily_total": 0}
         self.daily_reset_step = 0
         self.current_day = 0
         self._last_trade_count = 0  # Initialize trade count tracking
@@ -1555,7 +1787,9 @@ class MultiAssetChunkedEnv(gym.Env):
             self.last_trade_step = -1
 
         # Determine if this is a true new episode or just a reset
-        is_new_episode = not hasattr(self, '_episode_initialized') or getattr(self, '_needs_full_reset', False)
+        is_new_episode = not hasattr(self, "_episode_initialized") or getattr(
+            self, "_needs_full_reset", False
+        )
 
         # Reset the environment with appropriate parameters
         self._epoch_reset(force=False, new_epoch=is_new_episode)
@@ -1566,10 +1800,12 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # CORRECTION CRITIQUE : Réinitialiser les index de chunks
         self.current_chunk_idx = 0
-        if hasattr(self, 'current_chunk'):
+        if hasattr(self, "current_chunk"):
             self.current_chunk = 0
 
-        logger.info(f"[RESET Worker {getattr(self, 'worker_id', 0)}] Starting new episode - Loading chunk 1/{getattr(self, 'total_chunks', 'unknown')}")
+        logger.info(
+            f"[RESET Worker {getattr(self, 'worker_id', 0)}] Starting new episode - Loading chunk 1/{getattr(self, 'total_chunks', 'unknown')}"
+        )
         self.current_data = self._safe_load_chunk(self.current_chunk_idx)
 
         # Position the step within the chunk to ensure a non-empty observation window
@@ -1803,7 +2039,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 self.excellence_rewards = create_excellence_rewards_system(self.config)
                 logger.info("[GUGU-MARCH] Excellence rewards system initialized")
             except Exception as e:
-                logger.warning(f"[GUGU-MARCH] Failed to initialize excellence system: {e}")
+                logger.warning(
+                    f"[GUGU-MARCH] Failed to initialize excellence system: {e}"
+                )
                 self.excellence_rewards = None
         else:
             self.excellence_rewards = None
@@ -1876,7 +2114,7 @@ class MultiAssetChunkedEnv(gym.Env):
         position_actions = action[:-1]
 
         # Determine the selected timeframe and store it
-        timeframes = getattr(self, 'timeframes', ['5m', '1h', '4h'])
+        timeframes = getattr(self, "timeframes", ["5m", "1h", "4h"])
         timeframe_idx = int(round((timeframe_action + 1) / 2 * (len(timeframes) - 1)))
         selected_timeframe = timeframes[timeframe_idx]
         self.current_timeframe_for_trade = selected_timeframe
@@ -1889,8 +2127,11 @@ class MultiAssetChunkedEnv(gym.Env):
         # Generate correlation_id for this step
         correlation_id = str(uuid.uuid4())
         # Log uniquement depuis le worker principal pour éviter les duplications
-        if getattr(self, 'worker_id', 0) == 0:
-            logger.info(f"[STEP] Starting step {self.current_step}", extra={'correlation_id': correlation_id})
+        if getattr(self, "worker_id", 0) == 0:
+            logger.info(
+                f"[STEP] Starting step {self.current_step}",
+                extra={"correlation_id": correlation_id},
+            )
 
         # Mise à jour des paramètres de risque si le sizing dynamique est activé
         if getattr(self, "dynamic_position_sizing", False) and self.current_step > 0:
@@ -1910,25 +2151,55 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # Initialize Rich console once per environment if not done already
         if not hasattr(self, "_rich_initialized"):
+            self._rich_console = None
+            self._rich_table = None
+            self._rich_text = None
+
             try:
                 from rich.console import Console
                 from rich.table import Table
                 from rich.text import Text
 
-                self._rich_console = Console(
-                    force_terminal=True, force_interactive=True
-                )
-                self._rich_table = Table
-                self._rich_text = Text
-                self._rich_initialized = True
-                self._rich_last_print = 0
-                self._rich_print_interval = max(
-                    1, int(os.getenv("ADAN_RICH_STEP_EVERY", "10"))
-                )
+                # Tentative 1: Configuration complète
+                try:
+                    self._rich_console = Console(
+                        force_terminal=True, force_interactive=True
+                    )
+                    self.logger.debug(
+                        "Rich console initialized with full terminal support"
+                    )
+                except Exception:
+                    # Tentative 2: Configuration de base
+                    try:
+                        self._rich_console = Console()
+                        self.logger.debug(
+                            "Rich console initialized with basic configuration"
+                        )
+                    except Exception:
+                        # Tentative 3: Mode fichier
+                        import io
+
+                        self._rich_console = Console(file=io.StringIO())
+                        self.logger.debug("Rich console initialized in file mode")
+
+                if self._rich_console:
+                    self._rich_table = Table
+                    self._rich_text = Text
+                    self._rich_last_print = 0
+                    self._rich_print_interval = max(
+                        1, int(os.getenv("ADAN_RICH_STEP_EVERY", "10"))
+                    )
+                    self.logger.info(
+                        f"Rich table display enabled (interval: {self._rich_print_interval} steps)"
+                    )
+
             except Exception as e:
                 self._rich_console = None
-                self._rich_initialized = True
-                self.logger.debug(f"Rich console disabled: {e}")
+                self.logger.warning(
+                    f"Rich console initialization failed: {e}. Falling back to standard logging."
+                )
+
+            self._rich_initialized = True
 
         if not self._is_initialized:
             raise RuntimeError("Environment not initialized. Call reset() first.")
@@ -1959,29 +2230,49 @@ class MultiAssetChunkedEnv(gym.Env):
         self.step_in_chunk += 1
 
         # Update current day for frequency tracking
-        current_day = getattr(self, 'data', {}).get('TIMESTAMP', pd.Series()).iloc[min(self.current_step, len(getattr(self, 'data', {}).get('TIMESTAMP', pd.Series())) - 1)] // (24 * 60 * 60 * 1000) if hasattr(self, 'data') and 'TIMESTAMP' in self.data else self.current_step // 288
+        current_day = (
+            getattr(self, "data", {})
+            .get("TIMESTAMP", pd.Series())
+            .iloc[
+                min(
+                    self.current_step,
+                    len(getattr(self, "data", {}).get("TIMESTAMP", pd.Series())) - 1,
+                )
+            ]
+            // (24 * 60 * 60 * 1000)
+            if hasattr(self, "data") and "TIMESTAMP" in self.data
+            else self.current_step // 288
+        )
 
-        if not hasattr(self, 'current_day') or self.current_day != current_day:
+        if not hasattr(self, "current_day") or self.current_day != current_day:
             self.current_day = current_day
             # Reset daily counters
-            self.positions_count = {'daily_total': 0, '5m': 0, '1h': 0, '4h': 0}
-            if not hasattr(self, 'last_trade_steps_by_tf'):
+            self.positions_count = {"daily_total": 0, "5m": 0, "1h": 0, "4h": 0}
+            if not hasattr(self, "last_trade_steps_by_tf"):
                 self.last_trade_steps_by_tf = {}
 
         # Determine current timeframe
-        timeframe = self.get_current_timeframe() if hasattr(self, 'get_current_timeframe') else '5m'
+        timeframe = (
+            self.get_current_timeframe()
+            if hasattr(self, "get_current_timeframe")
+            else "5m"
+        )
 
         # Get frequency configuration
-        frequency_config = self.config.get('trading_rules', {}).get('frequency', {})
-        action_threshold = frequency_config.get('action_threshold', 0.3)
-        force_trade_steps = frequency_config.get('force_trade_steps', 50)
-        min_positions = frequency_config.get('min_positions', {})
+        frequency_config = self.config.get("trading_rules", {}).get("frequency", {})
+        action_threshold = frequency_config.get("action_threshold", 0.3)
+        force_trade_steps = frequency_config.get("force_trade_steps", 50)
+        min_positions = frequency_config.get("min_positions", {})
         min_pos_tf = min_positions.get(timeframe, 1)
 
         # Check if trade should be forced
-        steps_since_last_trade = self.current_step - self.last_trade_steps_by_tf.get(timeframe, 0)
-        should_force_trade = (self.positions_count.get(timeframe, 0) < min_pos_tf and
-                             steps_since_last_trade >= force_trade_steps)
+        steps_since_last_trade = self.current_step - self.last_trade_steps_by_tf.get(
+            timeframe, 0
+        )
+        should_force_trade = (
+            self.positions_count.get(timeframe, 0) < min_pos_tf
+            and steps_since_last_trade >= force_trade_steps
+        )
 
         # Note: Trade execution is now handled in _execute_trades method
         # This section previously contained duplicate trade counting logic
@@ -2053,10 +2344,15 @@ class MultiAssetChunkedEnv(gym.Env):
             # Préparation de l'action
             action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
-            if action.shape != (len(self.assets),):
+            # Validation pour 5 actifs avec support pour actions de taille 14 (compatibilité modèles PPO existants)
+            if action.shape == (14,):
+                # Padding temporaire : ajouter un zéro pour compatibilité 15 dimensions
+                action = np.pad(action, (0, 1), mode="constant", constant_values=0.0)
+                logger.debug(f"[ACTION_COMPAT] Action paddée de 14 à 15 dimensions")
+            elif action.shape != (15,):
                 raise ValueError(
                     f"Action shape {action.shape} does not match "
-                    f"expected shape (n_assets={len(self.assets)},)"
+                    f"expected shape (5 actifs × 3 = 15,) ou (14,) pour compatibilité"
                 )
 
             # Early risk check before executing any trades
@@ -2066,14 +2362,25 @@ class MultiAssetChunkedEnv(gym.Env):
             try:
                 # Update portfolio with current prices and enforce protection limits
                 if hasattr(self, "portfolio_manager"):
-                    positions_before = {k: v.is_open for k, v in self.portfolio_manager.positions.items()}
-                    self.portfolio_manager.update_market_price(current_prices, self.current_step)
-                    positions_after = {k: v.is_open for k, v in self.portfolio_manager.positions.items()}
+                    positions_before = {
+                        k: v.is_open
+                        for k, v in self.portfolio_manager.positions.items()
+                    }
+                    self.portfolio_manager.update_market_price(
+                        current_prices, self.current_step
+                    )
+                    positions_after = {
+                        k: v.is_open
+                        for k, v in self.portfolio_manager.positions.items()
+                    }
 
                     # Check for closed positions and log them
                     for asset, was_open in positions_before.items():
                         if was_open and not positions_after.get(asset, True):
-                            self.smart_logger.info(f"Position for {asset} was closed during market price update (SL/TP or stale).", rotate=True)
+                            self.smart_logger.info(
+                                f"Position for {asset} was closed during market price update (SL/TP or stale).",
+                                rotate=True,
+                            )
 
                     protection_triggered = (
                         self.portfolio_manager.check_protection_limits(current_prices)
@@ -2107,11 +2414,42 @@ class MultiAssetChunkedEnv(gym.Env):
             except Exception as risk_e:
                 logger.error("Early risk check failed: %s", str(risk_e), exc_info=True)
 
+            # Extract risk_horizon from action before DBE computation
+            # For the first asset (i=0), risk_horizon is at action[1]
+            risk_horizon = float(action[1]) if len(action) > 1 else 0.0
+
+            # Extract desired_position_size from action before DBE computation
+            # For the first asset (i=0), desired_position_size is at action[2]
+            desired_position_size = float(action[2]) if len(action) > 2 else 0.0
+
             # Mise à jour de l'état DBE et calcul de la modulation
             # DIAGNOSTIC: Tracer l'utilisation du DBE dans step()
-            self.logger.debug(f"🎯 STEP utilise DBE - ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}, Step={self.current_step}, DBE_ID={id(self.dbe) if hasattr(self, 'dbe') else 'NONE'}")
+            self.logger.debug(
+                f"🎯 STEP utilise DBE - ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}, Step={self.current_step}, DBE_ID={id(self.dbe) if hasattr(self, 'dbe') else 'NONE'}"
+            )
             self._update_dbe_state()
-            dbe_modulation = self.dbe.compute_dynamic_modulation()
+            # Calcul des paramètres de risque dynamiques via le DBE
+            dbe_modulation = self.dbe.compute_dynamic_modulation(
+                env=self,
+                risk_horizon=risk_horizon,
+            )
+
+            # Ajuster la taille de position finale en fonction de desired_position_size
+            final_position_size_pct = dbe_modulation.get(
+                "position_size_pct", self.portfolio.pos_size_pct
+            )
+            # desired_position_size est entre -1 et 1. Le mapper à un multiplicateur, par exemple 0.5 à 1.5
+            size_multiplier = 1.0 + (
+                desired_position_size * 0.5
+            )  # Multiplicateur de 0.5 à 1.5
+            final_position_size_pct *= size_multiplier
+            # Clamper à une plage valide (utiliser les limites du portefeuille si disponibles)
+            final_position_size_pct = np.clip(
+                final_position_size_pct,
+                self.min_position_size,
+                self.max_position_size,
+            )
+            dbe_modulation["position_size_pct"] = final_position_size_pct
 
             # Exécution des trades avec modulation DBE et récupération du PnL réalisé
             # Capture positions snapshot before executing trades to detect activity
@@ -2129,14 +2467,40 @@ class MultiAssetChunkedEnv(gym.Env):
                 logger.debug(f"[STEP] Failed capturing positions before trade: {_e}")
 
             trade_start_time = time.time()
-            realized_pnl = self._execute_trades(action, dbe_modulation)
+            realized_pnl = self._execute_trades(action, dbe_modulation, should_force_trade)
 
             # --- CORRECT REWARD CALCULATION ---
             # This is the single source of truth for reward calculation,
             # happening AFTER trades are executed and counters updated.
-            reward = self._calculate_reward(action)
+            # Extraire risk_horizon et trade_reason des reçus fermés
+            extracted_risk_horizon = 0.0
+            extracted_trade_reason = None
+            if self._step_closed_receipts:
+                first_receipt = self._step_closed_receipts[0]
+                extracted_risk_horizon = first_receipt.get("risk_horizon", 0.0)
+                extracted_trade_reason = first_receipt.get("reason", None)
+
+            # Define action_type for reward calculation
+            action_type = "step"  # Standard step action type
+
+            # Initialize optional reward calculation variables
+            optimal_chunk_pnl = 0.0  # Default optimal PnL for this chunk
+            performance_ratio = 1.0  # Default performance ratio (neutral)
+            is_hunting = False  # Default hunting mode (not hunting)
+
+            reward = self.reward_calculator.calculate(
+                portfolio_metrics=self.portfolio.get_metrics(),
+                trade_pnl=realized_pnl,
+                action=action_type,
+                chunk_id=self.current_chunk_idx,
+                optimal_chunk_pnl=optimal_chunk_pnl,
+                performance_ratio=performance_ratio,
+                is_hunting=is_hunting,
+                risk_horizon=extracted_risk_horizon,
+                trade_reason=extracted_trade_reason,
+            )
             self._last_reward = reward
-            self._cumulative_reward = getattr(self, '_cumulative_reward', 0.0) + reward
+            self._cumulative_reward = getattr(self, "_cumulative_reward", 0.0) + reward
             self._validate_frequency()
             trade_end_time = time.time()
             logger.debug(
@@ -2164,7 +2528,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 logger.debug(f"[STEP] Failed detecting trade activity: {_e}")
 
             # Journalisation du PnL réalisé (uniquement depuis worker principal)
-            if getattr(self, 'worker_id', 0) == 0:
+            if getattr(self, "worker_id", 0) == 0:
                 logger.info(f"[REWARD] Realized PnL for step: ${realized_pnl:.2f}")
 
             # step_in_chunk is already incremented earlier in step() method - removing duplicate
@@ -2175,14 +2539,22 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # DIAGNOSTIC LOGS - Comprendre pourquoi les chunks ne transitionnent jamais
             if self.current_step % 50 == 0:  # Log tous les 50 steps pour éviter le spam
-                logger.info(f"[CHUNK DIAGNOSTIC Worker {self.worker_id}] step_in_chunk: {self.step_in_chunk}, data_length: {data_length}, current_chunk: {self.current_chunk_idx + 1}/{getattr(self, 'total_chunks', 'unknown')}")
+                logger.info(
+                    f"[CHUNK DIAGNOSTIC Worker {self.worker_id}] step_in_chunk: {self.step_in_chunk}, data_length: {data_length}, current_chunk: {self.current_chunk_idx + 1}/{getattr(self, 'total_chunks', 'unknown')}"
+                )
 
-            MIN_EPISODE_STEPS = 288  # Minimum pour une journée complète (288 steps * 5m = 1 jour)
+            MIN_EPISODE_STEPS = (
+                288  # Minimum pour une journée complète (288 steps * 5m = 1 jour)
+            )
             done = False
             termination_reason = ""
 
             # Check if we should terminate based on frequency check interval or other conditions
-            frequency_check_interval = self.config.get('trading', {}).get('frequency', {}).get('frequency_check_interval', 288)
+            frequency_check_interval = (
+                self.config.get("trading", {})
+                .get("frequency", {})
+                .get("frequency_check_interval", 288)
+            )
 
             # Determiner steps_since_trade pour la logique de terminaison
 
@@ -2193,7 +2565,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 else str(self.current_step - self.last_trade_step)
             )
             # Log de vérification de terminaison (uniquement depuis worker principal)
-            if getattr(self, 'worker_id', 0) == 0:
+            if getattr(self, "worker_id", 0) == 0:
                 logger.info(
                     f"[TERMINATION CHECK] Step: {self.current_step}, "
                     f"Max Steps: {self.max_steps}, "
@@ -2217,7 +2589,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 termination_reason = (
                     f"Max steps reached ({self.current_step} >= {self.max_steps})"
                 )
-                logger.info(f"[TERMINATION Worker {self.worker_id}] {termination_reason}")
+                logger.info(
+                    f"[TERMINATION Worker {self.worker_id}] {termination_reason}"
+                )
             elif (
                 self.portfolio_manager.get_portfolio_value()
                 <= self.portfolio_manager.initial_equity * 0.70
@@ -2227,7 +2601,9 @@ class MultiAssetChunkedEnv(gym.Env):
                     f"Portfolio value too low ({self.portfolio_manager.get_portfolio_value():.2f} "
                     f"<= {self.portfolio_manager.initial_equity * 0.50:.2f})"
                 )
-                logger.info(f"[TERMINATION Worker {self.worker_id}] {termination_reason}")
+                logger.info(
+                    f"[TERMINATION Worker {self.worker_id}] {termination_reason}"
+                )
             # DÉSACTIVÉ : Cette condition terminait l'épisode trop agressivement, empêchant l'apprentissage
             # La condition originale était : 144 * 5 = 720 steps sans trade = terminaison
             # elif self.current_step - self.last_trade_step > self.config.get('trading', {}).get('frequency', {}).get('force_trade_steps', 144) * 5:
@@ -2236,9 +2612,16 @@ class MultiAssetChunkedEnv(gym.Env):
             #     logger.info(f"[TERMINATION Worker {self.worker_id}] {termination_reason}")
 
             # NOUVELLE LOGIQUE : Terminaison seulement après un chunk complet sans trades (plus permissive)
-            force_trade_limit = self.config.get('trading', {}).get('frequency', {}).get('force_trade_steps', 144) * 10  # 1440 steps = ~5 jours
+            force_trade_limit = (
+                self.config.get("trading", {})
+                .get("frequency", {})
+                .get("force_trade_steps", 144)
+                * 10
+            )  # 1440 steps = ~5 jours
             if self.current_step - self.last_trade_step > force_trade_limit:
-                logger.warning(f"[TERMINATION WARNING Worker {self.worker_id}] Long period without trades: {self.current_step - self.last_trade_step} steps > {force_trade_limit}")
+                logger.warning(
+                    f"[TERMINATION WARNING Worker {self.worker_id}] Long period without trades: {self.current_step - self.last_trade_step} steps > {force_trade_limit}"
+                )
                 # NE PAS TERMINER - laisser l'agent apprendre même s'il ne trade pas immédiatement
                 # done = True
                 # termination_reason = f"No trades for very long ({self.current_step - self.last_trade_step} steps)"
@@ -2250,19 +2633,27 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # DIAGNOSTIC CRITIQUE : Vérifier si nous avons atteint la fin du chunk actuel
             transition_threshold = data_length - 1
-            logger.debug(f"[CHUNK TRANSITION CHECK Worker {self.worker_id}] step_in_chunk: {self.step_in_chunk}, threshold: {transition_threshold}, will_transition: {self.step_in_chunk >= transition_threshold}")
+            logger.debug(
+                f"[CHUNK TRANSITION CHECK Worker {self.worker_id}] step_in_chunk: {self.step_in_chunk}, threshold: {transition_threshold}, will_transition: {self.step_in_chunk >= transition_threshold}"
+            )
 
             if self.step_in_chunk >= data_length - 1:
-                logger.info(f"[CHUNK TRANSITION Worker {self.worker_id}] End of chunk {self.current_chunk_idx + 1} reached (step_in_chunk: {self.step_in_chunk} >= {data_length - 1})")
+                logger.info(
+                    f"[CHUNK TRANSITION Worker {self.worker_id}] End of chunk {self.current_chunk_idx + 1} reached (step_in_chunk: {self.step_in_chunk} >= {data_length - 1})"
+                )
                 self.current_chunk_idx += 1
                 self.current_chunk += 1
 
                 # POINT CRITIQUE : Réinitialiser le compteur step_in_chunk pour le nouveau chunk
                 self.step_in_chunk = 0
 
-                if hasattr(self, 'portfolio') and hasattr(self.portfolio, 'check_reset'):
+                if hasattr(self, "portfolio") and hasattr(
+                    self.portfolio, "check_reset"
+                ):
                     if self.portfolio.check_reset(chunk_completed=True):
-                        logger.info("[HARD RESET] Portfolio reset performed due to capital below threshold")
+                        logger.info(
+                            "[HARD RESET] Portfolio reset performed due to capital below threshold"
+                        )
                     else:
                         logger.debug("[NO RESET] Capital OK, continuité préservée")
 
@@ -2281,45 +2672,77 @@ class MultiAssetChunkedEnv(gym.Env):
                         f"{chunks_limit}"
                     )
                     try:
-                        self.current_data = self._safe_load_chunk(self.current_chunk_idx)
+                        self.current_data = self._safe_load_chunk(
+                            self.current_chunk_idx
+                        )
                         self._set_start_step_for_chunk()  # Reposition step to skip warmup period
-                        logger.info(f"[CHUNK] Successfully loaded chunk {self.current_chunk_idx + 1}/{chunks_limit}")
+                        logger.info(
+                            f"[CHUNK] Successfully loaded chunk {self.current_chunk_idx + 1}/{chunks_limit}"
+                        )
                     except Exception as e:
-                        logger.error(f"[CHUNK] Failed to load chunk {self.current_chunk_idx + 1}: {e}")
+                        logger.error(
+                            f"[CHUNK] Failed to load chunk {self.current_chunk_idx + 1}: {e}"
+                        )
                         done = True
                         self.done = True
-                        termination_reason = f"Failed to load chunk {self.current_chunk_idx + 1}: {e}"
+                        termination_reason = (
+                            f"Failed to load chunk {self.current_chunk_idx + 1}: {e}"
+                        )
 
                     # Réinitialiser les composants pour le nouveau chunk avec continuité
-                    if hasattr(self, 'dbe') and hasattr(self.dbe, "reset_for_new_chunk"):
+                    if hasattr(self, "dbe") and hasattr(
+                        self.dbe, "reset_for_new_chunk"
+                    ):
                         try:
                             with self.logger_lock:
-                                logger.debug(f"[DBE {self.worker_id}] Resetting DBE for new chunk with continuity")
+                                logger.debug(
+                                    f"[DBE {self.worker_id}] Resetting DBE for new chunk with continuity"
+                                )
                         except AttributeError:
-                            logger.debug(f"[DBE {self.worker_id}] Resetting DBE for new chunk with continuity")
+                            logger.debug(
+                                f"[DBE {self.worker_id}] Resetting DBE for new chunk with continuity"
+                            )
                         self.dbe.reset_for_new_chunk(continuity=True)
-                    elif hasattr(self, 'dbe') and hasattr(self.dbe, "_reset_for_new_chunk"):
+                    elif hasattr(self, "dbe") and hasattr(
+                        self.dbe, "_reset_for_new_chunk"
+                    ):
                         try:
                             with self.logger_lock:
-                                logger.debug(f"[DBE {self.worker_id}] Fallback to legacy reset")
+                                logger.debug(
+                                    f"[DBE {self.worker_id}] Fallback to legacy reset"
+                                )
                         except AttributeError:
-                            logger.debug(f"[DBE {self.worker_id}] Fallback to legacy reset")
+                            logger.debug(
+                                f"[DBE {self.worker_id}] Fallback to legacy reset"
+                            )
                         self.dbe._reset_for_new_chunk()
 
                     # Réinitialiser les composants pour le nouveau chunk avec continuité
-                    if hasattr(self, 'dbe') and hasattr(self.dbe, "reset_for_new_chunk"):
+                    if hasattr(self, "dbe") and hasattr(
+                        self.dbe, "reset_for_new_chunk"
+                    ):
                         try:
                             with self.logger_lock:
-                                logger.debug(f"[DBE {self.worker_id}] Resetting DBE for new chunk with continuity")
+                                logger.debug(
+                                    f"[DBE {self.worker_id}] Resetting DBE for new chunk with continuity"
+                                )
                         except AttributeError:
-                            logger.debug(f"[DBE {self.worker_id}] Resetting DBE for new chunk with continuity")
+                            logger.debug(
+                                f"[DBE {self.worker_id}] Resetting DBE for new chunk with continuity"
+                            )
                         self.dbe.reset_for_new_chunk(continuity=True)
-                    elif hasattr(self, 'dbe') and hasattr(self.dbe, "_reset_for_new_chunk"):
+                    elif hasattr(self, "dbe") and hasattr(
+                        self.dbe, "_reset_for_new_chunk"
+                    ):
                         try:
                             with self.logger_lock:
-                                logger.debug(f"[DBE {self.worker_id}] Fallback to legacy reset")
+                                logger.debug(
+                                    f"[DBE {self.worker_id}] Fallback to legacy reset"
+                                )
                         except AttributeError:
-                            logger.debug(f"[DBE {self.worker_id}] Fallback to legacy reset")
+                            logger.debug(
+                                f"[DBE {self.worker_id}] Fallback to legacy reset"
+                            )
                         self.dbe._reset_for_new_chunk()
 
             # Log final decision and handle episode termination
@@ -2330,7 +2753,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 logger.info(
                     f"[EPISODE STATS] Total steps: {self.current_step}, "
                     f"Final portfolio value: {self.portfolio_manager.get_portfolio_value():.2f}, "
-                    f"Return: {(self.portfolio_manager.get_portfolio_value()/self.portfolio_manager.initial_equity - 1)*100:.2f}%"
+                    f"Return: {(self.portfolio_manager.get_portfolio_value() / self.portfolio_manager.initial_equity - 1) * 100:.2f}%"
                 )
             else:
                 logger.debug(
@@ -2343,7 +2766,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 "observation",
                 np.concatenate([v.flatten() for v in current_observation.values()]),
             ):
-                self.logger.warning("Invalid observation detected, attempting recovery instead of reset")
+                self.logger.warning(
+                    "Invalid observation detected, attempting recovery instead of reset"
+                )
 
                 # TENTATIVE DE RÉCUPÉRATION AVANT RESET COMPLET
                 try:
@@ -2355,13 +2780,17 @@ class MultiAssetChunkedEnv(gym.Env):
                         np.isnan(v).any() or np.isinf(v).any()
                         for v in current_observation.values()
                     ):
-                        self.logger.info("Observation recovery successful, continuing episode")
+                        self.logger.info(
+                            "Observation recovery successful, continuing episode"
+                        )
                         # Continuer avec l'observation récupérée
                     else:
                         raise ValueError("Recovery failed, still has NaN/inf values")
 
                 except Exception as recovery_error:
-                    self.logger.error(f"Recovery failed: {recovery_error}, performing reset as last resort")
+                    self.logger.error(
+                        f"Recovery failed: {recovery_error}, performing reset as last resort"
+                    )
                     obs_reset, info_reset = self.reset()
                     return (
                         obs_reset,
@@ -2372,12 +2801,14 @@ class MultiAssetChunkedEnv(gym.Env):
                             "nan_detected": True,
                             "nan_source": "observation",
                             "recovery_attempted": True,
-                            "recovery_error": str(recovery_error)
+                            "recovery_error": str(recovery_error),
                         },
                     )
 
             # Reward calculation moved after trade execution for synchronization.
-            reward = getattr(self, '_last_reward', 0.0) # Use the reward calculated after trades
+            reward = getattr(
+                self, "_last_reward", 0.0
+            )  # Use the reward calculated after trades
 
             # Mise à jour des métriques de risque
             if hasattr(self, "portfolio_manager"):
@@ -2443,8 +2874,8 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Compose compact positions list: symbol:size:entry_price:side if available
                 positions_compact = []
                 for sym, pos in pm_metrics.get("positions", {}).items():
-                    size = pos.get("size") or pos.get(
-                        "quantity"
+                    size = (
+                        pos.get("size") or pos.get("quantity")
                     )  # Préférer 'size', avec fallback sur 'quantity' pour rétrocompatibilité
                     entry = pos.get("entry_price") or pos.get("avg_price")
                     side = "LONG" if (size or 0) >= 0 else "SHORT"
@@ -2607,214 +3038,253 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # --- Rich Summary Table ---
             if hasattr(self, "_rich_console") and self._rich_console is not None:
-                # Get configuration
-                rich_cfg = (
-                    (self.config or {}).get("logging", {})
-                    if hasattr(self, "config")
-                    else {}
-                )
-                env_enabled = os.getenv("ADAN_RICH_STEP_TABLE", "").lower() in (
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                )
-                rich_enabled = (
-                    rich_cfg.get("rich_step_table", True)
-                    if "rich_step_table" in rich_cfg
-                    else env_enabled
-                )
-
-                # If rich table is not enabled, skip rendering here and continue
-                if not rich_enabled:
-                    pass
-
-                # Check if we should print on this step
-                print_interval = getattr(self, "_rich_print_interval", 10)
-                should_print = (self.current_step % print_interval == 0) or (
-                    self.current_step - getattr(self, "_rich_last_print", 0)
-                    >= print_interval
-                )
-
-                if should_print:
-                    self._rich_last_print = self.current_step
-
-                    # Local import for Text to avoid scope issues
-                    from rich.text import Text
-
-                    # Helpers
-                    def _fmt(v):
-                        if v is None:
-                            return "-"
-                        if isinstance(v, float):
-                            return f"{v:.6g}"
-                        return str(v)
-
-                    def _dd_cell(v):
-                        if not isinstance(v, (int, float)):
-                            return Text("-")
-                        if v < 0.05:
-                            return Text(f"{v:.3f}", style="green")
-                        if v < 0.20:
-                            return Text(f"{v:.3f}", style="yellow")
-                        if v < 0.50:
-                            return Text(f"{v:.3f}", style="orange3")
-                        return Text(f"{v:.3f}", style="red")
-
-                    def _reward_cell(v, avg=None):
-                        if not isinstance(v, (int, float)):
-                            return Text("-")
-                        style = None
-                        if v > 0:
-                            style = "green3"
-                        elif (
-                            avg is not None
-                            and isinstance(avg, (int, float))
-                            and v < -1.0 * abs(avg)
-                        ):
-                            style = "red"
-                        elif v < 0:
-                            style = "orange3"
-                        return Text(f"{v:.4g}", style=style)
-
-                    def _prot_cell(p):
-                        if p and p != "none":
-                            return Text(str(p), style="orange3")
-                        return Text("none")
-
-                    def _reason_cell(reason: str):
-                        if not reason:
-                            return Text("-")
-                        r = str(reason)
-                        if "insufficient_cash" in r:
-                            return Text(r, style="magenta")
-                        if "min_notional" in r:
-                            return Text(r, style="orange3")
-                        if ("step_size" in r) or ("precision" in r):
-                            return Text(r, style="gold1")
-                        if "trading_disabled" in r:
-                            return Text(r, style="red")
-                        return Text(r)
-
-                    def _winrate_cell(w):
-                        if not isinstance(w, (int, float)):
-                            return Text("-")
-                        if w >= 0.6:
-                            return Text(f"{w:.2f}", style="green3")
-                        if w >= 0.4:
-                            return Text(f"{w:.2f}")
-                        return Text(f"{w:.2f}", style="orange3")
-
-                    def _loss_cell(cur, prev):
-                        if not isinstance(cur, (int, float)):
-                            return Text("-")
-                        if isinstance(prev, (int, float)):
-                            delta = cur - prev
-                            if delta > 0:
-                                # big increase vs previous -> orange, extremely large -> red
-                                return Text(
-                                    f"{cur:.3g}",
-                                    style="red" if delta > abs(prev) * 2 else "orange3",
-                                )
-                        return Text(f"{cur:.3g}")
-
-                    # Gather row fields
-                    ts = record.get("timestamp")
-                    ts_short = (
-                        ts[11:19]
-                        if isinstance(ts, str) and len(ts) >= 19
-                        else "--:--:--"
+                try:
+                    # Get configuration
+                    rich_cfg = (
+                        (self.config or {}).get("logging", {})
+                        if hasattr(self, "config")
+                        else {}
                     )
-                    step_id = _fmt(record.get("step"))
-                    env_id = _fmt(record.get("env_id"))
-                    ep_id = _fmt(record.get("episode_id"))
-                    pv = record.get("portfolio_value")
-                    ddv = record.get("drawdown_pct")
-                    tier = _fmt(record.get("tier"))
-                    td_flag = bool(record.get("trading_disabled"))
-                    prot = record.get("protection_event")
-                    reward_val = record.get("reward")
-                    # Rolling average of reward for magnitude-based coloring
-                    avg_reward = getattr(self, "_reward_avg", None)
-                    try:
-                        if isinstance(reward_val, (int, float)):
-                            if avg_reward is None:
-                                avg_reward = float(reward_val)
-                            else:
-                                # EMA with smoothing factor
-                                beta = 0.1
-                                avg_reward = (1 - beta) * float(
-                                    avg_reward
-                                ) + beta * float(reward_val)
-                            setattr(self, "_reward_avg", avg_reward)
-                    except Exception:
+                    env_enabled = os.getenv("ADAN_RICH_STEP_TABLE", "").lower() in (
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    )
+                    rich_enabled = (
+                        rich_cfg.get("rich_step_table", True)
+                        if "rich_step_table" in rich_cfg
+                        else env_enabled
+                    )
+
+                    # If rich table is not enabled, skip rendering here and continue
+                    if not rich_enabled:
                         pass
-                    sizer_f = record.get("sizer_final")
-                    sizer_r = record.get("sizer_reason")
-                    trades_step = record.get("num_trades_step")
-                    trades_cum = record.get("cum_num_trades")
-                    winrate = record.get("winrate")
-                    sharpe = record.get("metrics_sharpe")
-                    ppo = info.get("ppo_metrics", {}) if isinstance(info, dict) else {}
-                    pol_loss = ppo.get("policy_loss")
-                    val_loss = ppo.get("value_loss")
-                    prev_pol_loss = getattr(self, "_prev_policy_loss", None)
-                    prev_val_loss = getattr(self, "_prev_value_loss", None)
-                    self._prev_policy_loss = pol_loss
-                    self._prev_value_loss = val_loss
 
-                    # Build compact live table
-                    from rich import box
-
-                    table = self._rich_table(
-                        title=f"Step {self.current_step} - {self._get_safe_timestamp()}",
-                        box=box.SIMPLE,
-                        show_header=True,
-                        header_style="bold magenta",
-                        show_lines=True,
-                        title_justify="left",
-                        expand=False,
+                    # Check if we should print on this step
+                    print_interval = getattr(self, "_rich_print_interval", 10)
+                    should_print = (self.current_step % print_interval == 0) or (
+                        self.current_step - getattr(self, "_rich_last_print", 0)
+                        >= print_interval
                     )
-                    table.add_column("t", justify="left")
-                    table.add_column("step", justify="right")
-                    table.add_column("env", justify="right")
-                    table.add_column("ep", justify="right")
-                    table.add_column("pv", justify="right")
-                    table.add_column("dd%", justify="right")
-                    table.add_column("tier", justify="center")
-                    table.add_column("TD", justify="center")
-                    table.add_column("prot", justify="left")
-                    table.add_column("reward", justify="right")
-                    table.add_column("sizer", justify="right")
-                    table.add_column("trades", justify="right")
-                    table.add_column("winrate", justify="right")
-                    table.add_column("sharpe", justify="right")
-                    table.add_column("polL", justify="right")
-                    table.add_column("valL", justify="right")
-                    table.add_column("tags", justify="left")
 
-                    row_style = "bold white on red" if td_flag else None
-                    table.add_row(
-                        Text(ts_short),
-                        Text(str(step_id)),
-                        Text(str(env_id)),
-                        Text(str(ep_id)),
-                        Text(_fmt(pv)),
-                        _dd_cell(ddv),
-                        Text(str(tier)),
-                        Text("T" if td_flag else "F"),
-                        _prot_cell(prot),
-                        _reward_cell(reward_val, avg_reward),
-                        _reason_cell(_fmt(sizer_r)) if sizer_r else Text(_fmt(sizer_f)),
-                        Text(f"{_fmt(trades_step)}|{_fmt(trades_cum)}"),
-                        _winrate_cell(winrate),
-                        Text(_fmt(sharpe)),
-                        _loss_cell(pol_loss, prev_pol_loss),
-                        _loss_cell(val_loss, prev_val_loss),
-                        Text("".join(event_tags)),
-                        style=row_style,
+                    if should_print:
+                        self._rich_last_print = self.current_step
+
+                        # Local import for Text to avoid scope issues
+                        from rich.text import Text
+
+                        # Helpers
+                        def _fmt(v):
+                            if v is None:
+                                return "-"
+                            if isinstance(v, float):
+                                return f"{v:.6g}"
+                            return str(v)
+
+                        def _dd_cell(v):
+                            if not isinstance(v, (int, float)):
+                                return Text("-")
+                            if v < 0.05:
+                                return Text(f"{v:.3f}", style="green")
+                            if v < 0.20:
+                                return Text(f"{v:.3f}", style="yellow")
+                            if v < 0.50:
+                                return Text(f"{v:.3f}", style="orange3")
+                            return Text(f"{v:.3f}", style="red")
+
+                        def _reward_cell(v, avg=None):
+                            if not isinstance(v, (int, float)):
+                                return Text("-")
+                            style = None
+                            if v > 0:
+                                style = "green3"
+                            elif (
+                                avg is not None
+                                and isinstance(avg, (int, float))
+                                and v < -1.0 * abs(avg)
+                            ):
+                                style = "red"
+                            elif v < 0:
+                                style = "orange3"
+                            return Text(f"{v:.4g}", style=style)
+
+                        def _prot_cell(p):
+                            if p and p != "none":
+                                return Text(str(p), style="orange3")
+                            return Text("none")
+
+                        def _reason_cell(reason: str):
+                            if not reason:
+                                return Text("-")
+                            r = str(reason)
+                            if "insufficient_cash" in r:
+                                return Text(r, style="magenta")
+                            if "min_notional" in r:
+                                return Text(r, style="orange3")
+                            if ("step_size" in r) or ("precision" in r):
+                                return Text(r, style="gold1")
+                            if "trading_disabled" in r:
+                                return Text(r, style="red")
+                            return Text(r)
+
+                        def _winrate_cell(w):
+                            if not isinstance(w, (int, float)):
+                                return Text("-")
+                            if w >= 0.6:
+                                return Text(f"{w:.2f}", style="green3")
+                            if w >= 0.4:
+                                return Text(f"{w:.2f}")
+                            return Text(f"{w:.2f}", style="orange3")
+
+                        def _loss_cell(cur, prev):
+                            if not isinstance(cur, (int, float)):
+                                return Text("-")
+                            if isinstance(prev, (int, float)):
+                                delta = cur - prev
+                                if delta > 0:
+                                    # big increase vs previous -> orange, extremely large -> red
+                                    return Text(
+                                        f"{cur:.3g}",
+                                        style="red"
+                                        if delta > abs(prev) * 2
+                                        else "orange3",
+                                    )
+                            return Text(f"{cur:.3g}")
+
+                        # Gather row fields - build record for Rich display
+                        record = {
+                            "timestamp": self._get_safe_timestamp(),
+                            "step": self.current_step,
+                            "env_id": getattr(self, "env_id", "unknown")[:8],
+                            "episode_id": getattr(self, "current_episode_id", 0),
+                            "portfolio_value": float(total_value),
+                            "drawdown_pct": float(current_dd_pct),
+                            "tier": current_tier,
+                            "trading_disabled": bool(trading_disabled),
+                            "protection_event": protection_event,
+                            "reward": float(reward),
+                            "sizer_final": sizer_final_pct,
+                            "sizer_reason": sizer_reason,
+                            "num_trades_step": trades_this_step,
+                            "cum_num_trades": total_trades_count,
+                            "winrate": float(winrate) if winrate is not None else None,
+                            "metrics_sharpe": float(sharpe)
+                            if sharpe is not None
+                            else None,
+                        }
+
+                        ts = record.get("timestamp")
+                        ts_short = (
+                            ts[11:19]
+                            if isinstance(ts, str) and len(ts) >= 19
+                            else "--:--:--"
+                        )
+                        step_id = _fmt(record.get("step"))
+                        env_id = _fmt(record.get("env_id"))
+                        ep_id = _fmt(record.get("episode_id"))
+                        pv = record.get("portfolio_value")
+                        ddv = record.get("drawdown_pct")
+                        tier = _fmt(record.get("tier"))
+                        td_flag = bool(record.get("trading_disabled"))
+                        prot = record.get("protection_event")
+                        reward_val = record.get("reward")
+                        # Rolling average of reward for magnitude-based coloring
+                        avg_reward = getattr(self, "_reward_avg", None)
+                        try:
+                            if isinstance(reward_val, (int, float)):
+                                if avg_reward is None:
+                                    avg_reward = float(reward_val)
+                                else:
+                                    # EMA with smoothing factor
+                                    beta = 0.1
+                                    avg_reward = (1 - beta) * float(
+                                        avg_reward
+                                    ) + beta * float(reward_val)
+                                setattr(self, "_reward_avg", avg_reward)
+                        except Exception:
+                            pass
+                        sizer_f = record.get("sizer_final")
+                        sizer_r = record.get("sizer_reason")
+                        trades_step = record.get("num_trades_step")
+                        trades_cum = record.get("cum_num_trades")
+                        winrate = record.get("winrate")
+                        sharpe = record.get("metrics_sharpe")
+                        ppo = (
+                            info.get("ppo_metrics", {})
+                            if isinstance(info, dict)
+                            else {}
+                        )
+                        pol_loss = ppo.get("policy_loss")
+                        val_loss = ppo.get("value_loss")
+                        prev_pol_loss = getattr(self, "_prev_policy_loss", None)
+                        prev_val_loss = getattr(self, "_prev_value_loss", None)
+                        self._prev_policy_loss = pol_loss
+                        self._prev_value_loss = val_loss
+
+                        # Build compact live table
+                        from rich import box
+
+                        table = self._rich_table(
+                            title=f"Step {self.current_step} - {self._get_safe_timestamp()}",
+                            box=box.SIMPLE,
+                            show_header=True,
+                            header_style="bold magenta",
+                            show_lines=True,
+                            title_justify="left",
+                            expand=False,
+                        )
+                        table.add_column("t", justify="left")
+                        table.add_column("step", justify="right")
+                        table.add_column("env", justify="right")
+                        table.add_column("ep", justify="right")
+                        table.add_column("pv", justify="right")
+                        table.add_column("dd%", justify="right")
+                        table.add_column("tier", justify="center")
+                        table.add_column("TD", justify="center")
+                        table.add_column("prot", justify="left")
+                        table.add_column("reward", justify="right")
+                        table.add_column("sizer", justify="right")
+                        table.add_column("trades", justify="right")
+                        table.add_column("winrate", justify="right")
+                        table.add_column("sharpe", justify="right")
+                        table.add_column("polL", justify="right")
+                        table.add_column("valL", justify="right")
+                        table.add_column("tags", justify="left")
+
+                        row_style = "bold white on red" if td_flag else None
+                        table.add_row(
+                            Text(ts_short),
+                            Text(str(step_id)),
+                            Text(str(env_id)),
+                            Text(str(ep_id)),
+                            Text(_fmt(pv)),
+                            _dd_cell(ddv),
+                            Text(str(tier)),
+                            Text("T" if td_flag else "F"),
+                            _prot_cell(prot),
+                            _reward_cell(reward_val, avg_reward),
+                            _reason_cell(_fmt(sizer_r))
+                            if sizer_r
+                            else Text(_fmt(sizer_f)),
+                            Text(f"{_fmt(trades_step)}|{_fmt(trades_cum)}"),
+                            _winrate_cell(winrate),
+                            Text(_fmt(sharpe)),
+                            _loss_cell(pol_loss, prev_pol_loss),
+                            _loss_cell(val_loss, prev_val_loss),
+                            Text("".join(event_tags)),
+                            style=row_style,
+                        )
+                        self._rich_console.print(table)
+
+                except Exception as e:
+                    self.logger.debug(f"Rich table display error: {e}")
+                    # Fallback to simple text summary
+                    self.logger.info(
+                        f"[RICH FALLBACK] Step {self.current_step} | "
+                        f"Portfolio: N/A | Drawdown: N/A% | "
+                        f"Trades: N/A | Reward: N/A"
                     )
-                    self._rich_console.print(table)
 
             if self.shared_buffer is not None:
                 experience = {
@@ -2830,7 +3300,10 @@ class MultiAssetChunkedEnv(gym.Env):
                 self.shared_buffer.add(experience)
 
             # Log summary
-            self._log_summary(self.current_step, self.current_chunk_idx + 1, self.total_chunks)
+            # self._log_summary(
+            #     self.current_step, self.current_chunk_idx + 1, self.total_chunks
+            # )
+            logger.info("End of step processing.")
 
             return current_observation, float(reward), terminated, truncated, info
 
@@ -2845,7 +3318,9 @@ class MultiAssetChunkedEnv(gym.Env):
     def _update_dbe_state(self) -> None:
         """Update the DBE state with current market conditions."""
         # DIAGNOSTIC: Tracer l'utilisation du DBE
-        self.logger.debug(f"🔄 UPDATE_DBE_STATE appelé pour ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}, Step={getattr(self, 'current_step', 'UNKNOWN')}")
+        self.logger.debug(
+            f"🔄 UPDATE_DBE_STATE appelé pour ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}, Step={getattr(self, 'current_step', 'UNKNOWN')}"
+        )
         try:
             current_prices = self._get_current_prices()
             portfolio_metrics = self.portfolio.get_metrics()
@@ -2879,10 +3354,14 @@ class MultiAssetChunkedEnv(gym.Env):
                         )
             if hasattr(self, "dbe"):
                 # DIAGNOSTIC: Tracer l'appel effectif au DBE
-                self.logger.debug(f"🧠 DBE.update_state appelé - ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}, DBE_ID={id(self.dbe)}")
+                self.logger.debug(
+                    f"🧠 DBE.update_state appelé - ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}, DBE_ID={id(self.dbe)}"
+                )
                 self.dbe.update_state(live_metrics)
             else:
-                self.logger.warning(f"❌ DBE non disponible pour ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}")
+                self.logger.warning(
+                    f"❌ DBE non disponible pour ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}"
+                )
 
         except Exception as e:
             logger.warning(f"Failed to update DBE state: {e}")
@@ -2935,15 +3414,23 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # Debug logging pour diagnostiquer les problèmes
         if self.current_step % 50 == 0:
-            self.smart_logger.debug(f"PRICE_DEBUG | step_in_chunk={self.step_in_chunk} | current_step={self.current_step}", sample_rate=0.1)
+            self.smart_logger.debug(
+                f"PRICE_DEBUG | step_in_chunk={self.step_in_chunk} | current_step={self.current_step}",
+                sample_rate=0.1,
+            )
 
         # *** CORRECTION CLÉ : Utiliser step_in_chunk de manière stricte ***
         current_idx_in_chunk = self.step_in_chunk
 
         for _asset, timeframe_data in self.current_data.items():
             try:
-                # Get 5m data for this asset
-                asset_data = timeframe_data.get("5m")
+                # Get data for this asset, trying several timeframes
+                asset_data = None
+                for tf in ["5m", "1h", "4h"]:
+                    if tf in timeframe_data:
+                        asset_data = timeframe_data[tf]
+                        break
+
                 if asset_data is None or asset_data.empty:
                     self.smart_logger.warning(f"MISSING_DATA | asset={_asset}")
                     continue
@@ -2951,52 +3438,72 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Vérification stricte des limites d'index
                 if current_idx_in_chunk >= len(asset_data):
                     # Index hors limites - utiliser la dernière valeur disponible
-                    self.smart_logger.error(f"INDEX_ERROR_PRICE | step_in_chunk={current_idx_in_chunk} >= len(df)={len(asset_data)}. Using last price.",
-                                          asset=_asset, dedupe=True)
+                    self.smart_logger.error(
+                        f"INDEX_ERROR_PRICE | step_in_chunk={current_idx_in_chunk} >= len(df)={len(asset_data)}. Using last price.",
+                        asset=_asset,
+                        dedupe=True,
+                    )
 
                     last_row = asset_data.iloc[-1]
-                    prices[_asset] = float(last_row['close'])
+                    prices[_asset] = float(last_row["close"])
                     if isinstance(last_row.name, pd.Timestamp):
                         self._last_asset_timestamp[_asset] = last_row.name
 
                     # Compteur de forward-fill pour surveillance
-                    if not hasattr(self, '_price_forward_fill_count'):
+                    if not hasattr(self, "_price_forward_fill_count"):
                         self._price_forward_fill_count = 0
                     self._price_forward_fill_count += 1
 
                 elif current_idx_in_chunk < 0:
                     # Index négatif - utiliser la première valeur
-                    self.smart_logger.error(f"NEGATIVE_INDEX_PRICE | step_in_chunk={current_idx_in_chunk}. Using first price.", dedupe=True)
+                    self.smart_logger.error(
+                        f"NEGATIVE_INDEX_PRICE | step_in_chunk={current_idx_in_chunk}. Using first price.",
+                        dedupe=True,
+                    )
 
-                    prices[_asset] = float(asset_data.iloc[0]['close'])
+                    prices[_asset] = float(asset_data.iloc[0]["close"])
 
                     # Compteur de forward-fill pour surveillance
-                    if not hasattr(self, '_price_forward_fill_count'):
+                    if not hasattr(self, "_price_forward_fill_count"):
                         self._price_forward_fill_count = 0
                     self._price_forward_fill_count += 1
 
                 else:
                     # Index valide - lecture normale
-                    prices[_asset] = float(asset_data.iloc[current_idx_in_chunk]['close'])
+                    prices[_asset] = float(
+                        asset_data.iloc[current_idx_in_chunk]["close"]
+                    )
 
                     if self.current_step % 100 == 0:
-                        self.smart_logger.debug(f"PRICE_SUCCESS | asset={_asset} | step_in_chunk={current_idx_in_chunk} | price={prices[_asset]:.4f}", sample_rate=0.05)
+                        self.smart_logger.debug(
+                            f"PRICE_SUCCESS | asset={_asset} | step_in_chunk={current_idx_in_chunk} | price={prices[_asset]:.4f}",
+                            sample_rate=0.05,
+                        )
 
             except Exception as e:
-                self.smart_logger.error(f"PRICE_READ_ERROR | asset={_asset} | step_in_chunk={current_idx_in_chunk} | error={str(e)}", dedupe=True)
+                self.smart_logger.error(
+                    f"PRICE_READ_ERROR | asset={_asset} | step_in_chunk={current_idx_in_chunk} | error={str(e)}",
+                    dedupe=True,
+                )
 
                 # Compteur de forward-fill pour les erreurs
-                if not hasattr(self, '_price_forward_fill_count'):
+                if not hasattr(self, "_price_forward_fill_count"):
                     self._price_forward_fill_count = 0
                 self._price_forward_fill_count += 1
 
                 # Utiliser la dernière valeur connue comme fallback
-                if hasattr(self, '_last_known_prices') and _asset in self._last_known_prices:
+                if (
+                    hasattr(self, "_last_known_prices")
+                    and _asset in self._last_known_prices
+                ):
                     prices[_asset] = self._last_known_prices[_asset]
-                    self.smart_logger.warning(f"FALLBACK_PRICE | asset={_asset} | using_last_known={prices[_asset]:.4f}", dedupe=True)
+                    self.smart_logger.warning(
+                        f"FALLBACK_PRICE | asset={_asset} | using_last_known={prices[_asset]:.4f}",
+                        dedupe=True,
+                    )
 
         # Mettre à jour les derniers prix connus
-        if not hasattr(self, '_last_known_prices'):
+        if not hasattr(self, "_last_known_prices"):
             self._last_known_prices = {}
         self._last_known_prices.update(prices)
 
@@ -3008,13 +3515,13 @@ class MultiAssetChunkedEnv(gym.Env):
     def _check_excessive_forward_fill(self):
         """Vérifier si le taux de forward-fill dépasse le seuil acceptable."""
         # Initialiser les compteurs s'ils n'existent pas
-        if not hasattr(self, '_price_read_success_count'):
+        if not hasattr(self, "_price_read_success_count"):
             self._price_read_success_count = 0
-        if not hasattr(self, '_price_forward_fill_count'):
+        if not hasattr(self, "_price_forward_fill_count"):
             self._price_forward_fill_count = 0
-        if not hasattr(self, '_forward_fill_threshold'):
+        if not hasattr(self, "_forward_fill_threshold"):
             self._forward_fill_threshold = 0.5  # 50% maximum de forward-fill acceptable
-        if not hasattr(self, '_last_ff_check_step'):
+        if not hasattr(self, "_last_ff_check_step"):
             self._last_ff_check_step = 0
 
         # Compter cette lecture comme succès (puisqu'on arrive ici, on a lu des prix)
@@ -3030,18 +3537,24 @@ class MultiAssetChunkedEnv(gym.Env):
         if total_reads < 10:  # Attendre au moins 10 lectures avant de vérifier
             return
 
-        forward_fill_rate = self._price_forward_fill_count / total_reads if total_reads > 0 else 0
+        forward_fill_rate = (
+            self._price_forward_fill_count / total_reads if total_reads > 0 else 0
+        )
 
         if forward_fill_rate > self._forward_fill_threshold:
             self.smart_logger.error(
-                f"EXCESSIVE_FORWARD_FILL | rate={forward_fill_rate*100:.1f}% | count={self._price_forward_fill_count}/{total_reads}",
-                dedupe=True
+                f"EXCESSIVE_FORWARD_FILL | rate={forward_fill_rate * 100:.1f}% | count={self._price_forward_fill_count}/{total_reads}",
+                dedupe=True,
             )
 
         # Réinitialiser les compteurs périodiquement pour avoir des mesures actuelles
         if total_reads > 1000:
-            self._price_read_success_count = max(100, int(self._price_read_success_count * 0.1))
-            self._price_forward_fill_count = max(10, int(self._price_forward_fill_count * 0.1))
+            self._price_read_success_count = max(
+                100, int(self._price_read_success_count * 0.1)
+            )
+            self._price_forward_fill_count = max(
+                10, int(self._price_forward_fill_count * 0.1)
+            )
 
     def _validate_market_data(self, prices: Dict[str, float]) -> bool:
         """Valide les données de marché avant l'exécution des trades.
@@ -3373,7 +3886,9 @@ class MultiAssetChunkedEnv(gym.Env):
             if not hasattr(self, "state_builder") or self.state_builder is None:
                 raise RuntimeError("StateBuilder non initialisé.")
             if not hasattr(self, "current_data") or self.current_data is None:
-                logger.warning("Données non disponibles, retourne une observation par défaut.")
+                logger.warning(
+                    "Données non disponibles, retourne une observation par défaut."
+                )
                 return self._default_observation()
 
             # Le StateBuilder doit maintenant retourner un dictionnaire de dataframes/arrays
@@ -3382,10 +3897,13 @@ class MultiAssetChunkedEnv(gym.Env):
             )
 
             # Récupérer le vecteur d'état du portefeuille
-            if hasattr(self.portfolio, 'get_state_vector'):
+            if hasattr(self.portfolio, "get_state_vector"):
                 portfolio_state = self.portfolio.get_state_vector()
             else:
-                portfolio_state = np.zeros(self.observation_space.spaces["portfolio_state"].shape, dtype=np.float32)
+                portfolio_state = np.zeros(
+                    self.observation_space.spaces["portfolio_state"].shape,
+                    dtype=np.float32,
+                )
 
             # Combiner les observations du marché et du portefeuille
             final_obs = {**market_obs_dict}
@@ -3403,7 +3921,9 @@ class MultiAssetChunkedEnv(gym.Env):
             obs = self._build_observation()
             # Valider la structure de l'observation finale
             if not self._is_valid_observation_structure(obs):
-                logger.error("L'observation générée a une structure invalide, utilisation d'une observation par défaut.")
+                logger.error(
+                    "L'observation générée a une structure invalide, utilisation d'une observation par défaut."
+                )
                 return self._default_observation()
             return obs
         except Exception as e:
@@ -3418,23 +3938,21 @@ class MultiAssetChunkedEnv(gym.Env):
         if not self.frequency_config:
             return
 
-        daily_steps_5m = self.frequency_config.get('daily_steps_5m', 288)
+        daily_steps_5m = self.frequency_config.get("daily_steps_5m", 288)
 
         # Calculer le jour courant basé sur les steps totaux
-        current_day = self.current_step // daily_steps_5m
+        current_day = self.num_timesteps // daily_steps_5m
 
         if current_day > self.current_day:
             # Nouveau jour détecté, reset des compteurs
-            self.positions_count = {
-                '5m': 0,
-                '1h': 0,
-                '4h': 0,
-                'daily_total': 0
-            }
+            self.positions_count = {"5m": 0, "1h": 0, "4h": 0, "daily_total": 0}
             self.current_day = current_day
             self.daily_reset_step = self.current_step
 
-            self.smart_logger.info(f"[FREQUENCY] Nouveau jour détecté (jour {current_day}), reset des compteurs de positions", rotate=True)
+            self.smart_logger.info(
+                f"[FREQUENCY] Nouveau jour détecté (jour {current_day}), reset des compteurs de positions",
+                rotate=True,
+            )
 
     def _track_position_frequency(self) -> None:
         """
@@ -3446,20 +3964,22 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # Déterminer le timeframe courant (simplifié - vous pouvez l'améliorer)
         # Pour cet exemple, on utilise un mapping basé sur le current_step modulo
-        step_in_day = self.current_step % self.frequency_config.get('daily_steps_5m', 288)
+        step_in_day = self.current_step % self.frequency_config.get(
+            "daily_steps_5m", 288
+        )
 
         # Logique simplifiée pour déterminer le timeframe actuel
         if step_in_day % 48 == 0:  # Toutes les 4h (288/6 = 48)
-            current_timeframe = '4h'
+            current_timeframe = "4h"
         elif step_in_day % 12 == 0:  # Toutes les 1h (288/24 = 12)
-            current_timeframe = '1h'
+            current_timeframe = "1h"
         else:
-            current_timeframe = '5m'
+            current_timeframe = "5m"
 
         # Vérifier si de nouveaux trades ont été ajoutés au trade_log
-        if hasattr(self.portfolio, 'trade_log') and self.portfolio.trade_log:
+        if hasattr(self.portfolio, "trade_log") and self.portfolio.trade_log:
             # Initialiser last_trade_ids si nécessaire
-            if not hasattr(self, 'last_trade_ids'):
+            if not hasattr(self, "last_trade_ids"):
                 self.last_trade_ids = set()
 
             # Identifier les nouveaux trades
@@ -3472,16 +3992,19 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # Compter les nouveaux trades par timeframe
             for trade in new_trades:
-                trade_type = trade.get('type', '')
-                if trade_type == 'open':
+                trade_type = trade.get("type", "")
+                if trade_type == "open":
                     self.positions_count[current_timeframe] += 1
-                    self.positions_count['daily_total'] += 1
+                    self.positions_count["daily_total"] += 1
 
-                    asset = trade.get('asset', 'Unknown')
-                    price = trade.get('price', 0.0)
-                    self.smart_logger.info(f"[FREQUENCY] Trade {trade_type} {asset} @ {price:.2f} sur {current_timeframe} "
-                                       f"(count: {self.positions_count[current_timeframe]}, "
-                                       f"total: {self.positions_count['daily_total']})", rotate=True)
+                    asset = trade.get("asset", "Unknown")
+                    price = trade.get("price", 0.0)
+                    self.smart_logger.info(
+                        f"[FREQUENCY] Trade {trade_type} {asset} @ {price:.2f} sur {current_timeframe} "
+                        f"(count: {self.positions_count[current_timeframe]}, "
+                        f"total: {self.positions_count['daily_total']})",
+                        rotate=True,
+                    )
 
     def _calculate_frequency_reward(self) -> float:
         """
@@ -3492,37 +4015,44 @@ class MultiAssetChunkedEnv(gym.Env):
             return 0.0
 
         frequency_reward = 0.0
-        
+
         # Get weights from reward_shaping.frequency_weights
         reward_shaping_config = self.config.get("reward_shaping", {})
         frequency_weights = reward_shaping_config.get("frequency_weights", {})
-        in_range_weight = frequency_weights.get('in_range', 0.0)
-        out_of_range_weight = frequency_weights.get('out_of_range', 0.0)
+        in_range_weight = frequency_weights.get("in_range", 0.0)
+        out_of_range_weight = frequency_weights.get("out_of_range", 0.0)
 
         # Logique de conscience de la traque
         is_hunting = self.dbe.is_hunting(self.worker_id)
         hunt_info = self.dbe.get_hunt_info(self.worker_id) if is_hunting else None
-        timeframe_map = {'5m': 5, '1h': 60, '4h': 240}
+        timeframe_map = {"5m": 5, "1h": 60, "4h": 240}
 
         # Vérifier chaque timeframe individuellement
-        for timeframe in ['5m', '1h', '4h']:
+        for timeframe in ["5m", "1h", "4h"]:
             if timeframe in self.frequency_config:
                 tf_config = self.frequency_config[timeframe]
-                min_pos = tf_config.get('min_positions', 0)
-                max_pos = tf_config.get('max_positions', 999)
+                min_pos = tf_config.get("min_positions", 0)
+                max_pos = tf_config.get("max_positions", 999)
                 current_count = self.positions_count[timeframe]
 
                 # Ajustement adaptatif si en traque
                 if is_hunting and hunt_info:
-                    hunting_tf = hunt_info.get('hunting_timeframe')
-                    if timeframe_map.get(timeframe, 0) < timeframe_map.get(hunting_tf, 0):
+                    hunting_tf = hunt_info.get("hunting_timeframe")
+                    if timeframe_map.get(timeframe, 0) < timeframe_map.get(
+                        hunting_tf, 0
+                    ):
                         min_pos = int(min_pos * 0.5)
                         max_pos = int(max_pos * 0.5)
-                        self.smart_logger.info(f"[HUNT AWARENESS] Freq thresholds for {timeframe} reduced to min:{min_pos}, max:{max_pos} due to hunt on {hunting_tf}", rotate=True)
+                        self.smart_logger.info(
+                            f"[HUNT AWARENESS] Freq thresholds for {timeframe} reduced to min:{min_pos}, max:{max_pos} due to hunt on {hunting_tf}",
+                            rotate=True,
+                        )
 
                 if min_pos <= current_count <= max_pos:
                     # Dans les bornes : bonus proportionnel
-                    frequency_reward += in_range_weight * (current_count / max(max_pos, 1))
+                    frequency_reward += in_range_weight * (
+                        current_count / max(max_pos, 1)
+                    )
                 else:
                     # Hors bornes : pénalité progressive et asymétrique
                     if current_count < min_pos:
@@ -3532,9 +4062,9 @@ class MultiAssetChunkedEnv(gym.Env):
                     frequency_reward -= penalty
 
         # Vérifier le total journalier
-        total_min = self.frequency_config.get('total_daily_min', 5)
-        total_max = self.frequency_config.get('total_daily_max', 15)
-        daily_total = self.positions_count['daily_total']
+        total_min = self.frequency_config.get("total_daily_min", 5)
+        total_max = self.frequency_config.get("total_daily_max", 15)
+        daily_total = self.positions_count["daily_total"]
 
         if total_min <= daily_total <= total_max:
             # Bonus pour être dans les bornes totales
@@ -3560,29 +4090,38 @@ class MultiAssetChunkedEnv(gym.Env):
         valid = True
 
         # Vérifier chaque timeframe individuellement
-        for tf in ['5m', '1h', '4h']:
+        for tf in ["5m", "1h", "4h"]:
             if tf in self.frequency_config:
                 tf_config = self.frequency_config[tf]
                 count = self.positions_count[tf]
-                min_pos = tf_config.get('min_positions', 0)
-                max_pos = tf_config.get('max_positions', 999)
+                min_pos = tf_config.get("min_positions", 0)
+                max_pos = tf_config.get("max_positions", 999)
 
                 if count < min_pos or count > max_pos:
                     valid = False
-                    self.smart_logger.warning(f"[FREQUENCY] Count hors bornes pour {tf}: {count} (min: {min_pos}, max: {max_pos})", dedupe=True)
+                    self.smart_logger.warning(
+                        f"[FREQUENCY] Count hors bornes pour {tf}: {count} (min: {min_pos}, max: {max_pos})",
+                        dedupe=True,
+                    )
 
         # Vérifier le total journalier
-        total_count = self.positions_count['daily_total']
-        min_total = self.frequency_config.get('total_daily_min', 5)
-        max_total = self.frequency_config.get('total_daily_max', 15)
+        total_count = self.positions_count["daily_total"]
+        min_total = self.frequency_config.get("total_daily_min", 5)
+        max_total = self.frequency_config.get("total_daily_max", 15)
 
         if total_count < min_total or total_count > max_total:
             valid = False
-            self.smart_logger.warning(f"[FREQUENCY] Total journalier hors bornes: {total_count} (min: {min_total}, max: {max_total})", dedupe=True)
+            self.smart_logger.warning(
+                f"[FREQUENCY] Total journalier hors bornes: {total_count} (min: {min_total}, max: {max_total})",
+                dedupe=True,
+            )
 
         # Log de confirmation si tout est dans les bornes
         if valid:
-            self.smart_logger.info(f"[FREQUENCY] Tous les counts dans les bornes: {self.positions_count}", rotate=True)
+            self.smart_logger.info(
+                f"[FREQUENCY] Tous les counts dans les bornes: {self.positions_count}",
+                rotate=True,
+            )
 
     def calculate_position_limit_penalty(self) -> float:
         """Calculates the penalty for exceeding the position limit for the current tier."""
@@ -3591,14 +4130,22 @@ class MultiAssetChunkedEnv(gym.Env):
             tier_cfg = self.portfolio_manager.get_current_tier()
             limit = 1
             if isinstance(tier_cfg, dict):
-                limit = int(tier_cfg.get('max_open_positions', 1))
+                limit = int(tier_cfg.get("max_open_positions", 1))
             open_count = 0
             try:
-                open_count = len([p for p in self.portfolio_manager.positions.values() if getattr(p, 'is_open', False)])
+                open_count = len(
+                    [
+                        p
+                        for p in self.portfolio_manager.positions.values()
+                        if getattr(p, "is_open", False)
+                    ]
+                )
             except Exception:
                 open_count = 0
             if open_count > limit:
-                weight = self.config.get('trading_rules', {}).get('position_limit_penalty_weight', 1.0)
+                weight = self.config.get("trading_rules", {}).get(
+                    "position_limit_penalty_weight", 1.0
+                )
                 # Appliquer une pénalité non-linéaire pour adoucir les petits dépassements
                 pos_limit_penalty -= float(weight) * np.tanh(open_count - limit)
         except Exception:
@@ -3613,51 +4160,58 @@ class MultiAssetChunkedEnv(gym.Env):
             trade_outcome_config = reward_config.get("trade_outcome", {})
             tp_multiplier = trade_outcome_config.get("take_profit_multiplier", 0.5)
             sl_multiplier = trade_outcome_config.get("stop_loss_multiplier", 0.5)
-            passivity_penalty = reward_config.get("passivity_penalty", -5.0) # Get new penalty
+            passivity_penalty = reward_config.get(
+                "passivity_penalty", -5.0
+            )  # Get new penalty
 
-            if hasattr(self, '_step_closed_receipts'):
+            if hasattr(self, "_step_closed_receipts"):
                 for receipt in self._step_closed_receipts:
-                    pnl = receipt.get('pnl', 0.0)
+                    pnl = receipt.get("pnl", 0.0)
 
                     # Apply passivity penalty if trade was force-closed
-                    if receipt.get('reason') == 'MaxDuration':
+                    if receipt.get("reason") == "MaxDuration":
                         outcome_reward += passivity_penalty
-                        self.smart_logger.warning(f"[REWARD] Passivity penalty applied for MaxDuration closure: {passivity_penalty:.2f}", rotate=True)
+                        self.smart_logger.warning(
+                            f"[REWARD] Passivity penalty applied for MaxDuration closure: {passivity_penalty:.2f}",
+                            rotate=True,
+                        )
 
-                    if pnl > 0: # Trade profitable
+                    if pnl > 0:  # Trade profitable
                         outcome_reward += pnl * tp_multiplier
-                    else: # Trade perdant
+                    else:  # Trade perdant
                         outcome_reward += pnl * sl_multiplier
         except Exception as e:
-            self.logger.error(f"Erreur lors du calcul de la récompense de résultat: {e}")
+            self.logger.error(
+                f"Erreur lors du calcul de la récompense de résultat: {e}"
+            )
         return outcome_reward
 
     def calculate_capacity_based_reward(self) -> float:
         """Calculates a reward based on the current capital usage."""
         reward = 0.0
-        if not hasattr(self, 'portfolio_manager'):
+        if not hasattr(self, "portfolio_manager"):
             return reward
 
         total_value = self.portfolio_manager.get_total_value()
         cash = self.portfolio_manager.get_cash()
-        
+
         if total_value > 0:
             capacity_usage = (total_value - cash) / total_value
-            
+
             if 0.6 <= capacity_usage <= 0.9:
                 reward += 2.0
             elif capacity_usage > 0.9:
                 reward -= (capacity_usage - 0.9) * 10
             elif capacity_usage < 0.3:
                 reward -= (0.3 - capacity_usage) * 5
-        
+
         return reward
 
     def has_open_trade(self, timeframe: str) -> bool:
         """Checks if there is an open trade for the given timeframe."""
-        if not hasattr(self, 'portfolio_manager'):
+        if not hasattr(self, "portfolio_manager"):
             return False
-        
+
         for position in self.portfolio_manager.positions.values():
             if position.is_open and position.timeframe == timeframe:
                 return True
@@ -3665,42 +4219,64 @@ class MultiAssetChunkedEnv(gym.Env):
 
     def calculate_early_close_bonus(self) -> float:
         bonus = 0.0
-        
+
         reward_shaping_config = self.config.get("reward_shaping", {})
-        worker_name = self.worker_config.get('name', 'Default')
-        worker_profile_config = reward_shaping_config.get('profiles', {}).get(worker_name, {})
-        
-        early_close_bonus_weight = worker_profile_config.get('early_exit_bonus', reward_shaping_config.get('early_close_bonus', 0.0))
-        
-        if not hasattr(self, '_step_closed_receipts'):
+        worker_name = self.worker_config.get("name", "Default")
+        worker_profile_config = reward_shaping_config.get("profiles", {}).get(
+            worker_name, {}
+        )
+
+        early_close_bonus_weight = worker_profile_config.get(
+            "early_exit_bonus", reward_shaping_config.get("early_close_bonus", 0.0)
+        )
+
+        if not hasattr(self, "_step_closed_receipts"):
             return bonus
 
         for receipt in self._step_closed_receipts:
-            pnl_pct = receipt.get('pnl_pct', 0.0)
-            duration_seconds = receipt.get('duration_seconds')
-            timeframe = receipt.get('timeframe', '5m')
+            pnl_pct = receipt.get("pnl_pct", 0.0)
+            duration_seconds = receipt.get("duration_seconds")
+            timeframe = receipt.get("timeframe", "5m")
 
             if pnl_pct > 0 and duration_seconds is not None:
-                duration_config = self.config.get('trading_rules', {}).get('duration_tracking', {})
+                duration_config = self.config.get("trading_rules", {}).get(
+                    "duration_tracking", {}
+                )
                 if timeframe in duration_config:
-                    optimal_duration_steps = duration_config[timeframe].get('optimal_duration', 0)
+                    optimal_duration_steps = duration_config[timeframe].get(
+                        "optimal_duration", 0
+                    )
                     # Assuming 5m steps, convert duration_seconds to steps
-                    duration_steps = duration_seconds / 300 # 300 seconds = 5 minutes
-                    
-                    if optimal_duration_steps > 0 and duration_steps < optimal_duration_steps:
+                    duration_steps = duration_seconds / 300  # 300 seconds = 5 minutes
+
+                    if (
+                        optimal_duration_steps > 0
+                        and duration_steps < optimal_duration_steps
+                    ):
                         # Bonus is proportional to how early it closed relative to optimal
-                        bonus += early_close_bonus_weight * (optimal_duration_steps - duration_steps) / optimal_duration_steps
-                        self.smart_logger.info(f"[OUTCOME BONUS] Early profitable close for {receipt.get('asset')}. Bonus: {bonus:.2f}", rotate=True)
+                        bonus += (
+                            early_close_bonus_weight
+                            * (optimal_duration_steps - duration_steps)
+                            / optimal_duration_steps
+                        )
+                        self.smart_logger.info(
+                            f"[OUTCOME BONUS] Early profitable close for {receipt.get('asset')}. Bonus: {bonus:.2f}",
+                            rotate=True,
+                        )
         return bonus
 
     def calculate_duration_penalty(self) -> float:
         """Calculates the penalty for trades that are open for too long, and rewards for optimal duration."""
         penalty = 0.0
-        if not hasattr(self, 'portfolio_manager'):
+        if not hasattr(self, "portfolio_manager"):
             return penalty
 
-        duration_config = self.config.get('trading_rules', {}).get('duration_tracking', {})
-        overstay_penalty_value = self.config.get('reward_shaping', {}).get('overstay_penalty', 0.0) # Get from new config
+        duration_config = self.config.get("trading_rules", {}).get(
+            "duration_tracking", {}
+        )
+        overstay_penalty_value = self.config.get("reward_shaping", {}).get(
+            "overstay_penalty", 0.0
+        )  # Get from new config
 
         if not duration_config:
             return penalty
@@ -3710,16 +4286,25 @@ class MultiAssetChunkedEnv(gym.Env):
                 timeframe = position.timeframe
                 if timeframe in duration_config:
                     config = duration_config[timeframe]
-                    max_duration_steps = config.get('max_duration_steps')
-                    optimal_duration_steps = config.get('optimal_duration', max_duration_steps) # Use max as optimal if not specified
+                    max_duration_steps = config.get("max_duration_steps")
+                    optimal_duration_steps = config.get(
+                        "optimal_duration", max_duration_steps
+                    )  # Use max as optimal if not specified
 
                     if max_duration_steps:
                         current_duration = self.current_step - position.open_step
-                        
+
                         if current_duration > max_duration_steps:
                             # Apply overstay penalty
-                            penalty += overstay_penalty_value * (current_duration - max_duration_steps) / max_duration_steps
-                            self.smart_logger.warning(f"[DURATION PENALTY] Overstay penalty for {position.asset}. Duration: {current_duration} > Max: {max_duration_steps}. Penalty: {penalty:.2f}", rotate=True)
+                            penalty += (
+                                overstay_penalty_value
+                                * (current_duration - max_duration_steps)
+                                / max_duration_steps
+                            )
+                            self.smart_logger.warning(
+                                f"[DURATION PENALTY] Overstay penalty for {position.asset}. Duration: {current_duration} > Max: {max_duration_steps}. Penalty: {penalty:.2f}",
+                                rotate=True,
+                            )
                         elif current_duration < optimal_duration_steps:
                             # No penalty for closing early if profitable, handled by early_close_bonus
                             pass
@@ -3730,72 +4315,124 @@ class MultiAssetChunkedEnv(gym.Env):
         """Calcule la récompense finale alignée pour chaque worker."""
 
         reward_shaping_config = self.config.get("reward_shaping", {})
-        
+
         # --- Load worker-specific reward profile ---
-        worker_name = self.worker_config.get('name', 'Default') # e.g., Conservative, Moderate, Aggressive, Adaptive
-        worker_profile_config = reward_shaping_config.get('profiles', {}).get(worker_name, {})
+        worker_name = self.worker_config.get(
+            "name", "Default"
+        )  # e.g., Conservative, Moderate, Aggressive, Adaptive
+        worker_profile_config = reward_shaping_config.get("profiles", {}).get(
+            worker_name, {}
+        )
 
         # Override global reward shaping parameters with worker-specific ones if they exist
-        pnl_weight = worker_profile_config.get('pnl_weight', reward_shaping_config.get('pnl_weight', 1.0))
-        missed_penalty_value = worker_profile_config.get('missed_opportunity_penalty', reward_shaping_config.get('missed_penalty', 0.0))
-        multi_traque_bonus_value = worker_profile_config.get('multi_traque_bonus', reward_shaping_config.get('multi_traque_bonus', 0.0))
-        invalid_trade_penalty_weight = worker_profile_config.get('invalid_trade_penalty_weight', reward_shaping_config.get('invalid_trade_penalty_weight', 0.5))
+        pnl_weight = worker_profile_config.get(
+            "pnl_weight", reward_shaping_config.get("pnl_weight", 1.0)
+        )
+        missed_penalty_value = worker_profile_config.get(
+            "missed_opportunity_penalty",
+            reward_shaping_config.get("missed_penalty", 0.0),
+        )
+        multi_traque_bonus_value = worker_profile_config.get(
+            "multi_traque_bonus", reward_shaping_config.get("multi_traque_bonus", 0.0)
+        )
+        invalid_trade_penalty_weight = worker_profile_config.get(
+            "invalid_trade_penalty_weight",
+            reward_shaping_config.get("invalid_trade_penalty_weight", 0.5),
+        )
         # Note: early_close_bonus and overstay_penalty are handled in their respective functions, which will need to be updated to use worker_profile_config as well.
 
         # 1. RÉCOMPENSE DE BASE SPÉCIALISÉE (PnL + Résultat)
-        pnl = self.calculate_pnl() if hasattr(self, 'calculate_pnl') else 0.0
-        base_reward = pnl_weight * np.tanh(pnl / pnl_weight) # Apply pnl_weight
+        pnl = self.calculate_pnl() if hasattr(self, "calculate_pnl") else 0.0
+        base_reward = pnl_weight * np.tanh(pnl / pnl_weight)  # Apply pnl_weight
 
         # Conditional inaction penalty and missed opportunity penalty
         current_timeframe = self.get_current_timeframe()
-        if not self.dbe.is_hunting(self.worker_id) and not self.has_open_trade(current_timeframe):
-            base_reward += self.calculate_inaction_penalty() # General inaction penalty
+        if not self.dbe.is_hunting(self.worker_id) and not self.has_open_trade(
+            current_timeframe
+        ):
+            base_reward += self.calculate_inaction_penalty()  # General inaction penalty
             # Add missed penalty if no open trade and not hunting
-            base_reward += missed_penalty_value # This is a direct penalty, not a function call
-            self.smart_logger.info(f"[REWARD] Missed opportunity penalty applied: {missed_penalty_value:.2f}", rotate=True)
-        elif not self.dbe.is_hunting(self.worker_id) and self.portfolio_manager.get_cash() < self.config.get('trading_rules', {}).get('min_order_value_usdt', 11.0):
+            base_reward += (
+                missed_penalty_value  # This is a direct penalty, not a function call
+            )
+            self.smart_logger.info(
+                f"[REWARD] Missed opportunity penalty applied: {missed_penalty_value:.2f}",
+                rotate=True,
+            )
+        elif not self.dbe.is_hunting(
+            self.worker_id
+        ) and self.portfolio_manager.get_cash() < self.config.get(
+            "trading_rules", {}
+        ).get("min_order_value_usdt", 11.0):
             # If not hunting and not enough cash, still apply inaction penalty if applicable
             base_reward += self.calculate_inaction_penalty()
 
         # 2. PÉNALITÉS DE GESTION TEMPORELLE
         # calculate_duration_penalty now includes overstay_penalty
-        duration_penalties = self.calculate_duration_penalty() # This function needs to be updated to use worker-specific overstay_penalty_value
+        duration_penalties = self.calculate_duration_penalty()  # This function needs to be updated to use worker-specific overstay_penalty_value
 
         # 3. RÉCOMPENSE DE FRÉQUENCE
-        frequency_reward = self._calculate_frequency_reward() # This method already uses frequency_weights
+        frequency_reward = (
+            self._calculate_frequency_reward()
+        )  # This method already uses frequency_weights
 
         # 4. PÉNALITÉ DE LIMITE DE POSITION
         pos_limit_penalty = self.calculate_position_limit_penalty()
 
         # 5. RÉCOMPENSE DE RÉSULTAT DE TRADE (inclut bonus early close)
-        outcome_reward = self.calculate_outcome_reward() + self.calculate_early_close_bonus() # calculate_early_close_bonus needs to be updated to use worker-specific early_close_bonus
+        outcome_reward = (
+            self.calculate_outcome_reward() + self.calculate_early_close_bonus()
+        )  # calculate_early_close_bonus needs to be updated to use worker-specific early_close_bonus
 
         # 6. PÉNALITÉ POUR TENTATIVES DE TRADE INVALIDE
-        invalid_trade_attempt_penalty = -invalid_trade_penalty_weight * self.invalid_trade_attempts
-        self.invalid_trade_attempts = 0 # Reset counter after use
+        invalid_trade_attempt_penalty = (
+            -invalid_trade_penalty_weight * self.invalid_trade_attempts
+        )
+        self.invalid_trade_attempts = 0  # Reset counter after use
 
         # 7. BONUS MULTI-TRAQUE (si capital élevé)
         multi_bonus = 0.0
-        if hasattr(self, 'portfolio_manager'):
+        if hasattr(self, "portfolio_manager"):
             initial_capital = self.portfolio_manager.initial_capital
             current_equity = self.portfolio_manager.get_equity()
-            open_trades_count = len([p for p in self.portfolio_manager.positions.values() if p.is_open])
+            open_trades_count = len(
+                [p for p in self.portfolio_manager.positions.values() if p.is_open]
+            )
 
-            multi_bonus_threshold_factor = reward_shaping_config.get('multi_traque_bonus_threshold_factor', 1.5) # This should be configurable per worker or globally
-            multi_bonus_min_open_trades = reward_shaping_config.get('multi_traque_bonus_min_open_trades', 2) # This should be configurable per worker or globally
+            multi_bonus_threshold_factor = reward_shaping_config.get(
+                "multi_traque_bonus_threshold_factor", 1.5
+            )  # This should be configurable per worker or globally
+            multi_bonus_min_open_trades = reward_shaping_config.get(
+                "multi_traque_bonus_min_open_trades", 2
+            )  # This should be configurable per worker or globally
 
-            if current_equity > initial_capital * multi_bonus_threshold_factor and open_trades_count >= multi_bonus_min_open_trades:
+            if (
+                current_equity > initial_capital * multi_bonus_threshold_factor
+                and open_trades_count >= multi_bonus_min_open_trades
+            ):
                 multi_bonus += multi_traque_bonus_value * open_trades_count
-                self.smart_logger.info(f"[REWARD] Multi-hunt bonus applied: {multi_bonus:.2f}", rotate=True)
+                self.smart_logger.info(
+                    f"[REWARD] Multi-hunt bonus applied: {multi_bonus:.2f}", rotate=True
+                )
 
         # Somme de toutes les composantes
-        total_reward = base_reward + frequency_reward + pos_limit_penalty + outcome_reward + duration_penalties + invalid_trade_attempt_penalty + multi_bonus
+        total_reward = (
+            base_reward
+            + frequency_reward
+            + pos_limit_penalty
+            + outcome_reward
+            + duration_penalties
+            + invalid_trade_attempt_penalty
+            + multi_bonus
+        )
 
         # Clipping asymétrique pour favoriser les gains
         final_reward = np.clip(total_reward, -3.0, 10.0)
 
         # Journalisation pour debug
-        self.logger.info(f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Freq: {frequency_reward:.4f}, PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, Duration: {duration_penalties:.4f}, InvalidTrade: {invalid_trade_attempt_penalty:.4f}, MultiHunt: {multi_bonus:.4f}, Total: {final_reward:.4f}, Counts: {self.positions_count}")
+        self.logger.info(
+            f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Freq: {frequency_reward:.4f}, PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, Duration: {duration_penalties:.4f}, InvalidTrade: {invalid_trade_attempt_penalty:.4f}, MultiHunt: {multi_bonus:.4f}, Total: {final_reward:.4f}, Counts: {self.positions_count}"
+        )
 
         # Store reward components for info dict
         self._last_reward_components = {
@@ -3923,7 +4560,7 @@ class MultiAssetChunkedEnv(gym.Env):
 
             except Exception as e:
                 logger.warning(f"[GUGU-MARCH] Error applying excellence bonus: {e}")
-        
+
             float: Volatilité annualisée en décimal (0.2 pour 20%)
         """
         try:
@@ -3970,11 +4607,24 @@ class MultiAssetChunkedEnv(gym.Env):
             )
             return 0.15  # Retourne une volatilité par défaut en cas d'erreur
 
-    def _execute_trades(
-        self, action: np.ndarray, dbe_modulation: Dict[str, float]
-    ) -> float:
+    def _execute_trades(self, action: np.ndarray, dbe_modulation: dict, force_trade: bool = False) -> float:
+        """
+        Exécute les trades en fonction des actions de l'agent.
+
+        Args:
+            action: Vecteur d'actions de l'agent [décision, horizon_risque, taille_position]
+                - décision: -1 à 1 (vendre/acheter)
+                - horizon_risque: -1 à 1 (court terme à long terme)
+                - taille_position: -1 à 1 (petite à grande)
+            dbe_modulation: Dictionnaire des paramètres modulés par le DBE
+
+        Returns:
+            Le PnL réalisé durant ce step
+        """
         if not hasattr(self, "portfolio_manager"):
-            self.logger.error("Portfolio manager non initialisé, impossible d'exécuter le trade.")
+            self.logger.error(
+                "Portfolio manager non initialisé, impossible d'exécuter le trade."
+            )
             return 0.0
 
         current_timestamp = None
@@ -3993,19 +4643,28 @@ class MultiAssetChunkedEnv(gym.Env):
                 self.portfolio_manager.register_market_timestamp(current_timestamp)
 
             if not current_prices or not self._validate_market_data(current_prices):
-                self.logger.warning(f"[W:{self.worker_id}] Données de marché invalides pour le step {self.current_step}, aucun trade exécuté.")
+                self.logger.warning(
+                    f"[W:{self.worker_id}] Données de marché invalides pour le step {self.current_step}, aucun trade exécuté."
+                )
                 if hasattr(self, "portfolio_manager"):
-                    self.portfolio_manager.update_market_price(current_prices if current_prices else {})
+                    self.portfolio_manager.update_market_price(
+                        current_prices if current_prices else {}
+                    )
                 return 0.0
         except Exception as e:
-            self.logger.error(f"Erreur critique lors de la récupération des prix au step {self.current_step}: {e}", exc_info=True)
+            self.logger.error(
+                f"Erreur critique lors de la récupération des prix au step {self.current_step}: {e}",
+                exc_info=True,
+            )
             return 0.0
 
         realized_pnl = 0.0
         trade_executed_this_step = False
 
         # 1. Mettre à jour la valeur des positions ouvertes et vérifier les SL/TP
-        pnl_from_update, sl_tp_receipts = self.portfolio_manager.update_market_price(current_prices, self.current_step)
+        pnl_from_update, sl_tp_receipts = self.portfolio_manager.update_market_price(
+            current_prices, self.current_step
+        )
         if sl_tp_receipts:
             self._step_closed_receipts.extend(sl_tp_receipts)
         if pnl_from_update > 0:
@@ -4017,21 +4676,59 @@ class MultiAssetChunkedEnv(gym.Env):
             if i >= len(action) or asset not in current_prices:
                 continue
 
-            action_value = np.clip(action[i], -1.0, 1.0)
+            # Décodage de l'action pour l'actif courant (compatibilité 5 actifs)
+            # L'action est un vecteur aplati de 15 dimensions [0-2: asset0, 3-5: asset1, 6-8: asset2, ...]
+            base_idx = i * 3  # 0, 3, 6, 9, 12 pour les actifs 0, 1, 2, 3, 4
+            if base_idx + 2 >= len(action):
+                # Ignorer si cet indice d'actif dépasse l'espace d'action
+                continue
+            main_decision = action[base_idx + 0]
+            risk_horizon = action[base_idx + 1]
+            desired_position_size = action[base_idx + 2]
             price = current_prices[asset]
             position = self.portfolio_manager.positions.get(asset)
             is_open = position and position.is_open
 
+            # Forcer l'ouverture si nécessaire
+            if force_trade and not is_open:
+                main_decision = 1.0  # Forcer l'ouverture
+                self.logger.warning(f"[FORCE_TRADE] Forcing OPEN for {asset} due to inactivity.")
+
+            # X. FORCER LA CLÔTURE SI LA DURÉE MAXIMALE EST ATTEINTE
+            max_steps = self.config.get("trading_rules", {}).get("max_position_steps")
+            if is_open and max_steps and (self.current_step - position.open_step > max_steps):
+                self.logger.warning(
+                    f"[FORCE CLOSE] Position for {asset} has exceeded max duration of {max_steps} steps. Forcing closure."
+                )
+                receipt = self.portfolio_manager.close_position(
+                    asset=asset.upper(),
+                    price=price,
+                    timestamp=current_timestamp,
+                    current_prices=current_prices,
+                    reason="MAX_DURATION",
+                    risk_horizon=position.risk_horizon,
+                )
+                if receipt:
+                    self._step_closed_receipts.append(receipt)
+                    realized_pnl += float(receipt.get("pnl", 0.0))
+                    trade_executed_this_step = True
+                continue # Passer à l'actif suivant
+
             # A. L'agent veut VENDRE (fermer une position)
-            if action_value < -0.5 and is_open:
-                self.logger.info(f"[ACTION] Agent requests CLOSE for {asset} at price {price:.2f}")
+            if main_decision < -0.5 and is_open:
+                self.logger.info(
+                    f"[ACTION] Agent requests CLOSE for {asset} at price {price:.2f}"
+                )
                 self.trade_attempts += 1
                 receipt = self.portfolio_manager.close_position(
                     asset=asset.upper(),
                     price=price,
                     timestamp=current_timestamp,
                     current_prices=current_prices,
-                    reason="agent",
+                    reason="SL",
+                    risk_horizon=position.risk_horizon
+                    if hasattr(position, "risk_horizon")
+                    else risk_horizon,
                 )
                 if receipt:
                     self._step_closed_receipts.append(receipt)
@@ -4040,47 +4737,65 @@ class MultiAssetChunkedEnv(gym.Env):
                     if len(self.receipts) > 50:
                         self.receipts = self.receipts[-50:]
 
-                    realized_pnl += float(receipt.get('pnl', 0.0))
+                    realized_pnl += float(receipt.get("pnl", 0.0))
                     trade_executed_this_step = True
                     # DECREMENT FREQUENCY COUNTERS ON CLOSURE
-                    tf = getattr(self, 'current_timeframe_for_trade', '5m')
+                    tf = getattr(self, "current_timeframe_for_trade", "5m")
                     try:
                         if tf in self.positions_count and self.positions_count[tf] > 0:
                             self.positions_count[tf] -= 1
-                        if self.positions_count['daily_total'] > 0:
-                            self.positions_count['daily_total'] -= 1
-                        self.smart_logger.info(f"[FREQUENCY] Position closed for {asset} on {tf}. Decremented counts. Current: {self.positions_count}", rotate=True)
+                        if self.positions_count["daily_total"] > 0:
+                            self.positions_count["daily_total"] -= 1
+                        self.smart_logger.info(
+                            f"[FREQUENCY] Position closed for {asset} on {tf}. Decremented counts. Current: {self.positions_count}",
+                            rotate=True,
+                        )
                     except Exception as freq_e:
-                        self.logger.debug(f"[FREQUENCY] Failed to decrement frequency counters on close: {freq_e}")
+                        self.logger.debug(
+                            f"[FREQUENCY] Failed to decrement frequency counters on close: {freq_e}"
+                        )
                 else:
                     self.invalid_trade_attempts += 1
-                    self.logger.info(f"Failed to close position for {asset} (no receipt)")
+                    self.logger.info(
+                        f"Failed to close position for {asset} (no receipt)"
+                    )
 
             # B. L'agent veut ACHETER (ouvrir une position)
-            elif action_value > 0.5 and not is_open:
-                self.logger.info(f"[ACTION] Agent requests OPEN for {asset} at price {price:.2f}")
+            elif main_decision > 0.5 and not is_open:
+                self.logger.info(
+                    f"[ACTION] Agent requests OPEN for {asset} at price {price:.2f} with risk_horizon={risk_horizon:.2f}"
+                )
                 self.trade_attempts += 1
 
                 trade_params = self.dbe.calculate_trade_parameters(
                     capital=self.portfolio_manager.get_total_value(),
-                    worker_pref_pct=action_value,
+                    worker_pref_pct=main_decision,
                     tier_config=self.portfolio_manager.get_current_tier(),
                     current_price=price,
                     asset_volatility=self._calculate_asset_volatility(asset),
-                    dbe_modulation=dbe_modulation
+                    dbe_modulation=dbe_modulation,
+                    risk_horizon=risk_horizon,
+                    desired_position_size=desired_position_size,
                 )
 
                 if not trade_params.get("feasible", False):
-                    reason_txt = trade_params.get('reason', 'Raison inconnue')
-                    self.logger.warning(f"Trade non réalisable pour {asset}: {reason_txt}")
+                    reason_txt = trade_params.get("reason", "Raison inconnue")
+                    self.logger.warning(
+                        f"Trade non réalisable pour {asset}: {reason_txt}"
+                    )
                     # Metrics: tentative rejetée
                     try:
-                        if hasattr(self.portfolio_manager, 'metrics') and self.portfolio_manager.metrics:
+                        if (
+                            hasattr(self.portfolio_manager, "metrics")
+                            and self.portfolio_manager.metrics
+                        ):
                             self.portfolio_manager.metrics.record_trade_rejection(
                                 reason=str(reason_txt),
                                 context={
-                                    'asset': asset,
-                                    'timeframe': getattr(self, 'current_timeframe_for_trade', '5m'),
+                                    "asset": asset,
+                                    "timeframe": getattr(
+                                        self, "current_timeframe_for_trade", "5m"
+                                    ),
                                 },
                             )
                     except Exception:
@@ -4092,18 +4807,28 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Harmoniser avec l'intervalle de taille de position du palier (config capital_tiers.exposure_range)
                 try:
                     tier_cfg = self.portfolio_manager.get_current_tier()
-                    exposure_range = tier_cfg.get("exposure_range") if isinstance(tier_cfg, dict) else None
-                    if exposure_range and isinstance(exposure_range, (list, tuple)) and len(exposure_range) == 2:
+                    exposure_range = (
+                        tier_cfg.get("exposure_range")
+                        if isinstance(tier_cfg, dict)
+                        else None
+                    )
+                    if (
+                        exposure_range
+                        and isinstance(exposure_range, (list, tuple))
+                        and len(exposure_range) == 2
+                    ):
                         min_pct = float(exposure_range[0]) / 100.0
                         max_pct = float(exposure_range[1]) / 100.0
                         # Calculer le pourcentage demandé et le contraindre à l'intervalle du palier
                         if equity > 0:
                             requested_pct = float(position_size_usdt) / float(equity)
-                            clamped_pct = float(np.clip(requested_pct, min_pct, max_pct))
+                            clamped_pct = float(
+                                np.clip(requested_pct, min_pct, max_pct)
+                            )
                             if clamped_pct != requested_pct:
                                 self.logger.info(
-                                    f"[TIER SIZING] {tier_cfg.get('name', 'Unknown')} range {min_pct*100:.1f}-{max_pct*100:.1f}% | "
-                                    f"Requested={requested_pct*100:.2f}% -> Clamped={clamped_pct*100:.2f}%"
+                                    f"[TIER SIZING] {tier_cfg.get('name', 'Unknown')} range {min_pct * 100:.1f}-{max_pct * 100:.1f}% | "
+                                    f"Requested={requested_pct * 100:.2f}% -> Clamped={clamped_pct * 100:.2f}%"
                                 )
                             position_size_usdt = clamped_pct * float(equity)
                 except Exception as _e:
@@ -4113,7 +4838,11 @@ class MultiAssetChunkedEnv(gym.Env):
                 try:
                     equity = float(self.portfolio_manager.get_equity())
                 except Exception:
-                    equity = float(self.portfolio_manager.get_total_value()) if hasattr(self.portfolio_manager, "get_total_value") else position_size_usdt
+                    equity = (
+                        float(self.portfolio_manager.get_total_value())
+                        if hasattr(self.portfolio_manager, "get_total_value")
+                        else position_size_usdt
+                    )
 
                 # Taille cible max autorisée: préférer le max d'exposure_range du palier si disponible, sinon pos_size_pct
                 try:
@@ -4122,10 +4851,18 @@ class MultiAssetChunkedEnv(gym.Env):
                         rng = tier_cfg.get("exposure_range")
                         if rng and isinstance(rng, (list, tuple)) and len(rng) == 2:
                             tier_cap_pct = float(rng[1]) / 100.0
-                    fallback_cap = getattr(self.portfolio_manager, 'pos_size_pct', 0.1) or 0.1
-                    pos_cap_pct = float(tier_cap_pct) if tier_cap_pct is not None else float(fallback_cap)
+                    fallback_cap = (
+                        getattr(self.portfolio_manager, "pos_size_pct", 0.1) or 0.1
+                    )
+                    pos_cap_pct = (
+                        float(tier_cap_pct)
+                        if tier_cap_pct is not None
+                        else float(fallback_cap)
+                    )
                 except Exception:
-                    pos_cap_pct = getattr(self.portfolio_manager, 'pos_size_pct', 0.1) or 0.1
+                    pos_cap_pct = (
+                        getattr(self.portfolio_manager, "pos_size_pct", 0.1) or 0.1
+                    )
                 max_notional = max(0.0, equity * pos_cap_pct)
 
                 requested_notional = float(position_size_usdt)
@@ -4133,11 +4870,13 @@ class MultiAssetChunkedEnv(gym.Env):
 
                 if capped_notional < requested_notional:
                     self.logger.info(
-                        f"[SIZING CAP] Requested={requested_notional:.2f} USDT, Capped={capped_notional:.2f} USDT (cap={pos_cap_pct*100:.1f}% of equity {equity:.2f})"
+                        f"[SIZING CAP] Requested={requested_notional:.2f} USDT, Capped={capped_notional:.2f} USDT (cap={pos_cap_pct * 100:.1f}% of equity {equity:.2f})"
                     )
                 # Gate par le cash disponible (pas de downsizing: rejeter si insuffisant)
                 try:
-                    available_cash = float(getattr(self.portfolio_manager, 'get_cash', lambda: 0.0)())
+                    available_cash = float(
+                        getattr(self.portfolio_manager, "get_cash", lambda: 0.0)()
+                    )
                 except Exception:
                     available_cash = 0.0
 
@@ -4146,14 +4885,17 @@ class MultiAssetChunkedEnv(gym.Env):
                         f"[CASH GATE] Required={capped_notional:.2f} USDT, Available={available_cash:.2f} USDT | Rejet de l'ouverture pour {asset}"
                     )
                     try:
-                        if hasattr(self.portfolio_manager, 'metrics') and self.portfolio_manager.metrics:
+                        if (
+                            hasattr(self.portfolio_manager, "metrics")
+                            and self.portfolio_manager.metrics
+                        ):
                             self.portfolio_manager.metrics.record_trade_rejection(
-                                reason='insufficient_liquidity_equity_based',
+                                reason="insufficient_liquidity_equity_based",
                                 context={
-                                    'asset': asset,
-                                    'required_usdt': capped_notional,
-                                    'available_cash': available_cash,
-                                    'equity': equity,
+                                    "asset": asset,
+                                    "required_usdt": capped_notional,
+                                    "available_cash": available_cash,
+                                    "equity": equity,
                                 },
                             )
                     except Exception:
@@ -4162,19 +4904,24 @@ class MultiAssetChunkedEnv(gym.Env):
                     continue
 
                 position_size_usdt = capped_notional
-                if position_size_usdt < 11.0: # Seuil minimum de trade
-                    self.logger.warning(f"Taille de position trop faible pour {asset}: {position_size_usdt:.2f} USDT")
+                if position_size_usdt < 11.0:  # Seuil minimum de trade
+                    self.logger.warning(
+                        f"Taille de position trop faible pour {asset}: {position_size_usdt:.2f} USDT"
+                    )
                     # Metrics: tentative rejetée (valide mais trop petite)
                     try:
-                        if hasattr(self.portfolio_manager, 'metrics') and self.portfolio_manager.metrics:
+                        if (
+                            hasattr(self.portfolio_manager, "metrics")
+                            and self.portfolio_manager.metrics
+                        ):
                             self.portfolio_manager.metrics.record_trade_rejection(
-                                reason='min_order',
+                                reason="min_order",
                                 context={
-                                    'asset': asset,
-                                    'requested_usdt': requested_notional,
-                                    'capped_usdt': capped_notional,
-                                    'cash_capped_usdt': cash_capped_notional,
-                                    'available_cash': available_cash,
+                                    "asset": asset,
+                                    "requested_usdt": requested_notional,
+                                    "capped_usdt": capped_notional,
+                                    "cash_capped_usdt": cash_capped_notional,
+                                    "available_cash": available_cash,
                                 },
                             )
                     except Exception:
@@ -4197,19 +4944,28 @@ class MultiAssetChunkedEnv(gym.Env):
                             timestamp=current_timestamp,
                             current_prices=current_prices,
                             allocated_pct=final_pct,
-                            timeframe=self.current_timeframe_for_trade,  # Ajout du timeframe
+                            timeframe=getattr(
+                                self, "current_timeframe_for_trade", "5m"
+                            ),
                             current_step=self.current_step,
+                            risk_horizon=risk_horizon,
                         )
                         # Metrics: tentative réussie
                         try:
-                            if receipt and hasattr(self.portfolio_manager, 'metrics') and self.portfolio_manager.metrics:
+                            if (
+                                receipt
+                                and hasattr(self.portfolio_manager, "metrics")
+                                and self.portfolio_manager.metrics
+                            ):
                                 self.portfolio_manager.metrics.record_trade_attempt(
                                     valid=True,
                                     context={
-                                        'asset': asset,
-                                        'notional': position_size_usdt,
-                                        'allocated_pct': final_pct,
-                                        'timeframe': getattr(self, 'current_timeframe_for_trade', '5m'),
+                                        "asset": asset,
+                                        "notional": position_size_usdt,
+                                        "allocated_pct": final_pct,
+                                        "timeframe": getattr(
+                                            self, "current_timeframe_for_trade", "5m"
+                                        ),
                                     },
                                 )
                         except Exception:
@@ -4222,24 +4978,43 @@ class MultiAssetChunkedEnv(gym.Env):
 
                             trade_executed_this_step = True
                             # Update frequency counters per timeframe using current_timeframe_for_trade
-                            tf = getattr(self, 'current_timeframe_for_trade', '5m')
+                            tf = getattr(self, "current_timeframe_for_trade", "5m")
                             try:
                                 if tf in self.positions_count:
-                                    self.positions_count[tf] = int(self.positions_count.get(tf, 0)) + 1
+                                    self.positions_count[tf] = (
+                                        int(self.positions_count.get(tf, 0)) + 1
+                                    )
                                 # Always update daily total
-                                self.positions_count['daily_total'] = int(self.positions_count.get('daily_total', 0)) + 1
+                                self.positions_count["daily_total"] = (
+                                    int(self.positions_count.get("daily_total", 0)) + 1
+                                )
                                 # Update last trade timestamp for tf
-                                if isinstance(current_timestamp, (pd.Timestamp, datetime)):
-                                    ts = current_timestamp.to_pydatetime() if isinstance(current_timestamp, pd.Timestamp) else current_timestamp
+                                if isinstance(
+                                    current_timestamp, (pd.Timestamp, datetime)
+                                ):
+                                    ts = (
+                                        current_timestamp.to_pydatetime()
+                                        if isinstance(current_timestamp, pd.Timestamp)
+                                        else current_timestamp
+                                    )
                                     self.last_trade_timestamps[tf] = ts
                             except Exception as freq_e:
-                                self.logger.debug(f"[FREQUENCY] Failed to update frequency counters: {freq_e}")
-                            self.logger.info(f"Position {asset} opened. Size: {size_in_asset_units:.4f}")
+                                self.logger.debug(
+                                    f"[FREQUENCY] Failed to update frequency counters: {freq_e}"
+                                )
+                            self.logger.info(
+                                f"Position {asset} opened. Size: {size_in_asset_units:.4f}"
+                            )
                         else:
-                            self.logger.warning(f"Failed to open position for {asset} (insufficient cash or already open)")
+                            self.logger.warning(
+                                f"Failed to open position for {asset} (insufficient cash or already open)"
+                            )
                             self.invalid_trade_attempts += 1
                     except Exception as e:
-                        self.logger.error(f"Impossible d'ouvrir une position pour {asset}: {e}", exc_info=True)
+                        self.logger.error(
+                            f"Impossible d'ouvrir une position pour {asset}: {e}",
+                            exc_info=True,
+                        )
 
             # C. L'agent veut CONSERVER (HOLD)
             else:
@@ -4365,9 +5140,8 @@ class MultiAssetChunkedEnv(gym.Env):
         info = {
             "step": self.current_step,
             "chunk": self.current_chunk_idx,
-            "done": getattr(self, 'done', False),
-            "worker_id": getattr(self, 'worker_id', 0),
-
+            "done": getattr(self, "done", False),
+            "worker_id": getattr(self, "worker_id", 0),
             # Portfolio metrics
             "portfolio_value": portfolio_metrics.get("total_value", 0.0),
             "cash": portfolio_metrics.get("cash", 0.0),
@@ -4378,45 +5152,46 @@ class MultiAssetChunkedEnv(gym.Env):
             "sharpe": portfolio_metrics.get("sharpe_ratio", 0.0),
             "sortino": portfolio_metrics.get("sortino_ratio", 0.0),
             "win_rate": portfolio_metrics.get("win_rate", 0.0),
-
             # Trading statistics
             "trades": total_trades,
             "valid_trades": valid_trades,
             "invalid_trades": max(0, total_trades - valid_trades),
             # Activity counters from PerformanceMetrics
-            "trade_attempts_total": portfolio_metrics.get("trade_attempts_total", portfolio_metrics.get("trade_attempts", 0)),
+            "trade_attempts_total": portfolio_metrics.get(
+                "trade_attempts_total", portfolio_metrics.get("trade_attempts", 0)
+            ),
             "valid_trade_attempts": portfolio_metrics.get("valid_trade_attempts", 0),
-            "invalid_trade_attempts": portfolio_metrics.get("invalid_trade_attempts", 0),
-            "executed_trades_opened": portfolio_metrics.get("executed_trades_opened", 0),
+            "invalid_trade_attempts": portfolio_metrics.get(
+                "invalid_trade_attempts", 0
+            ),
+            "executed_trades_opened": portfolio_metrics.get(
+                "executed_trades_opened", 0
+            ),
             "closed_positions": closed_positions,
-
             # Positions actuelles
             "positions": position_values,
             "total_position_value": total_position_value,
             "leverage": portfolio_metrics.get("leverage", 0.0),
-            "num_positions": portfolio_metrics.get("open_positions_count", len(position_values)),
-
+            "num_positions": portfolio_metrics.get(
+                "open_positions_count", len(position_values)
+            ),
             # Rewards & Penalties
             "last_reward": last_reward,
             "last_penalty": last_penalty,
             "cumulative_reward": cumulative_reward,
             "reward_components": reward_components,
-
             # Market data
             "current_date": self._get_safe_timestamp(),
             "current_prices": current_prices,
             "assets": list(current_prices.keys()),
             "num_assets": len(current_prices),
-
             # Action stats
             "action_stats": action_stats,
-
             # Risk metrics
             "risk_metrics": getattr(self, "risk_metrics", {}),
             "position_size": getattr(self, "base_position_size", 0.0),
             "risk_per_trade": getattr(self, "risk_per_trade", 0.0),
             "dynamic_sizing": getattr(self, "dynamic_position_sizing", False),
-
             # Performance metrics
             "performance": {
                 "timestamp": self._get_safe_timestamp(),
@@ -4427,7 +5202,6 @@ class MultiAssetChunkedEnv(gym.Env):
                     else 0.0
                 ),
             },
-
             # Frequency counts (picklable)
             "frequency": {
                 "counts": {
@@ -4437,14 +5211,23 @@ class MultiAssetChunkedEnv(gym.Env):
                     "daily_total": int(self.positions_count.get("daily_total", 0)),
                 }
             },
-
             # Recent receipts (small buffer, picklable primitives)
             "last_receipts": [
                 {
-                    k: (float(v) if isinstance(v, (np.floating,)) else int(v) if isinstance(v, (np.integer,)) else str(v))
+                    k: (
+                        float(v)
+                        if isinstance(v, (np.floating,))
+                        else int(v)
+                        if isinstance(v, (np.integer,))
+                        else str(v)
+                    )
                     for k, v in rec.items()
                 }
-                for rec in (self.receipts[-5:] if hasattr(self, "receipts") and self.receipts else [])
+                for rec in (
+                    self.receipts[-5:]
+                    if hasattr(self, "receipts") and self.receipts
+                    else []
+                )
             ],
         }
 
@@ -4480,7 +5263,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 "last_penalty": 0.0,
                 "cumulative_reward": 0.0,
                 "current_date": "N/A",
-                "worker_id": getattr(self, 'worker_id', 0),
+                "worker_id": getattr(self, "worker_id", 0),
             }
 
     def render(self, mode: str = "human") -> None:
@@ -4578,8 +5361,12 @@ class MultiAssetChunkedEnv(gym.Env):
         try:
             pm = self.portfolio_manager
             # Use performance_metrics with positions_count for synchronized metrics
-            if hasattr(self, 'performance_metrics'):
-                metrics = self.performance_metrics.calculate_metrics(positions_count=self.positions_count, trade_attempts=self.trade_attempts, invalid_trade_attempts=self.invalid_trade_attempts)
+            if hasattr(self, "performance_metrics"):
+                metrics = self.performance_metrics.calculate_metrics(
+                    positions_count=self.positions_count,
+                    trade_attempts=self.trade_attempts,
+                    invalid_trade_attempts=self.invalid_trade_attempts,
+                )
             else:
                 metrics = {}
 
@@ -4588,8 +5375,16 @@ class MultiAssetChunkedEnv(gym.Env):
             try:
                 for asset, pos in pm.positions.items():
                     if pos.is_open:
-                        sl_price = pos.entry_price * (1 - pos.stop_loss_pct) if pos.stop_loss_pct > 0 else 0
-                        tp_price = pos.entry_price * (1 + pos.take_profit_pct) if pos.take_profit_pct > 0 else 0
+                        sl_price = (
+                            pos.entry_price * (1 - pos.stop_loss_pct)
+                            if pos.stop_loss_pct > 0
+                            else 0
+                        )
+                        tp_price = (
+                            pos.entry_price * (1 + pos.take_profit_pct)
+                            if pos.take_profit_pct > 0
+                            else 0
+                        )
                         open_positions.append(
                             f"│   {asset}: {pos.size:.4f} @ {pos.entry_price:.2f} | SL: {sl_price:.2f} | TP: {tp_price:.2f}"
                         )
@@ -4599,18 +5394,20 @@ class MultiAssetChunkedEnv(gym.Env):
             # Safely collect closed positions
             closed_positions = []
             try:
-                if hasattr(pm, 'trade_log') and pm.trade_log:
-                    closed_trades = [t for t in pm.trade_log if t.get('action') == 'close']
+                if hasattr(pm, "trade_log") and pm.trade_log:
+                    closed_trades = [
+                        t for t in pm.trade_log if t.get("action") == "close"
+                    ]
                     for trade in closed_trades[-3:]:  # Last 3 closed trades
-                        pnl = trade.get('pnl', 0.0)
-                        pnl_pct = trade.get('pnl_pct', 0.0)
-                        asset = trade.get('asset', 'Unknown')
-                        size = trade.get('size', 0.0)
-                        entry_price = trade.get('entry_price', 0.0)
-                        exit_price = trade.get('exit_price', trade.get('price', 0.0))
-                        opened_at = trade.get('opened_at')
-                        closed_at = trade.get('closed_at')
-                        duration_seconds = trade.get('duration_seconds')
+                        pnl = trade.get("pnl", 0.0)
+                        pnl_pct = trade.get("pnl_pct", 0.0)
+                        asset = trade.get("asset", "Unknown")
+                        size = trade.get("size", 0.0)
+                        entry_price = trade.get("entry_price", 0.0)
+                        exit_price = trade.get("exit_price", trade.get("price", 0.0))
+                        opened_at = trade.get("opened_at")
+                        closed_at = trade.get("closed_at")
+                        duration_seconds = trade.get("duration_seconds")
 
                         closed_positions.append(
                             (
@@ -4636,65 +5433,92 @@ class MultiAssetChunkedEnv(gym.Env):
                 closed_positions = [f"│   Error retrieving closed trades: {str(e)}"]
 
             # Safe metric retrieval
-            sharpe = metrics.get('sharpe', 0.0)
-            sortino = metrics.get('sortino', 0.0)
-            profit_factor = metrics.get('profit_factor', 0.0)
-            max_dd = metrics.get('max_dd', 0.0)
-            cagr = metrics.get('cagr', 0.0)
-            win_rate = metrics.get('winrate', 0.0)
-            total_trades = metrics.get('total_trades', 0)
-            winning_trades = metrics.get('wins', 0)
-            losing_trades = metrics.get('losses', 0)
-            neutral_trades = metrics.get('neutrals', 0)
-            trade_attempts = metrics.get('trade_attempts_total', 0)
-            executed_opens = metrics.get('executed_trades_opened', 0)
-            invalid_attempts = metrics.get('invalid_trade_attempts', 0)
+            sharpe = metrics.get("sharpe", 0.0)
+            sortino = metrics.get("sortino", 0.0)
+            profit_factor = metrics.get("profit_factor", 0.0)
+            max_dd = metrics.get("max_dd", 0.0)
+            cagr = metrics.get("cagr", 0.0)
+            win_rate = metrics.get("winrate", 0.0)
+            total_trades = metrics.get("total_trades", 0)
+            winning_trades = metrics.get("wins", 0)
+            losing_trades = metrics.get("losses", 0)
+            neutral_trades = metrics.get("neutrals", 0)
+            trade_attempts = metrics.get("trade_attempts_total", 0)
+            executed_opens = metrics.get("executed_trades_opened", 0)
+            invalid_attempts = metrics.get("invalid_trade_attempts", 0)
 
             # Safe portfolio values
-            capital = pm.get_total_value() if hasattr(pm, 'get_total_value') else 0.0
-            equity = pm.get_equity() if hasattr(pm, 'get_equity') else 0.0
-            balance = pm.get_cash() if hasattr(pm, 'get_cash') else (
-                getattr(pm, 'cash', 0.0)
+            capital = pm.get_total_value() if hasattr(pm, "get_total_value") else 0.0
+            equity = pm.get_equity() if hasattr(pm, "get_equity") else 0.0
+            balance = (
+                pm.get_cash() if hasattr(pm, "get_cash") else (getattr(pm, "cash", 0.0))
             )
 
             # Utiliser calculate_drawdown() pour obtenir les valeurs correctes
-            current_dd = pm.calculate_drawdown() * 100  # calculate_drawdown() retourne un ratio (0.0-1.0)
-            max_dd_allowed = getattr(pm, 'max_drawdown_pct', 0.25) * 100
+            current_dd = (
+                pm.calculate_drawdown() * 100
+            )  # calculate_drawdown() retourne un ratio (0.0-1.0)
+            max_dd_allowed = getattr(pm, "max_drawdown_pct", 0.25) * 100
 
             summary_lines = [
-                "╭──────── Étape {} / Chunk {}/{} (Worker {}) ─────────╮".format(step, chunk_id, total_chunks, self.worker_id),
+                "╭──────── Étape {} / Chunk {}/{} (Worker {}) ─────────╮".format(
+                    step, chunk_id, total_chunks, self.worker_id
+                ),
                 "│ 📊 PORTFOLIO                                                  │",
-                "│ Capital: {:.2f} USDT | Équité: {:.2f} USDT".format(capital, equity).ljust(65) + "│",
+                "│ Capital: {:.2f} USDT | Équité: {:.2f} USDT".format(
+                    capital, equity
+                ).ljust(65)
+                + "│",
                 "│ Solde disponible: {:.2f} USDT".format(balance).ljust(65) + "│",
                 "│                                                               │",
                 "│ 📈 MÉTRIQUES                                                  │",
-                "│ Sharpe: {:.2f} | Sortino: {:.2f} | Profit Factor: {:.2f}".format(sharpe, sortino, profit_factor).ljust(65) + "│",
-                "│ Max DD: {:.2f}% | CAGR: {:.2f}% | Win Rate: {:.1f}%".format(max_dd, cagr, win_rate).ljust(65) + "│",
-                "│ Trades Clôturés: {} ({}W/{}L/{}N)".format(total_trades, winning_trades, losing_trades, neutral_trades).ljust(65) + "│",
-                "│ Activité: {} tentatives, {} ouverts, {} rejets".format(trade_attempts, executed_opens, invalid_attempts).ljust(65) + "│",
+                "│ Sharpe: {:.2f} | Sortino: {:.2f} | Profit Factor: {:.2f}".format(
+                    sharpe, sortino, profit_factor
+                ).ljust(65)
+                + "│",
+                "│ Max DD: {:.2f}% | CAGR: {:.2f}% | Win Rate: {:.1f}%".format(
+                    max_dd, cagr, win_rate
+                ).ljust(65)
+                + "│",
+                "│ Trades Clôturés: {} ({}W/{}L/{}N)".format(
+                    total_trades, winning_trades, losing_trades, neutral_trades
+                ).ljust(65)
+                + "│",
+                "│ Activité: {} tentatives, {} ouverts, {} rejets".format(
+                    trade_attempts, executed_opens, invalid_attempts
+                ).ljust(65)
+                + "│",
                 "│ Positions: 5m:{}, 1h:{}, 4h:{}, Total:{}".format(
-                    self.positions_count.get('5m', 0),
-                    self.positions_count.get('1h', 0),
-                    self.positions_count.get('4h', 0),
-                    len([p for p in pm.positions.values() if p.is_open])
-                ).ljust(65) + "│",
+                    self.positions_count.get("5m", 0),
+                    self.positions_count.get("1h", 0),
+                    self.positions_count.get("4h", 0),
+                    len([p for p in pm.positions.values() if p.is_open]),
+                ).ljust(65)
+                + "│",
                 "│                                                               │",
                 "│ ⚠️  RISQUE                                                     │",
-                "│ Drawdown actuel: {:.1f}%/{:.1f}%".format(current_dd, max_dd_allowed).ljust(65) + "│",
+                "│ Drawdown actuel: {:.1f}%/{:.1f}%".format(
+                    current_dd, max_dd_allowed
+                ).ljust(65)
+                + "│",
                 "│                                                               │",
-                "│ 📋 POSITIONS OUVERTES                                         │"
+                "│ 📋 POSITIONS OUVERTES                                         │",
             ]
 
             if open_positions:
                 # open_positions doit déjà contenir des lignes formatées. On les enrichit si possible
                 summary_lines.extend(open_positions)
             else:
-                summary_lines.append("│   Aucune                                                      │")
+                summary_lines.append(
+                    "│   Aucune                                                      │"
+                )
 
-            summary_lines.extend([
-                "│                                                               │",
-                "│ 📕 DERNIÈRES POSITIONS FERMÉES                                │"
-            ])
+            summary_lines.extend(
+                [
+                    "│                                                               │",
+                    "│ 📕 DERNIÈRES POSITIONS FERMÉES                                │",
+                ]
+            )
 
             if closed_positions:
                 # Enrichir l’affichage si le dict contient opened_at/closed_at
@@ -4703,69 +5527,94 @@ class MultiAssetChunkedEnv(gym.Env):
                     enriched.append(line)
                 summary_lines.extend(enriched)
             else:
-                summary_lines.append("│   Aucune                                                      │")
+                summary_lines.append(
+                    "│   Aucune                                                      │"
+                )
 
-            summary_lines.append("╰───────────────────────────────────────────────────────────────╯")
+            summary_lines.append(
+                "╰───────────────────────────────────────────────────────────────╯"
+            )
 
             summary = "\n".join(summary_lines)
             logger.info(summary)
 
         except Exception as e:
             logger.error(f"Error in _log_summary: {str(e)}")
-            logger.info(f"[SUMMARY] Step {step} | Chunk {chunk_id}/{total_chunks} | Basic info only due to error")
+            logger.info(
+                f"[SUMMARY] Step {step} | Chunk {chunk_id}/{total_chunks} | Basic info only due to error"
+            )
 
     def _calculate_reward(self, action):
         """Calculate reward with enhanced frequency penalties."""
         # Base reward (PnL non-linéaire + Inaction)
-        pnl = self.calculate_pnl() if hasattr(self, 'calculate_pnl') else 0.0
+        pnl = self.calculate_pnl() if hasattr(self, "calculate_pnl") else 0.0
         pnl_scaling_factor = 10.0  # Facteur pour contrôler l'agressivité du PnL
         base_reward = pnl_scaling_factor * np.tanh(pnl / pnl_scaling_factor)
 
-        base_reward += self.calculate_inaction_penalty() if hasattr(self, 'calculate_inaction_penalty') else 0.0
+        base_reward += (
+            self.calculate_inaction_penalty()
+            if hasattr(self, "calculate_inaction_penalty")
+            else 0.0
+        )
 
         # Frequency-based reward/penalty with grace period
-        frequency_config = self.config.get('trading_rules', {}).get('frequency', {})
+        frequency_config = self.config.get("trading_rules", {}).get("frequency", {})
         frequency_reward = 0.0
 
         # Grace period: no frequency penalties for the first 100 steps to allow learning
-        grace_period_steps = frequency_config.get('grace_period_steps', 100)
+        grace_period_steps = frequency_config.get("grace_period_steps", 100)
         current_step = self.current_step
 
         # Only apply frequency penalties after grace period
         if current_step > grace_period_steps:
-            for tf in ['5m', '1h', '4h']:
+            for tf in ["5m", "1h", "4h"]:
                 count = self.positions_count.get(tf, 0)
                 tf_config = frequency_config.get(tf, {})
-                min_pos = tf_config.get('min_positions', 1)
-                max_pos = tf_config.get('max_positions', 10)
+                min_pos = tf_config.get("min_positions", 1)
+                max_pos = tf_config.get("max_positions", 10)
 
                 if min_pos <= count <= max_pos:
                     # Bonus for being in range
-                    frequency_reward += frequency_config.get('frequency_bonus_weight', 0.3) * (count / max_pos)
+                    frequency_reward += frequency_config.get(
+                        "frequency_bonus_weight", 0.3
+                    ) * (count / max_pos)
                 elif count < min_pos:
                     # Reduced penalty for insufficient positions (removed 2.0 factor)
-                    penalty = frequency_config.get('frequency_penalty_weight', 1.0) * (min_pos - count)
+                    penalty = frequency_config.get("frequency_penalty_weight", 1.0) * (
+                        min_pos - count
+                    )
                     frequency_reward -= penalty
                 elif count > max_pos:
                     # Standard penalty for excessive positions
-                    frequency_reward -= frequency_config.get('frequency_penalty_weight', 1.0) * (count - max_pos)
+                    frequency_reward -= frequency_config.get(
+                        "frequency_penalty_weight", 1.0
+                    ) * (count - max_pos)
 
             # Daily total frequency check
-            total_count = self.positions_count.get('daily_total', 0)
-            min_total = frequency_config.get('total_daily_min', 5)
-            max_total = frequency_config.get('total_daily_max', 15)
+            total_count = self.positions_count.get("daily_total", 0)
+            min_total = frequency_config.get("total_daily_min", 5)
+            max_total = frequency_config.get("total_daily_max", 15)
 
             if min_total <= total_count <= max_total:
-                frequency_reward += frequency_config.get('frequency_bonus_weight', 0.3) * (total_count / max_total)
+                frequency_reward += frequency_config.get(
+                    "frequency_bonus_weight", 0.3
+                ) * (total_count / max_total)
             elif total_count < min_total:
                 # Reduced penalty for insufficient total positions (removed 2.0 factor)
-                frequency_reward -= frequency_config.get('frequency_penalty_weight', 1.0) * (min_total - total_count)
+                frequency_reward -= frequency_config.get(
+                    "frequency_penalty_weight", 1.0
+                ) * (min_total - total_count)
             elif total_count > max_total:
-                frequency_reward -= frequency_config.get('frequency_penalty_weight', 1.0) * (total_count - max_total)
+                frequency_reward -= frequency_config.get(
+                    "frequency_penalty_weight", 1.0
+                ) * (total_count - max_total)
         else:
             # During grace period: only give bonuses, no penalties
             if current_step % 20 == 0:
-                self.smart_logger.info(f"[GRACE PERIOD] Step {current_step}/{grace_period_steps} - No frequency penalties applied", rotate=True)
+                self.smart_logger.info(
+                    f"[GRACE PERIOD] Step {current_step}/{grace_period_steps} - No frequency penalties applied",
+                    rotate=True,
+                )
 
         # Penalty when exceeding tier open position limit
         pos_limit_penalty = 0.0
@@ -4773,15 +5622,23 @@ class MultiAssetChunkedEnv(gym.Env):
             tier_cfg = self.portfolio_manager.get_current_tier()
             limit = 1
             if isinstance(tier_cfg, dict):
-                limit = int(tier_cfg.get('max_open_positions', 1))
+                limit = int(tier_cfg.get("max_open_positions", 1))
             open_count = 0
             try:
                 # Prefer portfolio snapshot if available
-                open_count = len([p for p in self.portfolio_manager.positions.values() if getattr(p, 'is_open', False)])
+                open_count = len(
+                    [
+                        p
+                        for p in self.portfolio_manager.positions.values()
+                        if getattr(p, "is_open", False)
+                    ]
+                )
             except Exception:
                 open_count = 0
             if open_count > limit:
-                weight = self.config.get('trading_rules', {}).get('position_limit_penalty_weight', 1.0)
+                weight = self.config.get("trading_rules", {}).get(
+                    "position_limit_penalty_weight", 1.0
+                )
                 pos_limit_penalty -= float(weight) * (open_count - limit)
         except Exception:
             pass
@@ -4793,35 +5650,48 @@ class MultiAssetChunkedEnv(gym.Env):
         duration_penalty = self.calculate_duration_penalty()
 
         # Nouvelle pénalité pour les tentatives de trade invalides (CASH GATE, min_order, etc.)
-        invalid_trade_penalty_weight = self.config.get('reward_shaping', {}).get('invalid_trade_penalty_weight', 0.5)
-        invalid_trade_attempt_penalty = -invalid_trade_penalty_weight * self.invalid_trade_attempts
+        invalid_trade_penalty_weight = self.config.get("reward_shaping", {}).get(
+            "invalid_trade_penalty_weight", 0.5
+        )
+        invalid_trade_attempt_penalty = (
+            -invalid_trade_penalty_weight * self.invalid_trade_attempts
+        )
         # Réinitialiser le compteur après utilisation pour qu'il ne pénalise que les tentatives de ce step
         self.invalid_trade_attempts = 0
 
-        total_reward = base_reward + frequency_reward + pos_limit_penalty + outcome_reward + duration_penalty + invalid_trade_attempt_penalty
+        total_reward = (
+            base_reward
+            + frequency_reward
+            + pos_limit_penalty
+            + outcome_reward
+            + duration_penalty
+            + invalid_trade_attempt_penalty
+        )
 
-        logger.info(f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Freq: {frequency_reward:.4f}, "
-                   f"PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, Duration: {duration_penalty:.4f}, InvalidTrade: {invalid_trade_attempt_penalty:.4f}, Total: {total_reward:.4f}, Counts: {self.positions_count}")
+        logger.info(
+            f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Freq: {frequency_reward:.4f}, "
+            f"PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, Duration: {duration_penalty:.4f}, InvalidTrade: {invalid_trade_attempt_penalty:.4f}, Total: {total_reward:.4f}, Counts: {self.positions_count}"
+        )
 
         return total_reward
 
     def get_current_timeframe(self):
         """Determine current timeframe based on the agent's action."""
         # This value is set at the beginning of the step() method based on the agent's action.
-        return getattr(self, 'current_timeframe_for_trade', '5m')
+        return getattr(self, "current_timeframe_for_trade", "5m")
 
     def calculate_duration_penalty(self) -> float:
         """Pénalité/Bonus basé sur la durée du trade vs la durée optimale du worker."""
         penalty = 0.0
-        if not hasattr(self, 'portfolio') or not self.portfolio:
+        if not hasattr(self, "portfolio") or not self.portfolio:
             return penalty
 
         # Récupérer la configuration de spécialisation du worker
-        specialization_config = self.worker_config.get('specialization', {})
-        tracking_periods = specialization_config.get('tracking_periods')
+        specialization_config = self.worker_config.get("specialization", {})
+        tracking_periods = specialization_config.get("tracking_periods")
 
         if not tracking_periods:
-            return penalty # Pas de configuration, pas de pénalité
+            return penalty  # Pas de configuration, pas de pénalité
 
         for position in self.portfolio.positions.values():
             if position.is_open:
@@ -4830,56 +5700,74 @@ class MultiAssetChunkedEnv(gym.Env):
                     config = tracking_periods[timeframe]
                     duration = self.current_step - position.open_step
 
-                    min_steps = config.get('min_tracking_steps', 0)
-                    max_steps = config.get('max_tracking_steps', float('inf'))
-                    optimal_duration = config.get('optimal_duration', min_steps)
+                    min_steps = config.get("min_tracking_steps", 0)
+                    max_steps = config.get("max_tracking_steps", float("inf"))
+                    optimal_duration = config.get("optimal_duration", min_steps)
 
                     # Trop court - pénalité pour impatience
                     if duration < min_steps:
                         penalty -= (min_steps - duration) * 0.1
-                        self.smart_logger.info(f"[DURATION PENALTY] Impatience penalty for {position.asset}. Duration: {duration} < Min: {min_steps}", rotate=True)
+                        self.smart_logger.info(
+                            f"[DURATION PENALTY] Impatience penalty for {position.asset}. Duration: {duration} < Min: {min_steps}",
+                            rotate=True,
+                        )
                     # Trop long - pénalité pour inefficacité
                     elif duration > max_steps:
                         penalty -= (duration - max_steps) * 0.8
-                        self.smart_logger.warning(f"[DURATION PENALTY] Overstay penalty for {position.asset}. Duration: {duration} > Max: {max_steps}", rotate=True)
+                        self.smart_logger.warning(
+                            f"[DURATION PENALTY] Overstay penalty for {position.asset}. Duration: {duration} > Max: {max_steps}",
+                            rotate=True,
+                        )
                     # Zone optimale - bonus
                     elif min_steps <= duration <= optimal_duration:
                         penalty += 0.1 * (duration - min_steps)
-                        self.smart_logger.info(f"[DURATION BONUS] Optimal duration bonus for {position.asset}. Duration: {duration}", rotate=True)
+                        self.smart_logger.info(
+                            f"[DURATION BONUS] Optimal duration bonus for {position.asset}. Duration: {duration}",
+                            rotate=True,
+                        )
         return penalty
 
     def _validate_frequency(self):
         """Log frequency validation information."""
-        frequency_config = self.config.get('trading_rules', {}).get('frequency', {})
+        frequency_config = self.config.get("trading_rules", {}).get("frequency", {})
 
         validation_info = []
-        for tf in ['5m', '1h', '4h']:
+        for tf in ["5m", "1h", "4h"]:
             count = self.positions_count.get(tf, 0)
-            min_pos = frequency_config.get('min_positions', {}).get(tf, 1)
-            max_pos = frequency_config.get('max_positions', {}).get(tf, 10)
+            min_pos = frequency_config.get("min_positions", {}).get(tf, 1)
+            max_pos = frequency_config.get("max_positions", {}).get(tf, 10)
 
             status = "✓" if min_pos <= count <= max_pos else "✗"
             validation_info.append(f"{tf}: {count}/{min_pos}-{max_pos} {status}")
 
-        total_count = self.positions_count.get('daily_total', 0)
-        min_total = frequency_config.get('min_positions', {}).get('total_daily', 5)
-        max_total = frequency_config.get('max_positions', {}).get('total_daily', 15)
+        total_count = self.positions_count.get("daily_total", 0)
+        min_total = frequency_config.get("min_positions", {}).get("total_daily", 5)
+        max_total = frequency_config.get("max_positions", {}).get("total_daily", 15)
         total_status = "✓" if min_total <= total_count <= max_total else "✗"
-        validation_info.append(f"Total: {total_count}/{min_total}-{max_total} {total_status}")
+        validation_info.append(
+            f"Total: {total_count}/{min_total}-{max_total} {total_status}"
+        )
 
-        logger.info(f"[FREQUENCY VALIDATION Worker {self.worker_id}] {' | '.join(validation_info)}")
+        logger.info(
+            f"[FREQUENCY VALIDATION Worker {self.worker_id}] {' | '.join(validation_info)}"
+        )
 
     def calculate_pnl(self):
         """Calculate basic PnL from portfolio."""
-        if hasattr(self, 'portfolio_manager'):
-            return self.portfolio_manager.get_equity() - self.portfolio_manager.initial_capital
+        if hasattr(self, "portfolio_manager"):
+            return (
+                self.portfolio_manager.get_equity()
+                - self.portfolio_manager.initial_capital
+            )
         return 0.0
 
     def calculate_inaction_penalty(self):
         """Calculate penalty for inaction."""
         penalty = 0.0
         current_tf = self.get_current_timeframe()
-        steps_since_trade = self.current_step - getattr(self, 'last_trade_steps_by_tf', {}).get(current_tf, 0)
+        steps_since_trade = self.current_step - getattr(
+            self, "last_trade_steps_by_tf", {}
+        ).get(current_tf, 0)
 
         if steps_since_trade > 20:  # Penalty after 20 steps of inaction
             penalty = -0.01 * (steps_since_trade - 20)
@@ -4892,11 +5780,23 @@ class MultiAssetChunkedEnv(gym.Env):
 
     def log_worker_comparison(self):
         """Log comparison metrics between workers (for debugging)."""
-        if hasattr(self, 'portfolio_manager') and hasattr(self.portfolio_manager, 'metrics'):
-            metrics = self.portfolio_manager.metrics.calculate_metrics() if hasattr(self.portfolio_manager.metrics, 'calculate_metrics') else {}
-            equity = self.portfolio_manager.get_equity() if hasattr(self.portfolio_manager, 'get_equity') else 0.0
+        if hasattr(self, "portfolio_manager") and hasattr(
+            self.portfolio_manager, "metrics"
+        ):
+            metrics = (
+                self.portfolio_manager.metrics.calculate_metrics()
+                if hasattr(self.portfolio_manager.metrics, "calculate_metrics")
+                else {}
+            )
+            equity = (
+                self.portfolio_manager.get_equity()
+                if hasattr(self.portfolio_manager, "get_equity")
+                else 0.0
+            )
 
-            logger.info(f"[COMPARISON Worker {self.worker_id}] Trades: {metrics.get('total_trades', 0)}, "
-                       f"Winrate: {metrics.get('winrate', 0.0):.1f}%, "
-                       f"Equity: {equity:.2f} USDT, "
-                       f"Counts: {getattr(self, 'positions_count', {})}")
+            logger.info(
+                f"[COMPARISON Worker {self.worker_id}] Trades: {metrics.get('total_trades', 0)}, "
+                f"Winrate: {metrics.get('winrate', 0.0):.1f}%, "
+                f"Equity: {equity:.2f} USDT, "
+                f"Counts: {getattr(self, 'positions_count', {})}"
+            )

@@ -1,1 +1,31 @@
-<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="4" time="1.617" timestamp="2025-09-02T17:14:06.679995+00:00" hostname="kali"><testcase classname="tests.unit.environment.test_adaptive_dbe.TestAdaptiveDBE" name="test_crisis_regime" time="0.003" /><testcase classname="tests.unit.environment.test_adaptive_dbe.TestAdaptiveDBE" name="test_high_volatility_regime" time="0.002" /><testcase classname="tests.unit.environment.test_adaptive_dbe.TestAdaptiveDBE" name="test_initialization" time="0.001" /><testcase classname="tests.unit.environment.test_adaptive_dbe.TestAdaptiveDBE" name="test_update_with_market_data" time="0.002" /></testsuite></testsuites>
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="4" time="16.673" timestamp="2025-10-07T15:39:42.084355+00:00" hostname="kali"><testcase classname="tests.integration.test_trading_conditions.TestTradingConditionsIntegration" name="test_capital_tier_transitions" time="0.004"><failure message="AttributeError: 'PortfolioManager' object has no attribute 'get_risk_parameters'">tests/integration/test_trading_conditions.py:50: in test_capital_tier_transitions
+    risk_params = pm.get_risk_parameters()
+                  ^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'PortfolioManager' object has no attribute 'get_risk_parameters'</failure></testcase><testcase classname="tests.integration.test_trading_conditions.TestTradingConditionsIntegration" name="test_dynamic_behavior_engine_integration" time="0.004"><failure message="KeyError: 'stop_loss_pct'">tests/integration/test_trading_conditions.py:115: in test_dynamic_behavior_engine_integration
+    print(f"✅ Régime {condition['regime']}: SL={modulation['stop_loss_pct']:.2f}%, "
+                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'stop_loss_pct'</failure></testcase><testcase classname="tests.integration.test_trading_conditions.TestTradingConditionsIntegration" name="test_end_to_end_trading_cycle" time="0.005"><failure message="KeyError: 'data'">tests/integration/test_trading_conditions.py:123: in test_end_to_end_trading_cycle
+    env = MultiAssetChunkedEnv(
+src/adan_trading_bot/environment/multi_asset_chunked_env.py:367: in __init__
+    self._initialize_components()
+src/adan_trading_bot/environment/multi_asset_chunked_env.py:1023: in _initialize_components
+    self.data_loader_instance = self._init_data_loader(self.assets)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/adan_trading_bot/environment/multi_asset_chunked_env.py:1272: in _init_data_loader
+    self.data_loader = ChunkedDataLoader(
+src/adan_trading_bot/data_processing/data_loader.py:64: in __init__
+    self.config['data'].get('timeframes', [])
+    ^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'data'</failure></testcase><testcase classname="tests.integration.test_trading_conditions.TestTradingConditionsIntegration" name="test_timeframe_alignment" time="0.004"><failure message="KeyError: 'data'">tests/integration/test_trading_conditions.py:58: in test_timeframe_alignment
+    env = MultiAssetChunkedEnv(
+src/adan_trading_bot/environment/multi_asset_chunked_env.py:367: in __init__
+    self._initialize_components()
+src/adan_trading_bot/environment/multi_asset_chunked_env.py:1023: in _initialize_components
+    self.data_loader_instance = self._init_data_loader(self.assets)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/adan_trading_bot/environment/multi_asset_chunked_env.py:1272: in _init_data_loader
+    self.data_loader = ChunkedDataLoader(
+src/adan_trading_bot/data_processing/data_loader.py:64: in __init__
+    self.config['data'].get('timeframes', [])
+    ^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'data'</failure></testcase></testsuite></testsuites>

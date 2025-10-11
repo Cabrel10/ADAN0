@@ -2,6 +2,7 @@ import optuna
 import logging
 import sys
 import pandas as pd
+from datetime import datetime
 
 def show_results():
     """
@@ -58,6 +59,11 @@ def show_results():
         last_completed_trial = sorted(completed_trials, key=lambda t: t.number)[-1]
         logging.info("\n--- MOST RECENT COMPLETED TRIAL ---")
         print(f"\n🕒 LAST | Trial #{last_completed_trial.number}")
+        if 'start_time' in last_completed_trial.user_attrs and 'end_time' in last_completed_trial.user_attrs:
+            start = datetime.fromisoformat(last_completed_trial.user_attrs['start_time'])
+            end = datetime.fromisoformat(last_completed_trial.user_attrs['end_time'])
+            duration = end - start
+            print(f"   Durée: {str(duration).split('.')[0]}")
         print(f"   Value (Sharpe Ratio): {last_completed_trial.value:.5f}")
         print("   Parameters:")
         for key, value in last_completed_trial.params.items():
@@ -74,6 +80,11 @@ def show_results():
         logging.info("\n--- TOP 3 BEST TRIALS ---")
         for i, trial in enumerate(completed_trials[:3]):
             print(f"\n🏆 RANK {i+1} | Trial #{trial.number}")
+            if 'start_time' in trial.user_attrs and 'end_time' in trial.user_attrs:
+                start = datetime.fromisoformat(trial.user_attrs['start_time'])
+                end = datetime.fromisoformat(trial.user_attrs['end_time'])
+                duration = end - start
+                print(f"   Durée: {str(duration).split('.')[0]}")
             print(f"   Value (Sharpe Ratio): {trial.value:.5f}")
             print("   Parameters:")
             for key, value in trial.params.items():

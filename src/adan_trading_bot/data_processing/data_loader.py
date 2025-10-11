@@ -4,6 +4,7 @@
 Chargeur de données pour le projet ADAN.
 Charge les données de trading à partir de fichiers parquet organisés par actif et timeframe.
 """
+
 import logging
 import os
 import time
@@ -51,29 +52,32 @@ class ChunkedDataLoader:
         self.worker_id = worker_id
 
         # Initialiser le SmartLogger pour ce worker
-        self.smart_logger = create_smart_logger(worker_id, total_workers=4, logger_name="data_loader")
+        self.smart_logger = create_smart_logger(
+            worker_id, total_workers=4, logger_name="data_loader"
+        )
 
         # Cache pour éviter les doublons de logs
         self._last_logs = {}
         import time
+
         self._time_module = time
 
         # 1) Timeframes à charger
         self.timeframes = self.worker_config.get(
-            'timeframes',
-            self.config['data'].get('timeframes', [])
+            "timeframes", self.config["data"].get("timeframes", [])
         )
 
         # 2) Split (train / test / train_stress_test…)
         self.data_split = self.worker_config.get(
-            'data_split_override',
-            self.config['data'].get('data_split', 'train')
+            "data_split_override", self.config["data"].get("data_split", "train")
         )
 
         # 3) Actifs (permet override si besoin)
         self.assets_list = self.worker_config.get(
-            'assets',  # Utilise directement 'assets' du worker_config
-            self.config.get('environment', {}).get('assets', [])  # Fallback sur la config environment
+            "assets",  # Utilise directement 'assets' du worker_config
+            self.config.get("environment", {}).get(
+                "assets", []
+            ),  # Fallback sur la config environment
         )
 
         # Initialise le dictionnaire des features par timeframe
@@ -90,9 +94,8 @@ class ChunkedDataLoader:
         # Priorité: worker_config.chunk_sizes > config.data.chunk_sizes > défauts optimisés
         default_chunk_sizes = {"5m": 5328, "1h": 242, "4h": 111}
         cfg_chunk_sizes = (
-            (self.worker_config.get("chunk_sizes") or {})
-            or self.config.get("data", {}).get("chunk_sizes", {})
-        )
+            self.worker_config.get("chunk_sizes") or {}
+        ) or self.config.get("data", {}).get("chunk_sizes", {})
         # Conserver uniquement les timeframes demandés, sinon fallback sur défaut
         self.chunk_sizes = {}
         for tf in self.timeframes:
@@ -106,7 +109,9 @@ class ChunkedDataLoader:
         self.total_chunks = self._calculate_total_chunks()
         logger.info(f"Total chunks disponibles: {self.total_chunks}")
 
-        logger.info(f"Initialisation du ChunkedDataLoader avec {len(self.assets_list)} actifs et {len(self.timeframes)} timeframes")
+        logger.info(
+            f"Initialisation du ChunkedDataLoader avec {len(self.assets_list)} actifs et {len(self.timeframes)} timeframes"
+        )
 
         logger.debug(f"Actifs: {self.assets_list}")
         logger.debug(f"Timeframes: {self.timeframes}")
@@ -138,7 +143,12 @@ class ChunkedDataLoader:
         Raises:
             ValueError: Si un timeframe demandé n'est pas pris en charge
         """
-        supported_timeframes = self.config.get("data", {}).get("features_config", {}).get("timeframes", {}).keys()
+        supported_timeframes = (
+            self.config.get("data", {})
+            .get("features_config", {})
+            .get("timeframes", {})
+            .keys()
+        )
 
         for tf in self.timeframes:
             if tf not in supported_timeframes:
@@ -155,7 +165,9 @@ class ChunkedDataLoader:
             Dictionnaire des features par timeframe
         """
         features_by_timeframe = {}
-        timeframe_features = self.config.get("data", {}).get("features_config", {}).get("timeframes", {})
+        timeframe_features = (
+            self.config.get("data", {}).get("features_config", {}).get("timeframes", {})
+        )
 
         for timeframe in self.timeframes:
             if timeframe in timeframe_features:
@@ -193,11 +205,22 @@ class ChunkedDataLoader:
 
         if not features_by_timeframe:
             # Configuration par défaut si aucune features_config n'est trouvée
-            logger.warning(f"[DATA_LOADER Worker {self.worker_id}] Aucune configuration de features trouvée, utilisation des features par défaut")
+            logger.warning(
+                f"[DATA_LOADER Worker {self.worker_id}] Aucune configuration de features trouvée, utilisation des features par défaut"
+            )
             for timeframe in self.timeframes:
                 features_by_timeframe[timeframe] = [
-                    'open', 'high', 'low', 'close', 'volume',  # OHLCV de base
-                    'sma_20', 'ema_12', 'rsi_14', 'macd', 'bbands_upper', 'bbands_lower'  # Indicateurs de base
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",  # OHLCV de base
+                    "sma_20",
+                    "ema_12",
+                    "rsi_14",
+                    "macd",
+                    "bbands_upper",
+                    "bbands_lower",  # Indicateurs de base
                 ]
 
         return features_by_timeframe
@@ -222,18 +245,18 @@ class ChunkedDataLoader:
         """
         try:
             # Récupérer le répertoire de base des données
-            base_dir = Path(self.config['paths']['processed_data_dir'])
+            base_dir = Path(self.config["paths"]["processed_data_dir"])
 
             # Utiliser directement le répertoire du split spécifié dans data_dirs
-            data_dirs = self.config.get('data', {}).get('data_dirs', {})
+            data_dirs = self.config.get("data", {}).get("data_dirs", {})
 
             # Déterminer le répertoire de données en fonction du split
             if self.data_split in data_dirs:
                 data_dir = Path(data_dirs[self.data_split])
-            elif 'base' in data_dirs:
-                data_dir = Path(data_dirs['base']) / self.data_split
+            elif "base" in data_dirs:
+                data_dir = Path(data_dirs["base"]) / self.data_split
             else:
-                data_dir = base_dir / 'indicators' / self.data_split
+                data_dir = base_dir / "indicators" / self.data_split
 
             logger.debug(f"Recherche des données dans: {data_dir}")
 
@@ -241,21 +264,21 @@ class ChunkedDataLoader:
             clean_asset = asset.replace("/", "").replace("-", "").lower()
 
             # Extraire le timeframe de base (sans les combinaisons)
-            base_timeframe = timeframe.split('_')[0] if '_' in timeframe else timeframe
+            base_timeframe = timeframe.split("_")[0] if "_" in timeframe else timeframe
             base_timeframe = base_timeframe.lower()  # Forcer en minuscules
 
             # Liste des variantes de casse à essayer pour l'actif
             asset_variants = [
                 clean_asset.lower(),  # Tout en minuscules (ex: btcusdt) - structure actuelle
                 clean_asset.upper(),  # Tout en majuscules (ex: BTCUSDT)
-                clean_asset           # Cas d'origine
+                clean_asset,  # Cas d'origine
             ]
 
             # Liste des variantes de casse à essayer pour le timeframe
             timeframe_variants = [
                 base_timeframe.lower(),  # minuscules (ex: 5m)
                 base_timeframe.upper(),  # majuscules (ex: 5M)
-                base_timeframe           # cas d'origine
+                base_timeframe,  # cas d'origine
             ]
 
             # Essayer chaque combinaison de variantes
@@ -281,8 +304,10 @@ class ChunkedDataLoader:
             logger.error(f"Configuration des chemins manquante ou incorrecte: {str(e)}")
             raise
             logger.error(f"Erreur: {str(e)}")
-            if 'paths' in self.config:
-                logger.error(f"Chemins disponibles: {list(self.config['paths'].keys())}")
+            if "paths" in self.config:
+                logger.error(
+                    f"Chemins disponibles: {list(self.config['paths'].keys())}"
+                )
             raise KeyError(
                 f"Erreur de configuration des chemins: {str(e)}\n"
                 f"Vérifiez que la configuration contient les chemins nécessaires."
@@ -306,66 +331,90 @@ class ChunkedDataLoader:
         file_path = self._get_data_path(asset, timeframe)
 
         try:
-            # Get the list of required columns
-            required_cols = ['open', 'high', 'low', 'close', 'volume']
-            if timeframe in self.features_by_timeframe:
-                features = self.features_by_timeframe[timeframe]
-                if isinstance(features, list):
-                    required_cols.extend([f.lower() for f in features])
-                elif isinstance(features, str):
-                    required_cols.append(features.lower())
-
-            # Load all columns from the parquet file to avoid case sensitivity issues
+            # Load all columns from the parquet file
             df = pd.read_parquet(file_path)
 
             # Vérifie que le DataFrame n'est pas vide
             if df.empty:
                 raise ValueError(f"Le fichier {file_path} est vide.")
 
-            # Vérifie les colonnes requises (en tenant compte de la casse)
-            required_columns = {'Open', 'High', 'Low', 'Close', 'Volume'}
-            available_columns = set(df.columns.str.upper())
-            missing_columns = {col for col in required_columns if col.upper() not in available_columns}
+            # Exclure la colonne timestamp si elle existe
+            if "timestamp" in df.columns:
+                df = df.drop("timestamp", axis=1)
 
-            if missing_columns:
+            # Vérifie les colonnes OHLCV de base (en tenant compte de la casse)
+            required_base_columns = {"Open", "High", "Low", "Close", "Volume"}
+            available_columns = set(df.columns.str.upper())
+            missing_base_columns = {
+                col
+                for col in required_base_columns
+                if col.upper() not in available_columns
+            }
+
+            if missing_base_columns:
                 raise ValueError(
-                    f"Colonnes manquantes dans {file_path}: {missing_columns}\n"
+                    f"Colonnes OHLCV manquantes dans {file_path}: {missing_base_columns}\n"
                     f"Colonnes disponibles: {sorted(df.columns)}"
                 )
 
-
+            # Log du nombre réel de features utilisées
+            n_indicators = len(df.columns) - 5  # Total - OHLCV
+            self.log_info(
+                f"[DATA_LOADER] {asset}/{timeframe}: {len(df.columns)} colonnes (OHLCV + {n_indicators} indicateurs)"
+            )
+            logger.debug(
+                f"Colonnes utilisées pour {asset}/{timeframe}: {sorted(df.columns)}"
+            )
 
             # Vérifier et corriger les prix de clôture manquants avec interpolation (insensible à la casse)
-            close_col = next((col for col in df.columns if col.lower() == 'close'), None)
+            close_col = next(
+                (col for col in df.columns if col.lower() == "close"), None
+            )
 
             if close_col:
                 nan_count_before = df[close_col].isna().sum()
                 if nan_count_before > 0:
-                    self.log_info(f"[DATA_LOADER] {nan_count_before} prix de clôture manquants détectés pour {asset}/{timeframe}. Correction en cours...")
+                    self.log_info(
+                        f"[DATA_LOADER] {nan_count_before} prix de clôture manquants détectés pour {asset}/{timeframe}. Correction en cours..."
+                    )
 
                     # Étape 1: Interpolation linéaire pour les valeurs intérieures
-                    df[close_col] = df[close_col].interpolate(method='linear')
+                    df[close_col] = df[close_col].interpolate(method="linear")
 
                     # Étape 2: Forward fill puis backward fill pour les bords
                     df[close_col] = df[close_col].ffill().bfill()
 
                     nan_count_after = df[close_col].isna().sum()
                     if nan_count_after > 0:
-                        logger.warning(f"[DATA_LOADER] {nan_count_after} NaN restants dans {close_col} pour {asset}/{timeframe} après correction. Remplacement par la dernière valeur valide.")
-                        df[close_col] = df[close_col].fillna(method='ffill').fillna(method='bfill')
-                        if df[close_col].isna().any(): # Si toujours des NaN (ex: début de fichier)
-                            df[close_col] = df[close_col].fillna(0) # Remplacer par 0 en dernier recours
+                        logger.warning(
+                            f"[DATA_LOADER] {nan_count_after} NaN restants dans {close_col} pour {asset}/{timeframe} après correction. Remplacement par la dernière valeur valide."
+                        )
+                        df[close_col] = (
+                            df[close_col].fillna(method="ffill").fillna(method="bfill")
+                        )
+                        if (
+                            df[close_col].isna().any()
+                        ):  # Si toujours des NaN (ex: début de fichier)
+                            df[close_col] = df[close_col].fillna(
+                                0
+                            )  # Remplacer par 0 en dernier recours
 
                     # Vérification des valeurs aberrantes (prix <= 0)
                     invalid_prices = (df[close_col] <= 0).sum()
                     if invalid_prices > 0:
-                        logger.warning(f"[DATA_LOADER] {invalid_prices} prix invalides (<=0) détectés dans {close_col}. Remplacement par NaN puis interpolation.")
+                        logger.warning(
+                            f"[DATA_LOADER] {invalid_prices} prix invalides (<=0) détectés dans {close_col}. Remplacement par NaN puis interpolation."
+                        )
                         df.loc[df[close_col] <= 0, close_col] = np.nan
-                        df[close_col] = df[close_col].interpolate(method='linear').ffill().bfill()
+                        df[close_col] = (
+                            df[close_col].interpolate(method="linear").ffill().bfill()
+                        )
 
             else:
                 # Ce log ne devrait plus apparaître si vos données sont correctes
-                logger.error(f"Colonne 'close' introuvable pour {asset}/{timeframe} dans le DataLoader !")
+                logger.error(
+                    f"Colonne 'close' introuvable pour {asset}/{timeframe} dans le DataLoader !"
+                )
 
             logger.debug(f"Données chargées pour {asset} {timeframe}: {len(df)} lignes")
             return df
@@ -374,7 +423,9 @@ class ChunkedDataLoader:
             logger.error(f"Erreur lors du chargement de {file_path}: {str(e)}")
             raise
 
-    def _load_asset_timeframe_parallel(self, asset: str, tf: str, max_retries: int = 3) -> Tuple[str, str, pd.DataFrame]:
+    def _load_asset_timeframe_parallel(
+        self, asset: str, tf: str, max_retries: int = 3
+    ) -> Tuple[str, str, pd.DataFrame]:
         """
         Charge les données d'un actif et d'un timeframe spécifique.
         Méthode utilisée pour le chargement parallèle.
@@ -433,13 +484,18 @@ class ChunkedDataLoader:
         total_tasks = len(self.assets_list) * len(self.timeframes)
         failed_loads = []
 
-        self.log_info(f"[DATA_LOADER] Début du chargement du chunk {chunk_idx} pour {len(self.assets_list)} actifs et {len(self.timeframes)} timeframes")
+        self.log_info(
+            f"[DATA_LOADER] Début du chargement du chunk {chunk_idx} pour {len(self.assets_list)} actifs et {len(self.timeframes)} timeframes"
+        )
 
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Création des tâches de chargement
                 futures = {
-                    executor.submit(self._load_asset_timeframe_parallel, asset, tf): (asset, tf)
+                    executor.submit(self._load_asset_timeframe_parallel, asset, tf): (
+                        asset,
+                        tf,
+                    )
                     for asset in self.assets_list
                     for tf in self.timeframes
                 }
@@ -452,7 +508,9 @@ class ChunkedDataLoader:
                             asset, tf, df = future.result()
 
                             # Appliquer la taille de chunk cible par timeframe (prend les dernières lignes)
-                            logger.debug(f"[DEBUG] Before slicing - Asset: {asset}, Timeframe: {tf}, Original df len: {len(df)}, Target len: {self.chunk_sizes.get(tf, len(df))}")
+                            logger.debug(
+                                f"[DEBUG] Before slicing - Asset: {asset}, Timeframe: {tf}, Original df len: {len(df)}, Target len: {self.chunk_sizes.get(tf, len(df))}"
+                            )
                             target_len = int(self.chunk_sizes.get(tf, len(df)))
                             if target_len <= 0:
                                 target_len = len(df)
@@ -463,12 +521,16 @@ class ChunkedDataLoader:
                                 logger.warning(
                                     f"{asset} {tf}: données ({len(df)}) plus courtes que la taille de chunk cible ({target_len})."
                                 )
-                            logger.debug(f"[DEBUG] After slicing - Asset: {asset}, Timeframe: {tf}, Final df len: {len(df)}")
+                            logger.debug(
+                                f"[DEBUG] After slicing - Asset: {asset}, Timeframe: {tf}, Final df len: {len(df)}"
+                            )
                             data[asset][tf] = df
                             pbar.update(1)
                             pbar.set_postfix_str(f"{asset} {tf} - {len(df)} lignes")
                         except Exception as e:
-                            logger.error(f"Échec du chargement de {asset} {tf}: {str(e)}")
+                            logger.error(
+                                f"Échec du chargement de {asset} {tf}: {str(e)}"
+                            )
                             failed_loads.append((asset, tf, str(e)))
                             # Continue processing other assets/timeframes even if one fails
 
@@ -482,10 +544,14 @@ class ChunkedDataLoader:
                 )
 
                 if not is_valid:
-                    logger.warning(f"[DATA_LOADER] Chunk {chunk_idx} validation failed: {validation_info['rejection_reasons']}")
+                    logger.warning(
+                        f"[DATA_LOADER] Chunk {chunk_idx} validation failed: {validation_info['rejection_reasons']}"
+                    )
                     # Continue avec les données disponibles mais log l'avertissement
                 else:
-                    logger.info(f"[DATA_LOADER] Chunk {chunk_idx} validation passed: {validation_info['assets_validated']} assets validated")
+                    logger.info(
+                        f"[DATA_LOADER] Chunk {chunk_idx} validation passed: {validation_info['assets_validated']} assets validated"
+                    )
 
             # Vérifier si tous les chargements ont réussi
             if failed_loads:
@@ -507,22 +573,32 @@ class ChunkedDataLoader:
             # Vérifier que toutes les données attendues ont été chargées
             for asset in self.assets_list:
                 if asset not in data or not data[asset]:
-                    self.smart_logger.smart_error(logger, f"[DATA_LOADER] Aucune donnée chargée pour l'actif {asset}")
+                    self.smart_logger.smart_error(
+                        logger,
+                        f"[DATA_LOADER] Aucune donnée chargée pour l'actif {asset}",
+                    )
                     continue
 
                 for tf in self.timeframes:
                     if tf not in data[asset]:
-                        self.smart_logger.smart_warning(logger, f"[DATA_LOADER] Données manquantes pour {asset} {tf}")
+                        self.smart_logger.smart_warning(
+                            logger,
+                            f"[DATA_LOADER] Données manquantes pour {asset} {tf}",
+                        )
 
             duration = time.time() - start_time
             validation_stats = self.data_validator.get_validation_stats()
-            self.log_info(f"[DATA_LOADER] Chunk {chunk_idx} chargé en {duration:.2f}s | "
-                         f"Validation: {validation_stats['validation_rate']:.2%} success rate")
+            self.log_info(
+                f"[DATA_LOADER] Chunk {chunk_idx} chargé en {duration:.2f}s | "
+                f"Validation: {validation_stats['validation_rate']:.2%} success rate"
+            )
 
             return data
 
         except Exception as e:
-            logger.error(f"Erreur critique lors du chargement du chunk {chunk_idx}: {str(e)}")
+            logger.error(
+                f"Erreur critique lors du chargement du chunk {chunk_idx}: {str(e)}"
+            )
             logger.exception("Détails de l'erreur:")
             raise
 
@@ -538,7 +614,7 @@ class ChunkedDataLoader:
             int: Nombre total de chunks disponibles
         """
         # Calculer d'abord le nombre de chunks en fonction des données disponibles
-        min_chunks = float('inf')
+        min_chunks = float("inf")
 
         # Parcourir tous les actifs et timeframes pour trouver le plus petit nombre de chunks
         for asset in self.assets_list:
@@ -562,7 +638,7 @@ class ChunkedDataLoader:
                     continue
 
         # Si on n'a pas pu déterminer le nombre de chunks, on retourne 1 par défaut
-        if min_chunks == float('inf'):
+        if min_chunks == float("inf"):
             logger.warning(
                 "Impossible de déterminer le nombre de chunks, utilisation de la valeur par défaut (1)"
             )
@@ -572,16 +648,18 @@ class ChunkedDataLoader:
             logger.info(f"Nombre total de chunks calculé : {calculated_chunks}")
 
         # Prendre le minimum entre la config et les données disponibles
-        max_chunks = self.config.get('environment', {}).get('max_chunks_per_episode')
+        max_chunks = self.config.get("environment", {}).get("max_chunks_per_episode")
         if max_chunks is not None:
             final_chunks = min(int(max_chunks), calculated_chunks)
-            logger.info(f"Chunks limités par configuration : {calculated_chunks} → {final_chunks}")
+            logger.info(
+                f"Chunks limités par configuration : {calculated_chunks} → {final_chunks}"
+            )
             return final_chunks
 
         logger.info(f"Nombre de chunks utilisé : {calculated_chunks}")
         return calculated_chunks
 
-    def get_available_assets(self, split='train'):
+    def get_available_assets(self, split="train"):
         """
         Sélectionne les meilleurs actifs basés sur le Sharpe Momentum Ratio.
 
@@ -595,51 +673,65 @@ class ChunkedDataLoader:
         """
         import numpy as np
 
-        logger.info(f"Calcul du Sharpe Momentum Ratio pour la sélection d'actifs (split: {split})")
+        logger.info(
+            f"Calcul du Sharpe Momentum Ratio pour la sélection d'actifs (split: {split})"
+        )
 
         # Récupérer les actifs disponibles
-        assets = self.worker_config.get('assets', self.config['environment'].get('assets', ['btcusdt']))
+        assets = self.worker_config.get(
+            "assets", self.config["environment"].get("assets", ["btcusdt"])
+        )
         scores = {}
 
         for asset in assets:
             try:
                 # Charger les données 1h pour le calcul (timeframe optimal pour momentum)
-                timeframe = '1h'
+                timeframe = "1h"
                 data_path = self._get_data_path(asset.upper(), timeframe)
 
                 if not os.path.exists(data_path):
-                    logger.warning(f"Fichier non trouvé pour {asset}/{timeframe}: {data_path}")
+                    logger.warning(
+                        f"Fichier non trouvé pour {asset}/{timeframe}: {data_path}"
+                    )
                     continue
 
                 df = pd.read_parquet(data_path)
 
                 if df.empty or len(df) < 21:  # Besoin d'au moins 21 périodes
-                    logger.warning(f"Données insuffisantes pour {asset}: {len(df)} lignes")
+                    logger.warning(
+                        f"Données insuffisantes pour {asset}: {len(df)} lignes"
+                    )
                     continue
 
                 # Calcul du momentum (rendement sur 20 périodes)
-                close_prices = df['close'] if 'close' in df.columns else df['CLOSE']
-                momentum = (close_prices.iloc[-1] - close_prices.iloc[-21]) / close_prices.iloc[-21]
+                close_prices = df["close"] if "close" in df.columns else df["CLOSE"]
+                momentum = (
+                    close_prices.iloc[-1] - close_prices.iloc[-21]
+                ) / close_prices.iloc[-21]
 
                 # Calcul de la volatilité (écart-type des rendements)
                 returns = close_prices.pct_change().dropna()
                 volatility = returns.std()
 
                 # Calcul de la corrélation prix/volume (proxy pour la liquidité du marché)
-                volume = df['volume'] if 'volume' in df.columns else df['VOLUME']
+                volume = df["volume"] if "volume" in df.columns else df["VOLUME"]
                 correlation = close_prices.corr(volume)
 
                 # Éviter les divisions par zéro et les corrélations nulles
                 if volatility <= 0:
                     volatility = 0.01
-                correlation = max(abs(correlation) if not np.isnan(correlation) else 0.1, 0.1)
+                correlation = max(
+                    abs(correlation) if not np.isnan(correlation) else 0.1, 0.1
+                )
 
                 # Calcul du Sharpe Momentum Ratio
                 sharpe_momentum = (momentum / volatility) * (1 / np.sqrt(correlation))
                 scores[asset] = sharpe_momentum
 
-                logger.debug(f"{asset}: momentum={momentum:.4f}, vol={volatility:.4f}, "
-                           f"corr={correlation:.4f}, score={sharpe_momentum:.4f}")
+                logger.debug(
+                    f"{asset}: momentum={momentum:.4f}, vol={volatility:.4f}, "
+                    f"corr={correlation:.4f}, score={sharpe_momentum:.4f}"
+                )
 
             except Exception as e:
                 logger.error(f"Erreur lors du calcul pour {asset}: {str(e)}")

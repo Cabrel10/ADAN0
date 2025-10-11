@@ -454,13 +454,14 @@ _config_manager_instance = None
 _config_manager_lock = threading.Lock()
 
 
-def get_config_manager(config_dir: str = "config", enable_hot_reload: bool = True) -> EnhancedConfigManager:
+def get_config_manager(config_dir: str = "config", enable_hot_reload: bool = True, force_new: bool = False) -> EnhancedConfigManager:
     """
     Get the global configuration manager instance.
 
     Args:
         config_dir: Configuration directory
         enable_hot_reload: Enable hot-reload functionality
+        force_new: Force creation of a new instance
 
     Returns:
         EnhancedConfigManager instance
@@ -468,7 +469,9 @@ def get_config_manager(config_dir: str = "config", enable_hot_reload: bool = Tru
     global _config_manager_instance
 
     with _config_manager_lock:
-        if _config_manager_instance is None:
+        if _config_manager_instance is None or force_new:
+            if force_new and _config_manager_instance is not None:
+                _config_manager_instance.shutdown()
             _config_manager_instance = EnhancedConfigManager(
                 config_dir=config_dir,
                 enable_hot_reload=enable_hot_reload
