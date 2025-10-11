@@ -445,6 +445,7 @@ class PortfolioManager:
         self, current_prices: Dict[str, float], current_step: int
     ) -> tuple[float, list[dict[str, Any]]]:
         """Met à jour la valeur des positions, vérifie les SL/TP, et retourne le PnL et les reçus."""
+ 
         realized_pnl = 0.0
         closed_receipts = []
         for asset, position in self.positions.items():
@@ -506,9 +507,6 @@ class PortfolioManager:
 
                 current_duration = current_step - position.open_step
                 is_overstay = current_duration > max_duration
-                logger.error(
-                    f"[DEBUG DURATION] Asset: {asset}, TF: {timeframe}, Current Duration: {current_duration}, Max: {max_duration}, Overstay: {is_overstay}"
-                )
 
                 if is_overstay:
                     self.log_info(
