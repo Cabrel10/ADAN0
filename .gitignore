@@ -37,6 +37,7 @@ ENV/
 *.sqlite
 *.db
 *.db-journal
+hyperparam_optimization.db
 
 # Local development
 .env
@@ -61,3 +62,24 @@ test_logs/
 # System Files
 .DS_Store
 Thumbs.db
+
+# TA-Lib
+ta-lib/
+ta-lib-*
+
+# Models
+src/adan_trading_bot/models/
+
+# Config files
+config/api_keys.enc
+config/config.yaml.tar.gz
+
+# Coverage reports
+.coverage
+coverage.xml
+
+# Test results
+test-results/
+
+# Checkpoint directories
+checkpointsclear/
