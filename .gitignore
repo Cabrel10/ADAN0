@@ -1,3 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
 *.db
-test-results/
-*.html
+*.db-journal
+
+# Local development
+.env
+.venv
+
+# Project specific
+checkpoints/
+logs/
+data/raw/
+data/processed/
+reports/
+scripts/logs/
+scripts_old/
+test_artifacts/
+test_checkpoints/
+test_logs/
+
+# Temporary files
+*.tmp
+*~
+
+# System Files
+.DS_Store
+Thumbs.db
