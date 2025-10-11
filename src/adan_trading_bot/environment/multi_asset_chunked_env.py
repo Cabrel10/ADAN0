@@ -666,14 +666,15 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
                 return 0.15  # Valeur par défaut raisonnable
 
+            asset_lower = asset.lower()
             # Récupérer les données de prix pour l'actif
-            if asset not in self.current_data:
+            if asset_lower not in self.current_data:
                 self.logger.warning(f"Données manquantes pour l'actif {asset}")
                 return 0.15
 
             # Prendre le premier intervalle de temps disponible
-            tf = next(iter(self.current_data[asset].keys()))
-            df = self.current_data[asset][tf]
+            tf = next(iter(self.current_data[asset_lower].keys()))
+            df = self.current_data[asset_lower][tf]
 
             # Vérifier si on a assez de données
             if len(df) < lookback + 1:
@@ -1227,7 +1228,7 @@ class MultiAssetChunkedEnv(gym.Env):
         )
         # Create alias for backward compatibility
         self.portfolio_manager = self.portfolio
-        self.assets = mapped_assets  # Update self.assets
+        self.assets = [a.upper() for a in mapped_assets]  # Update self.assets and normalize to uppercase
 
         # Convert list of TimeframeConfig objects to dictionary
         timeframe_configs_dict = {
@@ -2467,7 +2468,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 logger.debug(f"[STEP] Failed capturing positions before trade: {_e}")
 
             trade_start_time = time.time()
-            realized_pnl = self._execute_trades(action, dbe_modulation, should_force_trade)
+            realized_pnl = self._execute_trades(action, dbe_modulation, action_threshold, should_force_trade)
 
             # --- CORRECT REWARD CALCULATION ---
             # This is the single source of truth for reward calculation,
@@ -3445,7 +3446,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     )
 
                     last_row = asset_data.iloc[-1]
-                    prices[_asset] = float(last_row["close"])
+                    prices[_asset.upper()] = float(last_row["close"])
                     if isinstance(last_row.name, pd.Timestamp):
                         self._last_asset_timestamp[_asset] = last_row.name
 
@@ -3461,7 +3462,7 @@ class MultiAssetChunkedEnv(gym.Env):
                         dedupe=True,
                     )
 
-                    prices[_asset] = float(asset_data.iloc[0]["close"])
+                    prices[_asset.upper()] = float(asset_data.iloc[0]["close"])
 
                     # Compteur de forward-fill pour surveillance
                     if not hasattr(self, "_price_forward_fill_count"):
@@ -3470,13 +3471,13 @@ class MultiAssetChunkedEnv(gym.Env):
 
                 else:
                     # Index valide - lecture normale
-                    prices[_asset] = float(
+                    prices[_asset.upper()] = float(
                         asset_data.iloc[current_idx_in_chunk]["close"]
                     )
 
                     if self.current_step % 100 == 0:
                         self.smart_logger.debug(
-                            f"PRICE_SUCCESS | asset={_asset} | step_in_chunk={current_idx_in_chunk} | price={prices[_asset]:.4f}",
+                            f"PRICE_SUCCESS | asset={_asset} | step_in_chunk={current_idx_in_chunk} | price={prices[_asset.upper()]:.4f}",
                             sample_rate=0.05,
                         )
 
@@ -3494,11 +3495,11 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Utiliser la dernière valeur connue comme fallback
                 if (
                     hasattr(self, "_last_known_prices")
-                    and _asset in self._last_known_prices
+                    and _asset.upper() in self._last_known_prices
                 ):
-                    prices[_asset] = self._last_known_prices[_asset]
+                    prices[_asset.upper()] = self._last_known_prices[_asset.upper()]
                     self.smart_logger.warning(
-                        f"FALLBACK_PRICE | asset={_asset} | using_last_known={prices[_asset]:.4f}",
+                        f"FALLBACK_PRICE | asset={_asset} | using_last_known={prices[_asset.upper()]:.4f}",
                         dedupe=True,
                     )
 
@@ -4607,7 +4608,7 @@ class MultiAssetChunkedEnv(gym.Env):
             )
             return 0.15  # Retourne une volatilité par défaut en cas d'erreur
 
-    def _execute_trades(self, action: np.ndarray, dbe_modulation: dict, force_trade: bool = False) -> float:
+    def _execute_trades(self, action: np.ndarray, dbe_modulation: dict, action_threshold: float, force_trade: bool = False) -> float:
         """
         Exécute les trades en fonction des actions de l'agent.
 
@@ -4715,7 +4716,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 continue # Passer à l'actif suivant
 
             # A. L'agent veut VENDRE (fermer une position)
-            if main_decision < -0.5 and is_open:
+            if main_decision < -action_threshold and is_open:
                 self.logger.info(
                     f"[ACTION] Agent requests CLOSE for {asset} at price {price:.2f}"
                 )
@@ -4739,21 +4740,7 @@ class MultiAssetChunkedEnv(gym.Env):
 
                     realized_pnl += float(receipt.get("pnl", 0.0))
                     trade_executed_this_step = True
-                    # DECREMENT FREQUENCY COUNTERS ON CLOSURE
-                    tf = getattr(self, "current_timeframe_for_trade", "5m")
-                    try:
-                        if tf in self.positions_count and self.positions_count[tf] > 0:
-                            self.positions_count[tf] -= 1
-                        if self.positions_count["daily_total"] > 0:
-                            self.positions_count["daily_total"] -= 1
-                        self.smart_logger.info(
-                            f"[FREQUENCY] Position closed for {asset} on {tf}. Decremented counts. Current: {self.positions_count}",
-                            rotate=True,
-                        )
-                    except Exception as freq_e:
-                        self.logger.debug(
-                            f"[FREQUENCY] Failed to decrement frequency counters on close: {freq_e}"
-                        )
+                    # Frequency counters are not decremented on closure to track total daily activity.
                 else:
                     self.invalid_trade_attempts += 1
                     self.logger.info(
@@ -4761,7 +4748,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     )
 
             # B. L'agent veut ACHETER (ouvrir une position)
-            elif main_decision > 0.5 and not is_open:
+            elif main_decision > action_threshold and not is_open:
                 self.logger.info(
                     f"[ACTION] Agent requests OPEN for {asset} at price {price:.2f} with risk_horizon={risk_horizon:.2f}"
                 )
