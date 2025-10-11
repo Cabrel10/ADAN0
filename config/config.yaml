@@ -88,8 +88,8 @@ model:
 # Configuration des données
 data:
   include:
-    - btcusdt
-    - xrpusdt
+    - BTCUSDT
+    - XRPUSDT
   assets:
     - BTCUSDT
     - XRPUSDT
@@ -174,7 +174,7 @@ workers:
   w1:
     name: Conservative
     description: Low risk, stable returns
-    assets: [btcusdt]
+    assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
     trading_mode: spot
@@ -239,7 +239,7 @@ workers:
   w2:
     name: Moderate
     description: Balanced risk-reward
-    assets: [btcusdt]
+    assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
     trading_mode: spot
@@ -303,7 +303,7 @@ workers:
   w3:
     name: Aggressive
     description: High risk, high returns
-    assets: [btcusdt]
+    assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
     trading_mode: spot
@@ -363,7 +363,7 @@ workers:
   w4:
     name: Adaptive
     description: Dynamically adjusts to market
-    assets: [btcusdt]
+    assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
     trading_mode: spot
