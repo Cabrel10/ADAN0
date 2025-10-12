@@ -1227,7 +1227,9 @@ class MultiAssetChunkedEnv(gym.Env):
         )
         # Create alias for backward compatibility
         self.portfolio_manager = self.portfolio
-        self.assets = [a.upper() for a in mapped_assets]  # Update self.assets and normalize to uppercase
+        self.assets = [
+            a.upper() for a in mapped_assets
+        ]  # Update self.assets and normalize to uppercase
 
         # Convert list of TimeframeConfig objects to dictionary
         timeframe_configs_dict = {
@@ -2467,7 +2469,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 logger.debug(f"[STEP] Failed capturing positions before trade: {_e}")
 
             trade_start_time = time.time()
-            realized_pnl = self._execute_trades(action, dbe_modulation, action_threshold, should_force_trade)
+            realized_pnl, discrete_action, _ = self._execute_trades(
+                action, dbe_modulation, action_threshold, should_force_trade
+            )
 
             # --- CORRECT REWARD CALCULATION ---
             # This is the single source of truth for reward calculation,
@@ -2480,9 +2484,6 @@ class MultiAssetChunkedEnv(gym.Env):
                 extracted_risk_horizon = first_receipt.get("risk_horizon", 0.0)
                 extracted_trade_reason = first_receipt.get("reason", None)
 
-            # Define action_type for reward calculation
-            action_type = "step"  # Standard step action type
-
             # Initialize optional reward calculation variables
             optimal_chunk_pnl = 0.0  # Default optimal PnL for this chunk
             performance_ratio = 1.0  # Default performance ratio (neutral)
@@ -2491,7 +2492,7 @@ class MultiAssetChunkedEnv(gym.Env):
             reward = self.reward_calculator.calculate(
                 portfolio_metrics=self.portfolio.get_metrics(),
                 trade_pnl=realized_pnl,
-                action=action_type,
+                action=discrete_action,
                 chunk_id=self.current_chunk_idx,
                 optimal_chunk_pnl=optimal_chunk_pnl,
                 performance_ratio=performance_ratio,
@@ -3279,12 +3280,32 @@ class MultiAssetChunkedEnv(gym.Env):
 
                 except Exception as e:
                     self.logger.debug(f"Rich table display error: {e}")
-                    # Fallback to simple text summary
-                    self.logger.info(
-                        f"[RICH FALLBACK] Step {self.current_step} | "
-                        f"Portfolio: N/A | Drawdown: N/A% | "
-                        f"Trades: N/A | Reward: N/A"
-                    )
+                    # Fallback to simple text summary with actual values
+                    try:
+                        portfolio_metrics = (
+                            self.portfolio_manager.get_metrics()
+                            if hasattr(self, "portfolio_manager")
+                            else {}
+                        )
+                        portfolio_value = portfolio_metrics.get("total_value", 0.0)
+                        drawdown = portfolio_metrics.get("drawdown", 0.0)
+                        total_trades = portfolio_metrics.get("total_trades", 0)
+                        last_reward = getattr(self, "_last_reward", 0.0)
+
+                        self.logger.info(
+                            f"[RICH FALLBACK] Step {self.current_step} | "
+                            f"Portfolio: ${portfolio_value:.2f} | Drawdown: {drawdown:.2f}% | "
+                            f"Trades: {total_trades} | Reward: {last_reward:.4f}"
+                        )
+                    except Exception as fallback_error:
+                        self.logger.warning(
+                            f"Fallback metrics retrieval failed: {fallback_error}"
+                        )
+                        self.logger.info(
+                            f"[RICH FALLBACK] Step {self.current_step} | "
+                            f"Portfolio: Error | Drawdown: Error% | "
+                            f"Trades: Error | Reward: Error"
+                        )
 
             if self.shared_buffer is not None:
                 experience = {
@@ -4607,7 +4628,13 @@ class MultiAssetChunkedEnv(gym.Env):
             )
             return 0.15  # Retourne une volatilité par défaut en cas d'erreur
 
-    def _execute_trades(self, action: np.ndarray, dbe_modulation: dict, action_threshold: float, force_trade: bool = False) -> float:
+    def _execute_trades(
+        self,
+        action: np.ndarray,
+        dbe_modulation: dict,
+        action_threshold: float,
+        force_trade: bool = False,
+    ) -> tuple[float, int]:
         """
         Exécute les trades en fonction des actions de l'agent.
 
@@ -4619,13 +4646,13 @@ class MultiAssetChunkedEnv(gym.Env):
             dbe_modulation: Dictionnaire des paramètres modulés par le DBE
 
         Returns:
-            Le PnL réalisé durant ce step
+            A tuple of (realized_pnl, first_discrete_action)
         """
         if not hasattr(self, "portfolio_manager"):
             self.logger.error(
                 "Portfolio manager non initialisé, impossible d'exécuter le trade."
             )
-            return 0.0
+            return 0.0, 0
 
         current_timestamp = None
         try:
@@ -4650,16 +4677,17 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.portfolio_manager.update_market_price(
                         current_prices if current_prices else {}
                     )
-                return 0.0
+                return 0.0, 0
         except Exception as e:
             self.logger.error(
                 f"Erreur critique lors de la récupération des prix au step {self.current_step}: {e}",
                 exc_info=True,
             )
-            return 0.0
+            return 0.0, 0
 
         realized_pnl = 0.0
         trade_executed_this_step = False
+        first_discrete_action = 0  # Default to HOLD
 
         # 1. Mettre à jour la valeur des positions ouvertes et vérifier les SL/TP
         pnl_from_update, sl_tp_receipts = self.portfolio_manager.update_market_price(
@@ -4683,6 +4711,16 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Ignorer si cet indice d'actif dépasse l'espace d'action
                 continue
             main_decision = action[base_idx + 0]
+
+            discrete_action = 0  # Hold
+            if main_decision < -action_threshold:
+                discrete_action = 2  # Sell
+            elif main_decision > action_threshold:
+                discrete_action = 1  # Buy
+
+            if i == 0:
+                first_discrete_action = discrete_action
+
             risk_horizon = action[base_idx + 1]
             desired_position_size = action[base_idx + 2]
             price = current_prices[asset]
@@ -4692,11 +4730,17 @@ class MultiAssetChunkedEnv(gym.Env):
             # Forcer l'ouverture si nécessaire
             if force_trade and not is_open:
                 main_decision = 1.0  # Forcer l'ouverture
-                self.logger.warning(f"[FORCE_TRADE] Forcing OPEN for {asset} due to inactivity.")
+                self.logger.warning(
+                    f"[FORCE_TRADE] Forcing OPEN for {asset} due to inactivity."
+                )
 
             # X. FORCER LA CLÔTURE SI LA DURÉE MAXIMALE EST ATTEINTE
             max_steps = self.config.get("trading_rules", {}).get("max_position_steps")
-            if is_open and max_steps and (self.current_step - position.open_step > max_steps):
+            if (
+                is_open
+                and max_steps
+                and (self.current_step - position.open_step > max_steps)
+            ):
                 self.logger.warning(
                     f"[FORCE CLOSE] Position for {asset} has exceeded max duration of {max_steps} steps. Forcing closure."
                 )
@@ -4712,7 +4756,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     self._step_closed_receipts.append(receipt)
                     realized_pnl += float(receipt.get("pnl", 0.0))
                     trade_executed_this_step = True
-                continue # Passer à l'actif suivant
+                continue  # Passer à l'actif suivant
 
             # A. L'agent veut VENDRE (fermer une position)
             if main_decision < -action_threshold and is_open:
@@ -5010,7 +5054,7 @@ class MultiAssetChunkedEnv(gym.Env):
         if trade_executed_this_step:
             self.last_trade_step = self.current_step
 
-        return realized_pnl
+        return realized_pnl, first_discrete_action, first_discrete_action
 
     def _update_risk_metrics(self, portfolio_value, returns):
         """Met à jour les métriques de risque du portefeuille."""
@@ -5248,7 +5292,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 "last_reward": 0.0,
                 "last_penalty": 0.0,
                 "cumulative_reward": 0.0,
-                "current_date": "N/A",
+                "current_date": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "worker_id": getattr(self, "worker_id", 0),
             }
 

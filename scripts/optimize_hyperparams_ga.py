@@ -165,14 +165,78 @@ def objective(trial: optuna.Trial) -> float:
                 if "trading_rules" not in temp_config: temp_config["trading_rules"] = {}
                 temp_config["trading_rules"][key] = value
             elif param.startswith("frequency_") or param.startswith("duration_") or param == "force_trade_steps":
-                 # Simplified frequency/duration handling
-                pass # This part of the logic was complex and might need a better mapping
+                # Proper frequency/duration handling
+                if param.startswith("frequency_min_positions_"):
+                    tf = param.split("_")[-1]
+                    if "trading_rules" not in temp_config:
+                        temp_config["trading_rules"] = {}
+                    if "frequency" not in temp_config["trading_rules"]:
+                        temp_config["trading_rules"]["frequency"] = {}
+                    if "min_positions" not in temp_config["trading_rules"]["frequency"]:
+                        temp_config["trading_rules"]["frequency"]["min_positions"] = {}
+                    temp_config["trading_rules"]["frequency"]["min_positions"][tf] = (
+                        value
+                    )
+                elif param.startswith("frequency_max_positions_"):
+                    tf = param.split("_")[-1]
+                    if "trading_rules" not in temp_config:
+                        temp_config["trading_rules"] = {}
+                    if "frequency" not in temp_config["trading_rules"]:
+                        temp_config["trading_rules"]["frequency"] = {}
+                    if "max_positions" not in temp_config["trading_rules"]["frequency"]:
+                        temp_config["trading_rules"]["frequency"]["max_positions"] = {}
+                    temp_config["trading_rules"]["frequency"]["max_positions"][tf] = (
+                        value
+                    )
+                elif param in [
+                    "frequency_total_daily_min",
+                    "frequency_total_daily_max",
+                ]:
+                    key = param.replace("frequency_", "")
+                    if "trading_rules" not in temp_config:
+                        temp_config["trading_rules"] = {}
+                    if "frequency" not in temp_config["trading_rules"]:
+                        temp_config["trading_rules"]["frequency"] = {}
+                    temp_config["trading_rules"]["frequency"][key] = value
+                elif param in [
+                    "frequency_bonus_weight",
+                    "frequency_penalty_weight",
+                    "frequency_grace_period_steps",
+                ]:
+                    key = param.replace("frequency_", "")
+                    if "trading_rules" not in temp_config:
+                        temp_config["trading_rules"] = {}
+                    if "frequency" not in temp_config["trading_rules"]:
+                        temp_config["trading_rules"]["frequency"] = {}
+                    temp_config["trading_rules"]["frequency"][key] = value
+                elif param.startswith("duration_tracking_"):
+                    # Handle duration tracking parameters
+                    parts = param.split("_")
+                    tf = parts[2]
+                    metric = "_".join(parts[3:])
+                    if "trading_rules" not in temp_config:
+                        temp_config["trading_rules"] = {}
+                    if "duration_tracking" not in temp_config["trading_rules"]:
+                        temp_config["trading_rules"]["duration_tracking"] = {}
+                    if tf not in temp_config["trading_rules"]["duration_tracking"]:
+                        temp_config["trading_rules"]["duration_tracking"][tf] = {}
+                    temp_config["trading_rules"]["duration_tracking"][tf][metric] = (
+                        value
+                    )
+                elif param == "force_trade_steps":
+                    if "trading_rules" not in temp_config:
+                        temp_config["trading_rules"] = {}
+                    if "frequency" not in temp_config["trading_rules"]:
+                        temp_config["trading_rules"]["frequency"] = {}
+                    temp_config["trading_rules"]["frequency"]["force_trade_steps"] = (
+                        value
+                    )
             elif param.startswith("window_size_"):
                 tf = param.split('_')[-1]
                 temp_config["environment"]["observation"]["window_sizes"][tf] = value
 
         temp_config["data"]["data_split_override"] = "train"
-        temp_config["environment"]["max_chunks_per_episode"] = 1
+        temp_config["environment"]["max_chunks_per_episode"] = 5
         temp_config["environment"]["max_steps"] = 50000
 
         worker_config = temp_config["workers"]["w3"]
