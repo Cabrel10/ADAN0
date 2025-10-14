@@ -1,0 +1,42 @@
+{
+  "application_timestamp": "2025-10-13T23:37:40.175473",
+  "applied_trials": {
+    "0": {
+      "trial_number": 12,
+      "sharpe_ratio": 5.632423366001516,
+      "hyperparams_applied": true
+    },
+    "1": {
+      "trial_number": 42,
+      "sharpe_ratio": 5.439463423936458,
+      "hyperparams_applied": true
+    },
+    "2": {
+      "trial_number": 31,
+      "sharpe_ratio": 4.813434198942145,
+      "hyperparams_applied": true
+    },
+    "3": {
+      "trial_number": 4,
+      "sharpe_ratio": -0.3434402450120993,
+      "hyperparams_applied": true
+    }
+  },
+  "fusion_weights": {
+    "0": 0.28,
+    "1": 0.26,
+    "2": 0.24,
+    "3": 0.22
+  },
+  "expected_performance": {
+    "average_sharpe": 4.9713275,
+    "best_performer": "w0 (Trial #12, Sharpe: 5.63242)",
+    "ensemble_target_sharpe": "> 5.0"
+  },
+  "next_steps": [
+    "Run training with timeout 120s to validate configuration",
+    "Monitor individual worker metrics",
+    "Adjust fusion weights based on real performance",
+    "Consider retraining if performance degrades"
+  ]
+}

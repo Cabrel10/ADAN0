@@ -1,0 +1,1138 @@
+# Fichier de configuration principal pour le robot de trading ADAN
+
+# Paramètres généraux du projet
+general:
+  project_name: ADAN_Trading_Bot
+  random_seed: 42
+  timezone: UTC
+  debug_mode: false
+  n_jobs: -1 # Utilise tous les cœurs disponibles
+
+# Chemins des dossiers
+paths:
+  base_dir: /home/morningstar/Documents/trading/bot
+  data_dir: ${paths.base_dir}/data
+  raw_data_dir: ${paths.data_dir}/raw
+  processed_data_dir: ${paths.base_dir}/data/processed
+  indicators_data_dir: ${paths.base_dir}/data/processed/indicators
+  final_data_dir: ${paths.data_dir}/final
+  models_dir: ${paths.base_dir}/models
+  trained_models_dir: ${paths.models_dir}/rl_agents
+  logs_dir: ${paths.base_dir}/logs
+  reports_dir: ${paths.base_dir}/reports
+  figures_dir: ${paths.reports_dir}/figures
+  metrics_dir: ${paths.reports_dir}/metrics
+
+# Configuration du modèle
+model:
+  architecture:
+    block_a:
+      out_channels: 64
+      kernel_size: 3
+      padding: 1
+      leaky_relu_negative_slope: 0.01
+      dropout: 0.2
+    block_b:
+      multi_scale: [3, 5, 7]
+      se_ratio: 8
+      dropout: 0.3
+    attention:
+      num_heads: 8
+      dropout: 0.1
+      use_residual: true
+    head:
+      hidden_units: [256, 128]
+      dropout: 0.5
+      activation: LeakyReLU
+  diagnostics:
+    use_grad_cam: false
+    use_integrated_gradients: false
+    target_layer: model.cnn.2
+    save_attention_maps: false
+    attention_map_dir: ${paths.models_dir}/attention_maps
+    volume_up: "#26a69a"
+    volume_down: "#ef5350"
+    ma_short: "#ff9800"
+    ma_medium: "#2196f3"
+    ma_long: "#9c27b0"
+    bollinger_mid: "#2962ff"
+    bollinger_band: "rgba(41, 98, 255, 0.1)"
+    rsi_line: "#ffc107"
+    rsi_overbought: "rgba(255, 193, 7, 0.2)"
+    rsi_oversold: "rgba(255, 193, 7, 0.2)"
+    macd_line: "#4caf50"
+    signal_line: "#f44336"
+    histogram_up: "#81c784"
+    histogram_down: "#e57373"
+    background: "#1e1e1e"
+    grid: "rgba(255, 255, 255, 0.05)"
+  style:
+    figure_facecolor: "#121212"
+    axes_facecolor: "#1e1e1e"
+    grid_alpha: 0.1
+    font_family: sans-serif
+    font_size: 10
+    candle_width: 0.8
+    volume_alpha: 0.7
+    line_width: 1.5
+    legend_loc: upper left
+    legend_frameon: true
+    legend_facecolor: "#2c2c2c"
+    legend_edgecolor: "#555555"
+    left_margin: 0.05
+    right_margin: 0.95
+    top_margin: 0.95
+    bottom_margin: 0.1
+    hspace: 0.1
+
+# Configuration des données
+data:
+  include:
+    - BTCUSDT
+    - XRPUSDT
+  assets:
+    - BTCUSDT
+    - XRPUSDT
+  processed_data:
+    train: data/processed/train
+    validation: data/processed/validation
+    test: data/processed/test
+  timeframes:
+    - 5m
+    - 1h
+    - 4h
+  data_dirs:
+    base: ${paths.base_dir}/data/processed/indicators
+    train: ${data.data_dirs.base}/train
+    val: ${data.data_dirs.base}/val
+    test: ${data.data_dirs.base}/test
+  # Configuration des données temporelles
+  timestamp:
+    column_name: "timestamp" # Nom de la colonne contenant les timestamps
+    timezone: "UTC" # Fuseau horaire des données
+    format: "auto" # Format automatique de détection
+    set_as_index: true # Utiliser le timestamp comme index du DataFrame
+
+  features_config:
+    timeframes:
+      # Timeframe 5 Minutes (Court Terme) - 9 indicateurs
+      5m:
+        price: ["open", "high", "low", "close"]
+        volume: ["volume"]
+        indicators: [
+            "rsi_14", # Momentum/surachat
+            "macd_12_26_9", # Changement de tendance
+            "bb_percent_b_20_2", # Volatilité et positions extrêmes
+            "atr_14", # Volatilité intra-bar
+            "volume_ratio_20", # Force derrière le mouvement
+            "ema_20_ratio", # Tendance très court terme
+            "stoch_k_14_3_3", # Momentum vitesse prix
+            "vwap_ratio", # Prix pondéré par volume
+            "price_action", # Prix typique (H+L+C)/3
+          ]
+
+      # Timeframe 1 Heure (Moyen Terme) - 9 indicateurs
+      1h:
+        price: ["open", "high", "low", "close"]
+        volume: ["volume"]
+        indicators: [
+            "rsi_21", # Momentum adapté 1h
+            "macd_21_42_9", # Paramètres adaptés 1h
+            "bb_width_20_2", # Expansion/contraction volatilité
+            "adx_14", # Force de la tendance
+            "obv_ratio_20", # Accumulation/distribution
+            "ema_50_ratio", # Tendance moyen terme
+            "ichimoku_base", # Support/resistance dynamique
+            "fib_ratio", # Niveaux psychologiques
+            "price_ema_ratio_50", # Écart à la moyenne
+          ]
+
+      # Timeframe 4 Heures (Long Terme) - 9 indicateurs
+      4h:
+        price: ["open", "high", "low", "close"]
+        volume: ["volume"]
+        indicators: [
+            "rsi_28", # Momentum lissé
+            "macd_26_52_18", # Paramètres adaptés 4h
+            "supertrend_10_3", # Tendance avec stop dynamique
+            "volume_sma_20_ratio", # Volume moyen long terme
+            "ema_100_ratio", # Tendance long terme
+            "pivot_level", # Niveaux structurels
+            "donchian_width_20", # Range et breakout
+            "market_structure", # HH/HL vs LH/LL
+            "volatility_ratio_14_50", # ATR/SMA ratio
+          ]
+
+# Configuration du portefeuille
+portfolio:
+  initial_balance: 20.5
+  include_portfolio_state: true
+  portfolio_state_features: 17
+
+# Configuration des workers
+workers:
+  w1:
+    name: Conservative
+    description: Low risk, stable returns
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_mode: spot
+    agent_config:
+      ent_coef: 0.01
+      learning_rate: 0.0003
+      batch_size: 64
+      n_steps: 2048
+      n_epochs: 10
+      clip_range: 0.2
+    reward_config:
+      drawdown_penalty: 0.5
+      profit_factor_bonus: 0.2
+      sharpe_ratio_bonus: 0.1
+      win_rate_bonus: 0.1
+    risk_per_trade_pct_by_tier:
+      Micro: 1.2
+      Small: 0.9
+      Medium: 0.6
+      High: 0.5
+      Enterprise: 0.4
+    stop_loss_pct_by_tier:
+      Micro: 0.018
+      Small: 0.015
+      Medium: 0.010
+      High: 0.008
+      Enterprise: 0.005
+    take_profit_pct_by_tier:
+      Micro: 0.06
+      Small: 0.045
+      Medium: 0.035
+      High: 0.025
+      Enterprise: 0.02
+    specialization:
+      timeframe: '4h'
+      reward_profile:
+        position_size_bonus: 3.0
+        duration_bonus: 2.0
+        premature_penalty: -2.0
+        overexposure_penalty: -3.0
+        speed_bonus: 0.0
+        precision_bonus: 0.0
+        overstay_penalty: -1.0
+        missed_penalty: -0.5
+      tracking_periods:
+        '5m':
+          min_tracking_steps: 10
+          max_tracking_steps: 48
+          optimal_duration: 12
+          grace_period: 2
+        '1h':
+          min_tracking_steps: 10
+          max_tracking_steps: 16
+          optimal_duration: 4
+          grace_period: 1
+        '4h':
+          min_tracking_steps: 10
+          max_tracking_steps: 6
+          optimal_duration: 2
+          grace_period: 1
+
+  w2:
+    name: Moderate
+    description: Balanced risk-reward
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_mode: spot
+    agent_config:
+      ent_coef: 0.02
+      learning_rate: 0.0005
+      batch_size: 128
+      n_steps: 2048
+      n_epochs: 10
+      clip_range: 0.25
+    reward_config:
+      drawdown_penalty: 0.4
+      profit_factor_bonus: 0.3
+      sharpe_ratio_bonus: 0.2
+      win_rate_bonus: 0.1
+    risk_per_trade_pct_by_tier:
+      Micro: 1.8
+      Small: 1.0
+      Medium: 0.9
+      High: 0.8
+      Enterprise: 0.6
+    stop_loss_pct_by_tier:
+      Micro: 0.03
+      Small: 0.02
+      Medium: 0.015
+      High: 0.01
+      Enterprise: 0.008
+    take_profit_pct_by_tier:
+      Micro: 0.08
+      Small: 0.06
+      Medium: 0.045
+      High: 0.035
+      Enterprise: 0.025
+    specialization:
+      timeframe: '1h'
+      reward_profile:
+        trend_capture_bonus: 4.0
+        swing_efficiency_bonus: 2.0
+        early_exit_penalty: -1.0
+        drift_penalty: -0.8
+        speed_bonus: 0.0
+        precision_bonus: 0.0
+        overstay_penalty: -1.0
+        missed_penalty: -0.5
+      tracking_periods:
+        '5m':
+          min_tracking_steps: 10
+          max_tracking_steps: 48
+          optimal_duration: 12
+          grace_period: 2
+        '1h':
+          min_tracking_steps: 10
+          max_tracking_steps: 16
+          optimal_duration: 4
+          grace_period: 1
+        '4h':
+          min_tracking_steps: 10
+          max_tracking_steps: 6
+          optimal_duration: 2
+          grace_period: 1
+  w3:
+    name: Aggressive
+    description: High risk, high returns
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_mode: spot
+    agent_config:
+      ent_coef: 0.05
+      learning_rate: 0.001
+      batch_size: 256
+      n_steps: 4096
+      n_epochs: 15
+      clip_range: 0.3
+    reward_config:
+      drawdown_penalty: 0.3
+      profit_factor_bonus: 0.5
+      sharpe_ratio_bonus: 0.3
+    risk_per_trade_pct_by_tier:
+      Micro: 3.5
+      Small: 2.5
+      Medium: 1.5
+      High: 1.2
+      Enterprise: 1.0
+    stop_loss_pct_by_tier:
+      Micro: 0.06
+      Small: 0.04
+      Medium: 0.02
+      High: 0.015
+      Enterprise: 0.01
+    take_profit_pct_by_tier:
+      Micro: 0.12
+      Small: 0.09
+      Medium: 0.06
+      High: 0.04
+      Enterprise: 0.03
+    specialization:
+      timeframe: '5m'
+      reward_profile:
+        speed_bonus: 2.0
+        precision_bonus: 3.0
+        overstay_penalty: -1.0
+        missed_penalty: -0.5
+      tracking_periods:
+        '5m':
+          min_tracking_steps: 10
+          max_tracking_steps: 48
+          optimal_duration: 12
+          grace_period: 2
+        '1h':
+          min_tracking_steps: 10
+          max_tracking_steps: 16
+          optimal_duration: 4
+          grace_period: 1
+        '4h':
+          min_tracking_steps: 10
+          max_tracking_steps: 6
+          optimal_duration: 2
+          grace_period: 1
+
+  w4:
+    name: Adaptive
+    description: Dynamically adjusts to market
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_mode: spot
+    agent_config:
+      learning_rate: 0.0007
+      ent_coef: 0.03
+    reward_config:
+      volatility_bonus: 0.2
+      drawdown_penalty: 0.35
+    risk_per_trade_pct_by_tier:
+      Micro: 2.5
+      Small: 1.5
+      Medium: 1.0
+      High: 0.8
+      Enterprise: 0.7
+    position_size_range_by_tier:
+      Micro: [75.0, 90.0]
+      Small: [60.0, 70.0]
+      Medium: [50.0, 60.0]
+      High: [25.0, 35.0]
+      Enterprise: [5.0, 20.0]
+    stop_loss_pct_by_tier:
+      Micro: 0.04
+      Small: 0.025
+      Medium: 0.02
+      High: 0.01
+      Enterprise: 0.008
+    take_profit_pct_by_tier:
+      Micro: 0.10
+      Small: 0.07
+      Medium: 0.05
+      High: 0.035
+      Enterprise: 0.025
+    specialization:
+      timeframe: '1h'
+      reward_profile:
+        balance_bonus: 2.0
+        adaptability_bonus: 3.0
+        rigidity_penalty: -1.5
+        speed_bonus: 0.0
+        precision_bonus: 0.0
+        overstay_penalty: -1.0
+        missed_penalty: -0.5
+      tracking_periods:
+        '5m':
+          min_tracking_steps: 10
+          max_tracking_steps: 48
+          optimal_duration: 12
+          grace_period: 2
+        '1h':
+          min_tracking_steps: 10
+          max_tracking_steps: 16
+          optimal_duration: 4
+          grace_period: 1
+        '4h':
+          min_tracking_steps: 10
+          max_tracking_steps: 6
+          optimal_duration: 2
+          grace_period: 1
+
+# Prétraitement des données
+preprocessing:
+  normalization:
+    method: minmax
+    clip_values: true
+    scale_per_asset: true
+    scale_per_timeframe: true
+  stationarity:
+    price_transform: diff
+    volume_transform: log
+  window_config:
+    window_sizes:
+      5m: 20
+      1h: 20
+      4h: 20
+    min_window_size: 20
+    step_size: 1
+  technical_indicators:
+    use_price_indicators: true
+    price_indicators: [rsi, macd, atr, bb]
+    use_volume_indicators: true
+    volume_indicators: [obv]
+    use_volatility_indicators: true
+    volatility_indicators: [atr]
+
+# Ingénierie des caractéristiques
+feature_engineering:
+  timeframes: [5m, 1h, 4h]
+  columns_to_normalize:
+    - OPEN
+    - HIGH
+    - LOW
+    - CLOSE
+    - VOLUME
+  indicators:
+    timeframes:
+      5m:
+        momentum: [rsi_14, stoch_k_14_3_3, stoch_d_14_3_3]
+        trend: [macd_hist_12_26_9, ema_5, ema_12]
+        volatility: [atr_14, bb_upper, bb_middle, bb_lower]
+        volume: [volume]
+      1h:
+        momentum: [rsi_14, stoch_k_14_3_3, stoch_d_14_3_3]
+        trend: [macd_hist_12_26_9, adx_14, ema_26, ema_50]
+        volatility: [bb_upper, bb_middle, bb_lower]
+        volume: [volume]
+      4h:
+        momentum: [rsi_14, stoch_k_14_3_3, stoch_d_14_3_3]
+        trend: [macd_hist_12_26_9, adx_14, ema_50, ema_200, sma_200]
+        volatility: [atr_14]
+        volume: [obv]
+    common:
+      bollinger:
+        window: 20
+        window_dev: 2
+      rsi:
+        window: 14
+      macd:
+        fast: 12
+        slow: 26
+        signal: 9
+      atr:
+        window: 14
+      supertrend:
+        window: 10
+        multiplier: 3
+      psar:
+        step: 0.02
+        max_step: 0.2
+  preprocessing:
+    fillna: mean
+    normalize: minmax
+    remove_outliers: true
+    min_data_points: 100
+  performance:
+    chunk_size: 1000
+    n_jobs: -1
+    cache_indicators: true
+    parallel_timeframes: true
+  validation:
+    check_nan_percentage: true
+    max_nan_percentage: 0.01
+    check_feature_correlation: true
+    max_correlation_threshold: 0.98
+
+# Configuration de l'environnement
+environment:
+  max_steps: 500000
+  initial_balance: 20.5
+  commission: 0.001
+  reward_scaling: 1.0
+  window_size: 50
+  features_config:
+    price: [open, high, low, close]
+    volume: [volume]
+    indicators: [rsi_14, macd_hist, atr_14, bb_upper, bb_middle, bb_lower]
+  max_chunks_per_episode: 10
+  assets: [btcusdt]
+  observation:
+    shape: [3, 20, 16]
+    window_sizes:
+      5m: 20
+      1h: 20
+      4h: 20
+    warmup_steps: 500
+    timeframes: [5m, 1h, 4h]
+    features:
+      base: [OPEN, HIGH, LOW, CLOSE, VOLUME]
+      indicators:
+        5m:
+          [
+            RSI_14,
+            MACD_12_26_9,
+            MACD_SIGNAL_12_26_9,
+            MACD_HIST_12_26_9,
+            BB_PERCENT_B_20_2,
+            ATR_14,
+            VOLUME_RATIO_20,
+            EMA_20_RATIO,
+            STOCH_K_14_3_3,
+            VWAP_RATIO,
+            PRICE_ACTION,
+          ]
+        1h:
+          [
+            RSI_21,
+            MACD_21_42_9,
+            MACD_SIGNAL_21_42_9,
+            MACD_HIST_21_42_9,
+            BB_WIDTH_20_2,
+            ADX_14,
+            OBV_RATIO_20,
+            EMA_50_RATIO,
+            ICHIMOKU_BASE,
+            FIB_RATIO,
+            PRICE_EMA_RATIO_50,
+          ]
+        4h:
+          [
+            RSI_28,
+            MACD_26_52_18,
+            MACD_SIGNAL_26_52_18,
+            MACD_HIST_26_52_18,
+            SUPERTREND_10_3,
+            VOLUME_SMA_20_RATIO,
+            EMA_100_RATIO,
+            PIVOT_LEVEL,
+            DONCHIAN_WIDTH_20,
+            MARKET_STRUCTURE,
+            VOLATILITY_RATIO_14_50,
+          ]
+  mode: validation
+  base_currency: USDT
+  memory:
+    chunk_size: 1000
+    max_chunks_in_memory: 5
+    aggressive_cleanup: true
+    force_gc_after_chunk: true
+    memory_warning_threshold_mb: 512
+    memory_critical_threshold_mb: 1024
+    num_workers: 4
+    pin_memory: true
+    batch_size: 64
+    prefetch_factor: 2
+    shuffle: true
+    drop_last: true
+    include_portfolio_state: true
+  risk_management:
+    position_sizing:
+      max_position_size: 0.9
+      initial_sl_pct: 0.02
+      initial_tp_pct: 0.05
+      initial_position_size: 0.1
+      min_trade_value: 10.0
+      max_risk_per_trade_pct: 0.01
+      max_asset_allocation_pct: 1.0
+      concentration_limits:
+        BTCUSDT: 1.0
+        ETHUSDT: 0.5
+        SOLUSDT: 0.3
+        XRPUSDT: 0.2
+        ADAUSDT: 0.2
+      take_profit:
+        enabled: true
+        risk_reward_ratio: 1.5
+        trailing_enabled: false
+        trailing_deviation_pct: 0.01
+      risk_parameters:
+        min_risk_level: 0.5
+        max_risk_level: 2.0
+        base_sl_pct: 0.02
+        base_tp_pct: 0.05
+        max_sl_pct: 0.1
+        min_sl_pct: 0.01
+        daily_loss_limit: 0.1
+        weekly_loss_limit: 0.2
+  penalties:
+    invalid_action: -1.0
+    order_rejection: -0.5
+    inaction_freq_threshold: 10
+    inaction_pnl_threshold: -0.001
+    base_inaction_penalty: -0.01
+
+# Règles de trading
+trading_rules:
+  futures_enabled: false
+  leverage: 1
+  commission_pct: 0.001
+  min_order_value_usdt: 11.0
+  slippage_pct: 0.0005
+  stop_loss_pct: 0.02
+  take_profit_pct: 0.04
+  max_position_steps: 144 # 1 jour en 5m (24h * 60min / 5min)
+  trailing_stop:
+    enabled: false
+    activation_pct: 0.01
+    trailing_pct: 0.005
+
+  # Configuration de la fréquence des positions par timeframe
+  frequency:
+    # Bornes de positions par timeframe (par jour)
+    min_positions:
+      5m: 6 # Réduit de 6 à 2 pour les débutants
+      1h: 3 # Réduit de 3 à 1 pour les débutants
+      4h: 1 # Réduit de 1 à 0 pour les débutants
+      total_daily: 2 # Réduit de 5 à 2 pour les débutants
+    max_positions:
+      5m: 15
+      1h: 10
+      4h: 3
+      total_daily: 15
+    frequency_bonus_weight: 0.3
+    frequency_penalty_weight: 0.01 # Reverted to original value as requested by user # Réduit drastiquement de 1.0 à 0.01 pour éviter d'écraser le signal d'apprentissage
+    action_threshold: 0.3 # Réduit de 0.5 à 0.3 pour plus de trades
+    frequency_check_interval: 2000 # Permettre progression à travers plusieurs chunks (1000 steps par chunk)
+    force_trade_steps: 50 # Forcer un trade toutes les 50 étapes si en dessous du minimum
+    grace_period_steps: 100 # Période de grâce (en steps) avant d'appliquer les pénalités de fréquence
+
+    # Paramètres de fenêtre temporelle
+    daily_steps_5m: 288 # Nombre de steps 5m par jour (24h * 60min / 5min)
+    daily_steps_1h: 24 # Nombre de steps 1h par jour
+    daily_steps_4h: 6 # Nombre de steps 4h par jour
+    chunk_progression_penalty: # MODIFIED: Added chunk progression penalty as requested by user
+      enabled: true
+      base_penalty: 0.01
+      increase_factor: 0.5
+      max_multiplier: 6.0
+      start_chunk_index: 0
+
+  duration_tracking:
+    '5m':
+      max_duration_steps: 28
+    '1h':
+      max_duration_steps: 48
+    '4h':
+      max_duration_steps: 57
+
+# Paliers de capital
+capital_tiers:
+  - name: Ultra Micro Capital
+    min_capital: 1.0
+    max_capital: 11.0
+    max_position_size_pct: 95
+    leverage: 1.0
+    risk_per_trade_pct: 2.0
+    max_drawdown_pct: 5.0
+    max_concurrent_positions: 1
+    exposure_range: [80, 95]
+  - name: Micro Capital
+    min_capital: 11.0
+    max_capital: 30.0
+    max_position_size_pct: 90
+    leverage: 1.0
+    risk_per_trade_pct: 5.0
+    max_drawdown_pct: 4.0
+    max_concurrent_positions: 1
+    exposure_range: [70, 90]
+  - name: Small Capital
+    min_capital: 30.0
+    max_capital: 100.0
+    max_position_size_pct: 70
+    leverage: 1.0
+    risk_per_trade_pct: 1.5
+    max_drawdown_pct: 4.0
+    max_concurrent_positions: 2
+    exposure_range: [60, 80]
+  - name: Medium Capital
+    min_capital: 100.0
+    max_capital: 300.0
+    max_position_size_pct: 60
+    leverage: 1.0
+    risk_per_trade_pct: 2.0
+    max_drawdown_pct: 3.5
+    max_concurrent_positions: 3
+    exposure_range: [40, 70]
+  - name: High Capital
+    min_capital: 300.0
+    max_capital: 1000.0
+    max_position_size_pct: 35
+    leverage: 1.0
+    risk_per_trade_pct: 2.5
+    max_drawdown_pct: 3.0
+    max_concurrent_positions: 4
+    exposure_range: [25, 50]
+  - name: Enterprise
+    min_capital: 1000.0
+    max_capital: null
+    max_position_size_pct: 20
+    leverage: 1.0
+    risk_per_trade_pct: 3.0
+    max_drawdown_pct: 2.5
+    max_concurrent_positions: 5
+    exposure_range: [5, 10]
+
+# Configuration de l'agent
+agent:
+  algorithm: PPO
+  policy: MultiInputPolicy
+  learning_rate: 0.0003
+  n_steps: 2048
+  logging_level: ERROR
+  # Désactiver les logs de débogage
+  verbose: 0
+  # Niveau de log pour les bibliothèques tierces
+  tensorflow_log_level: 3 # 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL
+  torch_log_level: "ERROR"
+  numpy_log_level: "ERROR"
+  # Désactiver les logs de débogage des composants internes
+  debug: false
+  log_level: "ERROR"
+  # Paramètres de confiance
+  confidence:
+    enabled: true
+    min_confidence: 0.6 # Niveau de confiance minimum requis pour trader
+    update_frequency: 100 # Mise à jour de la confiance tous les 100 steps
+  # Paramètres d'exploration
+  exploration:
+    initial_eps: 1.0
+    final_eps: 0.01
+    exploration_fraction: 0.1 # Fraction des steps pour la décroissance de l'exploration
+    # Stratégie d'exploration (epsilon_greedy, normal_noise, oun_noise)
+    strategy: epsilon_greedy
+    # Paramètres pour le bruit
+    noise_std: 0.1
+    noise_theta: 0.15
+    noise_sigma: 0.2
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  clip_range_vf: null
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  target_kl: 0.01
+  seed: 42
+  deterministic_inference: false
+  custom_log_freq_rollouts: 1
+  eval_freq: 10000
+  eval_episodes: 10
+  checkpoint_freq: 1000
+  n_envs: 4
+  buffer_size: 100000
+  window_size: 20
+  features_extractor_kwargs:
+    cnn_configs:
+      5m:
+        input_shape: [1, 20, 15]
+        channel_groups: 3
+        groups:
+          price:
+            indices: [0, 1, 2, 3]
+            out_channels: 16
+            kernel_size: 3
+            padding: 1
+          volume:
+            indices: [4]
+            out_channels: 8
+            kernel_size: 3
+            padding: 1
+          indicators:
+            indices: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+            out_channels: 32
+            kernel_size: 3
+            padding: 1
+      1h:
+        input_shape: [1, 20, 15]
+        channel_groups: 3
+        groups:
+          price:
+            indices: [0, 1, 2, 3]
+            out_channels: 16
+            kernel_size: 3
+            padding: 1
+          volume:
+            indices: [4]
+            out_channels: 8
+            kernel_size: 3
+            padding: 1
+          indicators:
+            indices: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+            out_channels: 32
+            kernel_size: 3
+            padding: 1
+      4h:
+        input_shape: [1, 20, 15]
+        channel_groups: 3
+        groups:
+          price:
+            indices: [0, 1, 2, 3]
+            out_channels: 16
+            kernel_size: 3
+            padding: 1
+          volume:
+            indices: [4]
+            out_channels: 8
+            kernel_size: 3
+            padding: 1
+          indicators:
+            indices: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+            out_channels: 32
+            kernel_size: 3
+            padding: 1
+        conv_blocks: 2
+        activation: relu
+        batch_norm: true
+        final_dropout: 0.3
+        use_channel_attention: true
+        use_temporal_attention: true
+        temporal_attention_heads: 4
+    fc_layers: [256, 128]
+    attention:
+      num_heads: 4
+      dropout: 0.1
+      use_relative_positions: true
+    normalization:
+      use_batch_norm: true
+      use_layer_norm: false
+    initialization:
+      conv: xavier_uniform
+      dense: xavier_uniform
+      bias: zeros
+    policy_kwargs:
+      net_arch:
+        shared: [256]
+        pi: [128, 64]
+        vf: [128, 64]
+      activation_fn: torch.nn.ReLU
+    ppo:
+      n_steps: 2048
+      batch_size: 64
+      n_epochs: 10
+      gae_lambda: 0.95
+      clip_range: 0.2
+      clip_range_vf: null
+      ent_coef: 0.01
+      vf_coef: 0.5
+      max_grad_norm: 0.5
+      normalize_advantage: true
+      use_sde: false
+      sde_sample_freq: -1
+      use_reparameterization: false
+  learning_rate_schedule:
+    type: linear
+    start: 0.0003
+    end: 1.0e-05
+  ent_coef_schedule:
+    type: linear
+    start: 0.01
+    end: 0.001
+
+# Traitement des données
+data_processing:
+  max_lookahead: 24
+  temporal_transforms:
+    enabled: true
+    diffs: [1, 2]
+    moving_averages: [5, 10]
+    rolling_windows: [5, 10]
+    rsi_window: 14
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    bollinger_window: 20
+    bollinger_std: 2
+
+# Augmentation des données
+data_augmentation:
+  enabled: false
+  time_warping:
+    enabled: true
+    window: 5
+    sigma: 0.2
+    exclude_columns: []
+  gaussian_noise:
+    enabled: true
+    std: 0.01
+    exclude_columns: []
+  window_permutation:
+    enabled: false
+    window_size: 10
+    n_permutations: 3
+    exclude_columns: []
+  random_scaling:
+    enabled: false
+    scale_range: [0.9, 1.1]
+    exclude_columns: []
+  trend_augmentation:
+    enabled: false
+    max_trend: 0.05
+    exclude_columns: []
+  partial_shuffle:
+    enabled: false
+    segment_size: 10
+    exclude_columns: []
+  random_impulses:
+    enabled: false
+    probability: 0.01
+    max_impulse: 0.1
+    exclude_columns: []
+  apply_order: [time_warping, gaussian_noise]
+
+# Régularisation
+regularization:
+  dropout_rate: 0.3
+  use_batch_norm: true
+  batch_norm_momentum: 0.99
+  batch_norm_epsilon: 1.0e-05
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+
+# Entraînement
+training:
+  num_instances: 4
+  timesteps_per_instance: 100000
+  batch_size: 64
+  save_freq: 10000
+  checkpointing:
+    enabled: true
+    save_freq: 1000
+    model_name: ppo_trading_bot
+    save_path: ${paths.trained_models_dir}
+  progress_bar: true
+  use_custom_progress: true
+
+# Paramètres de risque
+risk_parameters:
+  base_sl_pct: 0.02
+  base_tp_pct: 0.05
+  max_sl_pct: 0.1
+  min_sl_pct: 0.01
+  min_tp_pct: 0.01
+  max_tp_pct: 0.2
+  drawdown_risk_multiplier: 1.5
+  volatility_impact: 0.5
+  volatility_sl_factor: 1.2
+  winrate_tp_factor: 1.1
+  max_drawdown_pct: 0.25
+  min_risk_level: 0.5
+  max_risk_level: 2.0
+  risk_step: 0.1
+  daily_loss_limit: 0.1
+  weekly_loss_limit: 0.2
+
+# Moteur de comportement dynamique (DBE)
+dbe:
+  aggressiveness_decay:
+    micro: 1.1
+    small: 1.03
+    medium: 1.0
+    high: 0.85
+    enterprise: 0.6
+  volatility_guard:
+    enabled: true
+    atr_pct_threshold: 0.035
+    exposure_multiplier_on_high_vol: 0.6
+    risk_multiplier_on_high_vol: 0.7
+  default_reset_capital: 20.5
+
+  market_regime_detection:
+    adx_threshold: 25
+    rsi_overbought: 70
+    rsi_oversold: 30
+    ema_fast: 12
+    ema_slow: 26
+    atr_multiplier: 2.0
+    macd_signal: 9
+  regime_parameters:
+    bull:
+      sl_multiplier: 1.2
+      tp_multiplier: 1.5
+      position_size_multiplier: 1.1
+    bear:
+      sl_multiplier: 0.8
+      tp_multiplier: 0.9
+      position_size_multiplier: 0.9
+    volatile:
+      sl_multiplier: 1.5
+      tp_multiplier: 1.2
+      position_size_multiplier: 0.8
+    sideways:
+      sl_multiplier: 1.0
+      tp_multiplier: 1.0
+      position_size_multiplier: 1.0
+  risk_management:
+    min_trade_value: 10.0
+    max_leverage: 1
+    max_consecutive_losses: 5
+  take_profit:
+    enabled: true
+    risk_reward_ratio: 2.0
+    trailing_enabled: true
+    trailing_deviation_pct: 1.5
+    volatility_adjustment: true
+    min_volatility: 0.01
+    max_volatility: 0.1
+    atr_period: 14
+  performance:
+    lookback_window: 100
+    min_trades_for_metrics: 10
+    winrate_target: 0.6
+    profit_factor_target: 1.5
+    adaptation:
+      learning_rate: 0.01
+      min_risk_level: 0.5
+      max_risk_level: 2.0
+      risk_increment: 0.1
+      risk_decrement: 0.1
+      use_dynamic_sizing: true
+      volatility_smoothing: 14
+  logging:
+    level: ERROR # Seuls les logs ERROR et CRITICAL seront affichés
+    save_trade_history: false
+    performance_metrics: false
+    disable_existing_loggers: true
+    save_interval: 1000
+
+# Mise en forme de la récompense
+reset_parameters:
+  min_capital_before_reset: 11.0 # Seuil minimum de capital avant réinitialisation
+  reset_mode: "soft" # Mode de réinitialisation: soft (maintient les positions) ou hard (réinitialisation complète)
+  max_consecutive_losses: 5 # Nombre maximum de pertes consécutives avant réinitialisation
+  check_interval: 100 # Nombre d'étapes entre les vérifications de réinitialisation
+
+reward_shaping:
+  pnl_weight: 4.0
+  frequency_weights: {in_range: 2.0, out_of_range: 0.2}
+  trade_outcome: {take_profit_multiplier: 0.6, stop_loss_multiplier: 0.05}
+  duration_penalty_weight: 0.01
+  invalid_trade_penalty_weight: 0.00005
+  missed_penalty: -0.5
+  early_close_bonus: 0.3
+  overstay_penalty: -1.0
+  multi_traque_bonus: 1.5
+  progressive_difficulty: true
+  profiles:
+    Conservative:
+      stop_loss_penalty: -1.5
+      duration_penalty_weight: 0.02
+      take_profit_bonus: 0.4
+      early_exit_bonus: 0.0
+      missed_opportunity_penalty: -0.1
+    Moderate:
+      stop_loss_penalty: -1.0
+      duration_penalty_weight: 0.015
+      take_profit_bonus: 0.6
+      early_exit_bonus: 0.1
+      missed_opportunity_penalty: -0.2
+    Aggressive:
+      stop_loss_penalty: -0.8
+      duration_penalty_weight: 0.005
+      take_profit_bonus: 0.8
+      early_exit_bonus: 0.3
+      missed_opportunity_penalty: -0.3
+    Adaptive:
+      stop_loss_penalty: -1.0
+      duration_penalty_weight: 0.01
+      take_profit_bonus: 0.5
+      early_exit_bonus: 0.15
+      missed_opportunity_penalty: -0.25
+  logging:
+    version: 1
+    disable_existing_loggers: false
+    formatters:
+      console:
+        format: "[%(levelname)s] %(asctime)s - %(name)s - %(message)s"
+        datefmt: "%Y-%m-%d %H:%M:%S"
+      json:
+        (): pythonjsonlogger.jsonlogger.JsonFormatter
+        format: "%(asctime)s %(name)s %(levelname)s %(message)s"
+    handlers:
+      console:
+        class: logging.StreamHandler
+        level: INFO
+        formatter: console
+        stream: ext://sys.stdout
+      main_file:
+        class: logging.handlers.RotatingFileHandler
+        level: INFO
+        formatter: json
+        filename: ${paths.logs_dir}/adan_trading_bot.jsonl
+        maxBytes: 10485760
+        backupCount: 5
+        encoding: utf-8
+    root:
+      level: INFO
+      handlers: [console, main_file]
+    loggers:
+      urllib3: { level: WARNING }
+      matplotlib: { level: WARNING }
+      pyarrow: { level: WARNING }
