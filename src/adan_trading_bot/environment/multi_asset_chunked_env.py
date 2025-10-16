@@ -1784,6 +1784,11 @@ class MultiAssetChunkedEnv(gym.Env):
         self.current_day = 0
         self._last_trade_count = 0  # Initialize trade count tracking
 
+        # Reset trade tracking helpers to avoid negative deltas after episode restart
+        self.last_trade_steps_by_tf = {}
+        self.last_trade_timestamps = {}
+        self.current_timeframe_for_trade = "5m"
+
         # Reset portfolio and load initial data chunk
         if hasattr(self, "last_trade_step"):
             self.last_trade_step = -1
@@ -2263,7 +2268,29 @@ class MultiAssetChunkedEnv(gym.Env):
         # Get frequency configuration
         frequency_config = self.config.get("trading_rules", {}).get("frequency", {})
         action_threshold = frequency_config.get("action_threshold", 0.3)
-        force_trade_steps = frequency_config.get("force_trade_steps", 50)
+        # Backward-compatibility: normalize thresholds configured on a >1 scale (e.g., 3.5 -> 0.35)
+        if action_threshold > 1.0:
+            original_threshold = action_threshold
+            if action_threshold <= 10.0:
+                action_threshold = action_threshold / 10.0
+            elif action_threshold <= 100.0:
+                action_threshold = action_threshold / 100.0
+            else:
+                # Fallback to safe high threshold
+                action_threshold = 0.95
+            logger.warning(
+                f"[THRESHOLD NORMALIZED] action_threshold normalized to {action_threshold:.2f} (from {original_threshold})"
+            )
+        # Récupérer force_trade_steps global et duration_tracking par TF
+        force_trade_steps_global = frequency_config.get("force_trade_steps", 50)
+        duration_tracking = self.config.get("trading_rules", {}).get("duration_tracking", {})
+        
+        # Adapter force_trade_steps au timeframe courant (utiliser max_duration si disponible)
+        tf_duration_config = duration_tracking.get(timeframe, {})
+        max_duration_tf = tf_duration_config.get("max_duration_steps", force_trade_steps_global)
+        # Prendre le minimum entre global et TF-specific pour éviter attentes trop longues
+        force_trade_steps = min(force_trade_steps_global, max_duration_tf)
+        
         min_positions = frequency_config.get("min_positions", {})
         min_pos_tf = min_positions.get(timeframe, 1)
 
@@ -2275,6 +2302,16 @@ class MultiAssetChunkedEnv(gym.Env):
             self.positions_count.get(timeframe, 0) < min_pos_tf
             and steps_since_last_trade >= force_trade_steps
         )
+
+        # Diagnostic: detailed frequency gating snapshot
+        try:
+            logger.info(
+                f"[FREQ GATE] TF={timeframe} last_step={self.last_trade_steps_by_tf.get(timeframe, '-')} | "
+                f"since_last={steps_since_last_trade} | min_pos_tf={min_pos_tf} | count={self.positions_count.get(timeframe, 0)} | "
+                f"force_after={force_trade_steps} | should_force={should_force_trade} | action_thr={action_threshold:.2f}"
+            )
+        except Exception:
+            pass
 
         # Note: Trade execution is now handled in _execute_trades method
         # This section previously contained duplicate trade counting logic
@@ -2638,6 +2675,33 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"[CHUNK TRANSITION CHECK Worker {self.worker_id}] step_in_chunk: {self.step_in_chunk}, threshold: {transition_threshold}, will_transition: {self.step_in_chunk >= transition_threshold}"
             )
 
+            # PROTECTION: Forcer un trade si on approche la fin du chunk sans avoir tradé
+            chunk_end_buffer = 5  # Marge de sécurité avant la fin du chunk
+            approaching_chunk_end = self.step_in_chunk >= (data_length - chunk_end_buffer)
+            if approaching_chunk_end and not should_force_trade:
+                # Recalculer should_force_trade avec un seuil réduit pour éviter reset sans trade
+                steps_since_last_trade_global = (
+                    self.current_step - self.last_trade_step
+                    if self.last_trade_step is not None and self.last_trade_step >= 0
+                    else self.current_step
+                )
+                if steps_since_last_trade_global > 20:  # Seuil minimal pour forcer
+                    should_force_trade = True
+                    logger.warning(
+                        f"[CHUNK END PROTECTION] Forcing trade at step {self.current_step} "
+                        f"(step_in_chunk={self.step_in_chunk}, data_length={data_length}, "
+                        f"steps_since_last={steps_since_last_trade_global})"
+                    )
+                    # Ré-exécuter _execute_trades avec force activé
+                    try:
+                        realized_pnl_forced, discrete_action_forced, _ = self._execute_trades(
+                            action, dbe_modulation, action_threshold, force_trade=True
+                        )
+                        if realized_pnl_forced != 0 or discrete_action_forced != 0:
+                            logger.info(f"[CHUNK END PROTECTION] Forced trade executed successfully")
+                    except Exception as force_e:
+                        logger.error(f"[CHUNK END PROTECTION] Failed to force trade: {force_e}")
+
             if self.step_in_chunk >= data_length - 1:
                 logger.info(
                     f"[CHUNK TRANSITION Worker {self.worker_id}] End of chunk {self.current_chunk_idx + 1} reached (step_in_chunk: {self.step_in_chunk} >= {data_length - 1})"
@@ -2647,6 +2711,14 @@ class MultiAssetChunkedEnv(gym.Env):
 
                 # POINT CRITIQUE : Réinitialiser le compteur step_in_chunk pour le nouveau chunk
                 self.step_in_chunk = 0
+                
+                # CONSERVATION: NE PAS réinitialiser last_trade_steps_by_tf et positions_count
+                # pour maintenir la continuité du tracking de fréquence entre chunks
+                logger.debug(
+                    f"[CHUNK TRANSITION] Preserving frequency counters: "
+                    f"last_trade_steps_by_tf={self.last_trade_steps_by_tf}, "
+                    f"positions_count={self.positions_count}"
+                )
 
                 if hasattr(self, "portfolio") and hasattr(
                     self.portfolio, "check_reset"
@@ -4808,6 +4880,15 @@ class MultiAssetChunkedEnv(gym.Env):
                     desired_position_size=desired_position_size,
                 )
 
+                # Diagnostic: DBE output
+                try:
+                    self.logger.info(
+                        f"[DBE_PARAMS] {asset} feasible={trade_params.get('feasible')} reason={trade_params.get('reason')} "
+                        f"pos_usdt={trade_params.get('position_size_usdt')} sl={trade_params.get('sl_pct')} tp={trade_params.get('tp_pct')}"
+                    )
+                except Exception:
+                    pass
+
                 if not trade_params.get("feasible", False):
                     reason_txt = trade_params.get("reason", "Raison inconnue")
                     self.logger.warning(
@@ -4834,47 +4915,47 @@ class MultiAssetChunkedEnv(gym.Env):
                     continue
 
                 position_size_usdt = trade_params.get("position_size_usdt", 0)
-                # Harmoniser avec l'intervalle de taille de position du palier (config capital_tiers.exposure_range)
-                try:
-                    tier_cfg = self.portfolio_manager.get_current_tier()
-                    exposure_range = (
-                        tier_cfg.get("exposure_range")
-                        if isinstance(tier_cfg, dict)
-                        else None
-                    )
-                    if (
-                        exposure_range
-                        and isinstance(exposure_range, (list, tuple))
-                        and len(exposure_range) == 2
-                    ):
-                        min_pct = float(exposure_range[0]) / 100.0
-                        max_pct = float(exposure_range[1]) / 100.0
-                        # Calculer le pourcentage demandé et le contraindre à l'intervalle du palier
-                        if equity > 0:
-                            requested_pct = float(position_size_usdt) / float(equity)
-                            clamped_pct = float(
-                                np.clip(requested_pct, min_pct, max_pct)
-                            )
-                            if clamped_pct != requested_pct:
-                                self.logger.info(
-                                    f"[TIER SIZING] {tier_cfg.get('name', 'Unknown')} range {min_pct * 100:.1f}-{max_pct * 100:.1f}% | "
-                                    f"Requested={requested_pct * 100:.2f}% -> Clamped={clamped_pct * 100:.2f}%"
-                                )
-                            position_size_usdt = clamped_pct * float(equity)
-                except Exception as _e:
-                    # En cas d'erreur, on garde la valeur initiale sans interrompre le step
-                    pass
-                # Appliquer un cap dur basé sur l'equity courante et pos_size_pct du portfolio
+                # Préparer equity et tier config AVANT tout clamp/cap
                 try:
                     equity = float(self.portfolio_manager.get_equity())
                 except Exception:
                     equity = (
                         float(self.portfolio_manager.get_total_value())
                         if hasattr(self.portfolio_manager, "get_total_value")
-                        else position_size_usdt
+                        else float(position_size_usdt)
                     )
 
-                # Taille cible max autorisée: préférer le max d'exposure_range du palier si disponible, sinon pos_size_pct
+                try:
+                    tier_cfg = self.portfolio_manager.get_current_tier()
+                except Exception:
+                    tier_cfg = {}
+
+                # Harmoniser avec l'intervalle de taille de position du palier (config capital_tiers.exposure_range)
+                try:
+                    exposure_range = (
+                        tier_cfg.get("exposure_range") if isinstance(tier_cfg, dict) else None
+                    )
+                    if (
+                        exposure_range
+                        and isinstance(exposure_range, (list, tuple))
+                        and len(exposure_range) == 2
+                        and equity > 0
+                    ):
+                        min_pct = float(exposure_range[0]) / 100.0
+                        max_pct = float(exposure_range[1]) / 100.0
+                        requested_pct = float(position_size_usdt) / float(equity)
+                        clamped_pct = float(np.clip(requested_pct, min_pct, max_pct))
+                        if clamped_pct != requested_pct:
+                            self.logger.info(
+                                f"[TIER SIZING] {tier_cfg.get('name', 'Unknown')} range {min_pct * 100:.1f}-{max_pct * 100:.1f}% | "
+                                f"Requested={requested_pct * 100:.2f}% -> Clamped={clamped_pct * 100:.2f}%"
+                            )
+                        position_size_usdt = clamped_pct * float(equity)
+                except Exception:
+                    # En cas d'erreur, on garde la valeur initiale sans interrompre le step
+                    pass
+
+                # Appliquer un cap dur basé sur l'equity courante et pos_size_pct du portfolio
                 try:
                     tier_cap_pct = None
                     if isinstance(tier_cfg, dict):
@@ -4884,11 +4965,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     fallback_cap = (
                         getattr(self.portfolio_manager, "pos_size_pct", 0.1) or 0.1
                     )
-                    pos_cap_pct = (
-                        float(tier_cap_pct)
-                        if tier_cap_pct is not None
-                        else float(fallback_cap)
-                    )
+                    pos_cap_pct = float(tier_cap_pct) if tier_cap_pct is not None else float(fallback_cap)
                 except Exception:
                     pos_cap_pct = (
                         getattr(self.portfolio_manager, "pos_size_pct", 0.1) or 0.1
@@ -4909,6 +4986,15 @@ class MultiAssetChunkedEnv(gym.Env):
                     )
                 except Exception:
                     available_cash = 0.0
+
+                # Diagnostic: sizing and cash snapshot
+                try:
+                    self.logger.debug(
+                        f"[SIZING] equity={equity:.2f} req={requested_notional:.2f} cap_pct={pos_cap_pct*100:.1f}% "
+                        f"max_notional={max_notional:.2f} capped={capped_notional:.2f} cash={available_cash:.2f}"
+                    )
+                except Exception:
+                    pass
 
                 if available_cash + 1e-9 < capped_notional:
                     self.logger.warning(
@@ -4950,7 +5036,6 @@ class MultiAssetChunkedEnv(gym.Env):
                                     "asset": asset,
                                     "requested_usdt": requested_notional,
                                     "capped_usdt": capped_notional,
-                                    "cash_capped_usdt": cash_capped_notional,
                                     "available_cash": available_cash,
                                 },
                             )
@@ -5028,6 +5113,10 @@ class MultiAssetChunkedEnv(gym.Env):
                                         else current_timestamp
                                     )
                                     self.last_trade_timestamps[tf] = ts
+                                # Update last trade step for this timeframe to drive frequency logic
+                                if not hasattr(self, "last_trade_steps_by_tf"):
+                                    self.last_trade_steps_by_tf = {}
+                                self.last_trade_steps_by_tf[tf] = self.current_step
                             except Exception as freq_e:
                                 self.logger.debug(
                                     f"[FREQUENCY] Failed to update frequency counters: {freq_e}"
@@ -5197,6 +5286,7 @@ class MultiAssetChunkedEnv(gym.Env):
             "executed_trades_opened": portfolio_metrics.get(
                 "executed_trades_opened", 0
             ),
+            "executed_trades_closed": len(closed_positions),
             "closed_positions": closed_positions,
             # Positions actuelles
             "positions": position_values,
