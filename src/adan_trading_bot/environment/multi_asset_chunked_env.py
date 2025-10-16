@@ -2268,19 +2268,6 @@ class MultiAssetChunkedEnv(gym.Env):
         # Get frequency configuration
         frequency_config = self.config.get("trading_rules", {}).get("frequency", {})
         action_threshold = frequency_config.get("action_threshold", 0.3)
-        # Backward-compatibility: normalize thresholds configured on a >1 scale (e.g., 3.5 -> 0.35)
-        if action_threshold > 1.0:
-            original_threshold = action_threshold
-            if action_threshold <= 10.0:
-                action_threshold = action_threshold / 10.0
-            elif action_threshold <= 100.0:
-                action_threshold = action_threshold / 100.0
-            else:
-                # Fallback to safe high threshold
-                action_threshold = 0.95
-            logger.warning(
-                f"[THRESHOLD NORMALIZED] action_threshold normalized to {action_threshold:.2f} (from {original_threshold})"
-            )
         # Récupérer force_trade_steps global et duration_tracking par TF
         force_trade_steps_global = frequency_config.get("force_trade_steps", 50)
         duration_tracking = self.config.get("trading_rules", {}).get("duration_tracking", {})

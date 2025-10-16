@@ -773,7 +773,7 @@ trading_rules:
     penalty_weight: 0.3
     grace_period_steps: 100
     force_trade_steps: 150
-    action_threshold: 3.5
+    action_threshold: 0.35
   duration_tracking:
     5m:
       max_duration_steps: 50
