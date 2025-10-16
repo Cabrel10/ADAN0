@@ -785,6 +785,16 @@ def objective(trial: optuna.Trial) -> float:
             "position_hold_min": trial.suggest_int("position_hold_min", 5, 30),
             "position_hold_max": trial.suggest_int("position_hold_max", 50, 500),
         }
+        
+        # NOUVEAU: Hyperparamètres spécifiques par worker (w1, w2, w3, w4)
+        worker_specific_params = {}
+        for worker_id in ["w1", "w2", "w3", "w4"]:
+            worker_specific_params[worker_id] = {
+                "position_size_pct": trial.suggest_float(f"{worker_id}_position_size", 0.05, 0.25),
+                "risk_multiplier": trial.suggest_float(f"{worker_id}_risk_mult", 0.8, 1.5),
+                "patience_steps": trial.suggest_int(f"{worker_id}_patience", 10, 50),
+                "min_confidence": trial.suggest_float(f"{worker_id}_min_conf", 0.3, 0.7),
+            }
 
         # Configuration temporaire avec les nouveaux paramètres
         temp_config = copy.deepcopy(GLOBAL_CONFIG)
@@ -808,6 +818,14 @@ def objective(trial: optuna.Trial) -> float:
                 temp_config["workers"][worker_key]["reward_config"][
                     "win_rate_bonus"
                 ] = reward_params["win_rate_bonus"]
+                
+                # NOUVEAU: Appliquer les hyperparamètres spécifiques au worker
+                if worker_key in worker_specific_params:
+                    wsp = worker_specific_params[worker_key]
+                    temp_config["workers"][worker_key]["position_size_pct"] = wsp["position_size_pct"]
+                    temp_config["workers"][worker_key]["risk_multiplier"] = wsp["risk_multiplier"]
+                    temp_config["workers"][worker_key]["patience_steps"] = wsp["patience_steps"]
+                    temp_config["workers"][worker_key]["min_confidence"] = wsp["min_confidence"]
 
         # Mettre à jour les paramètres globaux
         temp_config["risk_parameters"]["base_sl_pct"] = stop_loss_pct
@@ -870,8 +888,22 @@ def objective(trial: optuna.Trial) -> float:
             "config": temp_config,
         }
 
-        env = MultiAssetChunkedEnv(**env_kwargs)
-        env = DummyVecEnv([lambda: env])
+        # Créer 4 environnements pour parallélisme réel (comme train_parallel_agents.py)
+        env_fns = []
+        for i in range(4):
+            worker_id_key = f"w{i+1}"
+            if worker_id_key in temp_config.get("workers", {}):
+                worker_cfg = temp_config["workers"][worker_id_key]
+            else:
+                worker_cfg = worker_config
+            
+            env_kwargs_copy = copy.deepcopy(env_kwargs)
+            env_kwargs_copy["worker_config"] = copy.deepcopy(worker_cfg)
+            env_kwargs_copy["worker_config"]["worker_id"] = i
+            env_fns.append(lambda kwargs=env_kwargs_copy: MultiAssetChunkedEnv(**kwargs))
+        
+        # SubprocVecEnv pour VRAI parallélisme (pas DummyVecEnv)
+        env = SubprocVecEnv(env_fns, start_method="spawn")
 
         # Callback avec progression par paliers
         callback = OptunaPruningCallback(
@@ -1013,6 +1045,9 @@ def objective(trial: optuna.Trial) -> float:
         trial.set_user_attr("take_profit_pct", take_profit_pct)
         trial.set_user_attr("win_rate_bonus", reward_params["win_rate_bonus"])
         trial.set_user_attr("pnl_weight", reward_params["pnl_weight"])
+        
+        # NOUVEAU: Sauvegarder les hyperparamètres spécifiques par worker
+        trial.set_user_attr("worker_specific_params", worker_specific_params)
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds() / 60.0
