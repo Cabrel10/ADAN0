@@ -191,20 +191,16 @@ class MultiAssetChunkedEnv(gym.Env):
 
     def __init__(
         self,
-        data: Dict[str, Dict[str, pd.DataFrame]],
-        timeframes: List[str],
-        window_size: int,
-        features_config: Dict[str, List[str]],
-        max_steps: int = 1000,
-        initial_balance: float = 10000.0,
-        commission: float = 0.001,
-        reward_scaling: float = 1.0,
-        render_mode: Optional[str] = None,
-        enable_logging: bool = True,
-        log_dir: str = "logs",
-        external_dbe: Optional[Any] = None,
+        data=None,
+        timeframes=None,
+        window_size=None,
+        features_config=None,
+        max_steps=1000,
+        worker_config=None,
+        config=None,
+        external_dbe=None,
         **kwargs,
-    ) -> None:
+    ):
         """Initialise l'environnement de trading multi-actifs.
 
         Args:
@@ -223,6 +219,9 @@ class MultiAssetChunkedEnv(gym.Env):
         """
         super().__init__()
 
+        # Assign timeframes early to prevent initialization errors
+        self.timeframes = timeframes
+
         # Initialize logger
         self.logger = logging.getLogger(__name__)
 
@@ -235,8 +234,8 @@ class MultiAssetChunkedEnv(gym.Env):
         self.logger_lock = threading.Lock()
 
         # Initialize configuration attributes
-        self.worker_config = kwargs.get("worker_config", {})
-        self.config = kwargs.get("config", {})
+        self.worker_config = worker_config if worker_config is not None else {}
+        self.config = config or {}
 
         # Get worker ID for synchronized logging (nettoyé pour éviter les erreurs JSONL)
         raw_worker_id = self.worker_config.get(
@@ -320,6 +319,9 @@ class MultiAssetChunkedEnv(gym.Env):
         # Configuration et compteurs de fréquence des positions
         self.frequency_config = self.config.get("trading_rules", {}).get(
             "frequency", {}
+        )
+        self.logger.debug(
+            f"[DEBUG_CONFIG] __init__ force_trade_steps_config: {self.frequency_config.get('force_trade_steps')}"
         )
         self.positions_count = {"5m": 0, "1h": 0, "4h": 0, "daily_total": 0}
 
@@ -1550,43 +1552,20 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"🔧 Mode compatibilité : {5 - len(self.assets)} actifs non utilisés seront ignorés"
             )
 
-        # --- NOUVEL ESPACE D'OBSERVATION (MULTI-TIMEFRAME DICT) ---
+        # --- NOUVEL ESPACE D'OBSERVATION ALIGNÉ SUR STATEBUILDER ---
         try:
-            env_obs_cfg = self.config.get("environment", {}).get("observation", {})
-            window_sizes = env_obs_cfg.get(
-                "window_sizes", {"5m": 20, "1h": 10, "4h": 5}
-            )
+            obs_spaces = {}
+            window_sizes = getattr(self.state_builder, "window_sizes", {"5m": 20, "1h": 10, "4h": 5})
+            for tf in self.timeframes:
+                window_size = window_sizes.get(tf, 20)
+                n_features = len(self.state_builder.get_feature_names(tf))
+                obs_spaces[tf] = spaces.Box(low=-np.inf, high=np.inf, shape=(window_size, n_features), dtype=np.float32)
 
-            # Déterminer le nombre de features à partir de la configuration du StateBuilder
-            first_tf = self.timeframes[0]
-            n_features = len(self.state_builder.get_feature_names(first_tf))
+            portfolio_dim = self.state_builder.get_portfolio_state_dim()
+            obs_spaces["portfolio_state"] = spaces.Box(low=-np.inf, high=np.inf, shape=(portfolio_dim,), dtype=np.float32)
 
-            # Créer un Box pour chaque timeframe
-            market_spaces = {
-                tf: spaces.Box(
-                    low=-np.inf,
-                    high=np.inf,
-                    shape=(window_sizes.get(tf, 20), n_features),
-                    dtype=np.float32,
-                )
-                for tf in self.timeframes
-            }
-
-            # Ajouter l'état du portefeuille
-            portfolio_state_dim = (
-                20  # Mis à jour pour inclure les flux de fonds (deposits/withdrawals)
-            )
-            market_spaces["portfolio_state"] = spaces.Box(
-                low=-np.inf,
-                high=np.inf,
-                shape=(portfolio_state_dim,),
-                dtype=np.float32,
-            )
-
-            self.observation_space = spaces.Dict(market_spaces)
-            logger.info(
-                f"Espace d'observation reconfiguré pour CNN multi-échelle: {self.observation_space}"
-            )
+            self.observation_space = spaces.Dict(obs_spaces)
+            logger.info(f"Espace d'observation reconfiguré pour CNN multi-échelle: {self.observation_space}")
 
         except Exception as e:
             logger.error(
@@ -2098,38 +2077,8 @@ class MultiAssetChunkedEnv(gym.Env):
         return observation, info
 
     def step(self, action: np.ndarray) -> tuple:
-        """Execute one time step within the environment.
-
-        This method handles the main environment loop, including:
-        - Action validation and processing
-        - Portfolio updates and trading
-        - Reward calculation
-        - Episode termination conditions
-        - Chunk transitions and surveillance mode management
-        - Risk management and position sizing
-
-        Args:
-            action: Array of actions for each asset in the portfolio
-
-        Returns:
-            tuple: (observation, reward, terminated, truncated, info)
-        """
+        """Execute one time step within the environment."""
         self._step_closed_receipts = []
-        # === START FREQUENCY FIX ===
-        # Decode the action from the agent into position actions and a timeframe selection
-        timeframe_action = action[-1]
-        position_actions = action[:-1]
-
-        # Determine the selected timeframe and store it
-        timeframes = getattr(self, "timeframes", ["5m", "1h", "4h"])
-        timeframe_idx = int(round((timeframe_action + 1) / 2 * (len(timeframes) - 1)))
-        selected_timeframe = timeframes[timeframe_idx]
-        self.current_timeframe_for_trade = selected_timeframe
-        logger.info(f"[ACTION] Agent selected timeframe: {selected_timeframe}")
-
-        # The rest of the method will now use 'position_actions' as 'action'
-        action = position_actions
-        # === END FREQUENCY FIX ===
 
         # Generate correlation_id for this step
         correlation_id = str(uuid.uuid4())
@@ -2257,54 +2206,6 @@ class MultiAssetChunkedEnv(gym.Env):
             self.positions_count = {"daily_total": 0, "5m": 0, "1h": 0, "4h": 0}
             if not hasattr(self, "last_trade_steps_by_tf"):
                 self.last_trade_steps_by_tf = {}
-
-        # Determine current timeframe
-        timeframe = (
-            self.get_current_timeframe()
-            if hasattr(self, "get_current_timeframe")
-            else "5m"
-        )
-
-        # Get frequency configuration
-        frequency_config = self.config.get("trading_rules", {}).get("frequency", {})
-        action_threshold = frequency_config.get("action_threshold", 0.3)
-        # Récupérer force_trade_steps global et duration_tracking par TF
-        force_trade_steps_global = frequency_config.get("force_trade_steps", 50)
-        duration_tracking = self.config.get("trading_rules", {}).get("duration_tracking", {})
-        
-        # Adapter force_trade_steps au timeframe courant (utiliser max_duration si disponible)
-        tf_duration_config = duration_tracking.get(timeframe, {})
-        max_duration_tf = tf_duration_config.get("max_duration_steps", force_trade_steps_global)
-        # Prendre le minimum entre global et TF-specific pour éviter attentes trop longues
-        force_trade_steps = min(force_trade_steps_global, max_duration_tf)
-        
-        min_positions = frequency_config.get("min_positions", {})
-        min_pos_tf = min_positions.get(timeframe, 1)
-
-        # Check if trade should be forced
-        steps_since_last_trade = self.current_step - self.last_trade_steps_by_tf.get(
-            timeframe, 0
-        )
-        should_force_trade = (
-            self.positions_count.get(timeframe, 0) < min_pos_tf
-            and steps_since_last_trade >= force_trade_steps
-        )
-
-        # Diagnostic: detailed frequency gating snapshot
-        try:
-            logger.info(
-                f"[FREQ GATE] TF={timeframe} last_step={self.last_trade_steps_by_tf.get(timeframe, '-')} | "
-                f"since_last={steps_since_last_trade} | min_pos_tf={min_pos_tf} | count={self.positions_count.get(timeframe, 0)} | "
-                f"force_after={force_trade_steps} | should_force={should_force_trade} | action_thr={action_threshold:.2f}"
-            )
-        except Exception:
-            pass
-
-        # Note: Trade execution is now handled in _execute_trades method
-        # This section previously contained duplicate trade counting logic
-        # which has been removed to prevent incorrect frequency counting
-
-        # Reward calculation is now done after trade execution.
 
         # Log current step and action with detailed information
         chunk_info = (
@@ -2440,44 +2341,6 @@ class MultiAssetChunkedEnv(gym.Env):
             except Exception as risk_e:
                 logger.error("Early risk check failed: %s", str(risk_e), exc_info=True)
 
-            # Extract risk_horizon from action before DBE computation
-            # For the first asset (i=0), risk_horizon is at action[1]
-            risk_horizon = float(action[1]) if len(action) > 1 else 0.0
-
-            # Extract desired_position_size from action before DBE computation
-            # For the first asset (i=0), desired_position_size is at action[2]
-            desired_position_size = float(action[2]) if len(action) > 2 else 0.0
-
-            # Mise à jour de l'état DBE et calcul de la modulation
-            # DIAGNOSTIC: Tracer l'utilisation du DBE dans step()
-            self.logger.debug(
-                f"🎯 STEP utilise DBE - ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}, Step={self.current_step}, DBE_ID={id(self.dbe) if hasattr(self, 'dbe') else 'NONE'}"
-            )
-            self._update_dbe_state()
-            # Calcul des paramètres de risque dynamiques via le DBE
-            dbe_modulation = self.dbe.compute_dynamic_modulation(
-                env=self,
-                risk_horizon=risk_horizon,
-            )
-
-            # Ajuster la taille de position finale en fonction de desired_position_size
-            final_position_size_pct = dbe_modulation.get(
-                "position_size_pct", self.portfolio.pos_size_pct
-            )
-            # desired_position_size est entre -1 et 1. Le mapper à un multiplicateur, par exemple 0.5 à 1.5
-            size_multiplier = 1.0 + (
-                desired_position_size * 0.5
-            )  # Multiplicateur de 0.5 à 1.5
-            final_position_size_pct *= size_multiplier
-            # Clamper à une plage valide (utiliser les limites du portefeuille si disponibles)
-            final_position_size_pct = np.clip(
-                final_position_size_pct,
-                self.min_position_size,
-                self.max_position_size,
-            )
-            dbe_modulation["position_size_pct"] = final_position_size_pct
-
-            # Exécution des trades avec modulation DBE et récupération du PnL réalisé
             # Capture positions snapshot before executing trades to detect activity
             positions_before = None
             try:
@@ -2493,40 +2356,59 @@ class MultiAssetChunkedEnv(gym.Env):
                 logger.debug(f"[STEP] Failed capturing positions before trade: {_e}")
 
             trade_start_time = time.time()
+
+            # Get frequency configuration for trade execution
+            frequency_config = self.config.get("trading_rules", {}).get("frequency", {})
+            action_threshold = self.worker_config.get(
+                "min_confidence", frequency_config.get("action_threshold", 0.35)
+            )
+
+            # Calcul des paramètres de risque dynamiques via le DBE
+            dbe_modulation = self.dbe.compute_dynamic_modulation(
+                env=self,
+                risk_horizon=float(action[1]) if len(action) > 1 else 0.0,
+            )
+
+            # --- PHASE 1: EXÉCUTION DES TRADES NORMAUX ---
             realized_pnl, discrete_action, _ = self._execute_trades(
-                action, dbe_modulation, action_threshold, should_force_trade
+                action, dbe_modulation, action_threshold, force_trade=False
             )
 
-            # --- CORRECT REWARD CALCULATION ---
-            # This is the single source of truth for reward calculation,
-            # happening AFTER trades are executed and counters updated.
-            # Extraire risk_horizon et trade_reason des reçus fermés
-            extracted_risk_horizon = 0.0
-            extracted_trade_reason = None
-            if self._step_closed_receipts:
-                first_receipt = self._step_closed_receipts[0]
-                extracted_risk_horizon = first_receipt.get("risk_horizon", 0.0)
-                extracted_trade_reason = first_receipt.get("reason", None)
+            # --- PHASE 2: FORCE TRADES DÉSACTIVÉS - MODÈLE AUTONOME ---
+            # Le modèle doit apprendre à trader de manière autonome sur toutes les timeframes
+            # Les force trades ne doivent PAS interférer avec l'apprentissage
+            # Logique désactivée par choix de conception
+            pass
 
-            # Initialize optional reward calculation variables
-            optimal_chunk_pnl = 0.0  # Default optimal PnL for this chunk
-            performance_ratio = 1.0  # Default performance ratio (neutral)
-            is_hunting = False  # Default hunting mode (not hunting)
-
-            reward = self.reward_calculator.calculate(
-                portfolio_metrics=self.portfolio.get_metrics(),
-                trade_pnl=realized_pnl,
-                action=discrete_action,
-                chunk_id=self.current_chunk_idx,
-                optimal_chunk_pnl=optimal_chunk_pnl,
-                performance_ratio=performance_ratio,
-                is_hunting=is_hunting,
-                risk_horizon=extracted_risk_horizon,
-                trade_reason=extracted_trade_reason,
-            )
-            self._last_reward = reward
-            self._cumulative_reward = getattr(self, "_cumulative_reward", 0.0) + reward
+            # --- PHASE 3: MISE À JOUR DES MÉTRIQUES APRÈS TOUS LES TRADES ---
+            self._update_dbe_state()
             self._validate_frequency()
+
+            # Log frequency state AFTER all trades are executed
+            for timeframe in self.timeframes:
+                force_trade_steps_config = frequency_config.get("force_trade_steps", {})
+                if isinstance(force_trade_steps_config, dict):
+                    force_trade_steps = force_trade_steps_config.get(
+                        timeframe, force_trade_steps_config.get("default", 50)
+                    )
+                else:
+                    force_trade_steps = int(force_trade_steps_config)
+
+                min_positions = frequency_config.get("min_positions", {})
+                min_pos_tf = min_positions.get(timeframe, 1)
+                steps_since_last_trade = (
+                    self.current_step - self.last_trade_steps_by_tf.get(timeframe, 0)
+                )
+
+                try:
+                    logger.info(
+                        f"[FREQ GATE POST-TRADE] TF={timeframe} last_step={self.last_trade_steps_by_tf.get(timeframe, '-')} | "
+                        f"since_last={steps_since_last_trade} | min_pos_tf={min_pos_tf} | count={self.positions_count.get(timeframe, 0)} | "
+                        f"force_after={force_trade_steps} | action_thr={action_threshold:.2f}"
+                    )
+                except Exception:
+                    pass
+
             trade_end_time = time.time()
             logger.debug(
                 f"_execute_trades took {trade_end_time - trade_start_time:.4f} seconds"
@@ -2662,43 +2544,44 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"[CHUNK TRANSITION CHECK Worker {self.worker_id}] step_in_chunk: {self.step_in_chunk}, threshold: {transition_threshold}, will_transition: {self.step_in_chunk >= transition_threshold}"
             )
 
-            # PROTECTION: Forcer un trade si on approche la fin du chunk sans avoir tradé
-            chunk_end_buffer = 5  # Marge de sécurité avant la fin du chunk
-            approaching_chunk_end = self.step_in_chunk >= (data_length - chunk_end_buffer)
-            if approaching_chunk_end and not should_force_trade:
-                # Recalculer should_force_trade avec un seuil réduit pour éviter reset sans trade
-                steps_since_last_trade_global = (
-                    self.current_step - self.last_trade_step
-                    if self.last_trade_step is not None and self.last_trade_step >= 0
-                    else self.current_step
-                )
-                if steps_since_last_trade_global > 20:  # Seuil minimal pour forcer
-                    should_force_trade = True
-                    logger.warning(
-                        f"[CHUNK END PROTECTION] Forcing trade at step {self.current_step} "
-                        f"(step_in_chunk={self.step_in_chunk}, data_length={data_length}, "
-                        f"steps_since_last={steps_since_last_trade_global})"
-                    )
-                    # Ré-exécuter _execute_trades avec force activé
-                    try:
-                        realized_pnl_forced, discrete_action_forced, _ = self._execute_trades(
-                            action, dbe_modulation, action_threshold, force_trade=True
-                        )
-                        if realized_pnl_forced != 0 or discrete_action_forced != 0:
-                            logger.info(f"[CHUNK END PROTECTION] Forced trade executed successfully")
-                    except Exception as force_e:
-                        logger.error(f"[CHUNK END PROTECTION] Failed to force trade: {force_e}")
+            # PROTECTION DE FIN DE CHUNK DÉSACTIVÉE
+            # Le modèle doit être autonome même en fin de chunk
+            # Pas de force trades, le modèle apprend à trader naturellement
+            pass
 
             if self.step_in_chunk >= data_length - 1:
                 logger.info(
                     f"[CHUNK TRANSITION Worker {self.worker_id}] End of chunk {self.current_chunk_idx + 1} reached (step_in_chunk: {self.step_in_chunk} >= {data_length - 1})"
                 )
+
+                # --- PROTECTION DE FIN DE CHUNK ---
+                # Fermer toutes les positions ouvertes avant de passer au chunk suivant.
+                current_prices = self._get_current_prices()
+                current_timestamp = self._get_current_timestamp()
+                for asset, position in self.portfolio_manager.positions.items():
+                    if position.is_open:
+                        logger.warning(
+                            f"[END_OF_CHUNK_PROTECTION] Forcing closure of {asset} position."
+                        )
+                        receipt = self.portfolio_manager.close_position(
+                            asset=asset.upper(),
+                            price=current_prices.get(asset, position.entry_price),
+                            timestamp=current_timestamp,
+                            current_prices=current_prices,
+                            reason="END_OF_CHUNK",
+                            risk_horizon=position.risk_horizon,
+                        )
+                        if receipt:
+                            self._step_closed_receipts.append(receipt)
+                            realized_pnl += float(receipt.get("pnl", 0.0))
+                # --- FIN DE LA PROTECTION ---
+
                 self.current_chunk_idx += 1
                 self.current_chunk += 1
 
                 # POINT CRITIQUE : Réinitialiser le compteur step_in_chunk pour le nouveau chunk
                 self.step_in_chunk = 0
-                
+
                 # CONSERVATION: NE PAS réinitialiser last_trade_steps_by_tf et positions_count
                 # pour maintenir la continuité du tracking de fréquence entre chunks
                 logger.debug(
@@ -3938,13 +3821,31 @@ class MultiAssetChunkedEnv(gym.Env):
     def _is_valid_observation_structure(self, obs: Dict[str, np.ndarray]) -> bool:
         """Vérifie si l'observation correspond à l'espace `Dict` attendu."""
         if not isinstance(obs, dict):
+            logger.error(f"Observation is not a dict, but {type(obs)}")
             return False
-        # Vérifie que toutes les clés de l'espace sont dans l'observation
-        if not all(key in obs for key in self.observation_space.spaces.keys()):
+        
+        obs_keys = set(obs.keys())
+        space_keys = set(self.observation_space.spaces.keys())
+
+        if obs_keys != space_keys:
+            logger.error(f"Observation keys mismatch: {obs_keys} vs {space_keys}")
+            missing_keys = space_keys - obs_keys
+            extra_keys = obs_keys - space_keys
+            if missing_keys:
+                logger.error(f"Missing keys in observation: {missing_keys}")
+            if extra_keys:
+                logger.error(f"Extra keys in observation: {extra_keys}")
             return False
-        # Vérifie que les shapes correspondent
+
         for key, space in self.observation_space.spaces.items():
+            if key not in obs:
+                logger.error(f"Key {key} is in observation space but not in observation")
+                return False
+            if not hasattr(obs[key], 'shape'):
+                logger.error(f"Observation for key {key} has no shape attribute")
+                return False
             if obs[key].shape != space.shape:
+                logger.error(f"Shape mismatch for key {key}: expected {space.shape}, got {obs[key].shape}")
                 return False
         return True
 
@@ -4687,6 +4588,124 @@ class MultiAssetChunkedEnv(gym.Env):
             )
             return 0.15  # Retourne une volatilité par défaut en cas d'erreur
 
+    def _force_trade(self, timeframe: str) -> float:
+        """
+        Forces a trade based on worker-specific strategy, respecting position limits.
+
+        Returns:
+            float: Realized PnL from any positions closed during force trade
+        """
+        realized_pnl = 0.0
+        try:
+            self.logger.warning(
+                f"🚨 [FORCE_TRADE] Attempting to force trade for timeframe {timeframe} at step {self.current_step} for Worker {self.worker_id}"
+            )
+
+            # 1. Get worker's strategy and primary timeframe from config
+            worker_key = f"w{self.worker_id + 1}"  # Assuming worker_id is 0-indexed
+            worker_config = self.config.get("workers", {}).get(worker_key, {})
+            primary_tf = worker_config.get("specialization", {}).get("timeframe")
+
+            # 2. Check position limit and existing positions
+            open_positions = self.portfolio._get_open_positions()
+            position_limit = self.config.get("capital_tiers", [])[0].get(
+                "max_concurrent_positions", 1
+            )  # Assuming Micro Capital tier
+
+            if len(open_positions) >= position_limit:
+                oldest_position = min(open_positions, key=lambda p: p.open_step)
+
+                # 3. Apply strategic replacement logic
+                # DO NOT close a primary timeframe position for a secondary one
+                if oldest_position.timeframe == primary_tf and timeframe != primary_tf:
+                    self.logger.warning(
+                        f"[FORCE_TRADE_SKIP] Worker {self.worker_id} holds a primary position on {primary_tf}. Ignoring force trade for secondary timeframe {timeframe}."
+                    )
+                    return 0.0
+
+                self.logger.warning(
+                    f"[FORCE_TRADE] Position limit ({position_limit}) reached. Closing position on {oldest_position.timeframe} to make room for {timeframe}."
+                )
+                current_prices = self._get_current_prices()
+                price_to_close = current_prices.get(
+                    oldest_position.asset, oldest_position.current_price
+                )
+
+                close_receipt = self.portfolio.close_position(
+                    asset=oldest_position.asset,
+                    price=price_to_close,
+                    timestamp=self._get_current_timestamp(),
+                    current_prices=current_prices,
+                    reason="FORCE_CLOSE_FOR_NEW_TRADE",
+                )
+
+                if close_receipt:
+                    # Add the PnL from the closed position
+                    closed_pnl = close_receipt.get("pnl", 0.0)
+                    realized_pnl += float(closed_pnl)
+                    self.logger.info(
+                        f"[FORCE_TRADE] Closed position realized PnL: ${closed_pnl:.2f}"
+                    )
+                else:
+                    self.logger.error(
+                        f"❌ [FORCE_TRADE] Failed to close oldest position ({oldest_position.asset}) to make room. Aborting."
+                    )
+                    return 0.0
+
+            # 4. Proceed to open the new forced trade
+            if not self.assets:
+                self.logger.error("[FORCE_TRADE] No assets available.")
+                return
+            asset_to_trade = self.assets[0]
+
+            current_prices = self._get_current_prices()
+            price = current_prices.get(asset_to_trade.upper())
+            if price is None or price <= 0:
+                self.logger.error(f"[FORCE_TRADE] No valid price for {asset_to_trade}.")
+                return
+
+            pos_size_pct = self.min_position_size
+            amount = (self.portfolio.get_portfolio_value() * pos_size_pct) / price
+
+            receipt = self.portfolio.open_position(
+                asset=asset_to_trade.upper(),
+                price=price,
+                size=amount,
+                stop_loss_pct=self.portfolio.sl_pct,
+                take_profit_pct=self.portfolio.tp_pct,
+                timestamp=self._get_current_timestamp(),
+                current_prices=current_prices,
+                timeframe=timeframe,
+                current_step=self.current_step,
+                risk_horizon=0.0,
+            )
+
+            if receipt and receipt.get("status") == "OPEN":
+                self.logger.warning(
+                    f"✅ [FORCE_TRADE] Success for {asset_to_trade} on {timeframe} for Worker {self.worker_id}."
+                )
+                self.positions_count[timeframe] = (
+                    self.positions_count.get(timeframe, 0) + 1
+                )
+                self.last_trade_steps_by_tf[timeframe] = self.current_step
+                self.last_trade_step = self.current_step
+                return realized_pnl  # Return PnL from any closed positions
+            else:
+                error_msg = (
+                    receipt.get("message", "No receipt") if receipt else "No receipt"
+                )
+                self.logger.error(
+                    f"❌ [FORCE_TRADE] Failed for {asset_to_trade} on {timeframe}. Reason: {error_msg}"
+                )
+                return realized_pnl  # Return any PnL from closed positions even if open failed
+
+        except Exception as e:
+            self.logger.error(
+                f"💥 [FORCE_TRADE] Exception for {timeframe} on Worker {self.worker_id}: {e}",
+                exc_info=True,
+            )
+            return 0.0  # Return 0 on exception
+
     def _execute_trades(
         self,
         action: np.ndarray,
@@ -4712,6 +4731,17 @@ class MultiAssetChunkedEnv(gym.Env):
                 "Portfolio manager non initialisé, impossible d'exécuter le trade."
             )
             return 0.0, 0
+
+        # Sélection cyclique de la timeframe basée sur le step pour forcer diversification
+        # Chaque worker utilise un offset différent pour varier
+        worker_offset = getattr(self, "worker_id", 0) * 7  # Offset par worker
+        timeframe_cycle = (self.current_step + worker_offset) % 3
+        if timeframe_cycle == 0:
+            self.current_timeframe_for_trade = "5m"
+        elif timeframe_cycle == 1:
+            self.current_timeframe_for_trade = "1h"
+        else:
+            self.current_timeframe_for_trade = "4h"
 
         current_timestamp = None
         try:
@@ -4920,7 +4950,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Harmoniser avec l'intervalle de taille de position du palier (config capital_tiers.exposure_range)
                 try:
                     exposure_range = (
-                        tier_cfg.get("exposure_range") if isinstance(tier_cfg, dict) else None
+                        tier_cfg.get("exposure_range")
+                        if isinstance(tier_cfg, dict)
+                        else None
                     )
                     if (
                         exposure_range
@@ -4952,7 +4984,11 @@ class MultiAssetChunkedEnv(gym.Env):
                     fallback_cap = (
                         getattr(self.portfolio_manager, "pos_size_pct", 0.1) or 0.1
                     )
-                    pos_cap_pct = float(tier_cap_pct) if tier_cap_pct is not None else float(fallback_cap)
+                    pos_cap_pct = (
+                        float(tier_cap_pct)
+                        if tier_cap_pct is not None
+                        else float(fallback_cap)
+                    )
                 except Exception:
                     pos_cap_pct = (
                         getattr(self.portfolio_manager, "pos_size_pct", 0.1) or 0.1
@@ -4977,7 +5013,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Diagnostic: sizing and cash snapshot
                 try:
                     self.logger.debug(
-                        f"[SIZING] equity={equity:.2f} req={requested_notional:.2f} cap_pct={pos_cap_pct*100:.1f}% "
+                        f"[SIZING] equity={equity:.2f} req={requested_notional:.2f} cap_pct={pos_cap_pct * 100:.1f}% "
                         f"max_notional={max_notional:.2f} capped={capped_notional:.2f} cash={available_cash:.2f}"
                     )
                 except Exception:
@@ -5046,9 +5082,7 @@ class MultiAssetChunkedEnv(gym.Env):
                             timestamp=current_timestamp,
                             current_prices=current_prices,
                             allocated_pct=final_pct,
-                            timeframe=getattr(
-                                self, "current_timeframe_for_trade", "5m"
-                            ),
+                            timeframe=self.current_timeframe_for_trade,
                             current_step=self.current_step,
                             risk_horizon=risk_horizon,
                         )
@@ -5781,11 +5815,6 @@ class MultiAssetChunkedEnv(gym.Env):
         )
 
         return total_reward
-
-    def get_current_timeframe(self):
-        """Determine current timeframe based on the agent's action."""
-        # This value is set at the beginning of the step() method based on the agent's action.
-        return getattr(self, "current_timeframe_for_trade", "5m")
 
     def calculate_duration_penalty(self) -> float:
         """Pénalité/Bonus basé sur la durée du trade vs la durée optimale du worker."""

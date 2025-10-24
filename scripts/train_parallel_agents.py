@@ -122,10 +122,11 @@ class MetricsMonitor(BaseCallback):
         return True
 
     def _collect_worker_metrics(self):
-        """Collect metrics from all workers."""
+        """Collect metrics from all workers with daily tracking."""
         try:
-            # Get portfolio managers from environments
+            # Get portfolio managers and environments
             portfolio_managers = self.training_env.get_attr("portfolio_manager")
+            environments = self.training_env.get_attr("data")
 
             for worker_id, pm in enumerate(portfolio_managers):
                 if pm is None:
@@ -142,10 +143,40 @@ class MetricsMonitor(BaseCallback):
                     / 100.0
                 )
 
+                # Get current day from environment data
+                current_day = 0
+                trade_info = {}
+                if worker_id < len(environments) and environments[worker_id]:
+                    env_data = environments[worker_id]
+                    if "TIMESTAMP" in env_data and len(env_data["TIMESTAMP"]) > 0:
+                        # Calculate day from timestamp (assuming milliseconds)
+                        timestamp = env_data["TIMESTAMP"].iloc[-1] if hasattr(env_data["TIMESTAMP"], 'iloc') else env_data["TIMESTAMP"][-1]
+                        current_day = int(timestamp // (24 * 60 * 60 * 1000))
+
+                    # Check for trade information in recent metrics
+                    recent_trades = metrics.get("recent_trades", [])
+                    if recent_trades:
+                        last_trade = recent_trades[-1] if isinstance(recent_trades, list) else recent_trades
+                        if isinstance(last_trade, dict):
+                            trade_info = {
+                                "trade_closed": last_trade.get("closed", False),
+                                "trade_opened": last_trade.get("opened", False),
+                                "trade_pnl": last_trade.get("pnl", 0.0)
+                            }
+
                 # Update tier tracker
                 self.tier_trackers[worker_id].update(
                     self.step_count, current_balance, current_pnl
                 )
+
+                # Update daily tracker
+                return_value = metrics.get("last_return", 0.0)
+                self.daily_trackers[worker_id].update(
+                    current_day, current_balance, trade_info, return_value
+                )
+
+                # Get daily performance summary
+                daily_summary = self.daily_trackers[worker_id].get_current_day_summary()
 
                 # Store worker metrics
                 worker_data = {
@@ -158,10 +189,13 @@ class MetricsMonitor(BaseCallback):
                     "win_rate": metrics.get("win_rate", 0.0),
                     "tier": self.tier_trackers[worker_id].current_tier,
                     "timestamp": time.time() - self.start_time,
+                    "current_day": current_day,
+                    "daily_performance": daily_summary,
                 }
 
                 self.portfolio_curves[worker_id].append(worker_data)
 
+                # Update aggregated metrics
                 # Update aggregated metrics
                 self.worker_metrics[worker_id]["total_steps"] = self.step_count
                 self.worker_metrics[worker_id]["portfolio_values"].append(
@@ -180,8 +214,9 @@ class MetricsMonitor(BaseCallback):
                 self.worker_metrics[worker_id]["win_rates"].append(
                     metrics.get("win_rate", 0.0)
                 )
+                self.worker_metrics[worker_id]["daily_performance"].append(daily_summary)
 
-                # Log worker progress
+                # Log worker progress including daily metrics
                 if worker_id == 0 or self.step_count % (self.log_interval * 5) == 0:
                     self.logger.record(f"worker_{worker_id}/balance", current_balance)
                     self.logger.record(f"worker_{worker_id}/pnl", current_pnl)
@@ -193,8 +228,109 @@ class MetricsMonitor(BaseCallback):
                         f"worker_{worker_id}/sharpe", metrics.get("sharpe_ratio", 0.0)
                     )
 
+                    # Log daily metrics
+                    if daily_summary:
+                        self.logger.record(f"worker_{worker_id}/daily_pnl", daily_summary.get("daily_pnl", 0.0))
+                        self.logger.record(f"worker_{worker_id}/daily_return_pct", daily_summary.get("daily_return_pct", 0.0))
+                        self.logger.record(f"worker_{worker_id}/daily_trades", daily_summary.get("trades_closed", 0))
+                        self.logger.record(f"worker_{worker_id}/daily_win_rate", daily_summary.get("win_rate", 0.0))
+                        self.logger.record(f"worker_{worker_id}/daily_profit_factor", min(daily_summary.get("profit_factor", 0.0), 10.0))  # Cap for logging
+
         except Exception as e:
-            print(f"Error collecting metrics: {e}")
+            self.logger.warn(f"Error collecting worker metrics: {e}")
+
+    def get_final_summary(self):
+        """Generate comprehensive training summary with daily metrics."""
+        # Finalize daily tracking for all workers
+        for worker_id in range(self.num_workers):
+            self.daily_trackers[worker_id].finalize_current_day()
+
+        summary = {
+            "training_duration": time.time() - self.start_time,
+            "total_steps": self.step_count,
+            "workers": {},
+            "overall_daily_performance": {},
+        }
+
+        all_avg_daily_returns = []
+        all_avg_trades_per_day = []
+        all_avg_win_rates = []
+        all_avg_profit_factors = []
+        all_avg_sharpe_ratios = []
+
+        for worker_id in range(self.num_workers):
+            if not self.worker_metrics[worker_id]["portfolio_values"]:
+                continue
+
+            final_balance = self.worker_metrics[worker_id]["portfolio_values"][-1]
+            total_return = (
+                (final_balance - self.config["portfolio"]["initial_balance"])
+                / self.config["portfolio"]["initial_balance"]
+                * 100
+            )
+
+            # Tier progression summary
+            tier_summary = self.tier_trackers[worker_id].get_progression_summary()
+
+            # Daily performance summary
+            daily_avg_performance = self.daily_trackers[worker_id].get_average_daily_performance()
+
+            worker_summary = {
+                "final_balance": final_balance,
+                "total_return_pct": total_return,
+                "final_tier": tier_summary["current_tier"],
+                "tier_progressions": tier_summary["total_progressions"],
+                "final_sharpe": (
+                    self.worker_metrics[worker_id]["sharpe_ratios"][-1]
+                    if self.worker_metrics[worker_id]["sharpe_ratios"]
+                    else 0.0
+                ),
+                "max_drawdown": (
+                    max(self.worker_metrics[worker_id]["drawdowns"])
+                    if self.worker_metrics[worker_id]["drawdowns"]
+                    else 0.0
+                ),
+                "total_trades": (
+                    self.worker_metrics[worker_id]["trade_counts"][-1]
+                    if self.worker_metrics[worker_id]["trade_counts"]
+                    else 0
+                ),
+                "final_win_rate": (
+                    self.worker_metrics[worker_id]["win_rates"][-1]
+                    if self.worker_metrics[worker_id]["win_rates"]
+                    else 0.0
+                ),
+                "reached_enterprise": tier_summary["reached_enterprise"],
+                # Daily performance metrics
+                "daily_performance": daily_avg_performance,
+            }
+
+            summary["workers"][worker_id] = worker_summary
+
+            # Collect for overall averages
+            if daily_avg_performance:
+                all_avg_daily_returns.append(daily_avg_performance.get("avg_daily_return_pct", 0))
+                all_avg_trades_per_day.append(daily_avg_performance.get("avg_trades_per_day", 0))
+                all_avg_win_rates.append(daily_avg_performance.get("avg_win_rate", 0))
+                profit_factor = daily_avg_performance.get("avg_profit_factor", 0)
+                if profit_factor != float("inf") and profit_factor > 0:
+                    all_avg_profit_factors.append(profit_factor)
+                all_avg_sharpe_ratios.append(daily_avg_performance.get("avg_daily_sharpe", 0))
+
+        # Calculate overall daily performance across all workers
+        if all_avg_daily_returns:
+            summary["overall_daily_performance"] = {
+                "avg_daily_return_pct": np.mean(all_avg_daily_returns),
+                "avg_trades_per_day": np.mean(all_avg_trades_per_day),
+                "avg_win_rate": np.mean(all_avg_win_rates),
+                "avg_profit_factor": np.mean(all_avg_profit_factors) if all_avg_profit_factors else 0,
+                "avg_daily_sharpe": np.mean(all_avg_sharpe_ratios),
+                "best_daily_return_pct": max(all_avg_daily_returns),
+                "worst_daily_return_pct": min(all_avg_daily_returns),
+                "consistency_score": 1.0 - (np.std(all_avg_daily_returns) / max(abs(np.mean(all_avg_daily_returns)), 0.01)),
+            }
+
+        return summary
 
     def generate_portfolio_curves(self, output_dir):
         """Generate portfolio progression curves for each worker."""
@@ -314,48 +450,6 @@ class MetricsMonitor(BaseCallback):
         return summary
 
 
-def load_optuna_best_params(study_name: str = "adan_progressive_optimization"):
-    """Charge les meilleurs hyperparamètres depuis Optuna."""
-    import optuna
-    
-    try:
-        storage_url = "sqlite:///optuna_study.db"
-        study = optuna.load_study(study_name=study_name, storage=storage_url)
-        
-        if study.best_trial is None:
-            logging.warning("Aucun trial Optuna trouvé, utilisation des paramètres par défaut")
-            return None
-        
-        best_trial = study.best_trial
-        best_params = {
-            "ppo_params": {
-                "learning_rate": best_trial.params.get("learning_rate"),
-                "n_steps": best_trial.params.get("n_steps"),
-                "batch_size": best_trial.params.get("batch_size"),
-                "n_epochs": best_trial.params.get("n_epochs"),
-                "gamma": best_trial.params.get("gamma"),
-                "clip_range": best_trial.params.get("clip_range"),
-                "ent_coef": best_trial.params.get("ent_coef"),
-            },
-            "risk_params": {
-                "stop_loss_pct": best_trial.user_attrs.get("stop_loss_pct"),
-                "take_profit_pct": best_trial.user_attrs.get("take_profit_pct"),
-            },
-            "reward_params": {
-                "win_rate_bonus": best_trial.user_attrs.get("win_rate_bonus"),
-                "pnl_weight": best_trial.user_attrs.get("pnl_weight"),
-            },
-            "worker_specific_params": best_trial.user_attrs.get("worker_specific_params", {}),
-        }
-        
-        logging.info(f"✅ Chargé les hyperparamètres du trial #{best_trial.number} (score: {best_trial.value:.4f})")
-        return best_params
-        
-    except Exception as e:
-        logging.warning(f"Impossible de charger les paramètres Optuna: {e}")
-        return None
-
-
 def main(
     config_path: str,
     resume: bool,
@@ -364,41 +458,13 @@ def main(
     progress_bar: bool,
     timeout: Optional[int],
     checkpoint_dir: str = None,
-    use_optuna_params: bool = True,
 ):
     logger = logging.getLogger(__name__)
     """Main training function."""
     try:
         # --- Configuration ---
         config = ConfigLoader.load_config(config_path)
-        
-        # NOUVEAU: Charger les hyperparamètres Optuna
-        if use_optuna_params:
-            optuna_params = load_optuna_best_params()
-            if optuna_params:
-                logger.info("🎯 Application des hyperparamètres optimisés par Optuna")
-                
-                # Appliquer les paramètres PPO
-                for key, value in optuna_params["ppo_params"].items():
-                    if value is not None:
-                        config["agent"][key] = value
-                
-                # Appliquer les paramètres de risque
-                if optuna_params["risk_params"]["stop_loss_pct"]:
-                    config["risk_parameters"]["base_sl_pct"] = optuna_params["risk_params"]["stop_loss_pct"]
-                if optuna_params["risk_params"]["take_profit_pct"]:
-                    config["risk_parameters"]["base_tp_pct"] = optuna_params["risk_params"]["take_profit_pct"]
-                
-                # Appliquer les paramètres spécifiques par worker
-                for worker_id, worker_params in optuna_params["worker_specific_params"].items():
-                    if worker_id in config["workers"]:
-                        for param_key, param_value in worker_params.items():
-                            config["workers"][worker_id][param_key] = param_value
-                        logger.info(f"  ✓ {worker_id}: {worker_params}")
-            else:
-                logger.warning("⚠️ Utilisation des paramètres par défaut (config.yaml)")
-        else:
-            logger.info("📋 Utilisation des paramètres de config.yaml (Optuna désactivé)")
+        logger.info("📋 Utilisation des paramètres de config.yaml")
         total_timesteps = config["training"]["timesteps_per_instance"]
 
         # Utiliser checkpoint_dir fourni ou celui du config
@@ -451,6 +517,9 @@ def main(
                 "log_dir": env_log_dir,
                 "worker_config": env_worker_config,
                 "config": config,
+                "exploration_tutor": config.get("reward_shaping", {}).get(
+                    "exploration_tutor", {}
+                ),
             }
             # Fix lambda capture issue
             env_fns.append(lambda kwargs=env_kwargs: MultiAssetChunkedEnv(**kwargs))

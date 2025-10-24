@@ -39,6 +39,120 @@ from src.adan_trading_bot.environment.multi_asset_chunked_env import (
 from src.adan_trading_bot.common.config_loader import ConfigLoader
 from src.adan_trading_bot.common.custom_logger import setup_logging
 from src.adan_trading_bot.data_processing.data_loader import ChunkedDataLoader
+# CapitalTierTracker class definition
+class CapitalTierTracker:
+    """Tracks capital tier progression for each worker."""
+
+    TIERS = {
+        "Micro": {"min": 0, "max": 100},
+        "Small": {"min": 100, "max": 1000},
+        "Medium": {"min": 1000, "max": 10000},
+        "High": {"min": 10000, "max": 100000},
+        "Enterprise": {"min": 100000, "max": float("inf")},
+    }
+
+    def __init__(self, initial_balance=20):
+        self.initial_balance = initial_balance
+        self.current_tier = "Micro"
+        self.tier_history = [("Micro", 0, initial_balance)]
+        self.progression_log = []
+
+    def get_tier_from_balance(self, balance):
+        """Determine tier based on current balance."""
+        for tier_name, limits in self.TIERS.items():
+            if limits["min"] <= balance < limits["max"]:
+                return tier_name
+        return "Enterprise"  # Fallback for very high balances
+
+    def update(self, step, balance, pnl=0.0):
+        """Update tier tracking."""
+        new_tier = self.get_tier_from_balance(balance)
+
+        if new_tier != self.current_tier:
+            # Tier upgrade/downgrade detected
+            self.tier_history.append((new_tier, step, balance))
+            self.progression_log.append(
+                {
+                    "step": step,
+                    "from_tier": self.current_tier,
+                    "to_tier": new_tier,
+                    "balance": balance,
+                    "pnl": pnl,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            self.current_tier = new_tier
+
+    def get_progression_summary(self):
+        """Get summary of tier progression."""
+        return {
+            "current_tier": self.current_tier,
+            "tier_history": self.tier_history,
+            "total_progressions": len(self.progression_log),
+            "progression_log": self.progression_log,
+            "reached_enterprise": self.current_tier == "Enterprise",
+        }
+
+# DailyMetricsTracker class definition
+class DailyMetricsTracker:
+    """Simple daily metrics tracker for optimization."""
+    
+    def __init__(self, initial_balance):
+        self.initial_balance = initial_balance
+        self.current_day = 0
+        self.daily_data = {}
+        self.total_days = 0
+        
+    def update(self, current_day, balance, trade_info, return_value):
+        """Update daily metrics."""
+        if current_day != self.current_day:
+            self.current_day = current_day
+            self.total_days += 1
+            
+        if current_day not in self.daily_data:
+            self.daily_data[current_day] = {
+                'trades_closed': 0,
+                'daily_pnl': 0.0,
+                'daily_return_pct': 0.0,
+                'win_rate': 0.0,
+                'profit_factor': 0.0,
+                'daily_sharpe': 0.0,
+                'profitable_days_pct': 0.0
+            }
+            
+        # Update trade info
+        if trade_info.get('trade_closed', False):
+            self.daily_data[current_day]['trades_closed'] += 1
+            pnl = trade_info.get('trade_pnl', 0.0)
+            self.daily_data[current_day]['daily_pnl'] += pnl
+            
+    def get_current_day_summary(self):
+        """Get current day summary."""
+        if self.current_day in self.daily_data:
+            return self.daily_data[self.current_day]
+        return {}
+        
+    def get_average_daily_performance(self):
+        """Get average daily performance."""
+        if not self.daily_data:
+            return {}
+            
+        total_trades = sum(day['trades_closed'] for day in self.daily_data.values())
+        total_pnl = sum(day['daily_pnl'] for day in self.daily_data.values())
+        
+        return {
+            'total_days': self.total_days,
+            'avg_trades_per_day': total_trades / max(self.total_days, 1),
+            'avg_daily_return_pct': (total_pnl / self.initial_balance) * 100,
+            'avg_win_rate': 0.5,  # Placeholder
+            'avg_profit_factor': 1.0,  # Placeholder
+            'avg_daily_sharpe': 0.0,  # Placeholder
+            'profitable_days_pct': 50.0  # Placeholder
+        }
+        
+    def finalize_current_day(self):
+        """Finalize current day tracking."""
+        pass
 
 # Setup advanced logging
 setup_logging()
@@ -377,7 +491,11 @@ class BehaviorAnalyzer:
 
 
 class OptunaPruningCallback(BaseCallback):
-    """Callback avec progression par paliers et analyse comportementale."""
+    """
+    Callback amélioré pour Optuna qui intègre :
+    1. Le pruning (élagage) des essais non prometteurs.
+    2. Un suivi détaillé des métriques de chaque worker, similaire à `train_parallel_agents.py`.
+    """
 
     def __init__(
         self,
@@ -386,6 +504,8 @@ class OptunaPruningCallback(BaseCallback):
         tier_manager: TierProgressionManager,
         eval_freq: int = 5000,
         total_timesteps: int = 25000,
+        log_interval: int = 2500,
+        initial_balance: float = 20,
     ):
         super().__init__(verbose=0)
         self.trial = trial
@@ -398,6 +518,102 @@ class OptunaPruningCallback(BaseCallback):
         self.last_update_time = time.time()
         self.current_epoch = 0
         self.tier_performances = {}
+
+        # --- Ajouts pour le monitoring détaillé ---
+        self.log_interval = log_interval
+        self.last_log_step = 0
+        self.num_workers = self.eval_env.num_envs
+
+        # Add daily metrics trackers for each worker
+        self.daily_trackers = {
+            i: DailyMetricsTracker(initial_balance) for i in range(self.num_workers)
+        }
+        
+        # Add capital tier trackers for each worker
+        self.tier_trackers = {
+            i: CapitalTierTracker(initial_balance) for i in range(self.num_workers)
+        }
+
+    def _collect_and_log_metrics(self):
+        """Collecte et affiche les métriques de chaque worker avec tracking journalier."""
+        try:
+            portfolio_managers = self.eval_env.get_attr("portfolio_manager")
+            environments = self.eval_env.get_attr("data")
+
+            for worker_id, pm in enumerate(portfolio_managers):
+                if pm is None:
+                    continue
+
+                metrics = pm.get_metrics()
+                balance = metrics.get("total_value", 0)
+                pnl = balance - pm.initial_equity
+
+                # Get current day from environment data
+                current_day = 0
+                trade_info = {}
+                if worker_id < len(environments) and environments[worker_id]:
+                    env_data = environments[worker_id]
+                    if "TIMESTAMP" in env_data and len(env_data["TIMESTAMP"]) > 0:
+                        timestamp = (
+                            env_data["TIMESTAMP"].iloc[-1]
+                            if hasattr(env_data["TIMESTAMP"], "iloc")
+                            else env_data["TIMESTAMP"][-1]
+                        )
+                        current_day = int(timestamp // (24 * 60 * 60 * 1000))
+
+                    # Check for trade information
+                    recent_trades = metrics.get("recent_trades", [])
+                    if recent_trades:
+                        last_trade = (
+                            recent_trades[-1]
+                            if isinstance(recent_trades, list)
+                            else recent_trades
+                        )
+                        if isinstance(last_trade, dict):
+                            trade_info = {
+                                "trade_closed": last_trade.get("closed", False),
+                                "trade_opened": last_trade.get("opened", False),
+                                "trade_pnl": last_trade.get("pnl", 0.0),
+                            }
+
+                # Update daily tracker
+                return_value = metrics.get("last_return", 0.0)
+                self.daily_trackers[worker_id].update(
+                    current_day, balance, trade_info, return_value
+                )
+                
+                # Update tier tracker
+                self.tier_trackers[worker_id].update(
+                    self.num_timesteps, balance, pnl
+                )
+
+                # Get daily performance summary
+                daily_summary = self.daily_trackers[
+                    worker_id
+                ].get_average_daily_performance()
+
+                # Enhanced logging with daily metrics
+                daily_info = ""
+                if daily_summary and daily_summary.get("total_days", 0) > 0:
+                    daily_info = (
+                        f" | Daily: Return={daily_summary.get('avg_daily_return_pct', 0):.2f}% "
+                        f"Trades={daily_summary.get('avg_trades_per_day', 0):.1f} "
+                        f"WinRate={daily_summary.get('avg_win_rate', 0):.1f}% "
+                        f"PF={min(daily_summary.get('avg_profit_factor', 0), 9.99):.2f}"
+                    )
+
+                # Get tier information
+                tier_info = self.tier_trackers[worker_id].get_progression_summary()
+                tier_str = f" | Tier={tier_info['current_tier']}"
+                
+                logger.info(
+                    f"TRIAL {self.trial.number} | Step {self.num_timesteps:<6} | "
+                    f"Worker {worker_id}: Balance=${balance:,.2f} | PnL=${pnl:,.2f} | "
+                    f"Sharpe={metrics.get('sharpe_ratio', 0):.2f} | "
+                    f"Trades={metrics.get('total_trades', 0)}{tier_str}{daily_info}"
+                )
+        except Exception as e:
+            logger.warning(f"Could not collect metrics during trial: {e}")
 
     def _on_training_start(self) -> None:
         """Initialize progress bar with tier information."""
@@ -413,6 +629,12 @@ class OptunaPruningCallback(BaseCallback):
     def _on_step(self) -> bool:
         current_time = time.time()
 
+        # --- NOUVEAU : Suivi détaillé des métriques ---
+        if (self.num_timesteps - self.last_log_step) >= self.log_interval:
+            self._collect_and_log_metrics()
+            self.last_log_step = self.num_timesteps
+
+        # --- Logique existante ---
         # Gestion de la progression par paliers
         expected_epoch = int(
             (self.num_timesteps / self.total_timesteps) * self.tier_manager.total_epochs
@@ -420,16 +642,13 @@ class OptunaPruningCallback(BaseCallback):
         if expected_epoch != self.current_epoch:
             self.current_epoch = expected_epoch
             current_tier = self.tier_manager.get_tier_for_epoch(self.current_epoch)
-
-            # Mettre à jour la description avec le nouveau tier
             if self.progress_bar:
                 new_desc = f"Trial {self.trial.number} [Tier: {current_tier.value}]"
                 self.progress_bar.set_description(new_desc)
 
-        # Update progress bar
-        if current_time - self.last_update_time >= 2.0:  # Update every 2 seconds
+        # Mise à jour de la barre de progression
+        if current_time - self.last_update_time >= 2.0:
             if self.progress_bar:
-                # Get current performance
                 try:
                     sharpe = self._evaluate_sharpe()
                     current_tier = self.tier_manager.get_tier_for_epoch(
@@ -438,38 +657,29 @@ class OptunaPruningCallback(BaseCallback):
                     sharpe_str = f"{sharpe:.3f} ({current_tier.name})"
                 except:
                     sharpe_str = "calculating..."
-
                 self.progress_bar.set_postfix_str(sharpe_str)
                 self.progress_bar.update(self.num_timesteps - self.progress_bar.n)
-
             self.last_update_time = current_time
 
-        # Evaluate and report for pruning
+        # Évaluation et élagage (pruning)
         if (self.num_timesteps - getattr(self, "last_eval_step", 0)) >= self.eval_freq:
             self.last_eval_step = self.num_timesteps
-
             try:
-                # Evaluer avec le tier actuel
                 current_tier = self.tier_manager.get_tier_for_epoch(self.current_epoch)
                 performance = self._evaluate_tier_performance(current_tier)
-
-                # Stocker la performance du tier
                 tier_key = current_tier.name
                 if tier_key not in self.tier_performances:
                     self.tier_performances[tier_key] = []
                 self.tier_performances[tier_key].append(performance)
 
-                # Report pour pruning
                 step_value = self.num_timesteps / self.total_timesteps
                 self.trial.report(performance["composite_score"], step_value)
 
-                # Vérifier si le trial doit être élagué
                 if self.trial.should_prune():
                     logger.info(
                         f"Trial {self.trial.number} pruned at step {self.num_timesteps}"
                     )
                     return False
-
             except Exception as e:
                 logger.warning(f"Evaluation failed at step {self.num_timesteps}: {e}")
 
@@ -486,6 +696,9 @@ class OptunaPruningCallback(BaseCallback):
         # Calculate overall multi-tier performance
         overall_score = self._calculate_multi_tier_score()
         self.trial.set_user_attr("multi_tier_score", overall_score)
+        
+        # Generate portfolio progression summary
+        self._generate_trial_summary()
 
     def _evaluate_sharpe(self) -> float:
         """Quick Sharpe ratio evaluation."""
@@ -666,14 +879,35 @@ class OptunaPruningCallback(BaseCallback):
         return gross_profit / gross_loss if gross_loss > 0 else 0.0
 
     def _calculate_multi_tier_score(self) -> float:
-        """Calcule un score global multi-paliers."""
+        """Calcule un score global multi-paliers avec focus sur les performances journalières."""
         if not self.tier_performances:
             return 0.0
 
-        total_score = 0.0
-        total_weight = 0.0
+        # Finalize daily tracking for all workers
+        for worker_id in range(self.num_workers):
+            self.daily_trackers[worker_id].finalize_current_day()
 
-        # Pondération progressive : plus le palier est élevé, plus il compte
+        # Calculate daily performance scores
+        daily_scores = []
+        for worker_id in range(self.num_workers):
+            daily_perf = self.daily_trackers[worker_id].get_average_daily_performance()
+            if daily_perf and daily_perf.get("total_days", 0) > 0:
+                # Daily performance composite score
+                daily_score = (
+                    daily_perf.get("avg_daily_return_pct", 0) * 0.3
+                    + min(daily_perf.get("avg_profit_factor", 0), 5.0) * 0.25
+                    + daily_perf.get("avg_win_rate", 0) * 0.2
+                    + daily_perf.get("avg_daily_sharpe", 0) * 0.15
+                    + daily_perf.get("profitable_days_pct", 0) * 0.1
+                )
+                if (
+                    daily_perf.get("avg_trades_per_day", 0) >= 1
+                ):  # Ensure sufficient trading activity
+                    daily_scores.append(daily_score)
+
+        # Calculate traditional multi-tier score
+        traditional_score = 0.0
+        total_weight = 0.0
         tier_weights = {
             "MICRO": 0.15,
             "SMALL": 0.2,
@@ -688,10 +922,59 @@ class OptunaPruningCallback(BaseCallback):
                     [p.get("composite_score", 0) for p in performances]
                 )
                 weight = tier_weights.get(tier_name, 0.1)
-                total_score += avg_performance * weight
+                traditional_score += avg_performance * weight
                 total_weight += weight
 
-        return total_score / total_weight if total_weight > 0 else 0.0
+        traditional_score = (
+            traditional_score / total_weight if total_weight > 0 else 0.0
+        )
+
+        # Combine daily and traditional scores with heavy weight on daily performance
+        if daily_scores:
+            daily_score_avg = np.mean(daily_scores)
+            final_score = daily_score_avg * 0.7 + traditional_score * 0.3
+
+            # Bonus for consistency across workers
+            if len(daily_scores) > 1:
+                consistency_bonus = max(
+                    0, 1.0 - (np.std(daily_scores) / max(abs(daily_score_avg), 0.01))
+                )
+                final_score *= 1.0 + consistency_bonus * 0.1
+
+            return final_score
+        else:
+            return traditional_score * 0.5  # Penalty if no sufficient daily data
+
+    def _generate_trial_summary(self):
+        """Generate trial summary with tier progression."""
+        summary = {
+            "trial_number": self.trial.number,
+            "total_steps": self.num_timesteps,
+            "workers": {},
+            "overall_enterprise_count": 0,
+        }
+        
+        for worker_id in range(self.num_workers):
+            tier_summary = self.tier_trackers[worker_id].get_progression_summary()
+            daily_perf = self.daily_trackers[worker_id].get_average_daily_performance()
+            
+            worker_summary = {
+                "tier_progression": tier_summary,
+                "reached_enterprise": tier_summary["reached_enterprise"],
+                "daily_performance": daily_perf,
+            }
+            
+            summary["workers"][f"w{worker_id + 1}"] = worker_summary
+            
+            if tier_summary["reached_enterprise"]:
+                summary["overall_enterprise_count"] += 1
+        
+        # Store in trial attributes
+        self.trial.set_user_attr("trial_summary", summary)
+        
+        logger.info(f"📊 TRIAL {self.trial.number} SUMMARY:")
+        logger.info(f"   🏢 Workers reaching Enterprise: {summary['overall_enterprise_count']}/4")
+        logger.info(f"   ✅ Enterprise Success Rate: {(summary['overall_enterprise_count'] / 4) * 100:.1f}%")
 
 
 def setup_database(study_name: str = "adan_progressive_hyperopt") -> optuna.Study:
@@ -737,7 +1020,7 @@ def objective(trial: optuna.Trial) -> float:
         logger.info(f"=== TRIAL {trial.number} - PROGRESSIVE TIER TRAINING ===")
 
         # Calculer le nombre d'époques pour la progression
-        n_epochs = trial.suggest_categorical("n_epochs", [3, 4, 5, 10, 20])
+        n_epochs = 1
 
         # Initialiser le gestionnaire de progression par paliers
         tier_manager = TierProgressionManager(total_epochs=n_epochs)
@@ -750,7 +1033,7 @@ def objective(trial: optuna.Trial) -> float:
         ppo_params = {
             "learning_rate": trial.suggest_float("learning_rate", 1e-5, 1e-3, log=True),
             "n_steps": trial.suggest_categorical("n_steps", [1024, 2048, 4096]),
-            "ent_coef": trial.suggest_float("ent_coef", 0.001, 0.1),
+            "ent_coef": trial.suggest_float("ent_coef", 0.02, 0.1),
             "clip_range": trial.suggest_categorical("clip_range", [0.1, 0.2, 0.3]),
             "gamma": trial.suggest_float("gamma", 0.9, 0.9999),
             "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
@@ -785,16 +1068,57 @@ def objective(trial: optuna.Trial) -> float:
             "position_hold_min": trial.suggest_int("position_hold_min", 5, 30),
             "position_hold_max": trial.suggest_int("position_hold_max", 50, 500),
         }
-        
-        # NOUVEAU: Hyperparamètres spécifiques par worker (w1, w2, w3, w4)
-        worker_specific_params = {}
-        for worker_id in ["w1", "w2", "w3", "w4"]:
-            worker_specific_params[worker_id] = {
-                "position_size_pct": trial.suggest_float(f"{worker_id}_position_size", 0.05, 0.25),
-                "risk_multiplier": trial.suggest_float(f"{worker_id}_risk_mult", 0.8, 1.5),
-                "patience_steps": trial.suggest_int(f"{worker_id}_patience", 10, 50),
-                "min_confidence": trial.suggest_float(f"{worker_id}_min_conf", 0.3, 0.7),
-            }
+
+        # NOUVEAU: force_trade_steps adaptatif par timeframe (pris du config.yaml)
+        force_trade_steps_params = (
+            GLOBAL_CONFIG.get("trading_rules", {})
+            .get("frequency", {})
+            .get("force_trade_steps", {})
+        )
+
+        # NOUVEAU: Intégrer min_tracking_steps dans l'optimisation
+        min_tracking_steps_params = {
+            "5m": trial.suggest_int("mts_5m", 1, 10),
+            "1h": trial.suggest_int("mts_1h", 1, 8),
+            "4h": trial.suggest_int("mts_4h", 1, 6),
+        }
+
+        # NOUVEAU: Définition statique des hyperparamètres par worker pour l'optimiseur multivarié
+        # --- Worker 1 (Conservative) ---
+        w1_position_size_pct = trial.suggest_float("w1_position_size", 0.05, 0.25)
+        w1_risk_multiplier = trial.suggest_float("w1_risk_mult", 0.8, 1.5)
+        w1_patience_steps = trial.suggest_int("w1_patience", 10, 50)
+        w1_min_confidence = trial.suggest_float("w1_min_conf", 0.01, 0.15)
+        w1_mts_5m = trial.suggest_int("w1_mts_5m", 1, 12)
+        w1_mts_1h = trial.suggest_int("w1_mts_1h", 1, 8)
+        w1_mts_4h = trial.suggest_int("w1_mts_4h", 1, 12)
+
+        # --- Worker 2 (Moderate) ---
+        w2_position_size_pct = trial.suggest_float("w2_position_size", 0.05, 0.25)
+        w2_risk_multiplier = trial.suggest_float("w2_risk_mult", 0.8, 1.5)
+        w2_patience_steps = trial.suggest_int("w2_patience", 10, 50)
+        w2_min_confidence = trial.suggest_float("w2_min_conf", 0.01, 0.15)
+        w2_mts_5m = trial.suggest_int("w2_mts_5m", 1, 12)
+        w2_mts_1h = trial.suggest_int("w2_mts_1h", 1, 8)
+        w2_mts_4h = trial.suggest_int("w2_mts_4h", 1, 12)
+
+        # --- Worker 3 (Aggressive) ---
+        w3_position_size_pct = trial.suggest_float("w3_position_size", 0.05, 0.25)
+        w3_risk_multiplier = trial.suggest_float("w3_risk_mult", 0.8, 1.5)
+        w3_patience_steps = trial.suggest_int("w3_patience", 10, 50)
+        w3_min_confidence = trial.suggest_float("w3_min_conf", 0.01, 0.15)
+        w3_mts_5m = trial.suggest_int("w3_mts_5m", 1, 12)
+        w3_mts_1h = trial.suggest_int("w3_mts_1h", 1, 8)
+        w3_mts_4h = trial.suggest_int("w3_mts_4h", 1, 12)
+
+        # --- Worker 4 (Adaptive) ---
+        w4_position_size_pct = trial.suggest_float("w4_position_size", 0.05, 0.25)
+        w4_risk_multiplier = trial.suggest_float("w4_risk_mult", 0.8, 1.5)
+        w4_patience_steps = trial.suggest_int("w4_patience", 10, 50)
+        w4_min_confidence = trial.suggest_float("w4_min_conf", 0.01, 0.15)
+        w4_mts_5m = trial.suggest_int("w4_mts_5m", 1, 12)
+        w4_mts_1h = trial.suggest_int("w4_mts_1h", 1, 8)
+        w4_mts_4h = trial.suggest_int("w4_mts_4h", 1, 12)
 
         # Configuration temporaire avec les nouveaux paramètres
         temp_config = copy.deepcopy(GLOBAL_CONFIG)
@@ -818,14 +1142,93 @@ def objective(trial: optuna.Trial) -> float:
                 temp_config["workers"][worker_key]["reward_config"][
                     "win_rate_bonus"
                 ] = reward_params["win_rate_bonus"]
-                
-                # NOUVEAU: Appliquer les hyperparamètres spécifiques au worker
-                if worker_key in worker_specific_params:
-                    wsp = worker_specific_params[worker_key]
-                    temp_config["workers"][worker_key]["position_size_pct"] = wsp["position_size_pct"]
-                    temp_config["workers"][worker_key]["risk_multiplier"] = wsp["risk_multiplier"]
-                    temp_config["workers"][worker_key]["patience_steps"] = wsp["patience_steps"]
-                    temp_config["workers"][worker_key]["min_confidence"] = wsp["min_confidence"]
+
+                # NOUVEAU: Application statique des hyperparamètres par worker
+                # Regrouper les variables unrollées pour un accès plus facile
+                unrolled_params = {
+                    "w1": {
+                        "position_size_pct": w1_position_size_pct,
+                        "risk_multiplier": w1_risk_multiplier,
+                        "patience_steps": w1_patience_steps,
+                        "min_confidence": w1_min_confidence,
+                        "mts_5m": w1_mts_5m,
+                        "mts_1h": w1_mts_1h,
+                        "mts_4h": w1_mts_4h,
+                    },
+                    "w2": {
+                        "position_size_pct": w2_position_size_pct,
+                        "risk_multiplier": w2_risk_multiplier,
+                        "patience_steps": w2_patience_steps,
+                        "min_confidence": w2_min_confidence,
+                        "mts_5m": w2_mts_5m,
+                        "mts_1h": w2_mts_1h,
+                        "mts_4h": w2_mts_4h,
+                    },
+                    "w3": {
+                        "position_size_pct": w3_position_size_pct,
+                        "risk_multiplier": w3_risk_multiplier,
+                        "patience_steps": w3_patience_steps,
+                        "min_confidence": w3_min_confidence,
+                        "mts_5m": w3_mts_5m,
+                        "mts_1h": w3_mts_1h,
+                        "mts_4h": w3_mts_4h,
+                    },
+                    "w4": {
+                        "position_size_pct": w4_position_size_pct,
+                        "risk_multiplier": w4_risk_multiplier,
+                        "patience_steps": w4_patience_steps,
+                        "min_confidence": w4_min_confidence,
+                        "mts_5m": w4_mts_5m,
+                        "mts_1h": w4_mts_1h,
+                        "mts_4h": w4_mts_4h,
+                    },
+                }
+
+        # Store worker-specific parameters for later use
+        worker_specific_params = unrolled_params
+
+        # Apply worker-specific parameters to temp_config
+        for worker_key in ["w1", "w2", "w3", "w4"]:
+            if worker_key in temp_config["workers"]:
+                if worker_key in unrolled_params:
+                    wsp = unrolled_params[worker_key]
+                    temp_config["workers"][worker_key]["position_size_pct"] = wsp[
+                        "position_size_pct"
+                    ]
+                    temp_config["workers"][worker_key]["risk_multiplier"] = wsp[
+                        "risk_multiplier"
+                    ]
+                    temp_config["workers"][worker_key]["patience_steps"] = wsp[
+                        "patience_steps"
+                    ]
+                    temp_config["workers"][worker_key]["min_confidence"] = wsp[
+                        "min_confidence"
+                    ]
+
+                    # Appliquer les MTS optimisés pour ce worker MAIS forcer à 1 minimum
+                    if (
+                        "specialization" in temp_config["workers"][worker_key]
+                        and "tracking_periods"
+                        in temp_config["workers"][worker_key]["specialization"]
+                    ):
+                        temp_config["workers"][worker_key]["specialization"][
+                            "tracking_periods"
+                        ]["5m"]["min_tracking_steps"] = max(1, min(wsp["mts_5m"], 2))
+                        temp_config["workers"][worker_key]["specialization"][
+                            "tracking_periods"
+                        ]["1h"]["min_tracking_steps"] = max(1, min(wsp["mts_1h"], 2))
+                        temp_config["workers"][worker_key]["specialization"][
+                            "tracking_periods"
+                        ]["4h"]["min_tracking_steps"] = max(1, min(wsp["mts_4h"], 2))
+
+                # NOUVEAU: Appliquer les min_tracking_steps optimisés MAIS plafonner à 2
+                for timeframe, min_steps in min_tracking_steps_params.items():
+                    if timeframe in temp_config["workers"][worker_key].get(
+                        "specialization", {}
+                    ).get("tracking_periods", {}):
+                        temp_config["workers"][worker_key]["specialization"][
+                            "tracking_periods"
+                        ][timeframe]["min_tracking_steps"] = max(1, min(min_steps, 2))
 
         # Mettre à jour les paramètres globaux
         temp_config["risk_parameters"]["base_sl_pct"] = stop_loss_pct
@@ -841,68 +1244,120 @@ def objective(trial: optuna.Trial) -> float:
         for param, value in ppo_params.items():
             temp_config["agent"][param] = value
 
-        # Configuration pour entraînement progressif par paliers
-        temp_config["environment"]["max_steps"] = 30000  # Plus long pour progression
-        temp_config["environment"]["max_chunks_per_episode"] = 3
+        # Appliquer les force_trade_steps adaptatifs
+        if "trading_rules" not in temp_config:
+            temp_config["trading_rules"] = {}
+        if "frequency" not in temp_config["trading_rules"]:
+            temp_config["trading_rules"]["frequency"] = {}
+        temp_config["trading_rules"]["frequency"]["force_trade_steps"] = (
+            force_trade_steps_params
+        )
+
+        # Configuration pour entraînement optimisé pour générer des trades
+        temp_config["environment"]["max_steps"] = (
+            8000  # Plus de steps pour plus de trades
+        )
+        temp_config["environment"]["max_chunks_per_episode"] = 2  # Réduit pour focus
+
+        # OPTIMISATION COHÉRENTE - Respecter la configuration de base
+        for worker_key in ["w1", "w2", "w3", "w4"]:
+            if worker_key in temp_config["workers"]:
+                # Utiliser les valeurs optimisées mais cohérentes
+                temp_config["workers"][worker_key]["min_confidence"] = max(
+                    0.005, worker_specific_params[worker_key]["min_confidence"]
+                )
+
+                # Utiliser les patience_steps optimisés
+                temp_config["workers"][worker_key]["patience_steps"] = worker_specific_params[worker_key]["patience_steps"]
+
+                # Appliquer les min_tracking_steps optimisés de manière cohérente
+                if "specialization" in temp_config["workers"][worker_key]:
+                    if (
+                        "tracking_periods"
+                        in temp_config["workers"][worker_key]["specialization"]
+                    ):
+                        for tf in ["5m", "1h", "4h"]:
+                            if (
+                                tf
+                                in temp_config["workers"][worker_key]["specialization"][
+                                    "tracking_periods"
+                                ]
+                            ):
+                                # Utiliser les valeurs optimisées mais avec des limites raisonnables
+                                optimized_mts = worker_specific_params[worker_key].get(f"mts_{tf}", 1)
+                                temp_config["workers"][worker_key]["specialization"][
+                                    "tracking_periods"
+                                ][tf]["min_tracking_steps"] = max(1, min(optimized_mts, 3))
+                                # Garder grace_period raisonnable
+                                temp_config["workers"][worker_key]["specialization"][
+                                    "tracking_periods"
+                                ][tf]["grace_period"] = max(1, min(optimized_mts, 2))
+
+        # Ajustements globaux pour favoriser les trades
+        if "trading_rules" not in temp_config:
+            temp_config["trading_rules"] = {}
+
+        # Utiliser action_threshold cohérent avec la configuration
+        temp_config["trading_rules"]["action_threshold"] = 0.01  # Valeur du config.yaml
+
+        # Forcer frequency rules très permissives
+        if "frequency" not in temp_config["trading_rules"]:
+            temp_config["trading_rules"]["frequency"] = {}
+
+        # Désactiver complètement les garde-fous de fréquence
+        temp_config["trading_rules"]["frequency"]["min_steps_between_trades"] = 1
+        temp_config["trading_rules"]["frequency"]["position_size_decay"] = 1.0
         temp_config["progressive_training"] = {
             "enabled": True,
             "tier_progression": True,
             "epochs_per_tier": max(1, n_epochs // len(CapitalTier)),
         }
 
-        # Créer l'environnement avec le premier worker
-        worker_config = temp_config["workers"]["w1"]
-        data_loader = ChunkedDataLoader(
-            config=temp_config, worker_config=worker_config, worker_id=0
-        )
-        data = data_loader.load_chunk(0)
-
-        if data is None or not data:
-            logger.error(f"Trial {trial.number}: No data available")
-            return -np.inf
-
-        # Check if any timeframe has non-empty data
-        has_valid_data = any(
-            not df.empty
-            for asset_data in data.values()
-            if isinstance(asset_data, dict)
-            for df in asset_data.values()
-            if isinstance(df, pd.DataFrame)
-        )
-
-        if not has_valid_data:
-            logger.error(f"Trial {trial.number}: No valid data available")
-            return -np.inf
-
-        # Configuration de l'environnement
-        env_kwargs = {
-            "data": data,
-            "timeframes": temp_config["data"]["timeframes"],
-            "window_size": temp_config["environment"]["window_size"],
-            "features_config": temp_config["environment"]["features_config"],
-            "max_steps": temp_config["environment"]["max_steps"],
-            "initial_balance": temp_config["environment"]["initial_balance"],
-            "commission": temp_config["environment"]["commission"],
-            "reward_scaling": temp_config["environment"]["reward_scaling"],
-            "worker_config": worker_config,
-            "config": temp_config,
-        }
-
-        # Créer 4 environnements pour parallélisme réel (comme train_parallel_agents.py)
+        # --- Copied Env Creation Logic ---
+        num_envs = 4
         env_fns = []
-        for i in range(4):
-            worker_id_key = f"w{i+1}"
-            if worker_id_key in temp_config.get("workers", {}):
-                worker_cfg = temp_config["workers"][worker_id_key]
-            else:
-                worker_cfg = worker_config
-            
-            env_kwargs_copy = copy.deepcopy(env_kwargs)
-            env_kwargs_copy["worker_config"] = copy.deepcopy(worker_cfg)
-            env_kwargs_copy["worker_config"]["worker_id"] = i
-            env_fns.append(lambda kwargs=env_kwargs_copy: MultiAssetChunkedEnv(**kwargs))
-        
-        # SubprocVecEnv pour VRAI parallélisme (pas DummyVecEnv)
+        worker_ids = ["w1", "w2", "w3", "w4"]
+
+        for i in range(num_envs):
+            worker_id = worker_ids[i]
+            worker_config = temp_config["workers"][worker_id]
+
+            data_loader = ChunkedDataLoader(
+                config=temp_config, worker_config=worker_config, worker_id=i
+            )
+            data = data_loader.load_chunk(10)  # Changed chunk to avoid warm-up issues
+
+            env_worker_config = copy.deepcopy(worker_config)
+            env_worker_config["worker_id"] = i
+
+            env_log_dir = os.path.join(
+                temp_config["paths"]["logs_dir"],
+                f"{worker_id}_env_trial_{trial.number}",
+            )
+            os.makedirs(env_log_dir, exist_ok=True)
+
+            env_kwargs = {
+                "data": data,
+                "timeframes": temp_config["data"]["timeframes"],
+                "window_size": temp_config["environment"]["window_size"],
+                "features_config": temp_config["data"]["features_config"]["timeframes"],
+                "max_steps": temp_config["environment"]["max_steps"],
+                "initial_balance": temp_config["portfolio"]["initial_balance"],
+                "commission": temp_config["environment"]["commission"],
+                "reward_scaling": temp_config["environment"]["reward_scaling"],
+                "enable_logging": True,
+                "log_dir": env_log_dir,
+                "worker_config": env_worker_config,
+                "config": temp_config,
+                "exploration_tutor": temp_config.get("reward_shaping", {}).get(
+                    "exploration_tutor", {}
+                ),
+            }
+            env_fns.append(lambda kwargs=env_kwargs: MultiAssetChunkedEnv(**kwargs))
+
+        logger.info(
+            f"🔄 Trial {trial.number}: Using SubprocVecEnv for TRUE PARALLEL execution ({num_envs} workers)"
+        )
         env = SubprocVecEnv(env_fns, start_method="spawn")
 
         # Callback avec progression par paliers
@@ -912,6 +1367,7 @@ def objective(trial: optuna.Trial) -> float:
             tier_manager=tier_manager,
             eval_freq=3000,
             total_timesteps=temp_config["environment"]["max_steps"],
+            log_interval=5000,
         )
 
         # Créer le modèle PPO
@@ -938,116 +1394,307 @@ def objective(trial: optuna.Trial) -> float:
             progress_bar=False,
         )
 
-        # Analyse comportementale finale
+        # NOUVEAU: Évaluation individuelle par worker
         analyzer = BehaviorAnalyzer()
+        worker_scores = {}
+        worker_behaviors = {}
 
-        # Évaluer sur chaque palier
-        final_behaviors = {}
-        tier_scores = []
+        # Évaluation INTENSIVE par worker avec LOGGING COMPLET
+        EVALUATION_STEPS = 5000  # Beaucoup plus d'étapes pour générer des trades
 
-        for tier in CapitalTier:
-            # Simuler quelques épisodes pour ce palier
-            tier_config = tier_manager.get_tier_config(tier)
+        for worker_idx, worker_id in enumerate(["w1", "w2", "w3", "w4"]):
+            logger.info(
+                f"🔍 DÉBUT ÉVALUATION INTENSIVE {worker_id.upper()} - {EVALUATION_STEPS} steps"
+            )
 
-            # Évaluation rapide
-            obs = env.reset()
-            episode_data = {
+            worker_data = {
                 "trades": [],
                 "returns": [],
-                "portfolio_values": [tier_config["initial_balance"]],
+                "portfolio_values": [20.50],
                 "total_steps": 0,
+                "timeframe_trades": {"5m": 0, "1h": 0, "4h": 0},
+                "actions_taken": 0,
+                "positions_opened": 0,
+                "positions_closed": 0,
+                "trade_attempts": 0,
             }
 
-            for step in range(1000):  # Évaluation rapide
-                action, _ = model.predict(obs, deterministic=True)
+            # Reset environnement pour ce worker
+            obs = env.reset()
+            logger.info(f"📊 {worker_id}: Environnement reset, début évaluation...")
+
+            # Compteurs pour monitoring temps réel
+            step_log_interval = 200
+            last_trade_count = 0
+
+            for step in range(EVALUATION_STEPS):
+                # Prédiction action
+                action, _ = model.predict(obs, deterministic=False)
+                worker_data["actions_taken"] += 1
+
+                # Exécution action
                 obs, reward, done, info = env.step(action)
-                episode_data["total_steps"] += 1
+                worker_data["total_steps"] += 1
 
-                if hasattr(info, "__iter__") and len(info) > 0:
-                    env_info = info[0] if isinstance(info[0], dict) else {}
+                # Analyse INFO pour ce worker
+                env_info = {}
+                if hasattr(info, "__iter__") and len(info) > worker_idx:
+                    env_info = (
+                        info[worker_idx] if isinstance(info[worker_idx], dict) else {}
+                    )
 
-                    if "return" in env_info:
-                        episode_data["returns"].append(env_info["return"])
-
+                    # Collecte portfolio value
                     if "portfolio_value" in env_info:
-                        episode_data["portfolio_values"].append(
-                            env_info["portfolio_value"]
+                        worker_data["portfolio_values"].append(
+                            float(env_info["portfolio_value"])
                         )
 
-                    if "trade_completed" in env_info:
-                        episode_data["trades"].append(
-                            {
-                                "pnl": env_info.get("trade_pnl", 0),
-                                "duration": env_info.get("trade_duration", 0),
-                            }
+                    # Collecte returns
+                    if "return" in env_info:
+                        worker_data["returns"].append(float(env_info["return"]))
+
+                    # DÉTECTION DE TRADE COMPLÉTÉ - LOG IMMÉDIAT
+                    if "trade_completed" in env_info and env_info["trade_completed"]:
+                        trade_info = {
+                            "pnl": env_info.get("trade_pnl", 0),
+                            "duration": env_info.get("trade_duration", 0),
+                            "timeframe": env_info.get("timeframe", "5m"),
+                            "step": step,
+                        }
+                        worker_data["trades"].append(trade_info)
+                        worker_data["timeframe_trades"][trade_info["timeframe"]] += 1
+
+                        logger.info(
+                            f"🎯 TRADE COMPLET {worker_id}: Step {step}, TF={trade_info['timeframe']}, "
+                            f"PnL=${trade_info['pnl']:.2f}, Duration={trade_info['duration']}"
                         )
 
+                    # DÉTECTION POSITION OUVERTE
+                    if "position_opened" in env_info and env_info["position_opened"]:
+                        worker_data["positions_opened"] += 1
+                        logger.info(
+                            f"🔓 POSITION OUVERTE {worker_id}: Step {step}, "
+                            f"TF={env_info.get('timeframe', '?')}"
+                        )
+
+                    # DÉTECTION POSITION FERMÉE
+                    if "position_closed" in env_info and env_info["position_closed"]:
+                        worker_data["positions_closed"] += 1
+                        logger.info(
+                            f"🔒 POSITION FERMÉE {worker_id}: Step {step}, "
+                            f"PnL=${env_info.get('trade_pnl', 0):.2f}"
+                        )
+
+                    # COMPTEURS DE POSITIONS PAR TIMEFRAME
+                    if "positions_count" in env_info:
+                        counts = env_info["positions_count"]
+                        if isinstance(counts, dict):
+                            for tf in ["5m", "1h", "4h"]:
+                                if tf in counts:
+                                    worker_data["timeframe_trades"][tf] = int(
+                                        counts[tf]
+                                    )
+
+                    # TENTATIVES DE TRADE
+                    if "trade_attempt" in env_info and env_info["trade_attempt"]:
+                        worker_data["trade_attempts"] += 1
+
+                    # Log activité de trading périodique
+                    current_trade_count = len(worker_data["trades"])
+                    if current_trade_count > last_trade_count:
+                        logger.info(
+                            f"📈 {worker_id}: NOUVEAU TRADE! Total={current_trade_count}"
+                        )
+                        last_trade_count = current_trade_count
+
+                # Reset si episode terminé
                 if done.any():
                     obs = env.reset()
 
-            # Analyser le comportement pour ce palier
-            behavior = analyzer.analyze_trial_behavior(episode_data, tier)
-            final_behaviors[tier.name] = behavior
+                # Log de progression périodique
+                if step % 1000 == 0 and step > 0:
+                    logger.info(
+                        f"⏱️ {worker_id}: Step {step}/{EVALUATION_STEPS}, "
+                        f"Trades={len(worker_data['trades'])}, "
+                        f"Positions={worker_data['positions_opened']}, "
+                        f"Tentatives={worker_data['trade_attempts']}"
+                    )
 
-            # Score comportemental
-            behavior_score = behavior.get_behavior_score()
-            tier_scores.append(behavior_score)
+            # LOG FINAL pour ce worker
+            total_trades = len(worker_data["trades"])
+            logger.info(f"🏁 FIN ÉVALUATION {worker_id.upper()}:")
+            logger.info(f"   📊 Total steps: {worker_data['total_steps']}")
+            logger.info(f"   🎯 Actions prises: {worker_data['actions_taken']}")
+            logger.info(f"   📈 Trades complétés: {total_trades}")
+            logger.info(f"   🔓 Positions ouvertes: {worker_data['positions_opened']}")
+            logger.info(f"   🔒 Positions fermées: {worker_data['positions_closed']}")
+            logger.info(f"   ⚡ Tentatives trades: {worker_data['trade_attempts']}")
+            logger.info(f"   ⏰ Répartition TF: {worker_data['timeframe_trades']}")
 
-            logger.info(
-                f"Tier {tier.name}: {behavior.get_behavior_description()}, Score: {behavior_score:.3f}"
+            if worker_data["portfolio_values"]:
+                final_portfolio = worker_data["portfolio_values"][-1]
+                initial_portfolio = worker_data["portfolio_values"][0]
+                growth = (
+                    (final_portfolio - initial_portfolio) / initial_portfolio
+                ) * 100
+                logger.info(
+                    f"   💼 Portfolio: ${initial_portfolio:.2f} → ${final_portfolio:.2f} ({growth:+.2f}%)"
+                )
+
+            # CALCUL MÉTRIQUES DÉTAILLÉES
+            trades_list = worker_data["trades"]
+            total_pnl = sum(trade.get("pnl", 0) for trade in trades_list)
+            portfolio_final = (
+                worker_data["portfolio_values"][-1]
+                if worker_data["portfolio_values"]
+                else 20.50
             )
+            total_trades = len(trades_list)
 
-        # Score final multi-palier avec emphase sur qualité
-        if tier_scores:
-            # Favoriser les paliers supérieurs mais exiger qualité sur tous
-            weights = [0.15, 0.2, 0.25, 0.3, 0.35]  # Progressive (5 tiers)
+            # PÉNALITÉ SÉVÈRE si aucun trade
+            if total_trades == 0:
+                logger.warning(
+                    f"❌ {worker_id}: AUCUN TRADE - Score pénalisé sévèrement!"
+                )
+                worker_score = -2.0  # Score très négatif
+                win_rate = 0.0
+                portfolio_growth = -1.0
+                tf_diversity = 0
+                tf_bonus = 0.0
+                trade_frequency = 0.0
+            else:
+                # Score multi-timeframe : bonus si le worker utilise plusieurs TF
+                tf_trades = worker_data["timeframe_trades"]
+                tf_diversity = sum(1 for count in tf_trades.values() if count > 0)
+                tf_bonus = tf_diversity * 0.15
 
-            # Bonus si tous les paliers sont acceptables (>0.4)
-            all_acceptable = all(score > 0.4 for score in tier_scores)
-            quality_bonus = 0.2 if all_acceptable else 0.0
+                # Win rate
+                winning_trades = sum(
+                    1 for trade in trades_list if trade.get("pnl", 0) > 0
+                )
+                win_rate = winning_trades / total_trades
 
-            # Score pondéré
-            weighted_score = sum(
-                score * weight
-                for score, weight in zip(tier_scores, weights[: len(tier_scores)])
-            )
+                # Portfolio growth
+                portfolio_growth = (
+                    (portfolio_final - 20.50) / 20.50 if portfolio_final > 0 else -1.0
+                )
 
-            # Pénalité si trop de pertes consécutives sur n'importe quel palier
-            max_consecutive_penalty = 0
-            for behavior in final_behaviors.values():
-                if (
-                    behavior.max_consecutive_losses
-                    > trading_params["max_consecutive_losses"]
-                ):
-                    max_consecutive_penalty += 0.1
+                # Trade frequency
+                trade_frequency = total_trades / EVALUATION_STEPS
 
-            final_score = weighted_score + quality_bonus - max_consecutive_penalty
-        else:
-            final_score = -1.0
+                # Score composite
+                base_score = (
+                    portfolio_growth * 0.35
+                    + win_rate * 0.25
+                    + tf_bonus * 0.25
+                    + trade_frequency * 0.15
+                )
 
-        # Sauvegarder les résultats comportementaux
-        behavior_summary = {}
-        for tier_name, behavior in final_behaviors.items():
-            behavior_summary[tier_name] = {
-                "win_rate": behavior.win_rate,
-                "risk_reward_ratio": behavior.risk_reward_ratio,
-                "trading_frequency": behavior.trading_frequency,
-                "behavior_description": behavior.get_behavior_description(),
-                "behavior_score": behavior.get_behavior_score(),
+                # Bonus pour activité
+                activity_bonus = 0.0
+                if total_trades >= 5:
+                    activity_bonus += 0.1
+                if total_trades >= 10:
+                    activity_bonus += 0.1
+                if worker_data["positions_opened"] >= 10:
+                    activity_bonus += 0.05
+
+                worker_score = base_score + activity_bonus
+
+            # Get tier progression summary
+            tier_summary = self.tier_trackers[worker_idx].get_progression_summary()
+            
+            # Stockage des comportements
+            worker_behaviors[worker_id] = {
+                "total_trades": total_trades,
+                "total_pnl": total_pnl,
+                "win_rate": win_rate,
+                "portfolio_final": portfolio_final,
+                "portfolio_growth": portfolio_growth,
+                "timeframe_trades": tf_trades,
+                "tf_diversity": tf_diversity,
+                "score": worker_score,
+                "params": worker_specific_params[worker_id],
+                "positions_opened": worker_data["positions_opened"],
+                "positions_closed": worker_data["positions_closed"],
+                "trade_attempts": worker_data["trade_attempts"],
+                "actions_taken": worker_data["actions_taken"],
+                "evaluation_steps": EVALUATION_STEPS,
+                "trade_frequency": trade_frequency,
+                "activity_score": worker_data["positions_opened"] + total_trades,
+                "tier_progression": tier_summary,
+                "reached_enterprise": tier_summary["reached_enterprise"],
             }
 
-        trial.set_user_attr("behavior_analysis", behavior_summary)
-        trial.set_user_attr("final_behavior_score", final_score)
-        trial.set_user_attr("tier_progression", [tier.name for tier in CapitalTier])
+            worker_scores[worker_id] = worker_score
 
-        # Paramètres importants pour l'analyse
+            # LOG FINAL DÉTAILLÉ pour ce worker
+            logger.info(f"🎯 RÉSULTAT FINAL {worker_id.upper()}:")
+            logger.info(f"   Score: {worker_score:.4f}")
+            logger.info(f"   Trades: {total_trades}")
+            logger.info(f"   PnL: ${total_pnl:.2f}")
+            logger.info(f"   Win Rate: {win_rate:.1%}")
+            logger.info(f"   Portfolio Growth: {portfolio_growth:.2%}")
+            logger.info(f"   TF Diversity: {tf_diversity}/3")
+            logger.info(f"   TF Distribution: {tf_trades}")
+            logger.info(f"   Positions Opened: {worker_data['positions_opened']}")
+            logger.info(f"   Trade Attempts: {worker_data['trade_attempts']}")
+            logger.info(f"   Trade Frequency: {trade_frequency:.4f}")
+            logger.info(f"   Tier Progression: {tier_summary['current_tier']}")
+            logger.info(f"   Reached Enterprise: {'✅ YES' if tier_summary['reached_enterprise'] else '❌ NO'}")
+            logger.info("   " + "=" * 50)
+
+        # Score final : moyenne des workers avec bonus si tous sont positifs
+        individual_scores = list(worker_scores.values())
+        final_score = (
+            sum(individual_scores) / len(individual_scores)
+            if individual_scores
+            else -1.0
+        )
+
+        # Bonus si tous les workers sont rentables
+        all_positive = all(score > 0 for score in individual_scores)
+        if all_positive:
+            final_score += 0.2
+            
+        # Bonus Enterprise : si des workers atteignent Enterprise tier
+        enterprise_count = sum(1 for worker_id in ["w1", "w2", "w3", "w4"] 
+                              if worker_behaviors.get(worker_id, {}).get("reached_enterprise", False))
+        if enterprise_count > 0:
+            enterprise_bonus = enterprise_count * 0.1  # 0.1 par worker Enterprise
+            final_score += enterprise_bonus
+            logger.info(f"🏢 Enterprise Bonus: {enterprise_count}/4 workers reached Enterprise tier (+{enterprise_bonus:.2f})")
+
+        logger.info(f"Individual scores: {worker_scores}")
+        logger.info(f"Final combined score: {final_score:.3f}")
+
+        # NOUVEAU: Sauvegarder les résultats par worker
+        trial.set_user_attr("worker_scores", worker_scores)
+        trial.set_user_attr("worker_behaviors", worker_behaviors)
+        trial.set_user_attr("worker_specific_params", worker_specific_params)
+
+        # Sauvegarder les meilleurs paramètres par worker
+        best_w1_score = worker_scores.get("w1", -1.0)
+        best_w2_score = worker_scores.get("w2", -1.0)
+        best_w3_score = worker_scores.get("w3", -1.0)
+        best_w4_score = worker_scores.get("w4", -1.0)
+
+        trial.set_user_attr("w1_score", best_w1_score)
+        trial.set_user_attr("w2_score", best_w2_score)
+        trial.set_user_attr("w3_score", best_w3_score)
+        trial.set_user_attr("w4_score", best_w4_score)
+
+        trial.set_user_attr("w1_params", worker_specific_params["w1"])
+        trial.set_user_attr("w2_params", worker_specific_params["w2"])
+        trial.set_user_attr("w3_params", worker_specific_params["w3"])
+        trial.set_user_attr("w4_params", worker_specific_params["w4"])
+
+        # Paramètres globaux pour compatibilité
+        trial.set_user_attr("final_behavior_score", final_score)
         trial.set_user_attr("stop_loss_pct", stop_loss_pct)
         trial.set_user_attr("take_profit_pct", take_profit_pct)
         trial.set_user_attr("win_rate_bonus", reward_params["win_rate_bonus"])
         trial.set_user_attr("pnl_weight", reward_params["pnl_weight"])
-        
-        # NOUVEAU: Sauvegarder les hyperparamètres spécifiques par worker
-        trial.set_user_attr("worker_specific_params", worker_specific_params)
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds() / 60.0
@@ -1057,14 +1704,12 @@ def objective(trial: optuna.Trial) -> float:
             f"Trial {trial.number} completed - Score: {final_score:.4f} - Duration: {duration:.1f}min"
         )
 
-        # Log du meilleur comportement
-        best_tier = max(
-            final_behaviors.keys(),
-            key=lambda k: final_behaviors[k].get_behavior_score(),
-        )
+        # Log du meilleur worker
+        best_worker = max(worker_scores.keys(), key=lambda k: worker_scores[k])
         logger.info(
-            f"Best behavior: {final_behaviors[best_tier].get_behavior_description()}"
+            f"Best worker: {best_worker} with score {worker_scores[best_worker]:.3f}"
         )
+        logger.info(f"Best worker params: {worker_specific_params[best_worker]}")
 
         return final_score
 
@@ -1072,7 +1717,12 @@ def objective(trial: optuna.Trial) -> float:
         logger.info(f"Trial {trial.number} was pruned")
         raise
     except Exception as e:
-        logger.error(f"Trial {trial.number} failed: {e}", exc_info=True)
+        import traceback
+
+        logger.error(f"Trial {trial.number} failed critically. Full traceback below:")
+        logger.error(traceback.format_exc())
+        # We still return -np.inf so Optuna can log the trial as failed and continue
+        # but the traceback will be visible in the logs.
         return -np.inf
     finally:
         if env is not None:
@@ -1167,9 +1817,14 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Optimisation Optuna avancée")
-    parser.add_argument("--n-trials", type=int, default=100, help="Nombre de trials")
+    parser.add_argument("--n-trials", type=int, default=1, help="Nombre de trials")
     parser.add_argument("--timeout", type=int, default=7200, help="Timeout en secondes")
-    parser.add_argument("--config", type=str, default="config/config.yaml", help="Chemin vers config.yaml")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="config/config.yaml",
+        help="Chemin vers config.yaml",
+    )
 
     args = parser.parse_args()
 
@@ -1201,7 +1856,7 @@ def main():
             objective,
             n_trials=args.n_trials,
             timeout=args.timeout,
-            n_jobs=3,  # Parallélisme avec 3 workers
+            n_jobs=1,  # MODIFIÉ: Forcer 1 worker pour le débogage
             gc_after_trial=True,
         )
 

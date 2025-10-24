@@ -88,6 +88,14 @@ class RewardCalculator:
             "calmar": 0.1,  # Drawdown-adjusted return
         }
 
+        # Exploration Tutor settings
+        self.tutor_config = self.config.get("exploration_tutor", {})
+        self.tutor_enabled = self.tutor_config.get("enabled", False)
+        self.discovery_bonus = self.tutor_config.get("discovery_bonus", 0.0)
+        self.exit_criteria = self.tutor_config.get("exit_on_successful_trades", {})
+        self.successful_trade_counts = {tf: 0 for tf in self.exit_criteria}
+        self._processed_trades = set()
+
         # Risk management formula bonus parameters
         self.kelly_bonus_weight = 0.1  # Bonus weight for respecting Kelly criterion
         self.risk_parity_bonus_weight = 0.05  # Bonus weight for respecting risk parity
@@ -100,6 +108,45 @@ class RewardCalculator:
         logger.info(
             "RewardCalculator initialized with multi-objective optimization and detailed logging."
         )
+
+    def _calculate_tutor_bonus(self, portfolio_metrics: Dict[str, Any]) -> float:
+        """
+        Calculates and applies a one-time bonus for successful trades on new timeframes.
+        This system acts as 'training wheels' and disables itself once criteria are met.
+        """
+        if not self.tutor_enabled:
+            return 0.0
+
+        bonus = 0.0
+        closed_trades = portfolio_metrics.get("closed_positions", [])
+        
+        for trade in closed_trades:
+            trade_id = trade.get("order_id")
+            if not trade_id or trade_id in self._processed_trades:
+                continue
+
+            self._processed_trades.add(trade_id)
+            
+            pnl = trade.get("pnl", 0.0)
+            timeframe = trade.get("timeframe")
+
+            if pnl > 0 and timeframe in self.exit_criteria:
+                if self.successful_trade_counts[timeframe] < self.exit_criteria[timeframe]:
+                    bonus += self.discovery_bonus
+                    self.successful_trade_counts[timeframe] += 1
+                    logger.info(f"[TUTOR] Discovery bonus of {self.discovery_bonus} applied for successful trade on {timeframe}.")
+        
+        # Check if the tutor can be disabled
+        tutor_complete = all(
+            self.successful_trade_counts.get(tf, 0) >= count
+            for tf, count in self.exit_criteria.items()
+        )
+
+        if tutor_complete:
+            self.tutor_enabled = False
+            logger.info("[TUTOR] All discovery objectives met. Exploration tutor is now disabled.")
+
+        return bonus
 
     def _calculate_kelly_bonus(self, position_metadata: Dict[str, Any]) -> float:
         """
@@ -211,196 +258,89 @@ class RewardCalculator:
     ) -> float:
         """
         Calculate the total reward for the current timestep using multi-objective optimization.
-
-        The reward is a weighted combination of:
-        - Base PnL (profit and loss)
-        - Risk-adjusted returns (Sharpe ratio)
-        - Downside risk-adjusted returns (Sortino ratio)
-        - Drawdown-adjusted returns (Calmar ratio)
-        - Chunk-based performance bonuses
-
-        Args:
-            portfolio_metrics: A dictionary of performance metrics from the PortfolioManager.
-            trade_pnl: The realized profit or loss from a trade executed in the current step.
-            action: The action taken by the agent (0: Hold, 1: Buy, 2: Sell).
-            chunk_id: The current chunk ID for chunk-based rewards.
-            optimal_chunk_pnl: The optimal possible PnL for the current chunk.
-            performance_ratio: The performance ratio for the current chunk (actual_pnl / optimal_pnl).
-
-        Returns:
-            float: The total reward for the current timestep, clipped to the configured range.
         """
         try:
-            # Update returns history if this is a new trade
             if trade_pnl != 0:
                 self._update_returns_history(trade_pnl)
 
-            # 1. Calculate base reward components
             commission = portfolio_metrics.get("total_commission", 0.0)
             commission_penalty = commission * self.commission_penalty
             base_reward = (trade_pnl - commission_penalty) * self.pnl_multiplier
 
-            # 2. Check minimum profit threshold
             drawdown_penalty = 0.0
             min_profit = self.min_profit_multiplier * commission
             if trade_pnl > 0 and commission > 0 and trade_pnl < min_profit:
-                # Penalize trades that don't meet minimum profit threshold
                 drawdown_penalty = (min_profit - trade_pnl) * 2
                 base_reward -= drawdown_penalty
-                logger.debug(
-                    f"Trade PnL ({trade_pnl}) below minimum threshold ({self.min_profit_multiplier}x commission = {min_profit}), penalty: {drawdown_penalty:.4f}"
-                )
 
-            # 3. Calculate chunk-based performance bonus if applicable
             chunk_bonus = 0.0
-            if (
-                chunk_id is not None
-                and optimal_chunk_pnl is not None
-                and optimal_chunk_pnl > 0
-                and chunk_id != self.current_chunk_id
-            ):
+            if chunk_id is not None and optimal_chunk_pnl is not None and optimal_chunk_pnl > 0 and chunk_id != self.current_chunk_id:
                 self.current_chunk_id = chunk_id
-
-                if (
-                    performance_ratio is not None
-                    and performance_ratio >= self.performance_threshold
-                ):
-                    chunk_bonus = self.optimal_trade_bonus * (
-                        performance_ratio - self.performance_threshold
-                    )
-
-                    # Store chunk rewards for analysis
+                if performance_ratio is not None and performance_ratio >= self.performance_threshold:
+                    chunk_bonus = self.optimal_trade_bonus * (performance_ratio - self.performance_threshold)
                     self.chunk_rewards[chunk_id] = {
                         "optimal_pnl": optimal_chunk_pnl,
                         "performance_ratio": performance_ratio,
                         "bonus": chunk_bonus,
                     }
 
-                    logger.debug(
-                        f"Chunk {chunk_id} performance bonus: {chunk_bonus:.4f} "
-                        f"(Ratio: {performance_ratio:.2f}, Optimal PnL: {optimal_chunk_pnl:.2f}%)"
-                    )
-
-            # 4. Calculate risk metrics
-            drawdown = portfolio_metrics.get("drawdown", 0.0)
-
-            # 5. Calculate advanced performance metrics if we have enough data
-            if (
-                len(self.returns_history) >= 5
-            ):  # Minimum 5 data points for meaningful calculations
-                # Calculate all performance ratios
+            final_reward = 0.0
+            if len(self.returns_history) >= 5:
                 sharpe_ratio = self._calculate_sharpe_ratio()
                 sortino_ratio = self._calculate_sortino_ratio()
                 calmar_ratio = self._calculate_calmar_ratio(portfolio_metrics)
-
-                # 6. Calculate risk management bonuses
                 position_metadata = portfolio_metrics.get("position_metadata", {})
                 kelly_bonus = self._calculate_kelly_bonus(position_metadata)
                 risk_parity_bonus = self._calculate_risk_parity_bonus(position_metadata)
-                stress_var_penalty = self._calculate_stress_var_penalty(
-                    portfolio_metrics
-                )
+                stress_var_penalty = self._calculate_stress_var_penalty(portfolio_metrics)
 
-                # Calculate composite score using weighted sum of components
                 composite_score = (
                     self.weights["pnl"] * base_reward
                     + self.weights["sharpe"] * sharpe_ratio
                     + self.weights["sortino"] * sortino_ratio
                     + self.weights["calmar"] * calmar_ratio
-                    + chunk_bonus  # Add chunk bonus as an additional component
-                    + kelly_bonus  # Bonus for respecting Kelly criterion
-                    + risk_parity_bonus  # Bonus for respecting risk parity
-                    + stress_var_penalty  # Penalty for exceeding stress VaR
+                    + chunk_bonus
+                    + kelly_bonus
+                    + risk_parity_bonus
+                    + stress_var_penalty
                 )
 
-                # Apply drawdown penalty (outside the composite score to maintain scale)
-                if drawdown < -0.05:  # If drawdown is worse than -5%
+                drawdown = portfolio_metrics.get("drawdown", 0.0)
+                if drawdown < -0.05:
                     drawdown_penalty = abs(drawdown) * 10
                     composite_score -= drawdown_penalty
-                    logger.debug(f"Applied drawdown penalty: {drawdown_penalty:.4f}")
 
-                # Apply inaction penalty for hold actions
                 inaction_penalty = 0.0
-                if action == 0 and not is_hunting:  # Hold action
+                if action == 0 and not is_hunting:
                     inaction_penalty = self.inaction_penalty
                     composite_score += inaction_penalty
-                    logger.debug(
-                        f"Applied inaction penalty (not hunting): {inaction_penalty:.4f}"
-                    )
 
-                # Apply duration penalty for MaxDuration trades
                 duration_penalty = 0.0
                 if trade_reason == "MaxDuration":
-                    # Penalty is higher for short-term trades (risk_horizon = -1) and lower for long-term trades (risk_horizon = 1)
-                    # L'agent définit son horizon de risque entre -1 (court terme) et 1 (long terme)
-                    # Si l'agent a choisi un horizon court et atteint MaxDuration, la pénalité est forte
-                    # Si l'agent a choisi un horizon long et atteint MaxDuration, la pénalité est faible voire nulle
-                    duration_penalty = -1.0 * (
-                        1.0 - risk_horizon
-                    )  # -2.0 for -1, -1.0 for 0, 0.0 for 1
+                    duration_penalty = -1.0 * (1.0 - risk_horizon)
                     composite_score += duration_penalty
-                    logger.debug(
-                        f"Applied duration penalty for MaxDuration trade (risk_horizon={risk_horizon:.2f}): {duration_penalty:.4f}"
-                    )
-
-                # Log detailed metrics
-                self._log_reward_components(
-                    {
-                        "base_reward": base_reward,
-                        "commission_penalty": commission_penalty,
-                        "chunk_bonus": chunk_bonus,
-                        "sharpe_ratio": sharpe_ratio,
-                        "sortino_ratio": sortino_ratio,
-                        "calmar_ratio": calmar_ratio,
-                        "drawdown": drawdown,
-                        "drawdown_penalty": drawdown_penalty,
-                        "inaction_penalty": inaction_penalty,
-                        "duration_penalty": duration_penalty,
-                        "kelly_bonus": kelly_bonus,
-                        "risk_parity_bonus": risk_parity_bonus,
-                        "stress_var_penalty": stress_var_penalty,
-                        "action": action,
-                        "trade_pnl": trade_pnl,
-                        "final_reward": composite_score,
-                    }
-                )
-
-                # Final reward is the composite score
+                
                 final_reward = composite_score
-
             else:
-                # Not enough data for advanced metrics, use simple reward
                 final_reward = base_reward + chunk_bonus
-
-                # Apply inaction penalty for hold actions
                 inaction_penalty = 0.0
-                if action == 0 and not is_hunting:  # Hold action
+                if action == 0 and not is_hunting:
                     inaction_penalty = self.inaction_penalty
                     final_reward += inaction_penalty
 
-                # Apply duration penalty for MaxDuration trades
                 duration_penalty = 0.0
                 if trade_reason == "MaxDuration":
-                    # Même formule de pénalité que ci-dessus, adaptée à l'horizon choisi par l'agent
-                    duration_penalty = -1.0 * (
-                        1.0 - risk_horizon
-                    )  # -2.0 pour court terme, 0.0 pour long terme
+                    duration_penalty = -1.0 * (1.0 - risk_horizon)
                     final_reward += duration_penalty
 
-            # Update DBE parameters based on performance
+            final_reward += self._calculate_tutor_bonus(portfolio_metrics)
             self._update_dbe_parameters(portfolio_metrics)
-
-            # Track episode rewards for logging
             self.current_episode_rewards.append(final_reward)
-
-            # Clip the final reward to prevent extreme values
             final_reward = np.clip(final_reward, *self.clipping_range)
-
             return float(final_reward)
 
         except Exception as e:
             logger.error(f"Error in reward calculation: {str(e)}")
-            # Return a neutral reward in case of errors
             return 0.0
 
         # Update DBE parameters based on performance

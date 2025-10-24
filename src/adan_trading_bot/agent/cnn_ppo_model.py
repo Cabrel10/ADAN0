@@ -187,14 +187,44 @@ class IntegratedCNNPPOModel(nn.Module):
         # Métriques pour analyse
         self.feature_importance = {}
     
-    def forward(self, observation: torch.Tensor, hidden_state: Optional[Tuple] = None) -> Dict:
+    def forward(self, observation: Dict[str, torch.Tensor], hidden_state: Optional[Tuple] = None) -> Dict:
         """Flux complet: CNN → Mémoire → PPO"""
         
-        # Étape 1: Extraction de features par le CNN
-        cnn_features = self.cnn(observation)  # [batch, 128]
+        # Étape 1: Préparation de l'observation pour le CNN
+        # observation est un dictionnaire: {'5m': tensor, '1h': tensor, '4h': tensor, 'portfolio_state': tensor}
+        
+        # Concaténer les observations des timeframes pour le CNN
+        # Assurez-vous que l'ordre est cohérent (ex: 5m, 1h, 4h)
+        # Les clés sont '5m', '1h', '4h'
+        timeframe_tensors = []
+        for tf_key in ['5m', '1h', '4h']:
+            if tf_key in observation:
+                timeframe_tensors.append(observation[tf_key])
+            else:
+                # Gérer le cas où un timeframe est manquant (ex: pour les tests)
+                # Créer un tenseur de zéros de la bonne forme
+                # La forme attendue par MultiTimeframeCNN est (batch, n_timeframes, window, features)
+                # Donc pour un timeframe manquant, il faut (batch, window, features)
+                # On peut déduire la forme des autres timeframes ou la passer en paramètre
+                # Pour l'instant, on va assumer que tous les timeframes sont présents
+                raise ValueError(f"Timeframe {tf_key} missing from observation dictionary.")
+
+        # Concaténer le long de la dimension des timeframes
+        # Input pour CNN: [batch_size, n_timeframes, window_size, n_features]
+        cnn_input = torch.stack(timeframe_tensors, dim=1)
+
+        # Étape 1.1: Extraction de features par le CNN
+        cnn_features = self.cnn(cnn_input)  # [batch, 128]
+
+        # Étape 1.2: Ajouter l'état du portefeuille aux features du CNN
+        portfolio_state = observation['portfolio_state']
+        # Assurez-vous que portfolio_state a la bonne forme (batch, dim)
+        # Si portfolio_state est [batch, 20], et cnn_features est [batch, 128]
+        # On les concatène pour le PPO
+        combined_features_for_ppo = torch.cat((cnn_features, portfolio_state), dim=1)
         
         # Étape 2: Traitement PPO avec mémoire des schémas
-        ppo_output = self.ppo(cnn_features, hidden_state)
+        ppo_output = self.ppo(combined_features_for_ppo, hidden_state)
         
         # Métriques pour analyse (optionnel)
         self._compute_feature_importance(cnn_features, ppo_output)

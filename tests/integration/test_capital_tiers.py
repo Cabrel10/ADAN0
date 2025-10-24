@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
+import copy
 
 # Add the project root to the Python path
 import sys
@@ -27,16 +28,9 @@ class TestCapitalTiers(unittest.TestCase):
             'volume': np.random.uniform(10, 100, size=100),
         })}}
 
-        # Load config using the EnhancedConfigManager
+        # Load the entire monolithic config file
         config_manager = get_config_manager(config_dir='config', enable_hot_reload=False, force_new=True)
-        self.config = {
-            'trading': config_manager.get_config('trading'),
-            'dbe': config_manager.get_config('dbe'),
-            'environment': config_manager.get_config('environment'),
-            'agent': config_manager.get_config('agent'),
-            'data': config_manager.get_config('data'),
-            'paths': {'processed_data_dir': '/tmp/processed_data'} # Dummy path
-        }
+        self.config = config_manager.load_config('config/config.yaml')
 
         # Mock the data loader
         self.mock_data_loader = MagicMock()
@@ -53,34 +47,31 @@ class TestCapitalTiers(unittest.TestCase):
 
     def test_capital_tier_position_sizing(self):
         """Test that position sizing respects capital tier rules."""
-        tiers = self.config['trading']['capital_tiers']
+        tiers = self.config['capital_tiers']
 
         for tier in tiers:
-            if tier['name'] == 'Enterprise': continue # Skip enterprise for this test
+            if tier['name'] == 'Enterprise': continue
 
-            initial_balance = (tier['min_capital'] + tier['max_capital']) / 2
+            initial_balance = (tier['min_capital'] + tier.get('max_capital', tier['min_capital'] * 2)) / 2
+            if initial_balance == 0: initial_balance = 15 # for Micro tier
+
+            config_copy = copy.deepcopy(self.config)
+            config_copy['environment']['initial_balance'] = initial_balance
             
             env = MultiAssetChunkedEnv(
                 data=self.data,
                 timeframes=self.timeframes,
                 window_size=20,
-                features_config={
-                    '5m': ['open', 'high', 'low', 'close', 'volume'],
-                    '1h': ['open', 'high', 'low', 'close', 'volume'],
-                    '4h': ['open', 'high', 'low', 'close', 'volume']
-                },
-                config=self.config,
-                worker_config={'assets': self.assets, 'timeframes': self.timeframes, 'initial_balance': initial_balance}
+                features_config=config_copy['data']['features_config']['timeframes'],
+                config=config_copy,
+                worker_config=config_copy['workers']['w1']
             )
             env.reset()
 
-            # Mock the open_position method to capture the size
             with patch.object(env.portfolio_manager, 'open_position', wraps=env.portfolio_manager.open_position) as mock_open_position:
-                # Action to open a position with high confidence
                 action = np.array([0.9, 0.1]) # High confidence buy
                 env.step(action)
 
-                # Check if open_position was called
                 if mock_open_position.called:
                     args, kwargs = mock_open_position.call_args
                     opened_size_usd = kwargs['size'] * kwargs['price']
@@ -94,7 +85,6 @@ class TestCapitalTiers(unittest.TestCase):
                     print(f"Max Position Size (config): {max_pos_size_pct_from_config:.2%}")
                     print(f"Actual Position Size: {position_size_pct:.2%}")
 
-                    # Allow a small tolerance for floating point inaccuracies
                     self.assertLessEqual(position_size_pct, max_pos_size_pct_from_config + 0.001)
 
 if __name__ == '__main__':

@@ -37,17 +37,17 @@ except ImportError:
     ARCH_AVAILABLE = False
     logger.warning("arch package non disponible - fonctionnalités GARCH désactivées")
 
+logger = logging.getLogger(__name__)
+
 try:
     from pykalman import KalmanFilter
 
     KALMAN_AVAILABLE = True
-except ImportError:
+except (ImportError, ValueError, Exception) as e:
     KALMAN_AVAILABLE = False
     logger.warning(
-        "pykalman package non disponible - fonctionnalités Kalman désactivées"
+        f"pykalman package non disponible - fonctionnalités Kalman désactivées: {e}"
     )
-
-logger = logging.getLogger(__name__)
 
 
 def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -1042,10 +1042,11 @@ class StateBuilder:
         Returns:
             int: Dimension de l'état du portefeuille
         """
+        logger.info("Executing new get_portfolio_state_dim")
         if hasattr(self, "_build_portfolio_state"):
             dummy_portfolio = np.zeros(1)
             return len(self._build_portfolio_state(dummy_portfolio))
-        return 17  # Valeur par défaut si _build_portfolio_state n'existe pas
+        return 20
 
     def calculate_expected_flat_dimension(
         self, portfolio_included: bool = False
@@ -1164,46 +1165,69 @@ class StateBuilder:
             Numpy array containing portfolio state information
         """
         if not self.include_portfolio_state or portfolio_manager is None:
-            return np.zeros(17, dtype=np.float32)  # Return zero-padded portfolio state
+            return np.zeros(20, dtype=np.float32)
 
         try:
             metrics = portfolio_manager.get_metrics()
-            portfolio_state = [
-                metrics.get("cash", 0.0),
-                metrics.get("total_capital", 0.0),
-                metrics.get("total_pnl_pct", 0.0),  # Using total_pnl_pct as returns
+            total_value = metrics.get("total_value", 0.0)
+            cash = metrics.get("cash", 0.0)
+
+            # Obtenir les informations sur les flux de fonds
+            fund_analysis = portfolio_manager.get_trading_pnl_vs_external_flows()
+            trading_pnl_pct = (
+                fund_analysis["trading_pnl"] / fund_analysis["adjusted_initial_capital"]
+                if fund_analysis["adjusted_initial_capital"] > 0
+                else 0.0
+            )
+            external_flow_pct = (
+                fund_analysis["net_external_flow"] / portfolio_manager.initial_capital
+                if portfolio_manager.initial_capital > 0
+                else 0.0
+            )
+
+            # 10 features de base (incluant les flux de fonds)
+            state = [
+                cash,
+                total_value,
+                trading_pnl_pct,
+                external_flow_pct,
+                fund_analysis["total_deposits"] / portfolio_manager.initial_capital
+                if portfolio_manager.initial_capital > 0
+                else 0.0,
+                fund_analysis["total_withdrawals"] / portfolio_manager.initial_capital
+                if portfolio_manager.initial_capital > 0
+                else 0.0,
                 metrics.get("sharpe_ratio", 0.0),
-                metrics.get("drawdown", 0.0),
-                len(metrics.get("positions", {})),
-                (
-                    (metrics.get("total_capital", 0.0) - metrics.get("cash", 0.0))
-                    / metrics.get("total_capital", 0.0)
-                    if metrics.get("total_capital", 0.0) > 0
-                    else 0.0
-                ),
+                metrics.get("drawdown", 0.0) / 100.0,
+                metrics.get("open_positions_count", 0),
+                (total_value - cash) / total_value
+                if total_value > 0
+                else 0.0,
             ]
 
-            # Add individual position information (up to 5 largest positions)
+            # 10 features pour les positions (5 positions * 2 features)
             sorted_positions = sorted(
                 metrics.get("positions", {}).items(),
-                key=lambda x: abs(x[1].get("size", 0.0)),
+                key=lambda item: abs(
+                    item[1].get("size", 0.0) * item[1].get("current_price", 0.0)
+                ),
                 reverse=True,
             )[:5]
 
-            for i, (asset, position_obj) in enumerate(sorted_positions):
-                portfolio_state.append(position_obj.get("size", 0.0))
-                portfolio_state.append(hash(asset) % 1000)  # Simple asset encoding
+            for asset, pos_obj in sorted_positions:
+                state.append(pos_obj.get("size", 0.0))
+                state.append(hash(asset) % 1000 / 1000.0)
 
-            # Pad remaining position slots with zeros
-            for i in range(len(sorted_positions), 5):
-                portfolio_state.append(0.0)
-                portfolio_state.append(0.0)
+            # Remplir les slots de positions restants avec des zéros
+            num_pos_features = len(sorted_positions) * 2
+            padding_needed = 10 - num_pos_features
+            state.extend([0.0] * padding_needed)
 
-            return np.array(portfolio_state, dtype=np.float32)
+            return np.array(state, dtype=np.float32)
 
         except Exception as e:
-            logger.error(f"Error building portfolio state: {e}")
-            return np.zeros(17, dtype=np.float32)  # Return zero-padded portfolio state
+            logger.error(f"Error building portfolio state: {e}", exc_info=True)
+            return np.zeros(20, dtype=np.float32)
 
     def validate_observation(self, observation: np.ndarray) -> bool:
         """
@@ -3310,7 +3334,8 @@ class StateBuilder:
 
                 # 7. Sélectionner la fenêtre de données
                 window_data = processed_data.iloc[-self.window_size :].copy()
-                result = window_data.values.astype(np.float32)
+                # S'assurer que le tableau est contigu en mémoire
+                result = np.ascontiguousarray(window_data.values.astype(np.float32))
 
                 # --- DEBUG LOGGING ---
                 logger.info(
@@ -3335,15 +3360,15 @@ class StateBuilder:
                         expected_shape,
                     )
 
-                    # Créer un nouveau tableau avec la forme correcte
-                    new_result = np.zeros(expected_shape, dtype=np.float32)
+                    # Créer un nouveau tableau avec la forme correcte et contigu en mémoire
+                    new_result = np.zeros(expected_shape, dtype=np.float32, order='C')
 
                     # Copier autant de données que possible
                     min_rows = min(result.shape[0], expected_shape[0])
                     min_cols = min(result.shape[1], expected_shape[1])
 
                     new_result[:min_rows, :min_cols] = result[:min_rows, :min_cols]
-                    result = new_result
+                    result = np.ascontiguousarray(new_result)
 
                 if verbose_log:
                     logger.info(
@@ -3972,7 +3997,11 @@ class StateBuilder:
             try:
                 df = asset_data.get(tf)
                 if df is None or df.empty:
-                    raise ValueError(f"No data for timeframe {tf}")
+                    logger.warning(f"No data for timeframe {tf}")
+                    window_size = window_sizes.get(tf, 20)
+                    n_features = len(self.get_feature_names(tf))
+                    observations[tf] = np.zeros((window_size, n_features), dtype=np.float32)
+                    continue
 
                 features = self.get_feature_names(tf)
                 window_size = window_sizes.get(tf, 20)
@@ -4002,28 +4031,40 @@ class StateBuilder:
                         obs_array, pad_width, mode="constant", constant_values=0.0
                     )
 
+                # Gestion de la normalisation
                 if self.normalize and self.scalers.get(tf):
-                    from sklearn.utils.validation import check_is_fitted
-                    from sklearn.exceptions import NotFittedError
-
                     try:
-                        check_is_fitted(self.scalers[tf])
-                    except NotFittedError:
-                        logger.warning(
-                            f"Scaler for timeframe {tf} is not fitted. Fitting on the full available data for this timeframe."
+                        from sklearn.utils.validation import check_is_fitted
+                        from sklearn.exceptions import NotFittedError
+
+                        try:
+                            check_is_fitted(self.scalers[tf])
+                        except NotFittedError:
+                            logger.warning(
+                                f"Scaler for timeframe {tf} is not fitted. "
+                                "Fitting on the full available data for this timeframe."
+                            )
+                            self.scalers[tf].fit(df_features.values)
+
+                        obs_array = self.scalers[tf].transform(obs_array)
+                    except Exception as e:
+                        logger.error(
+                            f"Error normalizing data for timeframe {tf}: {e}", 
+                            exc_info=True
                         )
-                        self.scalers[tf].fit(df_features.values)
-
-                    obs_array = self.scalers[tf].transform(obs_array)
-
-                observations[tf] = obs_array
+                        # En cas d'échec de la normalisation, on continue avec les données brutes
+                
+                # On s'assure que le tableau est contigu en mémoire
+                observations[tf] = np.ascontiguousarray(obs_array)
 
             except Exception as e:
                 logger.error(
-                    f"Error building observation for timeframe {tf}: {e}", exc_info=True
+                    f"Error processing timeframe {tf}: {e}", 
+                    exc_info=True
                 )
+                # En cas d'erreur, on crée une observation vide
                 window_size = window_sizes.get(tf, 20)
                 n_features = len(self.get_feature_names(tf))
                 observations[tf] = np.zeros((window_size, n_features), dtype=np.float32)
-
+                    
         return observations

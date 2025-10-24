@@ -16,6 +16,7 @@ import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import configure as sb3_configure
+from adan_trading_bot.agent.feature_extractors import TemporalFusionExtractor
 
 
 def setup_logger(log_file: str = "training_log.txt", logger_name: str = 'PPOTraining') -> logging.Logger:
@@ -501,8 +502,9 @@ class PPOAgent:
 
         # Configuration du réseau de neurones
         policy_kwargs = {
-            "net_arch": config.get("net_arch", [256, 128]),
-            "features_dim": config.get("features_dim", 256),
+            "features_extractor_class": TemporalFusionExtractor,
+            "features_extractor_kwargs": {"features_dim": config.get("features_dim", 128)},
+            "net_arch": config.get("net_arch", []), # L'architecture est dans l'extracteur
             "activation_fn": torch.nn.ReLU,
             "ortho_init": True
         }
@@ -527,7 +529,7 @@ class PPOAgent:
 
         # Créer le modèle PPO
         self.model = PPO(
-            policy="MultiInputPolicy",
+            policy="MlpPolicy", # Utiliser MlpPolicy avec un extracteur custom
             env=env,
             policy_kwargs=policy_kwargs,
             verbose=0,
