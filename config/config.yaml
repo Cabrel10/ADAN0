@@ -233,17 +233,17 @@ workers:
         take_profit_bonus: 7.076709
       tracking_periods:
         5m:
-          min_tracking_steps: 6
+          min_tracking_steps: 1
           max_tracking_steps: 42
           optimal_duration: 12
           grace_period: 2
         1h:
-          min_tracking_steps: 2
+          min_tracking_steps: 1
           max_tracking_steps: 47
           optimal_duration: 15
           grace_period: 1
         4h:
-          min_tracking_steps: 2
+          min_tracking_steps: 1
           max_tracking_steps: 18
           optimal_duration: 9
           grace_period: 1
@@ -312,17 +312,17 @@ workers:
         take_profit_bonus: 7.397326
       tracking_periods:
         5m:
-          min_tracking_steps: 5
+          min_tracking_steps: 1
           max_tracking_steps: 52
           optimal_duration: 33
           grace_period: 2
         1h:
-          min_tracking_steps: 4
+          min_tracking_steps: 1
           max_tracking_steps: 43
           optimal_duration: 14
           grace_period: 1
         4h:
-          min_tracking_steps: 2
+          min_tracking_steps: 1
           max_tracking_steps: 16
           optimal_duration: 8
           grace_period: 1
@@ -387,7 +387,7 @@ workers:
         take_profit_bonus: 8.340914
       tracking_periods:
         5m:
-          min_tracking_steps: 6
+          min_tracking_steps: 1
           max_tracking_steps: 49
           optimal_duration: 30
           grace_period: 2
@@ -397,7 +397,7 @@ workers:
           optimal_duration: 15
           grace_period: 1
         4h:
-          min_tracking_steps: 2
+          min_tracking_steps: 1
           max_tracking_steps: 13
           optimal_duration: 6
           grace_period: 1
@@ -480,17 +480,17 @@ workers:
         take_profit_bonus: 9.864655
       tracking_periods:
         5m:
-          min_tracking_steps: 10
+          min_tracking_steps: 1
           max_tracking_steps: 77
           optimal_duration: 35
           grace_period: 3
         1h:
-          min_tracking_steps: 3
+          min_tracking_steps: 1
           max_tracking_steps: 22
           optimal_duration: 7
           grace_period: 1
         4h:
-          min_tracking_steps: 3
+          min_tracking_steps: 1
           max_tracking_steps: 10
           optimal_duration: 5
           grace_period: 1
@@ -764,9 +764,9 @@ trading_rules:
     trailing_pct: 0.005
   frequency:
     min_positions:
-      5m: 3
-      1h: 4
-      4h: 1
+      5m: 0  # CORRECTION CRITIQUE: Permettre le premier trade
+      1h: 0  # CORRECTION CRITIQUE: Permettre le premier trade
+      4h: 0  # CORRECTION CRITIQUE: Permettre le premier trade
     max_positions:
       5m: 13
       1h: 13
@@ -775,7 +775,7 @@ trading_rules:
     total_daily_max: 24
     bonus_weight: 0.6
     penalty_weight: 0.3
-    grace_period_steps: 100
+    grace_period_steps: 5  # CORRECTION: Réduire période de grâce pour trader rapidement
     force_trade_steps:
       5m: 999999 # DÉSACTIVÉ: Le modèle doit être autonome
       1h: 999999 # DÉSACTIVÉ: Le modèle doit être autonome
