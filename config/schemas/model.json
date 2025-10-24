@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "architecture": {
+      "type": "object"
+    },
+    "diagnostics": {
+      "type": "object"
+    },
+    "style": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "architecture"
+  ]
+}

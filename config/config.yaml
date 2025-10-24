@@ -166,7 +166,7 @@ data:
 portfolio:
   initial_balance: 20.5
   include_portfolio_state: true
-  portfolio_state_features: 17
+  portfolio_state_features: 20
 workers:
   w1:
     name: Conservative Optimized
@@ -180,6 +180,7 @@ workers:
     data_split: train
     training_mode: full
     trading_mode: spot
+    min_confidence: 0.01
     agent_config:
       ent_coef: 0.080242
       learning_rate: 0.00038419
@@ -258,6 +259,7 @@ workers:
     data_split: train
     training_mode: full
     trading_mode: spot
+    min_confidence: 0.01
     agent_config:
       ent_coef: 0.069506
       learning_rate: 0.00056435
@@ -336,6 +338,7 @@ workers:
     data_split: train
     training_mode: full
     trading_mode: spot
+    min_confidence: 0.01
     agent_config:
       ent_coef: 0.066929
       learning_rate: 0.00030344
@@ -410,6 +413,7 @@ workers:
     data_split: train
     training_mode: full
     trading_mode: spot
+    min_confidence: 0.01
     agent_config:
       learning_rate: 0.00050158
       ent_coef: 0.08584
@@ -772,8 +776,11 @@ trading_rules:
     bonus_weight: 0.6
     penalty_weight: 0.3
     grace_period_steps: 100
-    force_trade_steps: 150
-    action_threshold: 0.35
+    force_trade_steps:
+      5m: 999999 # DÉSACTIVÉ: Le modèle doit être autonome
+      1h: 999999 # DÉSACTIVÉ: Le modèle doit être autonome
+      4h: 999999 # DÉSACTIVÉ: Le modèle doit être autonome
+    action_threshold: 0.01
   duration_tracking:
     5m:
       max_duration_steps: 50
@@ -1258,84 +1265,90 @@ reward_shaping:
   overstay_penalty: -1.0
   multi_traque_bonus: 1.5
   progressive_difficulty: true
-  
+  exploration_tutor:
+    enabled: true
+    discovery_bonus: 0.5
+    exit_on_successful_trades:
+      5m: 15
+      4h: 10
+
   # Gestion avancée des risques (formules clés)
   risk_formulas:
     # Protection du capital (RPC)
     capital_protection:
       enabled: true
       bonus_weight: 0.3
-      threshold: 0.9  # RPC > 90%
-    
+      threshold: 0.9 # RPC > 90%
+
     # Score de gestion des risques (SGR)
     risk_score:
       enabled: true
       bonus_weight: 0.2
-      threshold: 80  # SGR > 80%
-      max_risk_per_trade: 0.02  # 2% du capital
-    
+      threshold: 80 # SGR > 80%
+      max_risk_per_trade: 0.02 # 2% du capital
+
     # Indice de qualité d'entrée (IQE)
     entry_quality:
       enabled: true
       bonus_weight: 0.15
-      min_ratio: 2.0  # Ratio risque/rendement minimum
-      max_ratio: 3.0  # Ratio risque/rendement maximum
-    
+      min_ratio: 2.0 # Ratio risque/rendement minimum
+      max_ratio: 3.0 # Ratio risque/rendement maximum
+
     # Score de liquidité (SL)
     liquidity:
       enabled: true
       penalty_weight: -0.2
-      max_position_volume_ratio: 0.05  # 5% du volume 24h
-    
+      max_position_volume_ratio: 0.05 # 5% du volume 24h
+
     # Indice de timing du marché (ITM)
     market_timing:
       enabled: true
       bonus_weight: 0.1
-      optimal_range: [0.3, 0.4]  # Zone optimale d'entrée
-    
+      optimal_range: [0.3, 0.4] # Zone optimale d'entrée
+
     # Score de volatilité (SV)
     volatility:
       enabled: true
       penalty_weight: -0.15
       bonus_weight: 0.1
-      high_threshold: 0.03  # Trop volatile
-      optimal_range: [0.01, 0.02]  # Volatilité optimale
-    
+      high_threshold: 0.03 # Trop volatile
+      optimal_range: [0.01, 0.02] # Volatilité optimale
+
     # Ratio de performance du trade (RPT)
     trade_performance:
       enabled: true
       bonus_weight: 0.25
-      min_ratio: 2.0  # RPT >= 2
-    
+      min_ratio: 2.0 # RPT >= 2
+
     # Indice de concentration du portefeuille (ICP)
     portfolio_concentration:
       enabled: true
       penalty_weight: -0.1
-      max_concentration: 0.7  # 70% max dans un actif
-  
+      max_concentration: 0.7 # 70% max dans un actif
+
   # Pénalités et bonus spécifiques au trading spot BTC
   spot_trading:
     # Niveaux clés
     key_levels:
       support_resistance_bonus: 0.3
       trend_alignment_bonus: 0.2
-    
+
     # Gestion des liquidités
     liquidity_zones:
       avoidance_bonus: 0.3
       proximity_penalty: -0.4
-    
+
     # Efficacité des ordres
     order_efficiency:
       slippage_penalty_per_pct: -0.2
       efficient_execution_bonus: 0.15
-    
+
     # Gestion du capital
     capital_management:
       idle_capital_penalty: -0.1
       efficiency_bonus: 0.2
-      min_utilization: 0.3  # 30% minimum
-      max_utilization: 0.9  # 90% maximum
+      min_utilization: 0.3 # 30% minimum
+      max_utilization: 0.9 # 90% maximum
   profiles:
     Conservative:
       stop_loss_penalty: -1.5

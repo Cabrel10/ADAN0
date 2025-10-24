@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "initial_balance": {
+      "type": "number",
+      "minimum": 0
+    },
+    "trading_fees": {
+      "type": "number",
+      "minimum": 0
+    },
+    "max_steps": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "observation": {
+      "type": "object"
+    },
+    "memory": {
+      "type": "object"
+    },
+    "risk_management": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "initial_balance",
+    "assets",
+    "observation"
+  ]
+}

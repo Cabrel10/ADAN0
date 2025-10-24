@@ -1,0 +1,25 @@
+{
+  "best_score": -1.0,
+  "best_params": {
+    "n_epochs": 4,
+    "stop_loss_pct": 0.07341725265919861,
+    "take_profit_pct": 0.0919210181599499,
+    "learning_rate": 8.891942168465027e-05,
+    "n_steps": 1024,
+    "ent_coef": 0.09370655325818963,
+    "clip_range": 0.3,
+    "gamma": 0.9354615351787228,
+    "batch_size": 128,
+    "w1_position_size": 0.16941150375292918,
+    "w1_risk_mult": 1.2219317802431306,
+    "w2_position_size": 0.08883582142731293,
+    "w2_risk_mult": 1.2183689930673194,
+    "w3_position_size": 0.14244247767515736,
+    "w3_risk_mult": 1.3348156783637282,
+    "w4_position_size": 0.12297161198404494,
+    "w4_risk_mult": 0.9330711420403541
+  },
+  "best_attributes": {},
+  "n_trials": 599,
+  "optimization_time": 7200
+}

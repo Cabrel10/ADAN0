@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "futures_enabled": {
+      "type": "boolean"
+    },
+    "leverage": {
+      "type": "number",
+      "minimum": 1
+    },
+    "commission_pct": {
+      "type": "number",
+      "minimum": 0
+    },
+    "min_order_value_usdt": {
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "commission_pct"
+  ]
+}

@@ -1556,9 +1556,9 @@ def objective(trial: optuna.Trial) -> float:
                 logger.warning(
                     f"❌ {worker_id}: AUCUN TRADE - Score pénalisé sévèrement!"
                 )
-                worker_score = -2.0  # Score très négatif
+                worker_score = -1.0  # Score négatif mais pas aussi punitif que -2.0
                 win_rate = 0.0
-                portfolio_growth = -1.0
+                portfolio_growth = -0.5  # Moins punitif que -1.0
                 tf_diversity = 0
                 tf_bonus = 0.0
                 trade_frequency = 0.0
@@ -1576,7 +1576,7 @@ def objective(trial: optuna.Trial) -> float:
 
                 # Portfolio growth
                 portfolio_growth = (
-                    (portfolio_final - 20.50) / 20.50 if portfolio_final > 0 else -1.0
+                    (portfolio_final - 20.50) / 20.50 if portfolio_final > 0 else -0.2  # Moins punitif que -1.0
                 )
 
                 # Trade frequency
@@ -1646,11 +1646,12 @@ def objective(trial: optuna.Trial) -> float:
 
         # Score final : moyenne des workers avec bonus si tous sont positifs
         individual_scores = list(worker_scores.values())
-        final_score = (
-            sum(individual_scores) / len(individual_scores)
-            if individual_scores
-            else -1.0
-        )
+        if not individual_scores:
+            # Si aucun worker n'a de score valide, retourner un score très négatif mais pas -inf
+            final_score = -5.0
+            logger.warning("No valid worker scores available, returning penalty score")
+        else:
+            final_score = sum(individual_scores) / len(individual_scores)
 
         # Bonus si tous les workers sont rentables
         all_positive = all(score > 0 for score in individual_scores)
@@ -1721,9 +1722,9 @@ def objective(trial: optuna.Trial) -> float:
 
         logger.error(f"Trial {trial.number} failed critically. Full traceback below:")
         logger.error(traceback.format_exc())
-        # We still return -np.inf so Optuna can log the trial as failed and continue
-        # but the traceback will be visible in the logs.
-        return -np.inf
+        # We still return a very low score so Optuna can log the trial as failed and continue
+        # but the traceback will be visible in the logs. Using -10.0 instead of -inf for better optimization.
+        return -10.0
     finally:
         if env is not None:
             try:
