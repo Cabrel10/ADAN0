@@ -180,7 +180,7 @@ workers:
     data_split: train
     training_mode: full
     trading_mode: spot
-    min_confidence: 0.01
+    min_confidence: 0.005
     agent_config:
       ent_coef: 0.080242
       learning_rate: 0.00038419
@@ -259,7 +259,7 @@ workers:
     data_split: train
     training_mode: full
     trading_mode: spot
-    min_confidence: 0.01
+    min_confidence: 0.005
     agent_config:
       ent_coef: 0.069506
       learning_rate: 0.00056435
@@ -338,7 +338,7 @@ workers:
     data_split: train
     training_mode: full
     trading_mode: spot
-    min_confidence: 0.01
+    min_confidence: 0.005
     agent_config:
       ent_coef: 0.066929
       learning_rate: 0.00030344
@@ -413,7 +413,7 @@ workers:
     data_split: train
     training_mode: full
     trading_mode: spot
-    min_confidence: 0.01
+    min_confidence: 0.005
     agent_config:
       learning_rate: 0.00050158
       ent_coef: 0.08584
@@ -780,7 +780,7 @@ trading_rules:
       5m: 999999 # DÉSACTIVÉ: Le modèle doit être autonome
       1h: 999999 # DÉSACTIVÉ: Le modèle doit être autonome
       4h: 999999 # DÉSACTIVÉ: Le modèle doit être autonome
-    action_threshold: 0.01
+    action_threshold: 0.005
   duration_tracking:
     5m:
       max_duration_steps: 50

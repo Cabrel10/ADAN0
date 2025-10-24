@@ -1088,7 +1088,7 @@ def objective(trial: optuna.Trial) -> float:
         w1_position_size_pct = trial.suggest_float("w1_position_size", 0.05, 0.25)
         w1_risk_multiplier = trial.suggest_float("w1_risk_mult", 0.8, 1.5)
         w1_patience_steps = trial.suggest_int("w1_patience", 10, 50)
-        w1_min_confidence = trial.suggest_float("w1_min_conf", 0.01, 0.15)
+        w1_min_confidence = trial.suggest_float("w1_min_conf", 0.005, 0.05)
         w1_mts_5m = trial.suggest_int("w1_mts_5m", 1, 12)
         w1_mts_1h = trial.suggest_int("w1_mts_1h", 1, 8)
         w1_mts_4h = trial.suggest_int("w1_mts_4h", 1, 12)
@@ -1097,7 +1097,7 @@ def objective(trial: optuna.Trial) -> float:
         w2_position_size_pct = trial.suggest_float("w2_position_size", 0.05, 0.25)
         w2_risk_multiplier = trial.suggest_float("w2_risk_mult", 0.8, 1.5)
         w2_patience_steps = trial.suggest_int("w2_patience", 10, 50)
-        w2_min_confidence = trial.suggest_float("w2_min_conf", 0.01, 0.15)
+        w2_min_confidence = trial.suggest_float("w2_min_conf", 0.005, 0.05)
         w2_mts_5m = trial.suggest_int("w2_mts_5m", 1, 12)
         w2_mts_1h = trial.suggest_int("w2_mts_1h", 1, 8)
         w2_mts_4h = trial.suggest_int("w2_mts_4h", 1, 12)
@@ -1106,7 +1106,7 @@ def objective(trial: optuna.Trial) -> float:
         w3_position_size_pct = trial.suggest_float("w3_position_size", 0.05, 0.25)
         w3_risk_multiplier = trial.suggest_float("w3_risk_mult", 0.8, 1.5)
         w3_patience_steps = trial.suggest_int("w3_patience", 10, 50)
-        w3_min_confidence = trial.suggest_float("w3_min_conf", 0.01, 0.15)
+        w3_min_confidence = trial.suggest_float("w3_min_conf", 0.005, 0.05)
         w3_mts_5m = trial.suggest_int("w3_mts_5m", 1, 12)
         w3_mts_1h = trial.suggest_int("w3_mts_1h", 1, 8)
         w3_mts_4h = trial.suggest_int("w3_mts_4h", 1, 12)
@@ -1115,7 +1115,7 @@ def objective(trial: optuna.Trial) -> float:
         w4_position_size_pct = trial.suggest_float("w4_position_size", 0.05, 0.25)
         w4_risk_multiplier = trial.suggest_float("w4_risk_mult", 0.8, 1.5)
         w4_patience_steps = trial.suggest_int("w4_patience", 10, 50)
-        w4_min_confidence = trial.suggest_float("w4_min_conf", 0.01, 0.15)
+        w4_min_confidence = trial.suggest_float("w4_min_conf", 0.005, 0.05)
         w4_mts_5m = trial.suggest_int("w4_mts_5m", 1, 12)
         w4_mts_1h = trial.suggest_int("w4_mts_1h", 1, 8)
         w4_mts_4h = trial.suggest_int("w4_mts_4h", 1, 12)
@@ -1298,7 +1298,7 @@ def objective(trial: optuna.Trial) -> float:
             temp_config["trading_rules"] = {}
 
         # Utiliser action_threshold cohérent avec la configuration
-        temp_config["trading_rules"]["action_threshold"] = 0.01  # Valeur du config.yaml
+        temp_config["trading_rules"]["action_threshold"] = 0.005  # Valeur du config.yaml
 
         # Forcer frequency rules très permissives
         if "frequency" not in temp_config["trading_rules"]:
