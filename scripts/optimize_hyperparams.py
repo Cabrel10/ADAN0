@@ -1088,7 +1088,7 @@ def objective(trial: optuna.Trial) -> float:
         w1_position_size_pct = trial.suggest_float("w1_position_size", 0.05, 0.25)
         w1_risk_multiplier = trial.suggest_float("w1_risk_mult", 0.8, 1.5)
         w1_patience_steps = trial.suggest_int("w1_patience", 10, 50)
-        w1_min_confidence = trial.suggest_float("w1_min_conf", 0.005, 0.05)
+        w1_min_confidence = trial.suggest_float("w1_min_conf", 0.01, 0.08)
         w1_mts_5m = trial.suggest_int("w1_mts_5m", 1, 12)
         w1_mts_1h = trial.suggest_int("w1_mts_1h", 1, 8)
         w1_mts_4h = trial.suggest_int("w1_mts_4h", 1, 12)
@@ -1097,7 +1097,7 @@ def objective(trial: optuna.Trial) -> float:
         w2_position_size_pct = trial.suggest_float("w2_position_size", 0.05, 0.25)
         w2_risk_multiplier = trial.suggest_float("w2_risk_mult", 0.8, 1.5)
         w2_patience_steps = trial.suggest_int("w2_patience", 10, 50)
-        w2_min_confidence = trial.suggest_float("w2_min_conf", 0.005, 0.05)
+        w2_min_confidence = trial.suggest_float("w2_min_conf", 0.01, 0.08)
         w2_mts_5m = trial.suggest_int("w2_mts_5m", 1, 12)
         w2_mts_1h = trial.suggest_int("w2_mts_1h", 1, 8)
         w2_mts_4h = trial.suggest_int("w2_mts_4h", 1, 12)
@@ -1106,7 +1106,7 @@ def objective(trial: optuna.Trial) -> float:
         w3_position_size_pct = trial.suggest_float("w3_position_size", 0.05, 0.25)
         w3_risk_multiplier = trial.suggest_float("w3_risk_mult", 0.8, 1.5)
         w3_patience_steps = trial.suggest_int("w3_patience", 10, 50)
-        w3_min_confidence = trial.suggest_float("w3_min_conf", 0.005, 0.05)
+        w3_min_confidence = trial.suggest_float("w3_min_conf", 0.01, 0.08)
         w3_mts_5m = trial.suggest_int("w3_mts_5m", 1, 12)
         w3_mts_1h = trial.suggest_int("w3_mts_1h", 1, 8)
         w3_mts_4h = trial.suggest_int("w3_mts_4h", 1, 12)
@@ -1115,7 +1115,7 @@ def objective(trial: optuna.Trial) -> float:
         w4_position_size_pct = trial.suggest_float("w4_position_size", 0.05, 0.25)
         w4_risk_multiplier = trial.suggest_float("w4_risk_mult", 0.8, 1.5)
         w4_patience_steps = trial.suggest_int("w4_patience", 10, 50)
-        w4_min_confidence = trial.suggest_float("w4_min_conf", 0.005, 0.05)
+        w4_min_confidence = trial.suggest_float("w4_min_conf", 0.01, 0.08)
         w4_mts_5m = trial.suggest_int("w4_mts_5m", 1, 12)
         w4_mts_1h = trial.suggest_int("w4_mts_1h", 1, 8)
         w4_mts_4h = trial.suggest_int("w4_mts_4h", 1, 12)
@@ -1255,7 +1255,7 @@ def objective(trial: optuna.Trial) -> float:
 
         # Configuration pour entraînement optimisé pour générer des trades
         temp_config["environment"]["max_steps"] = (
-            8000  # Plus de steps pour plus de trades
+            50000  # 50k steps au lieu de 8k pour permettre l'apprentissage
         )
         temp_config["environment"]["max_chunks_per_episode"] = 2  # Réduit pour focus
 
@@ -1264,7 +1264,7 @@ def objective(trial: optuna.Trial) -> float:
             if worker_key in temp_config["workers"]:
                 # Utiliser les valeurs optimisées mais cohérentes
                 temp_config["workers"][worker_key]["min_confidence"] = max(
-                    0.005, worker_specific_params[worker_key]["min_confidence"]
+                    0.01, worker_specific_params[worker_key]["min_confidence"]
                 )
 
                 # Utiliser les patience_steps optimisés
@@ -1298,7 +1298,7 @@ def objective(trial: optuna.Trial) -> float:
             temp_config["trading_rules"] = {}
 
         # Utiliser action_threshold cohérent avec la configuration
-        temp_config["trading_rules"]["action_threshold"] = 0.005  # Valeur du config.yaml
+        temp_config["trading_rules"]["action_threshold"] = 0.01  # Valeur du config.yaml
 
         # Forcer frequency rules très permissives
         if "frequency" not in temp_config["trading_rules"]:
@@ -1325,7 +1325,7 @@ def objective(trial: optuna.Trial) -> float:
             data_loader = ChunkedDataLoader(
                 config=temp_config, worker_config=worker_config, worker_id=i
             )
-            data = data_loader.load_chunk(10)  # Changed chunk to avoid warm-up issues
+            data = data_loader.load_chunk(0)  # Utiliser le premier chunk avec plus d'entraînement
 
             env_worker_config = copy.deepcopy(worker_config)
             env_worker_config["worker_id"] = i
@@ -1819,7 +1819,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Optimisation Optuna avancée")
     parser.add_argument("--n-trials", type=int, default=1, help="Nombre de trials")
-    parser.add_argument("--timeout", type=int, default=7200, help="Timeout en secondes")
+    parser.add_argument("--timeout", type=int, default=600, help="Timeout en secondes (10 min pour plus d'apprentissage)")
     parser.add_argument(
         "--config",
         type=str,
