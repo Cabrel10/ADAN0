@@ -842,9 +842,11 @@ class StateBuilder:
             portfolio_manager: Optional portfolio manager for drawdown info.
 
         Returns:
-            np.ndarray of shape (5,) with dtype float32.
+            np.ndarray of shape (6,) with dtype float32.
+            [0] volatility, [1] trend, [2] adx, [3] regime_score,
+            [4] drawdown, [5] candle_progress_pct
         """
-        context = np.zeros(5, dtype=np.float32)
+        context = np.zeros(6, dtype=np.float32)
 
         if data is None:
             return context
@@ -901,6 +903,20 @@ class StateBuilder:
                             context[4] = float(np.clip(abs(state[4]) / 100.0, 0.0, 1.0))
                 except Exception:
                     pass
+
+            # [5] Candle progress: how far we are within the current data chunk
+            # This helps the agent detect time-distribution shift and avoid
+            # spamming orders inside a single candle.
+            try:
+                for tf in self.timeframes:
+                    if tf not in data or data[tf].empty:
+                        continue
+                    chunk_len = len(data[tf])
+                    if chunk_len > 1:
+                        context[5] = float(np.clip(current_idx / (chunk_len - 1), 0.0, 1.0))
+                    break
+            except Exception:
+                pass
 
         except Exception as e:
             logger.warning(f"Error building context vector: {e}. Returning zeros.")
@@ -1137,7 +1153,7 @@ class StateBuilder:
             )
         except Exception as e:
             logger.warning(f"Error building context_vector in build_observation: {e}")
-            observations["context_vector"] = np.zeros(5, dtype=np.float32)
+            observations["context_vector"] = np.zeros(6, dtype=np.float32)
 
         return observations
     def build_adaptive_observation(

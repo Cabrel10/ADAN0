@@ -35,6 +35,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+# ---------------------------------------------------------------------------
+# .env loading – must happen *before* any ADAN import so that env vars such
+# as BINANCE_API_KEY are available to ConfigLoader.resolve_env_vars().
+# ---------------------------------------------------------------------------
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
 import numpy as np
 import pandas as pd
 import torch
@@ -59,6 +67,11 @@ except ImportError:
 
 from adan_trading_bot.data_processing.data_loader import ChunkedDataLoader
 from adan_trading_bot.environment.multi_asset_chunked_env import MultiAssetChunkedEnv
+
+try:
+    from adan_trading_bot.agent.feature_extractors import ContextualTemporalFusionExtractor
+except ImportError:
+    ContextualTemporalFusionExtractor = None
 
 try:
     from adan_trading_bot.utils.ppo_safety import PpoStdSafetyCallback
@@ -325,18 +338,85 @@ class MetricsMonitor(BaseCallback):
 # Environment factory
 # ===========================================================================
 
-def make_env(config: dict, worker_idx: int = 0, envs_per_worker: int = 1, use_subproc: bool = True):
+# ---------------------------------------------------------------------------
+# Worker profiles – each profile defines specialisation defaults.
+# These are merged UNDER the worker's YAML config (YAML wins if set).
+# ---------------------------------------------------------------------------
+WORKER_PROFILES: Dict[str, Dict[str, Any]] = {
+    "scalper": {
+        "name": "Scalper",
+        "specialization": {"timeframe": "5m"},
+        "n_steps": 512,
+        "batch_size": 64,
+    },
+    "intraday": {
+        "name": "Intraday",
+        "specialization": {"timeframe": "1h"},
+        "n_steps": 512,
+        "batch_size": 64,
+    },
+    "swing": {
+        "name": "Swing",
+        "specialization": {"timeframe": "4h"},
+        "n_steps": 512,
+        "batch_size": 64,
+    },
+    "position": {
+        "name": "Position",
+        "specialization": {"timeframe": "4h"},
+        "n_steps": 1024,
+        "batch_size": 128,
+    },
+}
+
+
+def _inject_worker_profile(worker_config: dict, profile_name: str) -> dict:
+    """Merge a profile's defaults into *worker_config* (YAML values take precedence)."""
+    profile = WORKER_PROFILES.get(profile_name, {})
+    if not profile:
+        return worker_config
+    merged = copy.deepcopy(profile)
+    # Deep-merge: worker_config wins
+    for k, v in worker_config.items():
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k].update(v)
+        else:
+            merged[k] = v
+    return merged
+
+
+def make_env(
+    config: dict,
+    worker_idx: int = 0,
+    envs_per_worker: int = 1,
+    use_subproc: bool = True,
+    preloaded_data: Optional[Dict] = None,
+    profile: Optional[str] = None,
+):
     """Create a vectorised environment wrapped with VecNormalize.
 
-    When *use_subproc* is True each sub-env runs in its own process via
-    SubprocVecEnv; otherwise DummyVecEnv is used (useful for debugging
-    or low-memory sandboxes).
+    Bug-fix (v3): Adds *profile* injection (scalper, intraday, swing, position).
+    Each sub-env receives the correct ``worker_config``
+    (w1/w2/w3/w4) **and** pre-loaded parquet data.
     """
+    worker_key = f"w{worker_idx + 1}"
+    worker_config = copy.deepcopy(config.get("workers", {}).get(worker_key, {}))
+    if profile:
+        worker_config = _inject_worker_profile(worker_config, profile)
+
     def _make_single(env_idx: int):
         def _init():
-            wc = copy.deepcopy(config.get("workers", {}).get(f"w{worker_idx + 1}", {}))
+            wc = copy.deepcopy(worker_config)
             wc["worker_id"] = env_idx
-            return MultiAssetChunkedEnv(config=config)
+            if profile:
+                wc.setdefault("profile", profile)
+            return MultiAssetChunkedEnv(
+                data=preloaded_data,
+                config=config,
+                worker_config=wc,
+                worker_id=env_idx,
+                live_mode=False,
+            )
         return _init
 
     env_fns = [_make_single(worker_idx * envs_per_worker + j) for j in range(envs_per_worker)]
@@ -374,28 +454,84 @@ class ADAN_PBT_Worker(tune.Trainable):
     """
 
     def setup(self, config: Dict[str, Any]):
-        """Initialise env + PPO model from Ray Tune config."""
+        """Initialise env + PPO model from Ray Tune config.
+
+        Bug-fix (v2) – three corrections:
+          1. **Worker identity**: read the correct ``w<N>`` section from
+             ``adan_config['workers']`` so each trial uses its own
+             hyper-parameters, assets, and risk config.
+          2. **ChunkedDataLoader**: explicitly load parquet data here and
+             pass it to ``make_env`` so the env never falls back to live
+             websockets.
+          3. **No latency simulator**: ``MultiAssetChunkedEnv`` is used
+             directly (not ``RealisticTradingEnv``) so training speed is
+             not hampered by the ``LatencySimulator``.
+        """
         self.adan_config = config["adan_config"]
         self.worker_idx = config.get("worker_idx", 0)
         self.envs_per_worker = config.get("envs_per_worker", 2)
         self.use_subproc = config.get("use_subproc", True)
         self.interval_timesteps = config.get("interval_timesteps", 10_000)
         self._total_timesteps = 0
+        self.profile = config.get("profile", None)  # scalper / swing / ...
 
         # Mutable hyper-parameters (PBT will perturb these)
         self.learning_rate = config.get("learning_rate", 3e-4)
         self.ent_coef = config.get("ent_coef", 0.01)
         self.gamma = config.get("gamma", 0.99)
 
-        # Create environment
+        # -----------------------------------------------------------
+        # 1. Restore worker identity
+        # -----------------------------------------------------------
+        worker_key = f"w{self.worker_idx + 1}"
+        worker_config = copy.deepcopy(
+            self.adan_config.get("workers", {}).get(worker_key, {})
+        )
+        worker_config["worker_id"] = self.worker_idx
+        logger.info(
+            f"Worker {self.worker_idx} ({worker_key}): "
+            f"assets={worker_config.get('assets', '?')}, "
+            f"data_split={worker_config.get('data_split', '?')}"
+        )
+
+        # -----------------------------------------------------------
+        # 2. Pre-load parquet data via ChunkedDataLoader
+        #    so envs receive ready-made DataFrames and never attempt
+        #    live websocket connections.
+        # -----------------------------------------------------------
+        preloaded_data = None
+        try:
+            loader = ChunkedDataLoader(
+                config=self.adan_config,
+                worker_config=worker_config,
+                worker_id=self.worker_idx,
+            )
+            preloaded_data = loader.load_chunk(0)
+            logger.info(
+                f"Worker {self.worker_idx}: ChunkedDataLoader loaded chunk 0 "
+                f"({type(preloaded_data).__name__})"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Worker {self.worker_idx}: ChunkedDataLoader failed ({exc}); "
+                f"env will initialise its own loader."
+            )
+
+        # -----------------------------------------------------------
+        # 3. Create env WITHOUT latency simulator  (with profile)
+        # -----------------------------------------------------------
         self.vec_env = make_env(
             self.adan_config,
             worker_idx=self.worker_idx,
             envs_per_worker=self.envs_per_worker,
             use_subproc=self.use_subproc,
+            preloaded_data=preloaded_data,
+            profile=self.profile,
         )
 
-        # Policy kwargs
+        # -----------------------------------------------------------
+        # Policy kwargs + ContextualTemporalFusionExtractor
+        # -----------------------------------------------------------
         agent_cfg = self.adan_config.get("agent", {})
         fe_kwargs = agent_cfg.get("features_extractor_kwargs", {})
         policy_kwargs = copy.deepcopy(fe_kwargs.get("policy_kwargs", {}))
@@ -405,15 +541,31 @@ class ADAN_PBT_Worker(tune.Trainable):
             act_name = str(policy_kwargs["activation_fn"]).split(".")[-1]
             policy_kwargs["activation_fn"] = activation_fn_map.get(act_name, nn.ReLU)
 
+        # Inject ContextualTemporalFusionExtractor if available
+        # OMEGA-4A: only pass valid extractor kwargs (features_dim, context_dim, etc.)
+        if ContextualTemporalFusionExtractor is not None:
+            policy_kwargs.setdefault(
+                "features_extractor_class", ContextualTemporalFusionExtractor
+            )
+            valid_fe_keys = {"features_dim", "context_dim", "cnn_hidden", "dropout"}
+            safe_fe_kwargs = {k: v for k, v in fe_kwargs.items() if k in valid_fe_keys}
+            safe_fe_kwargs.setdefault("context_dim", 6)
+            policy_kwargs.setdefault("features_extractor_kwargs", safe_fe_kwargs)
+
         # Seed
         seed = self.adan_config.get("general", {}).get("random_seed", 42) + self.worker_idx
         if SeedManager is not None:
             SeedManager.initialize(seed)
 
-        # PPO model
+        # PPO model – profile may override n_steps/batch_size
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        n_steps = agent_cfg.get("n_steps", 2048)
-        batch_size = agent_cfg.get("batch_size", 64)
+        prof_cfg = WORKER_PROFILES.get(self.profile, {}) if self.profile else {}
+        n_steps = prof_cfg.get("n_steps", agent_cfg.get("n_steps", 2048))
+        batch_size = prof_cfg.get("batch_size", agent_cfg.get("batch_size", 64))
+        # Ensure batch_size divides n_steps * envs_per_worker
+        total_rollout = n_steps * self.envs_per_worker
+        if total_rollout % batch_size != 0:
+            batch_size = max(1, total_rollout // max(1, total_rollout // batch_size))
 
         self.model = PPO(
             "MultiInputPolicy",
@@ -561,6 +713,7 @@ def run_pbt(
     interval_timesteps: int = 10_000,
     stop_config: Optional[dict] = None,
     storage_path: Optional[str] = None,
+    profiles: Optional[list] = None,
 ):
     """Launch Ray Tune with Population-Based Training.
 
@@ -594,6 +747,12 @@ def run_pbt(
     )
 
     # Build per-trial param space
+    # If profiles supplied, cycle through them for each trial
+    _profiles = profiles or []
+    trial_profiles = [
+        _profiles[i % len(_profiles)] if _profiles else None
+        for i in range(num_samples)
+    ]
     param_space = {
         "adan_config": config,
         "worker_idx": tune.grid_search(list(range(num_samples))),
@@ -604,6 +763,9 @@ def run_pbt(
         "ent_coef": tune.uniform(0.0, 0.05),
         "gamma": tune.uniform(0.95, 0.999),
     }
+    # Only add profile to param_space if profiles are provided
+    if _profiles:
+        param_space["profile"] = tune.grid_search(trial_profiles)
 
     # Stop criteria
     if stop_config is None:
@@ -679,6 +841,7 @@ def main(
     log_level: str = "INFO",
     checkpoint_dir: Optional[str] = None,
     stop_config: Optional[dict] = None,
+    profiles: Optional[list] = None,
 ):
     """Main entry: load config, init Ray, run PBT."""
     # Logging
@@ -712,6 +875,7 @@ def main(
     logger.info(f"   CPUs: {num_cpus}, Samples: {num_samples}, Envs/worker: {envs_per_worker}")
     logger.info(f"   Total steps: {total_steps:,}, Interval: {interval_timesteps:,}")
     logger.info(f"   SubprocVecEnv: {use_subproc}")
+    logger.info(f"   Profiles: {profiles}")
     logger.info("=" * 80)
 
     try:
@@ -725,6 +889,7 @@ def main(
             interval_timesteps=interval_timesteps,
             stop_config=stop_config,
             storage_path=storage_path,
+            profiles=profiles,
         )
 
         logger.info("=" * 80)
@@ -760,6 +925,8 @@ if __name__ == "__main__":
     parser.add_argument("--steps-per-iter", type=int, default=10_000, help="Timesteps per PBT iteration")
     parser.add_argument("--log-level", type=str, default="INFO", help="Logging level")
     parser.add_argument("--checkpoint-dir", type=str, default=None, help="Override checkpoint dir")
+    parser.add_argument("--profiles", type=str, nargs="+", default=None,
+                        help="Worker profiles, e.g. --profiles scalper swing")
     # Legacy args (ignored, kept for CLI compatibility)
     parser.add_argument("--num-envs", type=int, default=4, help="(legacy, ignored)")
     parser.add_argument("--progress-bar", action="store_true", help="(legacy, ignored)")
@@ -779,4 +946,5 @@ if __name__ == "__main__":
         interval_timesteps=args.steps_per_iter,
         log_level=args.log_level,
         checkpoint_dir=args.checkpoint_dir,
+        profiles=args.profiles,
     )

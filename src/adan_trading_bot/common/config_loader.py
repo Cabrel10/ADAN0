@@ -1,11 +1,19 @@
 """
 Utility to load and resolve configuration with environment variables.
+
+When running in **training mode** (no live exchange connection needed),
+environment variables such as ``${BINANCE_API_KEY}`` may be absent.
+Instead of crashing, the resolver now inserts a safe placeholder
+(``__MISSING_<VAR>__``) so that config loading succeeds.
 """
 import os
 from typing import Dict, Any, Optional
 import re
 import yaml
 import sys
+import logging
+
+_cfg_logger = logging.getLogger(__name__)
 
 class ConfigLoader:
     """Load and resolve configuration with environment variables."""
@@ -52,7 +60,17 @@ class ConfigLoader:
                     env_var = match.group(1)
                     if env_var in os.environ:
                         return os.environ[env_var]
-                    return match.group(0)  # Return original if not found
+                    # --- TOLERANT MODE ---
+                    # During training, API keys and similar secrets are not
+                    # needed.  Instead of leaving the raw ``${VAR}`` (which
+                    # would trigger a ValueError later), we insert a safe
+                    # placeholder so that config loading succeeds.
+                    placeholder = f'__MISSING_{env_var}__'
+                    _cfg_logger.debug(
+                        "Env var ${{%s}} not set – inserting placeholder '%s'",
+                        env_var, placeholder,
+                    )
+                    return placeholder
 
                 new_value = re.sub(r'\${([A-Z0-9_]+)}', replace_env_var, value)
                 if new_value != value:
@@ -77,7 +95,13 @@ class ConfigLoader:
                                 # Check if it's an environment variable that wasn't resolved earlier
                                 if var_name in os.environ:
                                     return os.environ[var_name]
-                                return match.group(0)  # Return original if not found
+                                # Tolerant: insert placeholder for missing vars
+                                placeholder = f'__MISSING_{var_name}__'
+                                _cfg_logger.debug(
+                                    "Simple var ${{%s}} not found – placeholder '%s'",
+                                    var_name, placeholder,
+                                )
+                                return placeholder
                         return match.group(0)
 
                     new_value = re.sub(r'\${([^}]+)}', replace_simple_var, value)
@@ -119,23 +143,16 @@ class ConfigLoader:
                         result = str(current)
                         return result
 
-                    except (KeyError, TypeError) as e:
-                        # If we can't resolve the full path, try to resolve each part
-                        resolved_parts = []
-                        for part in parts:
-                            resolved = cls._resolve_part(part, root_config, f"{full_path}.{part}", root_config)
-
-                            if resolved == part and part not in os.environ:
-                                raise ValueError(
-                                    f"Undefined variable path in config: {var_path} "
-                                    f"(at {parent_key}.{key if parent_key else ''})"
-                                )
-
-                            final_value = resolved if resolved != part else os.environ.get(part, part)
-                            resolved_parts.append(str(final_value))
-
-                        result = '.'.join(resolved_parts)
-                        return result
+                    except (KeyError, TypeError, ValueError) as e:
+                        # Tolerant: if the nested path cannot be resolved,
+                        # return a safe placeholder instead of crashing.
+                        placeholder = f'__MISSING_{var_path}__'
+                        _cfg_logger.debug(
+                            "Nested var path ${{%s}} unresolvable (%s) "
+                            "\u2013 inserting placeholder '%s'",
+                            var_path, e, placeholder,
+                        )
+                        return placeholder
 
                 try:
                     config_copy[key] = re.sub(r'\${([^}]+)}', replace_nested_var, value)
@@ -208,8 +225,13 @@ class ConfigLoader:
         if '.' in part:
             return cls._resolve_nested_path(part, config, full_path, root_config)
 
-        # If we get here, we couldn't resolve the part
-        raise ValueError(f"Undefined variable path in config: {part} (at {full_path})")
+        # If we get here, we couldn't resolve the part – tolerate it
+        placeholder = f'__MISSING_{part}__'
+        _cfg_logger.debug(
+            "Could not resolve part '%s' at path '%s' – returning placeholder '%s'",
+            part, full_path, placeholder,
+        )
+        return placeholder
 
     @classmethod
     def _resolve_nested_path(
@@ -471,14 +493,20 @@ class ConfigLoader:
                         pass
                 pass
 
-        # If we get here, we couldn't resolve the part
+        # If we get here, we couldn't resolve the part – tolerate it
         if debug:
             try:
                 print(f"[ERROR] Failed to resolve part: '{part}' in path: '{full_path}'")
                 print(f"[ERROR] Available keys at this level: {list(config.keys())}")
             except BrokenPipeError:
                 pass
-        raise ValueError(f"Undefined variable path in config: {part} (at {full_path})")
+        # Tolerant: return placeholder instead of crashing
+        placeholder = f'__MISSING_{part}__'
+        _cfg_logger.debug(
+            "Could not resolve part '%s' at path '%s' – returning placeholder '%s'",
+            part, full_path, placeholder,
+        )
+        return placeholder
 
     @classmethod
     def _find_in_dict(cls, d: Dict[str, Any], target_key: str):

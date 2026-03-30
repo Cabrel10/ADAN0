@@ -131,6 +131,9 @@ class RewardCalculator:
             "calmar": 0.15,  # 15% - Augmenté (drawdown-adjusted)
         }
 
+        # Early exit bonus for profitable early closes
+        self.early_exit_bonus_weight = self.config.get("early_exit_bonus", 0.5)
+
         # Exploration Tutor configuration
         self.tutor_config = self.config.get("exploration_tutor", {})
         self.tutor_enabled = self.tutor_config.get("enabled", False)
@@ -159,6 +162,33 @@ class RewardCalculator:
             "RewardCalculator initialized with "
             "multi-objective optimization and detailed logging."
         )
+
+    def _calculate_early_exit_bonus(
+        self,
+        trade_pnl: float,
+        trade_reason: Optional[str],
+        portfolio_metrics: Dict[str, Any],
+    ) -> float:
+        """Calculate a bonus for profitable early exits.
+
+        The agent is rewarded for closing a profitable trade *before* the SL/TP
+        or max-duration is hit.  This encourages dynamic exit behavior.
+
+        Returns:
+            Early exit bonus (positive) or 0.
+        """
+        if trade_pnl <= 0:
+            return 0.0
+
+        # Only reward agent-initiated closes (not SL/TP/MaxDuration)
+        if trade_reason and trade_reason.upper() in (
+            "SL", "TP", "MAXDURATION", "MAX_DURATION",
+        ):
+            return 0.0
+
+        # Scale bonus by PnL magnitude (diminishing returns)
+        bonus = self.early_exit_bonus_weight * float(np.tanh(trade_pnl * 10.0))
+        return max(0.0, bonus)
 
     def _calculate_tutor_bonus(
         self, portfolio_metrics: Dict[str, Any]
@@ -407,6 +437,14 @@ class RewardCalculator:
                 if trade_reason == "MaxDuration":
                     duration_penalty = -1.0 * (1.0 - risk_horizon)
                     final_reward += duration_penalty
+
+            # Calculate early exit bonus for profitable closes
+            early_exit_bonus = self._calculate_early_exit_bonus(
+                trade_pnl=trade_pnl,
+                trade_reason=trade_reason,
+                portfolio_metrics=portfolio_metrics,
+            )
+            final_reward += early_exit_bonus
 
             # Calculate final reward with tutor bonus
             final_reward += self._calculate_tutor_bonus(portfolio_metrics)

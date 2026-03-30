@@ -6,9 +6,16 @@ from typing import Dict, Any, Optional, List, Tuple
 import pandas as pd
 import numpy as np
 import gym
+from gym import spaces
+import copy
 import os
+import json
 import logging
+import gc
+import pickle
 import threading
+import time
+import uuid
 from collections import deque
 
 from ..exchange_api.websocket_manager import WebSocketManager
@@ -89,6 +96,12 @@ class LiveDataManager:
                 self.current_data[asset][timeframe] = pd.concat([self.current_data[asset][timeframe], new_candle]).iloc[-200:] # Keep last 200
         except Exception as e:
             logger.error(f"Error updating data from WebSocket: {e}")
+
+
+DEFAULT_PORTFOLIO_STATE_SIZE = 20  # Must match StateBuilder's portfolio dim
+MAX_RELOAD_ATTEMPTS = 3            # Max retries when loading a data chunk
+RELOAD_FALLBACK_CHUNK = 0          # Fallback chunk index on persistent failure
+RELOAD_RETRY_DELAY = 0.5           # Seconds between reload retries
 
 
 class MultiAssetChunkedEnv(gym.Env):
@@ -307,6 +320,8 @@ class MultiAssetChunkedEnv(gym.Env):
 
         self.last_trade_timestamps = {"5m": None, "1h": None, "4h": None}
         self.receipts: deque = deque(maxlen=100)
+        self._all_episode_receipts: List[dict] = []
+        self._last_open_step_by_asset: Dict[str, int] = {}
 
         self.last_info: Dict[str, Any] = {}
 
@@ -1180,6 +1195,17 @@ class MultiAssetChunkedEnv(gym.Env):
 
     def _initialize_components(self) -> None:
         """Initialize all environment components in the correct order."""
+        # Lazy imports to avoid circular dependencies
+        from ..data_processing.state_builder import TimeframeConfig, StateBuilder
+        from ..portfolio.portfolio_manager import PortfolioManager
+        from ..data_processing.observation_validator import ObservationValidator
+        from .order_manager import OrderManager
+        from .reward_calculator import RewardCalculator
+        try:
+            from .dynamic_behavior_engine import DynamicBehaviorEngine
+        except ImportError:
+            DynamicBehaviorEngine = None
+
         # DIAGNOSTIC: Tracer les appels à _initialize_components
         self.logger.critical(
             f"📋 APPEL _initialize_components pour ENV_ID={getattr(self, 'env_instance_id', 'UNKNOWN')}"
@@ -1448,6 +1474,9 @@ class MultiAssetChunkedEnv(gym.Env):
         Raises:
             ValueError: If configuration is invalid or no assets are available
         """
+        # Lazy import to avoid circular dependency at module level
+        from ..data_processing.data_loader import ChunkedDataLoader
+
         if not self.worker_config:
             raise ValueError(
                 "worker_config must be provided to initialize the data loader."
@@ -1740,9 +1769,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 low=-np.inf, high=np.inf, shape=(portfolio_dim,), dtype=np.float32
             )
 
-            # Context vector for FiLM Meta-RL modulation (5 dims: volatility, trend, ADX, regime_score, drawdown)
+            # Context vector for FiLM Meta-RL modulation (6 dims: volatility, trend, ADX, regime_score, drawdown, candle_progress)
             obs_spaces["context_vector"] = spaces.Box(
-                low=-1.0, high=1.0, shape=(5,), dtype=np.float32
+                low=-1.0, high=1.0, shape=(6,), dtype=np.float32
             )
 
             self.observation_space = spaces.Dict(obs_spaces)
@@ -1971,6 +2000,8 @@ class MultiAssetChunkedEnv(gym.Env):
         self.last_trade_steps_by_tf = {}
         self.last_trade_timestamps = {}
         self.current_timeframe_for_trade = "5m"
+        self._all_episode_receipts = []
+        self._last_open_step_by_asset = {}
 
         # Reset portfolio and load initial data chunk
         if hasattr(self, "last_trade_step"):
@@ -3695,6 +3726,10 @@ class MultiAssetChunkedEnv(gym.Env):
             if self.current_step % 500 == 0:
                 gc.collect()
 
+            # OMEGA-4D: Log episode capital stats when episode ends
+            if terminated or truncated:
+                self._log_episode_capital_stats(info)
+
             return current_observation, float(reward), terminated, truncated, info
 
         except Exception as e:
@@ -5365,38 +5400,26 @@ class MultiAssetChunkedEnv(gym.Env):
         dbe_modulation: dict,
         action_threshold: float,
         force_trade: bool = False,
-    ) -> tuple[float, int]:
+    ) -> tuple:
         """
-        Exécute les trades en fonction des actions de l'agent.
+        OMEGA-3 Target-Weight execution logic.
 
-        Args:
-            action: Vecteur d'actions de l'agent [décision, horizon_risque, taille_position]
-                - décision: -1 à 1 (vendre/acheter)
-                - horizon_risque: -1 à 1 (court terme à long terme)
-                - taille_position: -1 à 1 (petite à grande)
-            dbe_modulation: Dictionnaire des paramètres modulés par le DBE
+        Action space per asset (5 dims): [action_raw, size_raw, tf_raw, sl_raw, tp_raw]
+        - action_raw: -1..1  (< -thr = SELL, > thr = BUY, else HOLD)
+        - size_raw:   -1..1  → mapped to tier exposure_range
+        - tf_raw:     -1..1  → maps to timeframe index
+        - sl_raw:     -1..1  → dynamic SL based on tier risk_per_trade_pct
+        - tp_raw:     -1..1  → dynamic TP
 
-        Returns:
-            A tuple of (realized_pnl, first_discrete_action)
+        Key design points:
+        • Tier-mapped exposure: uses capital_tiers.exposure_range
+        • Notional clamped to >= 11 USDT
+        • Anti-spam HOLD: if target exposure ≈ current exposure, do nothing
+        • Dynamic SL bounded by tier risk_per_trade_pct
         """
         if not hasattr(self, "portfolio_manager"):
-            self.logger.error(
-                "Portfolio manager non initialisé, impossible d'exécuter le trade."
-            )
+            self.logger.error("Portfolio manager non initialisé.")
             return 0.0, 0, 0
-            
-        # self.logger.info(f"DEBUG: Entering _execute_trades. Timeframes: {self.timeframes}")
-
-        # Sélection cyclique de la timeframe basée sur le step pour forcer diversification
-        # Chaque worker utilise un offset différent pour varier
-        worker_offset = getattr(self, "worker_id", 0) * 7  # Offset par worker
-        timeframe_cycle = (self.current_step + worker_offset) % 3
-        if timeframe_cycle == 0:
-            self.current_timeframe_for_trade = "5m"
-        elif timeframe_cycle == 1:
-            self.current_timeframe_for_trade = "1h"
-        else:
-            self.current_timeframe_for_trade = "4h"
 
         current_timestamp = None
         try:
@@ -5404,37 +5427,27 @@ class MultiAssetChunkedEnv(gym.Env):
             try:
                 current_timestamp = self._get_current_timestamp()
                 self._last_market_timestamp = current_timestamp
-            except Exception as timestamp_error:
-                self.logger.error(
-                    f"Impossible de récupérer l'horodatage marché au step {self.current_step}: {timestamp_error}"
-                )
+            except Exception:
                 current_timestamp = self._last_market_timestamp
 
             if hasattr(self.portfolio_manager, "register_market_timestamp"):
                 self.portfolio_manager.register_market_timestamp(current_timestamp)
 
             if not current_prices or not self._validate_market_data(current_prices):
-                self.logger.warning(
-                    f"[W:{self.worker_id}] Données de marché invalides pour le step {self.current_step}, aucun trade exécuté."
-                )
                 if hasattr(self, "portfolio_manager"):
                     self.portfolio_manager.update_market_price(
-                        current_prices if current_prices else {},
-                        self.current_step
+                        current_prices if current_prices else {}, self.current_step
                     )
                 return 0.0, 0, 0
         except Exception as e:
-            self.logger.error(
-                f"Erreur critique lors de la récupération des prix au step {self.current_step}: {e}",
-                exc_info=True,
-            )
+            self.logger.error(f"Price retrieval error at step {self.current_step}: {e}", exc_info=True)
             return 0.0, 0, 0
 
         realized_pnl = 0.0
         trade_executed_this_step = False
-        first_discrete_action = 0  # Default to HOLD
+        first_discrete_action = 0
 
-        # 1. Mettre à jour la valeur des positions ouvertes et vérifier les SL/TP
+        # 1. Update positions & check SL/TP
         pnl_from_update, sl_tp_receipts = self.portfolio_manager.update_market_price(
             current_prices, self.current_step
         )
@@ -5444,474 +5457,234 @@ class MultiAssetChunkedEnv(gym.Env):
             realized_pnl += pnl_from_update
             trade_executed_this_step = True
 
-        # 2. Itérer sur les actions de l'agent pour ouvrir ou fermer des positions
-        for i, asset in enumerate(self.assets):
-            if i >= len(action) or asset not in current_prices:
-                continue
+        # --- Helper: get current tier ---
+        capital = self.portfolio_manager.get_total_value()
+        tier = None
+        if hasattr(self, 'dbe') and self.dbe:
+            tier = self.dbe.get_capital_tier(capital)
+        if not tier:
+            # Fallback: find tier from config
+            for t in self.config.get("capital_tiers", []):
+                lo = t.get("min_capital", 0)
+                hi = t.get("max_capital") or float("inf")
+                if lo <= capital < hi:
+                    tier = t
+                    break
+        if not tier:
+            tier = {"exposure_range": [70, 90], "risk_per_trade_pct": 4.0, "name": "Micro Capital"}
 
-            # Get current price for SL/TP calculation
+        min_exp = float(tier.get("exposure_range", [70, 90])[0]) / 100.0
+        max_exp = float(tier.get("exposure_range", [70, 90])[1]) / 100.0
+        max_risk_pct = float(tier.get("risk_per_trade_pct", 4.0)) / 100.0
+        min_order_value = float(self.config.get("environment", {}).get(
+            "hard_constraints", {}).get("min_order_value_usdt", 11.0))
+
+        # 2. Iterate over assets
+        for i, asset in enumerate(self.assets):
+            if asset not in current_prices:
+                continue
             price = current_prices[asset]
 
-            # Décodage de l'action pour l'actif courant (compatibilité 5 actifs)
-            # L'action est un vecteur aplati de 15 dimensions [0-2: asset0, 3-5: asset1, 6-8: asset2, ...]
-            base_idx = i * 3  # 0, 3, 6, 9, 12 pour les actifs 0, 1, 2, 3, 4
-            if base_idx + 2 >= len(action):
-                # Ignorer si cet indice d'actif dépasse l'espace d'action
-                continue
-            main_decision = action[base_idx + 0]
-            # base_idx = i * 3  # 0, 3, 6, 9, 12 pour les actifs 0, 1, 2, 3, 4
-            # if base_idx + 2 >= len(action):
-            #     # Ignorer si cet indice d'actif dépasse l'espace d'action
-            #     continue
-            # main_decision = action[base_idx + 0]
-
-            discrete_action = 0  # Hold
-            # Extraction des composantes de l'action pour cet actif
-            # Structure v2 (Autonomie): [Action, Size, Timeframe, StopLoss, TakeProfit]
+            # Decode 5-dim action per asset
             base_idx = i * 5
-            if base_idx + 4 >= len(action): # Check if 5 dimensions are available
-                # If not enough dimensions, skip this asset or handle as an error
-                self.logger.warning(f"Not enough action dimensions for asset {asset} at index {i}. Expected 5, got less.")
+            if base_idx + 4 >= len(action):
                 continue
 
-            action_raw = action[base_idx]      # -1 (Sell) à 1 (Buy)
-            size_raw = action[base_idx + 1]    # 0 à 1 (Taille)
-            tf_raw = action[base_idx + 2]      # -1 (5m) à 1 (4h)
-            sl_raw = action[base_idx + 3]      # -1 (Serré) à 1 (Large)
-            tp_raw = action[base_idx + 4]      # -1 (Serré) à 1 (Large)
+            action_raw = float(action[base_idx])
+            size_raw = float(action[base_idx + 1])
+            tf_raw = float(action[base_idx + 2])
+            sl_raw = float(action[base_idx + 3])
+            tp_raw = float(action[base_idx + 4])
 
-            # 1. Décodage du Timeframe
-            # Mapping continu [-1, 1] vers discret [0, 1, 2]
-            tf_idx = int((tf_raw + 1) * 1.5)  # Maps -1->0, 0->1, 1->3 (clamped)
+            # Decode timeframe
+            tf_idx = int((tf_raw + 1) * 1.5)
             tf_idx = max(0, min(len(self.timeframes) - 1, tf_idx))
             self.current_timeframe_for_trade = self.timeframes[tf_idx]
 
-            # 2. Décodage Action & Taille
-            main_decision = action_raw  # > thr = Buy, < -thr = Sell
-            
-            # 3. Décodage SL/TP (Autonomie)
-            # Conversion des valeurs normalisées [-1, 1] en pourcentages de distance
-            # SL: 0.5% à 10%
-            sl_pct = 0.005 + (sl_raw + 1) / 2 * (0.10 - 0.005)
-            # TP: 1.0% à 20%
-            tp_pct = 0.01 + (tp_raw + 1) / 2 * (0.20 - 0.01)
+            main_decision = action_raw
 
-            # Calcul des prix SL/TP
-            sl_price = None
-            tp_price = None
-            if main_decision > 0: # Long
-                sl_price = price * (1 - sl_pct)
-                tp_price = price * (1 + tp_pct)
-            else: # Short (si activé un jour)
-                sl_price = price * (1 + sl_pct)
-                tp_price = price * (1 - tp_pct)
-
+            # Discrete action
+            discrete_action = 0
             if main_decision < -action_threshold:
                 discrete_action = 2  # Sell
             elif main_decision > action_threshold:
                 discrete_action = 1  # Buy
 
-            # === LOG MODEL INTENTION ===
-            action_str = "HOLD"
-            reason_str = ""
-            if discrete_action == 1:
-                action_str = "BUY"
-                reason_str = f"action({main_decision:.3f}) > thr({action_threshold:.3f})"
-            elif discrete_action == 2:
-                action_str = "SELL"
-                reason_str = f"action({main_decision:.3f}) < -thr({-action_threshold:.3f})"
-            else:
-                reason_str = f"|action({main_decision:.3f})| <= thr({action_threshold:.3f})"
-            
-            self.logger.info(
-                f"[MODEL_INTENTION] Step {self.current_step} | Asset={asset} | "
-                f"Action={action_str} | Raw={main_decision:.4f} | Thr={action_threshold:.3f} | "
-                f"Reason: {reason_str}"
-            )
-
             if i == 0:
                 first_discrete_action = discrete_action
 
-            # risk_horizon = action[base_idx + 1] # This is now part of the 5-dim action as tf_raw
-            # desired_position_size = action[base_idx + 2] # This is now size_raw
+            # Log intention (every 50 steps to reduce spam)
+            if self.current_step % 50 == 0:
+                action_str = {0: "HOLD", 1: "BUY", 2: "SELL"}.get(discrete_action, "HOLD")
+                self.logger.info(
+                    f"[TARGET_WEIGHT] Step {self.current_step} | {asset} | "
+                    f"Action={action_str} | Raw={main_decision:.3f} | Thr={action_threshold:.3f} | "
+                    f"SizeRaw={size_raw:.3f} | Capital={capital:.2f}"
+                )
 
             position = self.portfolio_manager.positions.get(asset)
             is_open = position and position.is_open
 
-            # Forcer l'ouverture si nécessaire
-            if force_trade and not is_open:
-                main_decision = 1.0  # Forcer l'ouverture
-                self.logger.warning(
-                    f"[FORCE_TRADE] Forcing OPEN for {asset} due to inactivity."
-                )
+            # ---- Target-Weight Sizing ----
+            normalized_size = (size_raw + 1.0) / 2.0  # 0..1
+            target_exposure_pct = min_exp + normalized_size * (max_exp - min_exp)
+            notional_usd = capital * target_exposure_pct
 
-            # X. FORCER LA CLÔTURE SI LA DURÉE MAXIMALE EST ATTEINTE
+            # Clamp to min order value
+            if notional_usd < min_order_value and capital >= min_order_value:
+                notional_usd = min_order_value
+                target_exposure_pct = min_order_value / capital if capital > 0 else 0
+
+            # ---- Dynamic SL bounded by tier risk ----
+            # max_sl_pct = (capital * max_risk_pct) / notional_usd if notional_usd > 0
+            if notional_usd > 0:
+                max_sl_pct = (capital * max_risk_pct) / notional_usd
+            else:
+                max_sl_pct = 0.02  # fallback
+            normalized_sl = (sl_raw + 1.0) / 2.0
+            sl_pct = 0.005 + normalized_sl * (max(max_sl_pct, 0.005) - 0.005)
+            sl_pct = min(sl_pct, 0.10)  # hard cap 10%
+
+            # Dynamic TP (agent decides, 1% to 20%)
+            normalized_tp = (tp_raw + 1.0) / 2.0
+            tp_pct = 0.01 + normalized_tp * (0.20 - 0.01)
+
+            # ---- Anti-spam HOLD ----
+            # If already open and target exposure ≈ current exposure → HOLD
+            if is_open and discrete_action == 1:
+                current_exposure = 0.0
+                try:
+                    pos_value = position.size * price if hasattr(position, 'size') else 0
+                    current_exposure = pos_value / capital if capital > 0 else 0
+                except Exception:
+                    pass
+                exposure_diff = abs(target_exposure_pct - current_exposure)
+                if exposure_diff < 0.10:  # Within 10% → no action needed (OMEGA-4E)
+                    discrete_action = 0  # Override to HOLD
+
+            # ---- Force close max duration ----
             max_steps = self.config.get("trading_rules", {}).get("max_position_steps")
-            if (
-                is_open
-                and max_steps
-                and (self.current_step - position.open_step > max_steps)
-            ):
-                self.logger.warning(
-                    f"[FORCE CLOSE] Position for {asset} has exceeded max duration of {max_steps} steps. Forcing closure."
-                )
+            if is_open and max_steps and (self.current_step - position.open_step > max_steps):
                 receipt = self.portfolio_manager.close_position(
-                    asset=asset.upper(),
-                    price=price,
-                    timestamp=current_timestamp,
-                    current_prices=current_prices,
-                    reason="MAX_DURATION",
-                    risk_horizon=position.risk_horizon,
+                    asset=asset.upper(), price=price, timestamp=current_timestamp,
+                    current_prices=current_prices, reason="MAX_DURATION",
+                    risk_horizon=getattr(position, 'risk_horizon', 0.0),
                 )
                 if receipt:
                     self._step_closed_receipts.append(receipt)
+                    self._all_episode_receipts.append(receipt)
                     realized_pnl += float(receipt.get("pnl", 0.0))
                     trade_executed_this_step = True
-                continue  # Passer à l'actif suivant
+                continue
 
-            # DEBUG LOGGING
-            if self.current_step % 100 == 0 and i == 0:
-                 self.logger.info(f"[DEBUG_EXEC] Asset={asset} Action={main_decision:.3f} IsOpen={is_open} CanOpen={self.can_open_trade(self.current_timeframe_for_trade)}")
-
-            # A. L'agent veut VENDRE (fermer une position)
-            should_force_close = False
-            if is_open:
-                max_force_steps = (
-                    self.config.get("trading_rules", {})
-                    .get("frequency", {})
-                    .get("force_trade_steps", {})
-                )
-                tf_force_after = 0
-                if isinstance(max_force_steps, dict):
-                    tf_force_after = max_force_steps.get(
-                        position.timeframe if hasattr(position, "timeframe") else "5m",
-                        max_force_steps.get("default", 50),
-                    )
-                steps_since_open = self.current_step - position.open_step
-                if (
-                    position
-                    and hasattr(position, "timeframe")
-                    and self._should_force_close_timeframe(
-                        position.timeframe, steps_since_open, tf_force_after
-                    )
-                ):
-                    should_force_close = True
-
-            if (main_decision < -action_threshold and is_open) or should_force_close:
-                reason_txt = (
-                    "FORCE_CLOSE_FIN_CHUNK"
-                    if should_force_close
-                    else "AGENT_REQUEST_CLOSE"
-                )
-                self._log_agent_thought(
-                    timeframe=self.current_timeframe_for_trade,
-                    asset=asset,
-                    action_raw=main_decision,
-                    action_threshold=action_threshold,
-                    current_price=price,
-                    reason=reason_txt,
-                    observation_summary=self._extract_observation_summary(
-                        asset, self.current_timeframe_for_trade
-                    ),
-                    action_decision="CLOSE",
-                )
-                self.trade_attempts += 1
-                receipt = self.portfolio_manager.close_position(
-                    asset=asset.upper(),
-                    price=price,
-                    timestamp=current_timestamp,
-                    current_prices=current_prices,
-                    reason="SL",
-                    risk_horizon=position.risk_horizon
-                    if hasattr(position, "risk_horizon")
-                    else risk_horizon,
-                )
-                if receipt:
-                    if isinstance(receipt, dict):
-                        self._step_closed_receipts.append(receipt)
-                        val = receipt.get("pnl")
-                        fees = receipt.get("fees", 0.0)
-                        if isinstance(val, (int, float)):
-                            realized_pnl += float(val)
-                            # Appliquer les résultats du trade avec sécurité
-                            self._apply_trade_results_safely(pnl_value=float(val), fees=float(fees))
-                    # Frequency counters are not decremented on closure to track total daily activity.
+            # A. CLOSE position — with SELL hysteresis
+            if discrete_action == 2 and is_open:
+                # SELL hysteresis: skip close if exposure < 5%
+                current_exposure_for_sell = 0.0
+                try:
+                    pos_val = position.size * price if hasattr(position, 'size') else 0
+                    current_exposure_for_sell = pos_val / capital if capital > 0 else 0
+                except Exception:
+                    pass
+                if current_exposure_for_sell < 0.05:
+                    discrete_action = 0  # Override to HOLD, position too small
                 else:
-                    self.invalid_trade_attempts += 1
-                    self.logger.info(
-                        f"Failed to close position for {asset} (no receipt)"
+                    self.trade_attempts += 1
+                    receipt = self.portfolio_manager.close_position(
+                        asset=asset.upper(), price=price, timestamp=current_timestamp,
+                        current_prices=current_prices, reason="AGENT_CLOSE",
+                        risk_horizon=getattr(position, 'risk_horizon', 0.0),
                     )
-
-            # B. L'agent veut ACHETER (ouvrir une position)
-            elif main_decision > action_threshold and not is_open:
-                # Log the BUY attempt
-                self.logger.info(
-                    f"[MODEL_BUY_ATTEMPT] Step {self.current_step} | Asset={asset} | "
-                    f"action={main_decision:.4f} > thr={action_threshold:.3f} | is_open={is_open}"
-                )
-                
-                # Check if trade can be opened based on daily limits
-                if not self.can_open_trade(self.current_timeframe_for_trade):
-                    self.logger.warning(
-                        f"[TRADE_BLOCKED] Step {self.current_step} | Worker {self.worker_id} | Asset={asset} | "
-                        f"TF={self.current_timeframe_for_trade} | Reason: can_open_trade=False (daily limits)"
-                    )
-                    self.invalid_trade_attempts += 1
-                    continue
-
-
-                self._log_agent_thought(
-                    timeframe=self.current_timeframe_for_trade,
-                    asset=asset,
-                    action_raw=main_decision,
-                    action_threshold=action_threshold,
-                    current_price=price,
-                    reason="OPEN_AGENT",
-                    observation_summary=self._extract_observation_summary(
-                        asset, self.current_timeframe_for_trade
-                    ),
-                    action_decision="OPEN",
-                )
-                self.trade_attempts += 1
-
-                # --- NOUVELLE LOGIQUE DE SIZING (v2) ---
-                # 1. Déterminer le type de worker
-                worker_name = self.worker_config.get("name", "default").lower()
-                if "scalper" in worker_name:
-                    worker_type = "scalper"
-                elif "intraday" in worker_name:
-                    worker_type = "intraday"
-                elif "swing" in worker_name:
-                    worker_type = "swing"
-                elif "position" in worker_name:
-                    worker_type = "position"
-                else:
-                    tf_specialization = self.worker_config.get("specialization", {}).get("timeframe")
-                    if tf_specialization == "5m": worker_type = "scalper"
-                    elif tf_specialization == "1h": worker_type = "intraday"
-                    elif tf_specialization == "4h": worker_type = "swing"
-                    else: worker_type = "scalper"  # Default to scalper for unknown specializations
-
-                # 2. Récupérer les données de marché BRUTES (non-normalisées)
-                raw_market_data = {}
-                step_idx = self.step_in_chunk
-                
-                # Itérer sur tous les timeframes pour collecter les indicateurs nécessaires
-                for tf in self.timeframes:
-                    df = self.current_data.get(asset, {}).get(tf)
-                    if df is not None and not df.empty and 0 <= step_idx < len(df):
-                        # Utiliser une map pour les noms de colonnes potentiellement en minuscules/majuscules
-                        col_map = {c.lower(): c for c in df.columns}
-                        
-                        # Indicateurs requis par les formules
-                        required_indicators = ['atr_14', 'atr_20', 'atr_50', 'volatility_ratio', 'trend_strength', 'fundamental_score', 'adx_14', 'volatility_ratio_14_50']
-                        
-                        for indicator in required_indicators:
-                            if indicator.lower() in col_map:
-                                indicator_col_name = col_map[indicator.lower()]
-                                value = df[indicator_col_name].iloc[step_idx]
-                                # S'assurer que la clé dans raw_market_data est cohérente (ex: 'atr_14')
-                                raw_market_data[indicator] = value
-
-                # Fallbacks et alias
-                if 'trend_strength' not in raw_market_data and 'adx_14' in raw_market_data:
-                    raw_market_data['trend_strength'] = raw_market_data['adx_14']
-                if 'volatility_ratio' not in raw_market_data and 'volatility_ratio_14_50' in raw_market_data:
-                    raw_market_data['volatility_ratio'] = raw_market_data['volatility_ratio_14_50']
-
-                # 3. Appeler le nouveau PositionSizer avec les données brutes
-                sizing_result = self.position_sizer.calculate_position_size(
-                    worker_type=worker_type,
-                    capital=self.portfolio_manager.get_total_value(),
-                    entry_price=price,
-                    market_data=raw_market_data
-                )
-
-                # Log des avertissements du sizer
-                if sizing_result.warnings:
-                    for warning in sizing_result.warnings:
-                        self.logger.warning(f"[PositionSizer] {warning}")
-
-                position_size_usdt = sizing_result.size_in_usd
-                size_in_asset_units = sizing_result.size_in_asset_units
-
-                # 4. Vérifier la taille minimale de l'ordre et le cash disponible
-                min_order_value = self.config.get("trading_rules", {}).get("min_order_value_usdt", 11.0)
-                available_cash = self.portfolio_manager.get_cash()
-
-                if position_size_usdt < min_order_value:
-                    self.logger.warning(f"Taille de position trop faible pour {asset}: {position_size_usdt:.2f} USDT. Minimum requis: {min_order_value} USDT.")
-                    self.invalid_trade_attempts += 1
-                    continue
-
-                if available_cash < position_size_usdt:
-                    self.logger.warning(f"[CASH GATE] Required={position_size_usdt:.2f} USDT, Available={available_cash:.2f} USDT | Rejet de l'ouverture pour {asset}")
-                    self.invalid_trade_attempts += 1
-                    continue
-                
-                # Pourcentage effectivement alloué vs equity
-                equity = self.portfolio_manager.get_equity()
-                final_pct = (position_size_usdt / equity) if equity > 0 else 0.0
-                
-                # Fix: risk_horizon non défini - utiliser valeur par défaut
-                # Cette variable était retirée de l'action space mais toujours utilisée ici
-                risk_horizon = 0.0  # Valeur par défaut sécurisée
-                
-                if size_in_asset_units > 0:
-                    # Gate agent-initiated openings by can_open_trade()
-                    tf = getattr(self, "current_timeframe_for_trade", "5m")
-                    if not self.can_open_trade(tf):
-                        self.smart_logger.info(
-                            f"[TRADE BLOCKED] Worker {self.worker_id} | TF {tf} | Reason: frequency limits reached (daily_total={self.positions_count.get('daily_total', 0)}, tf_count={self.positions_count.get(tf, 0)})",
-                            rotate=True,
-                        )
-                        self.invalid_trade_attempts += 1
-                        continue
-                    receipt = None
-                    try:
-                        # Use portfolio manager defaults if available
-                        default_sl = getattr(self.portfolio_manager, "sl_pct", 0.0) or 0.0
-                        default_tp = getattr(self.portfolio_manager, "tp_pct", 0.0) or 0.0
-                        receipt = self.portfolio_manager.open_position(
-                            asset=asset.upper(),
-                            price=price,
-                            size=size_in_asset_units,
-                            stop_loss_pct=float(default_sl),
-                            take_profit_pct=float(default_tp),
-                            timestamp=current_timestamp,
-                            current_prices=current_prices,
-                            allocated_pct=final_pct,
-                            timeframe=self.current_timeframe_for_trade,
-                            current_step=self.current_step,
-                            risk_horizon=risk_horizon,
-                        )
-                    except Exception as open_error:
-                        self.logger.error(
-                            f"[ACTION_OPEN] Exception while opening position for {asset}: {open_error}",
-                            exc_info=True,
-                        )
-                    else:
-                        # Metrics: tentative réussie
-                        try:
-                            if (
-                                receipt
-                                and hasattr(self.portfolio_manager, "metrics")
-                                and self.portfolio_manager.metrics
-                            ):
-                                self.portfolio_manager.metrics.record_trade_attempt(
-                                    valid=True,
-                                    context={
-                                        "asset": asset,
-                                        "notional": position_size_usdt,
-                                        "allocated_pct": final_pct,
-                                        "timeframe": getattr(
-                                            self, "current_timeframe_for_trade", "5m"
-                                        ),
-                                    },
-                                )
-                        except Exception:
-                            pass
-
-                        if receipt:
-                            # Keep small buffer of receipts
-                            self.receipts.append(receipt)
-
-                            trade_executed_this_step = True
-                            # Update frequency counters per timeframe using current_timeframe_for_trade
-                            # CRITICAL FIX: Only increment counts for NATURAL trades to avoid deadlock
-                            if not force_trade:
-                                tf = getattr(self, "current_timeframe_for_trade", "5m")
-                                try:
-                                    if tf in self.positions_count:
-                                        self.positions_count[tf] = (
-                                            int(self.positions_count.get(tf, 0)) + 1
-                                        )
-                                    # Always update daily total
-                                    self.positions_count["daily_total"] = (
-                                        int(self.positions_count.get("daily_total", 0)) + 1
-                                    )
-                                except Exception as freq_e:
-                                    self.logger.debug(
-                                        f"[FREQUENCY] Failed to update frequency counters: {freq_e}"
-                                    )
-                            
-                            # Update last trade timestamp for tf (for both natural and force trades)
-                            tf = getattr(self, "current_timeframe_for_trade", "5m")
-                            try:
-                                if isinstance(
-                                    current_timestamp, (pd.Timestamp, datetime)
-                                ):
-                                    ts = (
-                                        current_timestamp.to_pydatetime()
-                                        if isinstance(current_timestamp, pd.Timestamp)
-                                        else current_timestamp
-                                    )
-                                    self.last_trade_timestamps[tf] = ts
-                                # Update last trade step for this timeframe to drive frequency logic
-                                if not hasattr(self, "last_trade_steps_by_tf"):
-                                    self.last_trade_steps_by_tf = {}
-                                self.last_trade_steps_by_tf[tf] = self.current_step
-                            except Exception as freq_e:
-                                self.logger.debug(
-                                    f"[FREQUENCY] Failed to update frequency counters: {freq_e}"
-                                )
-                            self.logger.info(
-                                f"Position {asset} opened. Size: {size_in_asset_units:.4f}"
-                            )
-                        else:
-                            self.logger.warning(
-                                f"Failed to open position for {asset} (insufficient cash or already open)"
-                            )
-            else:
-                if position and position.is_open:
-                    self._log_agent_thought(
-                        timeframe=self.current_timeframe_for_trade,
-                        asset=asset,
-                        action_raw=main_decision,
-                        action_threshold=action_threshold,
-                        current_price=price,
-                        reason="HOLD_OPEN",
-                        observation_summary=self._extract_observation_summary(
-                            asset, self.current_timeframe_for_trade
-                        ),
-                        action_decision="HOLD",
-                    )
-
-        # Forcer un trade si nécessaire après traitement normal
-        for timeframe in self.timeframes:
-            try:
-                if self._should_force_trade(timeframe):
-                    self.logger.warning(
-                        f"[FORCE_TRADE_CHECK] Forcing trade on {timeframe} after inactivity"
-                    )
-                    # Snapshot counts to confirm execution
-                    _prev_total = int(self.positions_count.get("daily_total", 0))
-                    forced_pnl = self._force_trade(timeframe) or 0.0
-                    if forced_pnl != 0.0:
-                        realized_pnl += forced_pnl
+                if receipt and isinstance(receipt, dict):
+                    self._step_closed_receipts.append(receipt)
+                    self._all_episode_receipts.append(receipt)
+                    val = receipt.get("pnl", 0.0)
+                    fees = receipt.get("fees", 0.0)
+                    realized_pnl += float(val)
+                    self._apply_trade_results_safely(pnl_value=float(val), fees=float(fees))
                     trade_executed_this_step = True
-                    # Schedule next allowed force (non-recurrent) ONLY if a trade executed (daily_total increased)
+                else:
+                    self.invalid_trade_attempts += 1
+
+            # B. OPEN position
+            elif discrete_action == 1 and not is_open:
+                self.trade_attempts += 1
+
+                # OMEGA-4E: Per-worker cooldown
+                _COOLDOWN_MAP = {"scalper": 3, "intraday": 2, "swing": 1, "position": 1}
+                _wname = str(self.worker_config.get("profile", self.worker_config.get("name", "scalper"))).lower()
+                for _pkey in _COOLDOWN_MAP:
+                    if _pkey in _wname:
+                        _min_cd = _COOLDOWN_MAP[_pkey]
+                        break
+                else:
+                    _min_cd = 2
+                if self.current_step - self._last_open_step_by_asset.get(asset, -999) < _min_cd:
+                    self.invalid_trade_attempts += 1
+                    continue
+
+                # Check daily limits
+                if not self.can_open_trade(self.current_timeframe_for_trade):
+                    self.invalid_trade_attempts += 1
+                    continue
+
+                # Check cash
+                available_cash = self.portfolio_manager.get_cash()
+                if notional_usd < min_order_value or available_cash < notional_usd:
+                    self.invalid_trade_attempts += 1
+                    if self.current_step % 100 == 0:
+                        self.logger.warning(
+                            f"[SIZE_GATE] {asset} notional={notional_usd:.2f} min={min_order_value} cash={available_cash:.2f}"
+                        )
+                    continue
+
+                size_in_asset = notional_usd / price if price > 0 else 0
+                equity = self.portfolio_manager.get_equity()
+                final_pct = (notional_usd / equity) if equity > 0 else 0.0
+
+                receipt = None
+                try:
+                    receipt = self.portfolio_manager.open_position(
+                        asset=asset.upper(), price=price, size=size_in_asset,
+                        stop_loss_pct=float(sl_pct), take_profit_pct=float(tp_pct),
+                        timestamp=current_timestamp, current_prices=current_prices,
+                        allocated_pct=final_pct,
+                        timeframe=self.current_timeframe_for_trade,
+                        current_step=self.current_step, risk_horizon=0.0,
+                    )
+                except Exception as open_err:
+                    self.logger.error(f"[OPEN_ERROR] {asset}: {open_err}", exc_info=True)
+
+                if receipt:
+                    self.receipts.append(receipt)
+                    self._all_episode_receipts.append(receipt)
+                    self._last_open_step_by_asset[asset] = self.current_step
+                    trade_executed_this_step = True
+                    # Update frequency counters
+                    if not force_trade:
+                        tf = self.current_timeframe_for_trade
+                        self.positions_count[tf] = int(self.positions_count.get(tf, 0)) + 1
+                        self.positions_count["daily_total"] = int(self.positions_count.get("daily_total", 0)) + 1
+                    # Update timestamps
+                    tf = self.current_timeframe_for_trade
                     try:
-                        _new_total = int(self.positions_count.get("daily_total", 0))
-                        if _new_total > _prev_total:
-                            cooldown = int(self.force_cooldown_by_tf.get(timeframe, 0))
-                            jmax = int(self.force_jitter_max_by_tf.get(timeframe, 0))
-                            jitter = int(np.random.randint(0, max(0, jmax) + 1)) if jmax > 0 else 0
-                            self.next_force_allowed_step_by_tf[timeframe] = (
-                                self.current_step + max(0, cooldown) + max(0, jitter)
-                            )
-                            self.logger.info(
-                                f"[FORCE_TRADE_SCHEDULE] tf={timeframe} next_allowed_step={self.next_force_allowed_step_by_tf[timeframe]} (cooldown={cooldown}, jitter<= {jmax})"
-                            )
+                        if isinstance(current_timestamp, (pd.Timestamp,)):
+                            self.last_trade_timestamps[tf] = current_timestamp.to_pydatetime()
+                        elif current_timestamp is not None:
+                            self.last_trade_timestamps[tf] = current_timestamp
+                        if not hasattr(self, "last_trade_steps_by_tf"):
+                            self.last_trade_steps_by_tf = {}
+                        self.last_trade_steps_by_tf[tf] = self.current_step
                     except Exception:
                         pass
-            except Exception as force_error:
-                self.logger.error(
-                    f"[FORCE_TRADE_ERROR] Failed to enforce trade on {timeframe}: {force_error}",
-                    exc_info=True,
-                )
+                    self.logger.info(
+                        f"[TRADE_OPEN] {asset} size={size_in_asset:.6f} notional={notional_usd:.2f} "
+                        f"SL={sl_pct:.2%} TP={tp_pct:.2%} tier={tier.get('name', '?')}"
+                    )
+                else:
+                    self.invalid_trade_attempts += 1
 
-        # 3. Mettre à jour l'étape du dernier trade si une action a eu lieu
+        # 3. Update last trade step
         if trade_executed_this_step:
             self.last_trade_step = self.current_step
 
@@ -6331,6 +6104,36 @@ class MultiAssetChunkedEnv(gym.Env):
 
         return info
 
+    # ------------------------------------------------------------------
+    # OMEGA-4D: Episode-end capital stats
+    # ------------------------------------------------------------------
+    def _log_episode_capital_stats(self, info: Dict[str, Any]) -> None:
+        """Log capital statistics at episode end for forensic analysis."""
+        try:
+            initial = self.config.get("portfolio", {}).get(
+                "initial_balance",
+                self.config.get("environment", {}).get("initial_balance", 20.5),
+            )
+            final_value = info.get("portfolio_value", 0.0)
+            pnl = final_value - initial
+            pnl_pct = (pnl / max(initial, 1e-8)) * 100.0
+            trades = info.get("trades", 0)
+            steps = info.get("step", self.current_step)
+            trade_step_ratio = trades / max(steps, 1)
+
+            self.logger.info(
+                f"[EPISODE_END_STATS] Worker={self.worker_id} | "
+                f"Initial=${initial:.2f} | Final=${final_value:.2f} | "
+                f"PnL=${pnl:.2f} ({pnl_pct:+.2f}%) | "
+                f"Trades={trades} | Steps={steps} | "
+                f"Trade/Step={trade_step_ratio:.4f} | "
+                f"MaxDD={info.get('max_dd', 0.0):.2%} | "
+                f"Sharpe={info.get('sharpe', 0.0):.4f} | "
+                f"WinRate={info.get('win_rate', 0.0):.1f}%"
+            )
+        except Exception as e:
+            self.logger.warning(f"[EPISODE_END_STATS] Error logging: {e}")
+
     def get_portfolio_metrics(self) -> Dict[str, Any]:
         """Méthode publique pour récupérer les métriques du portfolio pour les callbacks."""
         try:
@@ -6643,15 +6446,24 @@ class MultiAssetChunkedEnv(gym.Env):
         return 0.0
 
     def calculate_inaction_penalty(self):
-        """Calculate penalty for inaction."""
+        """Calculate penalty for inaction.
+
+        The penalty ramps quadratically after a grace period of 10 steps
+        (≈50 min on 5m) so that a PPO agent exploring near zero quickly
+        learns that *doing nothing* is costly.  The penalty is capped at
+        -1.0 per step to avoid reward explosion.
+        """
         penalty = 0.0
         current_tf = self.get_current_timeframe()
         steps_since_trade = self.current_step - getattr(
             self, "last_trade_steps_by_tf", {}
         ).get(current_tf, 0)
 
-        if steps_since_trade > 20:  # Penalty after 20 steps of inaction
-            penalty = -0.01 * (steps_since_trade - 20)
+        grace_period = 10  # steps before penalty kicks in
+        if steps_since_trade > grace_period:
+            excess = steps_since_trade - grace_period
+            # Quadratic ramp: -0.005 * excess^1.5, capped at -1.0
+            penalty = max(-1.0, -0.005 * (excess ** 1.5))
 
         return penalty
 
