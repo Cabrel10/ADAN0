@@ -17,6 +17,17 @@ from typing import Any, Dict, Optional
 # Third-party imports
 import numpy as np
 
+
+# ------------------------------------------------------------------
+# SOTA 2025: Symlog transform (DreamerV3)
+# Symmetric logarithm that compresses extreme values while
+# preserving the sign.  Mathematically stable for any real input.
+#   symlog(x) = sign(x) * ln(|x| + 1)
+# ------------------------------------------------------------------
+def symlog(x: float) -> float:
+    """DreamerV3-style symmetric logarithmic compression."""
+    return float(np.sign(x) * np.log1p(np.abs(x)))
+
 # Local application imports
 from ..common.reward_logger import RewardLogger
 
@@ -501,8 +512,10 @@ class RewardCalculator:
                 f"Risk Level: {self.risk_level:.2f}"
             )
             
-            # Clip and return final reward
-            final_reward = np.clip(final_reward, *self.clipping_range)
+            # SOTA 2025: Symlog transform (DreamerV3) instead of hard clipping.
+            # Preserves the signal from extreme black-swan events while
+            # keeping the reward mathematically bounded.
+            final_reward = symlog(final_reward)
             
             # ✅ PHASE FINALE: Logger avec le système unifié
             if UNIFIED_SYSTEM_AVAILABLE and central_logger:

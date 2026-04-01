@@ -4,12 +4,28 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import yaml
 
+# ------------------------------------------------------------------
+# SOTA 2025: Gaussian HMM for statistical regime detection
+# ------------------------------------------------------------------
+try:
+    from hmmlearn.hmm import GaussianHMM
+    HMM_AVAILABLE = True
+except ImportError:
+    HMM_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+# Number of hidden states for the Markov regime model
+N_HMM_STATES = 3
+# Minimum observations required to fit the HMM
+HMM_MIN_OBS = 30
+# Rolling window size for HMM input
+HMM_WINDOW = 120
 
 
 @dataclass
@@ -265,35 +281,118 @@ class DynamicBehaviorEngine:
         except Exception as e:
             logger.error(f"Error in update_state: {e}")
 
-    def detect_market_regime(self, market_data: Dict[str, Any]) -> Tuple[str, float]:
-        """Détecte le régime de marché actuel."""
-        adx = market_data.get("adx", 0)
-        rsi = market_data.get("rsi", 50)
-        ema_fast = market_data.get("ema_fast", 0)
-        ema_slow = market_data.get("ema_slow", 0)
-        volatility = market_data.get("volatility", 0)
-
-        if adx > self.config.get("market_regime_detection", {}).get("adx_threshold", 25):
-            if ema_fast > ema_slow:
-                regime = "bull"
-                confidence = 0.7 + (0.3 * (adx / 100))
+    # ------------------------------------------------------------------
+    # SOTA 2025: HMM-based probabilistic regime detection
+    # ------------------------------------------------------------------
+    def _init_hmm(self) -> None:
+        """Lazy-initialise the Gaussian HMM model and observation buffer."""
+        if not hasattr(self, '_hmm_model'):
+            self._hmm_fitted = False
+            self._hmm_obs_buffer: list = []  # list of [log_return, volatility]
+            if HMM_AVAILABLE:
+                self._hmm_model = GaussianHMM(
+                    n_components=N_HMM_STATES,
+                    covariance_type="full",
+                    n_iter=50,
+                    random_state=42,
+                    tol=0.01,
+                )
             else:
-                regime = "bear"
-                confidence = 0.7 + (0.3 * (adx / 100))
+                self._hmm_model = None
+            # Last probability vector (uniform prior)
+            self._hmm_probs = np.ones(N_HMM_STATES, dtype=np.float32) / N_HMM_STATES
+
+    def _update_hmm(self, log_return: float, volatility: float) -> np.ndarray:
+        """Feed a new observation and return the state-probability vector.
+
+        Returns:
+            np.ndarray of shape (3,) summing to 1.0.
+        """
+        self._init_hmm()
+        self._hmm_obs_buffer.append([log_return, volatility])
+
+        # Keep a rolling window
+        if len(self._hmm_obs_buffer) > HMM_WINDOW:
+            self._hmm_obs_buffer = self._hmm_obs_buffer[-HMM_WINDOW:]
+
+        if self._hmm_model is None or len(self._hmm_obs_buffer) < HMM_MIN_OBS:
+            return self._hmm_probs.copy()
+
+        try:
+            X = np.array(self._hmm_obs_buffer, dtype=np.float64)
+            # Re-fit periodically (every 20 new obs) for adaptivity
+            if not self._hmm_fitted or len(self._hmm_obs_buffer) % 20 == 0:
+                self._hmm_model.fit(X)
+                self._hmm_fitted = True
+
+            # Posterior probability of last observation
+            posteriors = self._hmm_model.predict_proba(X)
+            self._hmm_probs = posteriors[-1].astype(np.float32)
+        except Exception as e:
+            logger.debug(f"HMM update fallback: {e}")
+
+        return self._hmm_probs.copy()
+
+    def get_regime_probabilities(self, market_data: Dict[str, Any]) -> np.ndarray:
+        """Public API: return the 3-state HMM probability vector.
+
+        This vector is intended to be injected into the context_vector
+        for the FiLM conditioning layer.
+        """
+        self._init_hmm()
+        close = market_data.get("close", 0.0)
+        prev_close = market_data.get("prev_close", close)
+        volatility = market_data.get("volatility", 0.0)
+
+        if prev_close > 0 and close > 0:
+            log_ret = float(np.log(close / prev_close))
         else:
-            if rsi > 70 or rsi < 30:
-                regime = "volatile"
-                confidence = 0.8
+            log_ret = 0.0
+
+        return self._update_hmm(log_ret, volatility)
+
+    def detect_market_regime(self, market_data: Dict[str, Any]) -> Tuple[str, float]:
+        """Detect market regime using the Gaussian HMM posterior.
+
+        Returns a (regime_label, confidence) tuple for backward compatibility.
+        The regime label is derived from the highest-probability hidden state.
+        State mapping (sorted by mean log-return after fit):
+            - State with highest mean return → 'bull'
+            - State with lowest  mean return → 'bear'
+            - Middle state                   → 'sideways'
+        If the HMM is not yet fitted, falls back to simple heuristics.
+        """
+        probs = self.get_regime_probabilities(market_data)
+        best_state = int(np.argmax(probs))
+        confidence = float(probs[best_state])
+
+        # Derive human-readable label from HMM means if fitted
+        if hasattr(self, '_hmm_model') and self._hmm_model is not None and self._hmm_fitted:
+            try:
+                means = self._hmm_model.means_[:, 0]  # log-return means
+                order = np.argsort(means)  # ascending: bear, sideways, bull
+                labels = {int(order[0]): 'bear', int(order[1]): 'sideways', int(order[2]): 'bull'}
+                regime = labels.get(best_state, 'sideways')
+            except Exception:
+                regime = ['bear', 'sideways', 'bull'][best_state]
+        else:
+            # Heuristic fallback while HMM is warming up
+            adx = market_data.get("adx", 0)
+            ema_fast = market_data.get("ema_fast", 0)
+            ema_slow = market_data.get("ema_slow", 0)
+            if adx > 25:
+                regime = "bull" if ema_fast > ema_slow else "bear"
+                confidence = 0.7 + 0.3 * (adx / 100.0)
             else:
                 regime = "sideways"
                 confidence = 0.9
 
         worker_key = getattr(self, "worker_key", f"w{self.worker_id}")
-        logger.info(
-            f"[REGIME_DETECTION] Worker={worker_key} | RSI={rsi:.2f} | ADX={adx:.2f} | "
-            f"Volatility={volatility:.4f} | Trend={ema_fast:.2f}vs{ema_slow:.2f} → Regime={regime} (conf={confidence:.2f})"
+        logger.debug(
+            f"[HMM_REGIME] Worker={worker_key} | probs={probs} | "
+            f"regime={regime} (conf={confidence:.2f})"
         )
-        
+
         return regime, confidence
 
     def _get_capital_tier(self, portfolio_value: float) -> Optional[Dict[str, Any]]:
@@ -1466,6 +1565,12 @@ class DynamicBehaviorEngine:
         # Réinitialisation du gestionnaire financier si disponible
         if self.finance_manager:
             self.finance_manager.reset()
+
+        # SOTA 2025: Reset HMM state
+        if hasattr(self, '_hmm_obs_buffer'):
+            self._hmm_obs_buffer = []
+            self._hmm_fitted = False
+            self._hmm_probs = np.ones(N_HMM_STATES, dtype=np.float32) / N_HMM_STATES
 
         self.log_info("DBE réinitialisé")
 

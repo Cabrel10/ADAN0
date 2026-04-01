@@ -5,7 +5,7 @@ Tests unitaires réels pour MultiAssetChunkedEnv - Tests du fonctionnement effec
 import pytest
 import numpy as np
 import pandas as pd
-import gymnasium as gym
+import gym
 from unittest.mock import Mock, patch, MagicMock
 import sys
 import os
@@ -72,8 +72,8 @@ class TestMultiAssetChunkedEnvReal:
 
         # Créer des données réalistes pour chaque timeframe
         timestamps_5m = pd.date_range(start="2024-01-01", periods=1000, freq="5min")
-        timestamps_1h = pd.date_range(start="2024-01-01", periods=200, freq="1H")
-        timestamps_4h = pd.date_range(start="2024-01-01", periods=50, freq="4H")
+        timestamps_1h = pd.date_range(start="2024-01-01", periods=200, freq="1h")
+        timestamps_4h = pd.date_range(start="2024-01-01", periods=50, freq="4h")
 
         # Données 5m
         data_5m = pd.DataFrame(
@@ -166,7 +166,7 @@ class TestMultiAssetChunkedEnvReal:
     def test_env_initialization_with_real_config(self, real_config, mock_data_loader):
         """Test l'initialisation avec la vraie configuration."""
         with patch(
-            "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+            "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
             return_value=mock_data_loader,
         ):
             try:
@@ -184,7 +184,7 @@ class TestMultiAssetChunkedEnvReal:
 
     def test_observation_space_structure(self, minimal_config, mock_data_loader):
         with patch(
-            "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+            "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
             return_value=mock_data_loader,
         ):
             env = MultiAssetChunkedEnv(config=minimal_config, worker_config=minimal_config['workers']['w1'])
@@ -199,18 +199,20 @@ class TestMultiAssetChunkedEnvReal:
             assert "1h" in obs_space.spaces
             assert "4h" in obs_space.spaces
             assert "portfolio_state" in obs_space.spaces
+            assert "context_vector" in obs_space.spaces
 
-            # Vérifier les dimensions
-            assert obs_space.spaces["5m"].shape == (20, 15)
-            assert obs_space.spaces["1h"].shape == (14, 15)
-            assert obs_space.spaces["4h"].shape == (5, 15)
+            # Vérifier les dimensions (features dynamiques)
+            assert obs_space.spaces["5m"].shape[0] == 20   # window_size
+            assert obs_space.spaces["1h"].shape[0] == 14    # window_size
+            assert obs_space.spaces["4h"].shape[0] == 5     # window_size
+            assert obs_space.spaces["context_vector"].shape == (12,)
 
             print("✅ Observation space correctement structuré")
 
     def test_action_space_dimensionality(self, minimal_config, mock_data_loader):
         """Test les dimensions de l'espace d'action."""
         with patch(
-            "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+            "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
             return_value=mock_data_loader,
         ):
             env = MultiAssetChunkedEnv(minimal_config)
@@ -220,9 +222,8 @@ class TestMultiAssetChunkedEnvReal:
             # Vérifier que c'est un Box space (actions continues)
             assert isinstance(action_space, gym.spaces.Box)
 
-            # Pour 1 asset, on devrait avoir 15 dimensions d'action
-            # (5 actions par asset * 3 assets, mais avec 1 asset = 15)
-            assert action_space.shape == (15,)
+            # 5 assets × 5 dims (action, size, timeframe, SL, TP) = 25
+            assert action_space.shape == (25,)
             assert action_space.dtype == np.float32
 
             print(f"✅ Action space dimensionnality correcte: {action_space.shape}")
@@ -233,11 +234,11 @@ class TestMultiAssetChunkedEnvReal:
         """Test la fonction reset."""
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
         ):
@@ -273,15 +274,15 @@ class TestMultiAssetChunkedEnvReal:
         """Test la fonction step avec différentes actions."""
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.PortfolioManager",
+                "adan_trading_bot.portfolio.portfolio_manager.PortfolioManager",
                 return_value=mock_portfolio_manager,
             ),
         ):
@@ -317,11 +318,11 @@ class TestMultiAssetChunkedEnvReal:
         """Test la gestion des données multi-timeframe."""
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
         ):
@@ -353,15 +354,15 @@ class TestMultiAssetChunkedEnvReal:
         """Test l'intégration de l'état du portfolio."""
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.PortfolioManager",
+                "adan_trading_bot.portfolio.portfolio_manager.PortfolioManager",
                 return_value=mock_portfolio_manager,
             ),
         ):
@@ -401,15 +402,15 @@ class TestMultiAssetChunkedEnvReal:
 
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.PortfolioManager",
+                "adan_trading_bot.portfolio.portfolio_manager.PortfolioManager",
                 return_value=mock_portfolio_manager,
             ),
         ):
@@ -439,11 +440,11 @@ class TestMultiAssetChunkedEnvReal:
 
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
         ):
@@ -470,11 +471,11 @@ class TestMultiAssetChunkedEnvReal:
         """Test la cohérence des observations entre les steps."""
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
         ):
@@ -499,7 +500,7 @@ class TestMultiAssetChunkedEnvReal:
             # Vérifier la cohérence des structures
             for obs in observations:
                 assert isinstance(obs, dict)
-                assert set(obs.keys()) == {"5m", "1h", "4h", "portfolio_state"}
+                assert set(obs.keys()) == {"5m", "1h", "4h", "portfolio_state", "context_vector"}
 
                 # Vérifier les dimensions
                 assert obs["5m"].shape == (20, 15)
@@ -527,15 +528,15 @@ class TestMultiAssetChunkedEnvReal:
         """Test les effets de l'exécution des actions."""
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.PortfolioManager",
+                "adan_trading_bot.portfolio.portfolio_manager.PortfolioManager",
                 return_value=mock_portfolio_manager,
             ),
         ):
@@ -577,11 +578,11 @@ class TestMultiAssetChunkedEnvReal:
         """Test la complétude du dictionnaire info."""
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
         ):
@@ -608,11 +609,11 @@ class TestMultiAssetChunkedEnvReal:
 
         with (
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.ChunkedDataLoader",
+                "adan_trading_bot.data_processing.data_loader.ChunkedDataLoader",
                 return_value=mock_data_loader,
             ),
             patch(
-                "adan_trading_bot.environment.multi_asset_chunked_env.StateBuilder",
+                "adan_trading_bot.data_processing.state_builder.StateBuilder",
                 return_value=mock_state_builder,
             ),
         ):

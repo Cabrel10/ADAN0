@@ -38,6 +38,11 @@ try:
 except ImportError:
     ContextualTemporalFusionExtractor = None
 
+try:
+    from adan_trading_bot.agent.feature_extractors import WorldModelPPO
+except ImportError:
+    WorldModelPPO = None
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 logging.basicConfig(
@@ -92,6 +97,16 @@ class TrainingMetricsCallback(BaseCallback):
                         f"[PPO_METRICS] policy_gradient_loss={pl:.6f} | "
                         f"value_loss={vl:.4f} | "
                         f"explained_variance={ev:.4f}"
+                    )
+            except Exception:
+                pass
+
+            # Log auxiliary world-model prediction magnitude
+            try:
+                if hasattr(self.model, '_aux_loss_history') and self.model._aux_loss_history:
+                    aux_mag = self.model._aux_loss_history[-1]
+                    logger.info(
+                        f"[AUX_WORLD_MODEL] aux_pred_magnitude={aux_mag:.6f}"
                     )
             except Exception:
                 pass
@@ -170,7 +185,11 @@ def main():
     batch_size = min(agent_cfg.get("batch_size", 64), n_steps)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = PPO(
+    # Create PPO model (use WorldModelPPO if available for aux forward-prediction)
+    PPOClass = WorldModelPPO if WorldModelPPO is not None else PPO
+    logger.info(f"Using PPO class: {PPOClass.__name__}")
+
+    model = PPOClass(
         "MultiInputPolicy",
         vec_env,
         device=device,

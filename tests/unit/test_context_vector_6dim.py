@@ -2,9 +2,9 @@
 OMEGA-4B – Verify that context_vector has exactly 6 dimensions everywhere.
 
 Tests:
-  1. StateBuilder.build_context_vector returns shape (6,)
-  2. Feature extractors DEFAULT_CONTEXT_DIM == 6
-  3. Observation space in env defines context_vector with shape (6,)
+  1. StateBuilder.build_context_vector returns shape (12,)
+  2. Feature extractors DEFAULT_CONTEXT_DIM == 12
+  3. Observation space in env defines context_vector with shape (12,)
   4. Default observation includes context_vector with 6 dims
 """
 
@@ -25,7 +25,7 @@ class TestContextVectorDim:
             window_sizes={"5m": 20},
         )
         ctx = sb.build_context_vector(data=None, current_idx=0)
-        assert ctx.shape == (6,), f"Expected shape (6,), got {ctx.shape}"
+        assert ctx.shape == (12,), f"Expected shape (12,), got {ctx.shape}"
         assert ctx.dtype == np.float32
 
     def test_state_builder_context_with_data(self):
@@ -47,7 +47,7 @@ class TestContextVectorDim:
             "ADX_14": np.random.uniform(10, 50, 30).astype(np.float32),
         })
         ctx = sb.build_context_vector(data={"5m": df}, current_idx=25)
-        assert ctx.shape == (6,), f"Expected shape (6,), got {ctx.shape}"
+        assert ctx.shape == (12,), f"Expected shape (12,), got {ctx.shape}"
         assert ctx.dtype == np.float32
         # candle_progress_pct should be set (index 5)
         assert 0.0 <= ctx[5] <= 1.0, f"candle_progress_pct out of range: {ctx[5]}"
@@ -55,13 +55,13 @@ class TestContextVectorDim:
     def test_temporal_fusion_default_context_dim(self):
         """ContextualTemporalFusionExtractor.DEFAULT_CONTEXT_DIM should be 6."""
         from adan_trading_bot.agent.feature_extractors import ContextualTemporalFusionExtractor
-        assert ContextualTemporalFusionExtractor.DEFAULT_CONTEXT_DIM == 6
+        assert ContextualTemporalFusionExtractor.DEFAULT_CONTEXT_DIM == 12
 
     def test_film_temporal_fusion_default_context_dim(self):
         """FiLMTemporalFusionExtractor.DEFAULT_CONTEXT_DIM should be 6."""
         try:
             from adan_trading_bot.agent.feature_extractors import FiLMTemporalFusionExtractor
-            assert FiLMTemporalFusionExtractor.DEFAULT_CONTEXT_DIM == 6
+            assert FiLMTemporalFusionExtractor.DEFAULT_CONTEXT_DIM == 12
         except (ImportError, AttributeError):
             pytest.skip("FiLMTemporalFusionExtractor not available")
 

@@ -115,7 +115,7 @@ class TestDBEv2FiLMIntegration:
         from adan_trading_bot.data_processing.state_builder import StateBuilder
         sb = StateBuilder(config={}, timeframes=["5m", "1h", "4h"])
         ctx = sb.build_context_vector()
-        assert ctx.shape == (6,)
+        assert ctx.shape == (12,)
         assert ctx.dtype == np.float32
         # Without data, all entries including candle_progress are 0.0
         assert ctx[5] == 0.0
@@ -125,7 +125,7 @@ class TestDBEv2FiLMIntegration:
         from adan_trading_bot.data_processing.state_builder import StateBuilder
         sb = StateBuilder(config={}, timeframes=["5m", "1h", "4h"])
         ctx = sb.build_context_vector(data=None)
-        assert ctx.shape == (6,)
+        assert ctx.shape == (12,)
         # All entries should be 0 when no data is provided
         for i in range(6):
             assert ctx[i] == 0.0

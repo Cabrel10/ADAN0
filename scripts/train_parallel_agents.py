@@ -70,6 +70,12 @@ try:
 except ImportError:
     SeedManager = None
 
+# Feature extractor (SOTA architecture: FiLM Meta-RL, TemporalFusion)
+try:
+    from adan_trading_bot.agent.feature_extractors import ContextualTemporalFusionExtractor
+except ImportError:
+    ContextualTemporalFusionExtractor = None
+
 # Optional imports
 try:
     from adan_trading_bot.common.central_logger import logger as central_logger
@@ -648,7 +654,9 @@ class ADAN_PBT_Worker(tune.Trainable):
 
         vec_path = os.path.join(checkpoint_dir, "vecnormalize.pkl")
         if os.path.exists(vec_path):
-            self.vec_env = VecNormalize.load(vec_path, self.vec_env)
+            # Load onto the underlying venv (not the VecNormalize wrapper)
+            venv = self.vec_env.venv if hasattr(self.vec_env, "venv") else self.vec_env
+            self.vec_env = VecNormalize.load(vec_path, venv)
             self.model.set_env(self.vec_env)
 
         state_path = os.path.join(checkpoint_dir, "worker_state.json")

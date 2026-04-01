@@ -27,6 +27,15 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def _tz_naive(ts):
+    """Strip timezone from a pd.Timestamp so comparisons never fail."""
+    if ts is None:
+        return ts
+    if hasattr(ts, 'tz') and ts.tz is not None:
+        return ts.tz_localize(None)
+    return ts
+
+
 class DataValidator:
     """
     Classe principale pour la validation et préparation des données de trading.
@@ -127,7 +136,7 @@ class DataValidator:
                 self._valid_from_cache[cache_key] = None
                 return None
 
-            first_valid_close = close_series.index[0]
+            first_valid_close = _tz_naive(close_series.index[0])
 
             # Pour les indicateurs, chercher quand au moins 80% sont disponibles
             indicator_cols_present = [c for c in data.columns
@@ -141,7 +150,7 @@ class DataValidator:
                 # Trouver la première date avec 80% d'indicateurs valides
                 sufficient_indicators = non_null_pct >= 0.8
                 if sufficient_indicators.any():
-                    first_valid_indicators = sufficient_indicators[sufficient_indicators].index[0]
+                    first_valid_indicators = _tz_naive(sufficient_indicators[sufficient_indicators].index[0])
                     valid_from = max(first_valid_close, first_valid_indicators)
                 else:
                     # Si pas assez d'indicateurs, utiliser seulement close + marge de sécurité
@@ -172,11 +181,15 @@ class DataValidator:
                            f"valid_from_type={type(valid_from)} | Cannot add Timedelta")
                 valid_from = data.index[0] if len(data.index) > 0 else pd.Timestamp.now()
 
+            # Strip tz from valid_from for safe comparisons
+            valid_from = _tz_naive(valid_from)
+
             # Vérifier que valid_from n'est pas au-delà des données disponibles
-            if valid_from >= data.index[-1]:
+            _data_end = _tz_naive(data.index[-1])
+            if valid_from >= _data_end:
                 logger.warning(f"VALID_FROM_TOO_LATE | asset={asset} | tf={timeframe} | "
-                             f"valid_from={valid_from} | data_end={data.index[-1]}")
-                valid_from = first_valid_close
+                             f"valid_from={valid_from} | data_end={_data_end}")
+                valid_from = _tz_naive(first_valid_close)
 
             self._valid_from_cache[cache_key] = valid_from
             self.stats['valid_from_calculated'] += 1
@@ -217,7 +230,7 @@ class DataValidator:
             'asset_details': {}
         }
 
-        max_valid_from = chunk_start
+        max_valid_from = _tz_naive(chunk_start)
         rejected_assets = []
 
         for asset, timeframe_data in chunk_data.items():
@@ -240,8 +253,9 @@ class DataValidator:
                     )
 
                 # Mettre à jour le valid_from maximum
-                if tf_info['valid_from'] and tf_info['valid_from'] > max_valid_from:
-                    max_valid_from = tf_info['valid_from']
+                vf = _tz_naive(tf_info['valid_from'])
+                if vf is not None and vf > max_valid_from:
+                    max_valid_from = vf
 
             if asset_valid:
                 validation_info['assets_validated'] += 1
@@ -253,11 +267,13 @@ class DataValidator:
             validation_info['asset_details'][asset] = asset_info
 
         # Déterminer si le chunk est globalement valide
-        effective_start = max(chunk_start, max_valid_from)
+        _cs = _tz_naive(chunk_start)
+        _ce = _tz_naive(chunk_end)
+        effective_start = max(_cs, max_valid_from)
         validation_info['effective_start'] = effective_start
 
         # Le chunk est invalide si effective_start dépasse chunk_end
-        is_valid = effective_start <= chunk_end
+        is_valid = effective_start <= _ce
 
         if not is_valid:
             self.stats['chunks_rejected'] += 1
@@ -408,9 +424,14 @@ class DataValidator:
             return tf_info
 
         # Évaluer la qualité des prix
+        # Use tz-naive slicing to avoid tz-naive/tz-aware comparison issues
         close_col = self._find_close_column(data)
         if close_col:
-            price_data = data[close_col][effective_start:chunk_end]
+            try:
+                price_data = data[close_col][effective_start:_ce]
+            except TypeError:
+                # Fallback: tz mismatch – use full column
+                price_data = data[close_col]
             if not price_data.empty:
                 nan_count = price_data.isna().sum()
                 tf_info['price_gaps'] = nan_count
@@ -425,7 +446,10 @@ class DataValidator:
         indicator_cols = [c for c in data.columns
                          if any(ind in c.lower() for ind in self.indicator_columns)]
         if indicator_cols:
-            indicator_data = data[indicator_cols][effective_start:chunk_end]
+            try:
+                indicator_data = data[indicator_cols][effective_start:_ce]
+            except TypeError:
+                indicator_data = data[indicator_cols]
             if not indicator_data.empty:
                 coverage = indicator_data.notna().mean().mean()
                 tf_info['indicator_coverage'] = coverage

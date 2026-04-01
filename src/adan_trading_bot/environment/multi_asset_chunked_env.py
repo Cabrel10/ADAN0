@@ -1096,14 +1096,18 @@ class MultiAssetChunkedEnv(gym.Env):
 
     def _init_risk_parameters(self):
         """
-        Initialise les paramètres de risque à partir de la configuration du worker.
+        Initialise les paramètres de risque.
 
-        Cette méthode configure les paramètres de gestion des risques en fonction du profil du worker,
-        avec une attention particulière aux micro-capitaux (<50 USDT) et aux différents régimes de marché.
+        ARCHITECTURE RULE: risk_per_trade and exposure limits come from
+        the Capital Tier (based on current portfolio value), NOT from the
+        worker profile. The worker only provides temporal specialisation.
         """
-        # 1. Configuration de base du risque
-        self.base_position_size = self.risk_params.get("position_size_pct", 0.1)
-        self.risk_per_trade = self.risk_params.get("risk_per_trade_pct", 1.0)
+        # 1. Base position size - use tier if available, else safe default
+        self.base_position_size = 0.10  # 10% default, overridden at trade time by tier
+        
+        # risk_per_trade will be overridden by tier at each step in _execute_trades
+        # but we need a safe init value
+        self.risk_per_trade = 0.04  # 4% Micro Capital default
 
         # 2. Paramètres de position sizing dynamique
         self.dynamic_position_sizing = self.worker_config.get("dbe_config", {}).get(
@@ -1788,9 +1792,11 @@ class MultiAssetChunkedEnv(gym.Env):
                 low=-np.inf, high=np.inf, shape=(portfolio_dim,), dtype=np.float32
             )
 
-            # Context vector for FiLM Meta-RL modulation (6 dims: volatility, trend, ADX, regime_score, drawdown, candle_progress_pct)
+            # Context vector for FiLM Meta-RL modulation (SOTA 2025: 12 dims)
+            # [0-5] market: volatility, trend, ADX, regime_score, drawdown, candle_progress
+            # [6-11] cyclical time: sin/cos hour, day-of-week, day-of-month
             obs_spaces["context_vector"] = spaces.Box(
-                low=-1.0, high=1.0, shape=(6,), dtype=np.float32
+                low=-1.0, high=1.0, shape=(12,), dtype=np.float32
             )
 
             self.observation_space = spaces.Dict(obs_spaces)
@@ -5478,24 +5484,40 @@ class MultiAssetChunkedEnv(gym.Env):
             realized_pnl += pnl_from_update
             trade_executed_this_step = True
 
-        # --- Helper: get current tier ---
+        # ================================================================
+        # CAPITAL TIER SUPREMACY: exposure_range and risk_per_trade_pct
+        # are dictated EXCLUSIVELY by the current Capital Tier, NEVER
+        # by the worker profile. A Scalper at 20$ (Micro) exposes 70-90%;
+        # the same Scalper at 10000$ (Enterprise) exposes only 5-15%.
+        # ================================================================
         capital = self.portfolio_manager.get_total_value()
         tier = None
+
+        # 1. Try DBE tier resolution (preferred, uses live capital)
         if hasattr(self, 'dbe') and self.dbe:
-            tier_func = getattr(self.dbe, 'get_capital_tier', getattr(self.dbe, '_get_capital_tier', None))
+            tier_func = getattr(self.dbe, 'get_capital_tier',
+                                getattr(self.dbe, '_get_capital_tier', None))
             if tier_func:
                 tier = tier_func(capital)
+
+        # 2. Fallback: search capital_tiers from master config
         if not tier:
-            # Fallback: find tier from config
             for t in self.config.get("capital_tiers", []):
                 lo = t.get("min_capital", 0)
                 hi = t.get("max_capital") or float("inf")
                 if lo <= capital < hi:
                     tier = t
                     break
-        if not tier:
-            tier = {"exposure_range": [70, 90], "risk_per_trade_pct": 4.0, "name": "Micro Capital"}
 
+        # 3. Last resort: Micro Capital defaults (safest assumption)
+        if not tier:
+            tier = {"exposure_range": [70, 90], "risk_per_trade_pct": 4.0,
+                    "name": "Micro Capital"}
+
+        # Store for monitoring / reward calculator
+        self.current_tier = tier
+
+        # 4. Extract tier-level risk parameters (NEVER from worker_config)
         min_exp = float(tier.get("exposure_range", [70, 90])[0]) / 100.0
         max_exp = float(tier.get("exposure_range", [70, 90])[1]) / 100.0
         max_risk_pct = float(tier.get("risk_per_trade_pct", 4.0)) / 100.0

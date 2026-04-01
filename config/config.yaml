@@ -1,685 +1,11 @@
-action:
-  action_scale: 1.0
-  min_action_threshold: 0.01
-agent:
-  algorithm: PPO
-  batch_size: 64
-  buffer_size: 100000
-  checkpoint_freq: 1000
-  clip_range: 0.2
-  clip_range_vf: null
-  confidence:
-    enabled: true
-    min_confidence: 0.6
-    update_frequency: 100
-  custom_log_freq_rollouts: 1
-  debug: false
-  deterministic_inference: false
-  early_stopping:
-    enabled: true
-    min_delta: 0.001
-    patience: 50000
-  ent_coef: 0.01
-  ent_coef_schedule:
-    end: 0.001
-    start: 0.01
-    type: linear
-  eval_episodes: 10
-  eval_freq: 10000
-  exploration:
-    exploration_fraction: 0.1
-    final_eps: 0.01
-    initial_eps: 1.0
-    noise_sigma: 0.2
-    noise_std: 0.1
-    noise_theta: 0.15
-    strategy: epsilon_greedy
-  features_extractor_kwargs:
-    attention:
-      dropout: 0.1
-      num_heads: 4
-      use_relative_positions: true
-    cnn_configs:
-      1h:
-        channel_groups: 3
-        groups:
-          indicators:
-            indices:
-            - 5
-            - 6
-            - 7
-            - 8
-            - 9
-            - 10
-            - 11
-            - 12
-            - 13
-            - 14
-            kernel_size: 3
-            out_channels: 32
-            padding: 1
-          price:
-            indices:
-            - 0
-            - 1
-            - 2
-            - 3
-            kernel_size: 3
-            out_channels: 16
-            padding: 1
-          volume:
-            indices:
-            - 4
-            kernel_size: 3
-            out_channels: 8
-            padding: 1
-        input_shape:
-        - 1
-        - 20
-        - 15
-      4h:
-        activation: relu
-        batch_norm: true
-        channel_groups: 3
-        conv_blocks: 2
-        final_dropout: 0.3
-        groups:
-          indicators:
-            indices:
-            - 5
-            - 6
-            - 7
-            - 8
-            - 9
-            - 10
-            - 11
-            - 12
-            - 13
-            - 14
-            kernel_size: 3
-            out_channels: 32
-            padding: 1
-          price:
-            indices:
-            - 0
-            - 1
-            - 2
-            - 3
-            kernel_size: 3
-            out_channels: 16
-            padding: 1
-          volume:
-            indices:
-            - 4
-            kernel_size: 3
-            out_channels: 8
-            padding: 1
-        input_shape:
-        - 1
-        - 20
-        - 15
-        temporal_attention_heads: 4
-        use_channel_attention: true
-        use_temporal_attention: true
-      5m:
-        channel_groups: 3
-        groups:
-          indicators:
-            indices:
-            - 5
-            - 6
-            - 7
-            - 8
-            - 9
-            - 10
-            - 11
-            - 12
-            - 13
-            - 14
-            kernel_size: 3
-            out_channels: 32
-            padding: 1
-          price:
-            indices:
-            - 0
-            - 1
-            - 2
-            - 3
-            kernel_size: 3
-            out_channels: 16
-            padding: 1
-          volume:
-            indices:
-            - 4
-            kernel_size: 3
-            out_channels: 8
-            padding: 1
-        input_shape:
-        - 1
-        - 20
-        - 15
-    fc_layers:
-    - 256
-    - 128
-    initialization:
-      bias: zeros
-      conv: xavier_uniform
-      dense: xavier_uniform
-    normalization:
-      use_batch_norm: true
-      use_layer_norm: false
-    policy_kwargs:
-      activation_fn: torch.nn.ReLU
-      net_arch:
-        pi:
-        - 128
-        - 64
-        shared:
-        - 256
-        vf:
-        - 128
-        - 64
-    ppo:
-      batch_size: 64
-      clip_range: 0.2
-      clip_range_vf: null
-      ent_coef: 0.01
-      gae_lambda: 0.95
-      max_grad_norm: 0.5
-      n_epochs: 10
-      n_steps: 2048
-      normalize_advantage: true
-      sde_sample_freq: -1
-      use_reparameterization: false
-      use_sde: false
-      vf_coef: 0.5
-  gae_lambda: 0.95
-  gamma: 0.9523222699352663
-  learning_rate: 0.0003
-  learning_rate_schedule:
-    end: 1.0e-05
-    start: 0.0003
-    type: linear
-  log_level: INFO
-  logging_level: INFO
-  max_grad_norm: 0.5
-  n_envs: 4
-  n_epochs: 10
-  n_steps: 2048
-  numpy_log_level: ERROR
-  policy: MultiInputPolicy
-  save_best_model: true
-  seed: 42
-  target_kl: 0.03
-  tensorflow_log_level: 3
-  torch_log_level: ERROR
-  verbose: 1
-  vf_coef: 0.5
-  window_size: 20
-capital_tiers:
-- exposure_range:
-  - 70
-  - 90
-  leverage: 1.0
-  max_capital: 30.0
-  max_concurrent_positions: 1
-  max_drawdown_pct: 4.0
-  max_position_size_pct: 90
-  min_capital: 11.0
-  name: Micro Capital
-  risk_per_trade_pct: 4.0
-- exposure_range:
-  - 35
-  - 75
-  leverage: 1.0
-  max_capital: 100.0
-  max_concurrent_positions: 2
-  max_drawdown_pct: 3.75
-  max_position_size_pct: 65
-  min_capital: 30.0
-  name: Small Capital
-  risk_per_trade_pct: 2.0
-- exposure_range:
-  - 45
-  - 60
-  leverage: 1.0
-  max_capital: 300.0
-  max_concurrent_positions: 3
-  max_drawdown_pct: 3.25
-  max_position_size_pct: 48
-  min_capital: 100.0
-  name: Medium Capital
-  risk_per_trade_pct: 2.25
-- exposure_range:
-  - 20
-  - 35
-  leverage: 1.0
-  max_capital: 1000.0
-  max_concurrent_positions: 4
-  max_drawdown_pct: 2.75
-  max_position_size_pct: 28
-  min_capital: 300.0
-  name: High Capital
-  risk_per_trade_pct: 2.75
-- exposure_range:
-  - 5
-  - 15
-  leverage: 1.0
-  max_capital: null
-  max_concurrent_positions: 5
-  max_drawdown_pct: 2.5
-  max_position_size_pct: 20
-  min_capital: 1000.0
-  name: Enterprise
-  risk_per_trade_pct: 3.0
-chunk_carry_over:
-  keep_recent_avg_pnl_pct: 0.0
-  keep_unrealized_pct: 0.02
-  max_allowed_loss_pct: 0.1
-  min_steps_left_to_allow_carry: 6
-  recent_closed_window: 8
-data:
-  assets:
-  - BTCUSDT
-  - XRPUSDT
-  data_dirs:
-    base: ./data/processed/indicators
-    test: ./data/processed/indicators/test
-    train: ./data/processed/indicators/train
-    val: ./data/processed/indicators/val
-  features_config:
-    timeframes:
-      1h:
-        indicators:
-        - rsi_21
-        - macd_21_42_9
-        - bb_width_20_2
-        - adx_14
-        - obv_ratio_20
-        - ema_50_ratio
-        - ichimoku_base
-        - fib_ratio
-        - price_ema_ratio_50
-        price:
-        - open
-        - high
-        - low
-        - close
-        volume:
-        - volume
-      4h:
-        indicators:
-        - rsi_28
-        - macd_26_52_18
-        - supertrend_10_3
-        - volume_sma_20_ratio
-        - ema_100_ratio
-        - pivot_level
-        - donchian_width_20
-        - market_structure
-        - volatility_ratio_14_50
-        price:
-        - open
-        - high
-        - low
-        - close
-        volume:
-        - volume
-      5m:
-        indicators:
-        - rsi_14
-        - macd_12_26_9
-        - bb_percent_b_20_2
-        - atr_14
-        - atr_20
-        - atr_50
-        - volume_ratio_20
-        - ema_20_ratio
-        - stoch_k_14_3_3
-        price:
-        - open
-        - high
-        - low
-        - close
-        volume:
-        - volume
-  include:
-  - BTCUSDT
-  - XRPUSDT
-  processed_data:
-    test: data/processed/indicators/test
-    train: data/processed/indicators/train
-    validation: data/processed/validation
-  timeframes:
-  - 5m
-  - 1h
-  - 4h
-  timestamp:
-    column_name: timestamp
-    format: auto
-    set_as_index: true
-    timezone: UTC
-data_augmentation:
-  apply_order:
-  - time_warping
-  - gaussian_noise
-  enabled: false
-  gaussian_noise:
-    enabled: true
-    exclude_columns: []
-    std: 0.01
-  partial_shuffle:
-    enabled: false
-    exclude_columns: []
-    segment_size: 10
-  random_impulses:
-    enabled: false
-    exclude_columns: []
-    max_impulse: 0.1
-    probability: 0.01
-  random_scaling:
-    enabled: false
-    exclude_columns: []
-    scale_range:
-    - 0.9
-    - 1.1
-  time_warping:
-    enabled: true
-    exclude_columns: []
-    sigma: 0.2
-    window: 5
-  trend_augmentation:
-    enabled: false
-    exclude_columns: []
-    max_trend: 0.05
-  window_permutation:
-    enabled: false
-    exclude_columns: []
-    n_permutations: 3
-    window_size: 10
-data_processing:
-  max_lookahead: 24
-  temporal_transforms:
-    bollinger_std: 2
-    bollinger_window: 20
-    diffs:
-    - 1
-    - 2
-    enabled: true
-    macd_fast: 12
-    macd_signal: 9
-    macd_slow: 26
-    moving_averages:
-    - 5
-    - 10
-    rolling_windows:
-    - 5
-    - 10
-    rsi_window: 14
-dbe:
-  aggressiveness_by_tier:
-    Enterprise:
-      bear:
-        position_size_multiplier: 0.6
-        sl_multiplier: 0.7
-        tp_multiplier: 0.8
-      bull:
-        position_size_multiplier: 0.8
-        sl_multiplier: 0.9
-        tp_multiplier: 1.1
-      sideways:
-        position_size_multiplier: 1.0
-        sl_multiplier: 1.0
-        tp_multiplier: 1.0
-      volatile:
-        position_size_multiplier: 0.4
-        sl_multiplier: 0.8
-        tp_multiplier: 0.7
-    High:
-      bear:
-        position_size_multiplier: 0.7
-        sl_multiplier: 0.75
-        tp_multiplier: 0.85
-      bull:
-        position_size_multiplier: 0.9
-        sl_multiplier: 1.0
-        tp_multiplier: 1.2
-      sideways:
-        position_size_multiplier: 1.0
-        sl_multiplier: 1.0
-        tp_multiplier: 1.0
-      volatile:
-        position_size_multiplier: 0.5
-        sl_multiplier: 0.9
-        tp_multiplier: 0.8
-    Medium:
-      bear:
-        position_size_multiplier: 0.9
-        sl_multiplier: 0.8
-        tp_multiplier: 0.9
-      bull:
-        position_size_multiplier: 1.1
-        sl_multiplier: 1.1
-        tp_multiplier: 1.3
-      sideways:
-        position_size_multiplier: 1.0
-        sl_multiplier: 1.0
-        tp_multiplier: 1.0
-      volatile:
-        position_size_multiplier: 0.6
-        sl_multiplier: 1.0
-        tp_multiplier: 0.9
-    Micro:
-      bear:
-        position_size_multiplier: 1.2
-        sl_multiplier: 0.9
-        tp_multiplier: 1.1
-      bull:
-        position_size_multiplier: 1.4
-        sl_multiplier: 1.3
-        tp_multiplier: 1.6
-      sideways:
-        position_size_multiplier: 1.0
-        sl_multiplier: 1.0
-        tp_multiplier: 1.0
-      volatile:
-        position_size_multiplier: 0.8
-        sl_multiplier: 1.2
-        tp_multiplier: 1.1
-    Small:
-      bear:
-        position_size_multiplier: 1.0
-        sl_multiplier: 0.85
-        tp_multiplier: 1.0
-      bull:
-        position_size_multiplier: 1.2
-        sl_multiplier: 1.2
-        tp_multiplier: 1.4
-      sideways:
-        position_size_multiplier: 1.0
-        sl_multiplier: 1.0
-        tp_multiplier: 1.0
-      volatile:
-        position_size_multiplier: 0.7
-        sl_multiplier: 1.1
-        tp_multiplier: 1.0
-  aggressiveness_decay:
-    enterprise: 0.6
-    high: 0.85
-    medium: 1.0
-    micro: 1.1
-    small: 1.03
-  default_reset_capital: 20.5
-  logging:
-    disable_existing_loggers: true
-    level: INFO
-    performance_metrics: false
-    save_interval: 1000
-    save_trade_history: false
-  market_regime_detection:
-    adx_threshold: 25
-    atr_multiplier: 2.0
-    ema_fast: 12
-    ema_slow: 26
-    macd_signal: 9
-    rsi_overbought: 70
-    rsi_oversold: 30
-  performance:
-    adaptation:
-      learning_rate: 0.01
-      max_risk_level: 2.0
-      min_risk_level: 0.5
-      risk_decrement: 0.1
-      risk_increment: 0.1
-      use_dynamic_sizing: true
-      volatility_smoothing: 14
-    lookback_window: 100
-    min_trades_for_metrics: 10
-    profit_factor_target: 1.5
-    winrate_target: 0.6
-  regime_parameters:
-    bear:
-      position_size_multiplier: 0.9
-      sl_multiplier: 0.8
-      tp_multiplier: 0.9
-    bull:
-      position_size_multiplier: 1.1
-      sl_multiplier: 1.2
-      tp_multiplier: 1.5
-    sideways:
-      position_size_multiplier: 1.0
-      sl_multiplier: 1.0
-      tp_multiplier: 1.0
-    volatile:
-      position_size_multiplier: 0.8
-      sl_multiplier: 1.5
-      tp_multiplier: 1.2
-  risk_management:
-    max_consecutive_losses: 5
-    max_leverage: 1
-    min_trade_value: 11.0
-  take_profit:
-    atr_period: 14
-    enabled: true
-    max_volatility: 0.1
-    min_volatility: 0.01
-    risk_reward_ratio: 2.0
-    trailing_deviation_pct: 1.5
-    trailing_enabled: true
-    volatility_adjustment: true
-  volatility_calculation:
-    atr_based:
-      multiplier: 1.0
-      period: 14
-      use_when_available: true
-    fallback_handling:
-      default_volatility: 0.025
-      max_volatility: 0.2
-      min_volatility: 0.005
-      smoothing_factor: 0.1
-      zero_volatility_replacement: 0.015
-    logging:
-      detailed_debug: false
-      log_calculations: true
-      log_fallback_usage: true
-      log_method_switches: true
-    price_range:
-      high_low_ratio: true
-      lookback_periods: 10
-    primary_method: rolling_std
-    rolling_std:
-      center: false
-      ddof: 1
-      min_periods: 5
-      window: 21
-    secondary_methods:
-    - atr_based
-    - price_range
-    timeframe_specific:
-      1h:
-        fallback_volatility: 0.025
-        min_periods: 6
-        window: 24
-      4h:
-        fallback_volatility: 0.03
-        min_periods: 5
-        window: 21
-      5m:
-        fallback_volatility: 0.02
-        min_periods: 3
-        window: 20
-    validation:
-      cap_extreme_values: true
-      log_outliers: true
-      log_zero_volatility: true
-      outlier_threshold_std: 3.0
-      remove_outliers: true
-  volatility_guard:
-    atr_pct_threshold: 0.035
-    enabled: true
-    exposure_multiplier_on_high_vol: 0.6
-    risk_multiplier_on_high_vol: 0.7
-diagnostics:
-  action_threshold_monitoring:
-    alert_on_no_trades: true
-    enabled: true
-    log_rejected_actions: true
-    report_threshold_effectiveness: true
-    track_action_magnitudes: true
-  frequency_monitoring:
-    alert_on_inactive_timeframes: true
-    enabled: true
-    log_validation_results: true
-    monitor_timeframe_balance: true
-    track_force_trade_events: true
-  performance_monitoring:
-    generate_activity_reports: true
-    log_trading_patterns: true
-    monitor_action_success_rates: true
-    track_trades_per_timeframe: true
-  volatility_monitoring:
-    enabled: true
-    log_zero_volatility_events: true
-    monitor_fallback_usage: true
-    track_calculation_methods: true
-    validate_volatility_range: true
-exchange:
-  default: binance
-  binance:
-    live:
-      rest_url: "https://api.binance.com"
-      ws_url: "wss://stream.binance.com:9443/ws"
-      api_key: "${BINANCE_API_KEY}"
-      secret_key: "${BINANCE_SECRET_KEY}"
-    testnet:
-      rest_url: "https://testnet.binance.vision/api"
-      ws_url: "wss://stream.testnet.binance.vision/ws"
-      api_key: "${BINANCE_TESTNET_API_KEY}"
-      secret_key: "${BINANCE_TESTNET_SECRET_KEY}"
-  bybit:
-    live:
-      rest_url: "https://api.bybit.com"
-      ws_url: "wss://stream.bybit.com/v5/public/spot"
-      api_key: "${BYBIT_API_KEY}"
-      secret_key: "${BYBIT_SECRET_KEY}"
-    testnet:
-      rest_url: "https://api-testnet.bybit.com"
-      ws_url: "wss://stream-testnet.bybit.com/v5/public/spot"
-      api_key: "${BYBIT_TESTNET_API_KEY}"
-      secret_key: "${BYBIT_TESTNET_SECRET_KEY}"
-  bitget:
-    live:
-      rest_url: "https://api.bitget.com/api/v2"
-      ws_url: "wss://ws.bitget.com/v2/ws"
-      api_key: "${BITGET_API_KEY}"
-      secret_key: "${BITGET_SECRET_KEY}"
-      passphrase: "${BITGET_PASSPHRASE}"
-    testnet:
-      rest_url: "https://api.bitget.com/api/v2" # Placeholder, check docs
-      ws_url: "wss://ws.bitget.com/v2/ws" # Placeholder, check docs
-      api_key: "${BITGET_TESTNET_API_KEY}"
-      secret_key: "${BITGET_TESTNET_SECRET_KEY}"
-      passphrase: "${BITGET_TESTNET_PASSPHRASE}"
+# ============================================================================
+# ADAN Trading Bot - Master Configuration
+# ============================================================================
+# ARCHITECTURE RULE: Capital Tiers define ALL risk/exposure parameters.
+# Workers define ONLY temporal specialization (timeframes, trade duration).
+# A Scalper at 20$ (Micro) exposes 90%; the same Scalper at 10000$ (Enterprise)
+# exposes only 15%. The TIER dictates risk, not the worker profile.
+# ============================================================================
 
 action:
   action_scale: 1.0
@@ -1327,18 +653,6 @@ diagnostics:
     track_calculation_methods: true
     validate_volatility_range: true
 environment:
-  hard_constraints:
-    min_order_value_usdt: 11.0
-    max_position_size_pct: 0.5
-    min_position_size_pct: 0.01
-    stop_loss_pct:
-      min: 0.005
-      max: 0.2
-    take_profit_pct:
-      min: 0.01
-      max: 0.5
-    max_risk_per_trade_pct: 0.02
-    max_drawdown_pct: 0.25
   action_thresholds:
     1h: 0.4
     4h: 0.5
@@ -1364,7 +678,7 @@ environment:
     - volume
   frequency_validation:
     force_trade:
-      enabled: false  # CRITIQUE: Pas de forçage - ADAN décide seul
+      enabled: false
       escalation_steps:
       - 30
       - 50
@@ -1375,7 +689,7 @@ environment:
       - lower_thresholds
       - mandatory_action
       - bypass_validation
-      progressive_forcing: false  # Désactivé aussi
+      progressive_forcing: false
     global_rules:
       allow_episodes_with_few_trades: true
       emergency_trade_forcing: true
@@ -1413,6 +727,18 @@ environment:
       log_validation_failures: true
       retry_with_lower_thresholds: true
       skip_validation_after_retries: 3
+  hard_constraints:
+    max_drawdown_pct: 0.25
+    max_position_size_pct: 0.5
+    max_risk_per_trade_pct: 0.02
+    min_order_value_usdt: 11.0
+    min_position_size_pct: 0.01
+    stop_loss_pct:
+      max: 0.2
+      min: 0.005
+    take_profit_pct:
+      max: 0.5
+      min: 0.01
   initial_balance: 20.5
   max_chunks_per_episode: 10
   max_steps: 25000
@@ -1430,7 +756,6 @@ environment:
     pin_memory: true
     prefetch_factor: 2
     shuffle: true
-  trading_mode: backtest
   observation:
     features:
       base:
@@ -1541,12 +866,50 @@ environment:
       description: High-frequency trading enabled
       force_trade_steps: 100
       min_magnitude: 0.03
+  trading_mode: backtest
   volatility_handling:
     cache_calculations: true
     cache_duration_steps: 10
     force_recalculation_on_zero: true
     validate_on_step: true
   window_size: 50
+exchange:
+  binance:
+    live:
+      api_key: ${BINANCE_API_KEY}
+      rest_url: https://api.binance.com
+      secret_key: ${BINANCE_SECRET_KEY}
+      ws_url: wss://stream.binance.com:9443/ws
+    testnet:
+      api_key: ${BINANCE_TESTNET_API_KEY}
+      rest_url: https://testnet.binance.vision/api
+      secret_key: ${BINANCE_TESTNET_SECRET_KEY}
+      ws_url: wss://stream.testnet.binance.vision/ws
+  bitget:
+    live:
+      api_key: ${BITGET_API_KEY}
+      passphrase: ${BITGET_PASSPHRASE}
+      rest_url: https://api.bitget.com/api/v2
+      secret_key: ${BITGET_SECRET_KEY}
+      ws_url: wss://ws.bitget.com/v2/ws
+    testnet:
+      api_key: ${BITGET_TESTNET_API_KEY}
+      passphrase: ${BITGET_TESTNET_PASSPHRASE}
+      rest_url: https://api.bitget.com/api/v2
+      secret_key: ${BITGET_TESTNET_SECRET_KEY}
+      ws_url: wss://ws.bitget.com/v2/ws
+  bybit:
+    live:
+      api_key: ${BYBIT_API_KEY}
+      rest_url: https://api.bybit.com
+      secret_key: ${BYBIT_SECRET_KEY}
+      ws_url: wss://stream.bybit.com/v5/public/spot
+    testnet:
+      api_key: ${BYBIT_TESTNET_API_KEY}
+      rest_url: https://api-testnet.bybit.com
+      secret_key: ${BYBIT_TESTNET_SECRET_KEY}
+      ws_url: wss://stream-testnet.bybit.com/v5/public/spot
+  default: binance
 feature_engineering:
   columns_to_normalize:
   - OPEN
@@ -1647,93 +1010,93 @@ general:
   project_name: ADAN_Trading_Bot
   random_seed: 42
   timezone: UTC
+model:
+  architecture:
+    attention:
+      dropout: 0.1
+      num_heads: 8
+      use_residual: true
+    block_a:
+      dropout: 0.2
+      kernel_size: 3
+      leaky_relu_negative_slope: 0.01
+      out_channels: 64
+      padding: 1
+    block_b:
+      dropout: 0.3
+      multi_scale:
+      - 3
+      - 5
+      - 7
+      se_ratio: 8
+    head:
+      activation: LeakyReLU
+      dropout: 0.5
+      hidden_units:
+      - 256
+      - 128
+  diagnostics:
+    attention_map_dir: ./models/attention_maps
+    background: '#1e1e1e'
+    bollinger_band: rgba(41, 98, 255, 0.1)
+    bollinger_mid: '#2962ff'
+    grid: rgba(255, 255, 255, 0.05)
+    histogram_down: '#e57373'
+    histogram_up: '#81c784'
+    ma_long: '#9c27b0'
+    ma_medium: '#2196f3'
+    ma_short: '#ff9800'
+    macd_line: '#4caf50'
+    rsi_line: '#ffc107'
+    rsi_overbought: rgba(255, 193, 7, 0.2)
+    rsi_oversold: rgba(255, 193, 7, 0.2)
+    save_attention_maps: false
+    signal_line: '#f44336'
+    target_layer: model.cnn.2
+    use_grad_cam: false
+    use_integrated_gradients: false
+    volume_down: '#ef5350'
+    volume_up: '#26a69a'
+  style:
+    axes_facecolor: '#1e1e1e'
+    bottom_margin: 0.1
+    candle_width: 0.8
+    figure_facecolor: '#121212'
+    font_family: sans-serif
+    font_size: 10
+    grid_alpha: 0.1
+    hspace: 0.1
+    left_margin: 0.05
+    legend_edgecolor: '#555555'
+    legend_facecolor: '#2c2c2c'
+    legend_frameon: true
+    legend_loc: upper left
+    line_width: 1.5
+    right_margin: 0.95
+    top_margin: 0.95
+    volume_alpha: 0.7
+model_fusion:
+  enabled: true
+  ensemble_params:
+    consistency_threshold: 0.7
+    diversity_bonus: 0.1
+    max_worker_contribution: 0.35
+    min_worker_contribution: 0.15
+  method: weighted_ensemble
+  rebalancing:
+    enabled: true
+    frequency: weekly
+    min_trials_for_update: 50
+    performance_window: 168
+  strategy: performance_based
+  weights:
+    0: 0.25
+    1: 0.27
+    2: 0.3
+    3: 0.18
 paper_trading:
-  exchange_id: 'binance'
+  exchange_id: binance
   use_testnet: true
-model:
-  architecture:
-    attention:
-      dropout: 0.1
-      num_heads: 8
-      use_residual: true
-    block_a:
-      dropout: 0.2
-      kernel_size: 3
-      leaky_relu_negative_slope: 0.01
-      out_channels: 64
-      padding: 1
-    block_b:
-      dropout: 0.3
-      multi_scale:
-      - 3
-      - 5
-      - 7
-      se_ratio: 8
-    head:
-      activation: LeakyReLU
-      dropout: 0.5
-      hidden_units:
-      - 256
-      - 128
-  diagnostics:
-    attention_map_dir: ./models/attention_maps
-    background: '#1e1e1e'
-    bollinger_band: rgba(41, 98, 255, 0.1)
-    bollinger_mid: '#2962ff'
-    grid: rgba(255, 255, 255, 0.05)
-    histogram_down: '#e57373'
-    histogram_up: '#81c784'
-    ma_long: '#9c27b0'
-    ma_medium: '#2196f3'
-    ma_short: '#ff9800'
-    macd_line: '#4caf50'
-    rsi_line: '#ffc107'
-    rsi_overbought: rgba(255, 193, 7, 0.2)
-    rsi_oversold: rgba(255, 193, 7, 0.2)
-    save_attention_maps: false
-    signal_line: '#f44336'
-    target_layer: model.cnn.2
-    use_grad_cam: false
-    use_integrated_gradients: false
-    volume_down: '#ef5350'
-    volume_up: '#26a69a'
-  style:
-    axes_facecolor: '#1e1e1e'
-    bottom_margin: 0.1
-    candle_width: 0.8
-    figure_facecolor: '#121212'
-    font_family: sans-serif
-    font_size: 10
-    grid_alpha: 0.1
-    hspace: 0.1
-    left_margin: 0.05
-    legend_edgecolor: '#555555'
-    legend_facecolor: '#2c2c2c'
-    legend_frameon: true
-    legend_loc: upper left
-    line_width: 1.5
-    right_margin: 0.95
-    top_margin: 0.95
-    volume_alpha: 0.7
-model_fusion:
-  enabled: true
-  ensemble_params:
-    consistency_threshold: 0.7
-    diversity_bonus: 0.1
-    max_worker_contribution: 0.35
-    min_worker_contribution: 0.15
-  method: weighted_ensemble
-  rebalancing:
-    enabled: true
-    frequency: weekly
-    min_trials_for_update: 50
-    performance_window: 168
-  strategy: performance_based
-  weights:
-    0: 0.25
-    1: 0.27
-    2: 0.3
-    3: 0.18
 paths:
   base_dir: .
   data_dir: ./data
@@ -1782,1661 +1145,361 @@ preprocessing:
       1h: 20
       4h: 20
       5m: 20
-regularization:
-  batch_norm_epsilon: 1.0e-05
-  batch_norm_momentum: 0.99
-  dropout_rate: 0.3
-  gradient_clip: 1.0
-  use_batch_norm: true
-  weight_decay: 0.0001
-reset_parameters:
-  check_interval: 100
-  max_consecutive_losses: 5
-  min_capital_before_reset: 11.0
-  reset_mode: soft
-reward_shaping:
-  duration_penalty_weight: 0.01
-  early_close_bonus: 0.3
-  early_exit_bonus: 0.5
-  min_holding_period_steps: 6
-  exploration_tutor:
-    discovery_bonus: 0.5
-    enabled: true
-    exit_on_successful_trades:
-      4h: 10
-      5m: 15
-  frequency_weights:
-    in_range: 2.0
-    out_of_range: 0.2
-  invalid_trade_penalty_weight: 5.0e-05
-  logging:
-    disable_existing_loggers: false
-    formatters:
-      console:
-        datefmt: '%Y-%m-%d %H:%M:%S'
-        format: '[%(levelname)s] %(asctime)s - %(name)s - %(message)s'
-      json:
-        (): pythonjsonlogger.jsonlogger.JsonFormatter
-        format: '%(asctime)s %(name)s %(levelname)s %(message)s'
-    handlers:
-      console:
-        class: logging.StreamHandler
-        formatter: console
-        level: INFO
-        stream: ext://sys.stdout
-      main_file:
-        backupCount: 5
-        class: logging.handlers.RotatingFileHandler
-        encoding: utf-8
-        filename: ./logs/adan_trading_bot.jsonl
-        formatter: json
-        level: INFO
-        maxBytes: 10485760
-    loggers:
-      matplotlib:
-        level: WARNING
-      pyarrow:
-        level: WARNING
-      urllib3:
-        level: WARNING
-    root:
-      handlers:
-      - console
-      - main_file
-      level: INFO
-    version: 1
-  missed_penalty: -0.5
-  multi_traque_bonus: 1.5
-  overstay_penalty: -1.0
-  pnl_normalization: 50.0
-  pnl_weight: 50.0
-  profiles:
-    Adaptive:
-      duration_penalty_weight: 0.01
-      early_exit_bonus: 0.15
-      missed_opportunity_penalty: -0.25
-      stop_loss_penalty: -1.0
-      take_profit_bonus: 0.5
-    Aggressive:
-      duration_penalty_weight: 0.005
-      early_exit_bonus: 0.3
-      missed_opportunity_penalty: -0.3
-      stop_loss_penalty: -0.8
-      take_profit_bonus: 0.8
-    Conservative:
-      duration_penalty_weight: 0.02
-      early_exit_bonus: 0.0
-      missed_opportunity_penalty: -0.1
-      stop_loss_penalty: -1.5
-      take_profit_bonus: 0.4
-    Moderate:
-      duration_penalty_weight: 0.015
-      early_exit_bonus: 0.1
-      missed_opportunity_penalty: -0.2
-      stop_loss_penalty: -1.0
-      take_profit_bonus: 0.6
-  progressive_difficulty: true
-  risk_formulas:
-    capital_protection:
-      bonus_weight: 0.3
-      enabled: true
-      threshold: 0.9
-    entry_quality:
-      bonus_weight: 0.15
-      enabled: true
-      max_ratio: 3.0
-      min_ratio: 2.0
-    liquidity:
-      enabled: true
-      max_position_volume_ratio: 0.05
-      penalty_weight: -0.2
-    market_timing:
-      bonus_weight: 0.1
-      enabled: true
-      optimal_range:
-      - 0.3
-      - 0.4
-    portfolio_concentration:
-      enabled: true
-      max_concentration: 0.7
-      penalty_weight: -0.1
-    risk_score:
-      bonus_weight: 0.2
-      enabled: true
-      max_risk_per_trade: 0.02
-      threshold: 80
-    trade_performance:
-      bonus_weight: 0.25
-      enabled: true
-      min_ratio: 2.0
-    volatility:
-      bonus_weight: 0.1
-      enabled: true
-      high_threshold: 0.03
-      optimal_range:
-      - 0.01
-      - 0.02
-      penalty_weight: -0.15
-  spot_trading:
-    capital_management:
-      efficiency_bonus: 0.2
-      idle_capital_penalty: -0.1
-      max_utilization: 0.9
-      min_utilization: 0.3
-    key_levels:
-      support_resistance_bonus: 0.3
-      trend_alignment_bonus: 0.2
-    liquidity_zones:
-      avoidance_bonus: 0.3
-      proximity_penalty: -0.4
-    order_efficiency:
-      efficient_execution_bonus: 0.15
-      slippage_penalty_per_pct: -0.2
-  trade_outcome:
-    stop_loss_multiplier: 0.05
-    take_profit_multiplier: 0.6
-risk_parameters:
-  base_sl_pct: 0.1
-  base_tp_pct: 0.15
-  daily_loss_limit: 0.1
-  drawdown_risk_multiplier: 1.5
-  max_drawdown_pct: 0.25
-  max_risk_level: 2.0
-  max_sl_pct: 0.1
-  max_tp_pct: 0.2
-  min_risk_level: 0.5
-  min_sl_pct: 0.01
-  min_tp_pct: 0.01
-  risk_step: 0.1
-  volatility_impact: 0.5
-  volatility_sl_factor: 1.2
-  weekly_loss_limit: 0.2
-  winrate_tp_factor: 1.1
-trading_rules:
-  commission_pct: 0.001
-  duration_tracking:
-    1h:
-      max_duration_steps: 20
-    4h:
-      max_duration_steps: 15
-    5m:
-      max_duration_steps: 50
-      optimal_duration: 25
-  frequency:
-    action_threshold: 0.01
-    bonus_weight: 0.6
-    force_trade_steps:
-      1h: 150
-      4h: 200
-      5m: 100
-    grace_period_steps: 5
-    max_positions:
-      1h: 13
-      4h: 4
-      5m: 13
-    min_positions:
-      1h: 0
-      4h: 0
-      5m: 0
-    penalty_weight: 0.05
-    total_daily_max: 50
-    total_daily_min: 1
-  futures_enabled: false
-  leverage: 1
-  max_position_steps: 144
-  min_order_value_usdt: 11.0
-  slippage_pct: 0.0005
-  stop_loss_pct: 0.02
-  take_profit_pct: 0.04
-  trailing_stop:
-    activation_pct: 0.01
-    enabled: false
-    trailing_pct: 0.005
-training:
-  batch_size: 64
-  checkpointing:
-    enabled: true
-    model_name: ppo_trading_bot
-    save_freq: 5000
-    save_path: ./models/rl_agents
-  final_model_export:
-    enabled: true
-    export_path: ./models/rl_agents/final
-    formats:
-    - pytorch
-    - onnx
-    include_preprocessing: true
-    onnx_config:
-      do_constant_folding: true
-      dynamic_axes:
-        input:
-          0: batch_size
-          1: sequence_length
-        output:
-          0: batch_size
-      export_params: true
-      input_names:
-      - observation
-      opset_version: 11
-      output_names:
-      - action
-      - value
-  num_instances: 4
-  progress_bar: true
-  save_freq: 5000
-  timesteps_per_instance: 350000
-  use_custom_progress: true
-workers:
-  w1:
-    agent_config:
-      batch_size: 128
-      clip_range: 0.21084844859190754
-      ent_coef: 0.010970372201012518
-      gae_lambda: 0.9328383156897404
-      gamma: 0.9745456241801775
-      learning_rate: 1.0838581269344744e-05
-      max_grad_norm: 0.5164916560792168
-      n_epochs: 7
-      n_steps: 2048
-      vf_coef: 0.5159725093210579
-      ppo_hyperparams:
-        batch_size: 32
-        clip_range: 0.2716743745284256
-        ent_coef: 0.0083184226004126
-        gae_lambda: 0.9661952867996083
-        gamma: 0.9916926551807859
-        learning_rate: 0.00017533232613106234
-        max_grad_norm: 0.5712987001858788
-        n_epochs: 14
-        n_steps: 512
-        vf_coef: 0.38241310168655024
-    assets:
-    - BTCUSDT
-    data_split: train
-    description: "✅ OPTIMIZED - Trial 1 - Score 51.46 - Ultra-Stable Scalper"
-    min_confidence: 0.6
-    name: W1 Ultra-Stable (Scalper)
-    position_size_pct: 0.1121
-    reward_config:
-      consecutive_loss_penalty: -3.0063
-      consistency_bonus: 1.1413
-      overtrading_penalty: -1.069
-      patience_bonus: 1.4807
-      pnl_weight: 85.0998512978671
-      stop_loss_penalty: -1.9435441748407962
-      take_profit_bonus: 1.622947827413278
-      win_rate_bonus: 1.3421466016073853
-    risk_management:
-      position_size_pct: 0.14159863754897406
-      risk_per_trade_pct: 0.019903972812986285
-      stop_loss_pct: 0.03885747982638574
-      take_profit_pct: 0.03524358220837648
-    risk_multiplier: 0.8012145777083237
-    risk_per_trade_pct_by_tier:
-      Enterprise: 0.0548
-      High: 0.064
-      Medium: 0.0731
-      Micro: 0.0914
-      Small: 0.0823
-    specialization:
-      patience: 6
-      reward_profile:
-        duration_bonus: 2.0
-        missed_penalty: -0.5
-        overexposure_penalty: -3.0
-        overstay_penalty: -5.0
-        position_size_bonus: 1.5
-        precision_bonus: 2.0
-        premature_penalty: -2.0
-        speed_bonus: 0.0
-        stop_loss_penalty: -1.617
-        take_profit_bonus: 3.2846
-      risk_mult: 1.3441
-      timeframe: 4h
-      tracking_periods:
-        1h:
-          grace_period: 1
-          max_tracking_steps: 47
-          min_tracking_steps: 1
-          optimal_duration: 15
-        4h:
-          grace_period: 1
-          max_tracking_steps: 70
-          min_tracking_steps: 1
-          optimal_duration: 40
-        5m:
-          grace_period: 2
-          max_tracking_steps: 42
-          min_tracking_steps: 1
-          optimal_duration: 12
-    stop_loss_pct_by_tier:
-      Enterprise: 0.0883973356558337
-      High: 0.0883973356558337
-      Medium: 0.0883973356558337
-      Micro: 0.0883973356558337
-      Small: 0.0883973356558337
-    take_profit_pct_by_tier:
-      Enterprise: 0.12220566795734734
-      High: 0.12220566795734734
-      Medium: 0.12220566795734734
-      Micro: 0.12220566795734734
-      Small: 0.12220566795734734
-    timeframes:
-    - 5m
-    - 1h
-    - 4h
-    trading:
-      stop_loss_pct: 0.10117711563917646
-      take_profit_pct: 0.08553709510801683
-    trading_mode: spot
-    trading_parameters:
-      max_concurrent_positions: 3
-      min_holding_period_steps: 5
-      position_size_pct: 0.1121
-      risk_per_trade_pct: 0.01
-      stop_loss_pct: 0.0253
-      take_profit_pct: 0.0321
-    trading_rules:
-      daily_max_forced_trades: 10
-      frequency:
-        force_trade_steps:
-          1h: 18
-          4h: 24
-          5m: 33
-        freq_penalty_weight: 0.05
-      max_consecutive_losses: 4
-      max_positions:
-        total: 4
-      max_trades_per_session:
-        1h: 15
-        4h: 10
-        5m: 20
-      min_trade_quality_score: 0.8984
-      position_hold_max: 70
-      position_hold_min: 11
-    training_mode: full
-    optuna_metrics:
-      drawdown: 0.05849711551921559
-      profit_factor: 1.5917285139671318
-      sharpe: 29.312183925589622
-      total_return: 3.513649419739048
-      trades: 519
-      win_rate: 0.6146435452793835
-  w2:
-    agent_config:
-      batch_size: 64
-      clip_range: 0.2516337775011062
-      ent_coef: 0.012868975786679728
-      gae_lambda: 0.9511102652474991
-      gamma: 0.9903706810126471
-      learning_rate: 1.6173512248439632e-05
-      max_grad_norm: 0.5512548096461941
-      n_epochs: 9
-      n_steps: 1024
-      vf_coef: 0.621948009123721
-      ppo_hyperparams:
-        batch_size: 64
-        clip_range: 0.3203034772380114
-        ent_coef: 0.01576014099534621
-        gae_lambda: 0.9501316458032528
-        gamma: 0.9702257230618241
-        learning_rate: 0.00046629309920400753
-        max_grad_norm: 0.6509679306459871
-        n_epochs: 12
-        n_steps: 1024
-        vf_coef: 0.32118850786031583
-    assets:
-    - BTCUSDT
-    data_split: train
-    description: "✅ OPTIMIZED - Trial 15 - Score 34.79 - Moderate Swing Trader"
-    min_confidence: 0.6
-    name: W2 Moderate Optimized (Swing)
-    position_size_pct: 0.25
-    reward_config:
-      drawdown_penalty: 0.4
-      pnl_weight: 96.40385709344584
-      profit_factor_bonus: 0.3
-      sharpe_ratio_bonus: 0.2
-      stop_loss_penalty: -1.5237843121836676
-      take_profit_bonus: 4.328263076608351
-      win_rate_bonus: 1.0341368350024904
-    risk_management:
-      position_size_pct: 0.27209383908141693
-      risk_per_trade_pct: 0.017135075385833358
-      stop_loss_pct: 0.04703154479370312
-      take_profit_pct: 0.17480670394168155
-    risk_multiplier: 0.8063627791962789
-    risk_per_trade_pct_by_tier:
-      Enterprise: 0.6
-      High: 0.8
-      Medium: 0.9
-      Micro: 1.8
-    specialization:
-      reward_profile:
-        drift_penalty: -0.8
-        early_exit_penalty: -1.0
-        missed_penalty: -0.3563387198099056
-        overstay_penalty: -5.835269
-        precision_bonus: 0.0
-        speed_bonus: 0.0
-        stop_loss_penalty: -5.061458
-        swing_efficiency_bonus: 2.0
-        take_profit_bonus: 7.397326
-        trend_capture_bonus: 4.0
-      timeframe: 1h
-      tracking_periods:
-        1h:
-          grace_period: 1
-          max_tracking_steps: 43
-          min_tracking_steps: 1
-          optimal_duration: 14
-        4h:
-          grace_period: 1
-          max_tracking_steps: 16
-          min_tracking_steps: 1
-          optimal_duration: 8
-        5m:
-          grace_period: 2
-          max_tracking_steps: 52
-          min_tracking_steps: 1
-          optimal_duration: 33
-    timeframes:
-    - 5m
-    - 1h
-    - 4h
-    trading:
-      stop_loss_pct: 0.07838422657101739
-      take_profit_pct: 0.11849204218837435
-    trading_mode: spot
-    trading_parameters:
-      max_concurrent_positions: 3
-      min_holding_period_steps: 10
-      position_size_pct: 0.25
-      risk_per_trade_pct: 0.015
-      stop_loss_pct: 0.025
-      take_profit_pct: 0.05
-    trading_rules:
-      frequency:
-        daily_max_forced_trades: 10
-        force_trade_steps:
-          1h: 33
-          4h: 22
-          5m: 39
-        freq_penalty_weight: 0.05
-      max_positions:
-        total: 2
-      position_hold_min: 26
-    training_mode: full
-    optuna_metrics:
-      drawdown: 0.06827714762529404
-      profit_factor: 1.9143610628217544
-      sharpe: 31.975012797304217
-      total_return: 1.4391619165789344
-      trades: 165
-      win_rate: 0.6242424242424243
-  w3:
-    agent_config:
-      batch_size: 64
-      clip_range: 0.25558529442048455
-      ent_coef: 0.01911122901556083
-      gae_lambda: 0.9644910540809394
-      gamma: 0.9915241842142017
-      learning_rate: 0.00019135050567284858
-      max_grad_norm: 0.5522588418833745
-      n_epochs: 14
-      n_steps: 1024
-      vf_coef: 0.7592144646973444
-      ppo_hyperparams:
-        batch_size: 32
-        clip_range: 0.18993475643167193
-        ent_coef: 0.010770454329858622
-        gae_lambda: 0.9749623172975109
-        gamma: 0.9814017496054259
-        learning_rate: 0.00010952662748632558
-        max_grad_norm: 0.4185801650879991
-        n_epochs: 9
-        n_steps: 512
-        vf_coef: 0.5962072844310212
-    assets:
-    - BTCUSDT
-    data_split: train
-    description: "⚠️ OPTIMIZED - Trial 6 - Score 8.80 - Aggressive Position Trader (RE-OPTIMIZE RECOMMENDED)"
-    min_confidence: 0.6
-    name: W3 Aggressive Optimized (Position)
-    position_size_pct: 0.45
-    reward_config:
-      drawdown_penalty: 0.19397282317018047
-      pnl_weight: 96.40385709344584
-      profit_factor_bonus: 0.4
-      sharpe_ratio_bonus: 0.20289024927946636
-      stop_loss_penalty: -1.5237843121836676
-      take_profit_bonus: 4.328263076608351
-      win_rate_bonus: 1.0341368350024904
-    risk_management:
-      position_size_pct: 0.3416145155592091
-      risk_per_trade_pct: 0.03202230023486417
-      stop_loss_pct: 0.05406585285177397
-      take_profit_pct: 0.273235229154987
-    risk_multiplier: 0.8063627791962789
-    risk_per_trade_pct_by_tier:
-      Enterprise: 1.0
-      High: 1.2
-      Medium: 1.5
-      Micro: 3.5
-    specialization:
-      reward_profile:
-        missed_penalty: -0.38816035153826756
-        overstay_penalty: -7.615179
-        precision_bonus: 3.0
-        speed_bonus: 2.0
-        stop_loss_penalty: -0.965334
-        take_profit_bonus: 8.340914
-      timeframe: 5m
-      tracking_periods:
-        1h:
-          grace_period: 1
-          max_tracking_steps: 45
-          min_tracking_steps: 1
-          optimal_duration: 15
-        4h:
-          grace_period: 1
-          max_tracking_steps: 13
-          min_tracking_steps: 1
-          optimal_duration: 6
-        5m:
-          grace_period: 2
-          max_tracking_steps: 49
-          min_tracking_steps: 1
-          optimal_duration: 30
-    timeframes:
-    - 5m
-    - 1h
-    - 4h
-    trading:
-      stop_loss_pct: 0.05498424198669284
-      take_profit_pct: 0.09835333186208438
-    trading_mode: spot
-    trading_parameters:
-      max_concurrent_positions: 2
-      min_holding_period_steps: 40
-      position_size_pct: 0.5
-      risk_per_trade_pct: 0.03
-      stop_loss_pct: 0.1
-      take_profit_pct: 0.18
-    trading_rules:
-      frequency:
-        daily_max_forced_trades: 10
-        force_trade_steps:
-          1h: 30
-          4h: 9
-          5m: 27
-        freq_penalty_weight: 0.05
-      max_positions:
-        total: 1
-      position_hold_min: 147
-    training_mode: full
-    optuna_metrics:
-      drawdown: 0.054756879310477014
-      profit_factor: 1.6247705550280716
-      sharpe: 12.672907983789852
-      total_return: 0.02098395342964955
-      trades: 5
-      win_rate: 0.4
-  w4:
-    agent_config:
-      batch_size: 128
-      clip_range: 0.2
-      ent_coef: 0.01
-      gae_lambda: 0.95
-      gamma: 0.98
-      learning_rate: 5.0e-05
-      max_grad_norm: 0.6
-      n_epochs: 10
-      n_steps: 1024
-      vf_coef: 0.7
-      ppo_hyperparams:
-        batch_size: 64
-        clip_range: 0.18926022587145405
-        ent_coef: 0.00731498526212002
-        gae_lambda: 0.9657355396079869
-        gamma: 0.9796077083072322
-        learning_rate: 1.0580000882650805e-05
-        max_grad_norm: 0.6394943838310455
-        n_epochs: 5
-        n_steps: 1024
-        vf_coef: 0.5499877290066507
-    assets:
-    - BTCUSDT
-    data_split: train
-    description: "⭐ OPTIMIZED - Trial 5 - Score 79.29 - Sharpe Optimized Day Trader (BEST WORKER)"
-    min_confidence: 0.6
-    name: W4 Sharpe Optimized (Day Trading)
-    position_size_pct: 0.2
-    reward_config:
-      drawdown_penalty: 0.19397282317018047
-      pnl_weight: 96.40385709344584
-      profit_factor_bonus: 0.4
-      sharpe_ratio_bonus: 0.20289024927946636
-      stop_loss_penalty: -1.5237843121836676
-      take_profit_bonus: 4.328263076608351
-      win_rate_bonus: 1.0341368350024904
-    risk_management:
-      position_size_pct: 0.1451700562185014
-      risk_per_trade_pct: 0.008999669076221791
-      stop_loss_pct: 0.008849343056814276
-      take_profit_pct: 0.03683618801477559
-    risk_multiplier: 0.8063627791962789
-    risk_per_trade_pct_by_tier:
-      Enterprise: 0.01
-      High: 0.012
-      Medium: 0.015
-      Micro: 0.025
-      Small: 0.02
-    timeframes:
-    - 5m
-    - 1h
-    - 4h
-    trading:
-      stop_loss_pct: 0.0884034972972207
-      take_profit_pct: 0.06838831784981789
-    trading_mode: spot
-    trading_parameters:
-      max_concurrent_positions: 4
-      min_holding_period_steps: 5
-      position_size_pct: 0.2
-      risk_per_trade_pct: 0.012
-      stop_loss_pct: 0.012
-      take_profit_pct: 0.02
-    trading_rules:
-      frequency:
-        force_trade_steps:
-          1h: 15
-          4h: 19
-          5m: 27
-        freq_penalty_weight: 1.1309727879060552
-      max_positions:
-        total: 5
-      position_hold_min: 3
-    training_mode: full
-    optuna_metrics:
-      drawdown: 0.08129494463280418
-      profit_factor: 1.6162397907653627
-      sharpe: 28.074111476356983
-      total_return: 2.3039782139672926
-      trades: 357
-      win_rate: 0.5938375350140056
-
-feature_engineering:
-  columns_to_normalize:
-  - OPEN
-  - HIGH
-  - LOW
-  - CLOSE
-  - VOLUME
-  indicators:
-    common:
-      atr:
-        window: 14
-      bollinger:
-        window: 20
-        window_dev: 2
-      macd:
-        fast: 12
-        signal: 9
-        slow: 26
-      psar:
-        max_step: 0.2
-        step: 0.02
-      rsi:
-        window: 14
-      supertrend:
-        multiplier: 3
-        window: 10
-    timeframes:
-      1h:
-        momentum:
-        - rsi_21
-        - fib_ratio
-        trend:
-        - macd_21_42_9
-        - adx_14
-        - ema_50_ratio
-        - ichimoku_base
-        - price_ema_ratio_50
-        volatility:
-        - bb_width_20_2
-        - atr_20
-        - atr_50
-        volume:
-        - obv_ratio_20
-      4h:
-        momentum:
-        - rsi_28
-        - market_structure
-        trend:
-        - macd_26_52_18
-        - supertrend_10_3
-        - ema_100_ratio
-        - pivot_level
-        volatility:
-        - donchian_width_20
-        - volatility_ratio_14_50
-        - atr_20
-        - atr_50
-        volume:
-        - volume_sma_20_ratio
-      5m:
-        momentum:
-        - rsi_14
-        - stoch_k_14_3_3
-        - price_action
-        trend:
-        - macd_12_26_9
-        - ema_20_ratio
-        - vwap_ratio
-        volatility:
-        - bb_percent_b_20_2
-        - atr_14
-        - atr_20
-        - atr_50
-        volume:
-        - volume_ratio_20
-  performance:
-    cache_indicators: true
-    chunk_size: 1000
-    n_jobs: -1
-    parallel_timeframes: true
-  preprocessing:
-    fillna: mean
-    min_data_points: 100
-    normalize: minmax
-    remove_outliers: true
-  timeframes:
-  - 5m
-  - 1h
-  - 4h
-  validation:
-    check_feature_correlation: true
-    check_nan_percentage: true
-    max_correlation_threshold: 0.98
-    max_nan_percentage: 0.01
-general:
-  debug_mode: false
-  n_jobs: -1
-  project_name: ADAN_Trading_Bot
-  random_seed: 42
-  timezone: UTC
-model:
-  architecture:
-    attention:
-      dropout: 0.1
-      num_heads: 8
-      use_residual: true
-    block_a:
-      dropout: 0.2
-      kernel_size: 3
-      leaky_relu_negative_slope: 0.01
-      out_channels: 64
-      padding: 1
-    block_b:
-      dropout: 0.3
-      multi_scale:
-      - 3
-      - 5
-      - 7
-      se_ratio: 8
-    head:
-      activation: LeakyReLU
-      dropout: 0.5
-      hidden_units:
-      - 256
-      - 128
-  diagnostics:
-    attention_map_dir: ./models/attention_maps
-    background: '#1e1e1e'
-    bollinger_band: rgba(41, 98, 255, 0.1)
-    bollinger_mid: '#2962ff'
-    grid: rgba(255, 255, 255, 0.05)
-    histogram_down: '#e57373'
-    histogram_up: '#81c784'
-    ma_long: '#9c27b0'
-    ma_medium: '#2196f3'
-    ma_short: '#ff9800'
-    macd_line: '#4caf50'
-    rsi_line: '#ffc107'
-    rsi_overbought: rgba(255, 193, 7, 0.2)
-    rsi_oversold: rgba(255, 193, 7, 0.2)
-    save_attention_maps: false
-    signal_line: '#f44336'
-    target_layer: model.cnn.2
-    use_grad_cam: false
-    use_integrated_gradients: false
-    volume_down: '#ef5350'
-    volume_up: '#26a69a'
-  style:
-    axes_facecolor: '#1e1e1e'
-    bottom_margin: 0.1
-    candle_width: 0.8
-    figure_facecolor: '#121212'
-    font_family: sans-serif
-    font_size: 10
-    grid_alpha: 0.1
-    hspace: 0.1
-    left_margin: 0.05
-    legend_edgecolor: '#555555'
-    legend_facecolor: '#2c2c2c'
-    legend_frameon: true
-    legend_loc: upper left
-    line_width: 1.5
-    right_margin: 0.95
-    top_margin: 0.95
-    volume_alpha: 0.7
-model_fusion:
-  enabled: true
-  ensemble_params:
-    consistency_threshold: 0.7
-    diversity_bonus: 0.1
-    max_worker_contribution: 0.35
-    min_worker_contribution: 0.15
-  method: weighted_ensemble
-  rebalancing:
-    enabled: true
-    frequency: weekly
-    min_trials_for_update: 50
-    performance_window: 168
-  strategy: performance_based
-  weights:
-    0: 0.25
-    1: 0.27
-    2: 0.3
-    3: 0.18
-paths:
-  base_dir: .
-  data_dir: ./data
-  figures_dir: ./reports/figures
-  final_data_dir: ./data/final
-  indicators_data_dir: ./data/processed/indicators
-  logs_dir: ./logs
-  metrics_dir: ./reports/metrics
-  models_dir: ./models
-  processed_data_dir: ./data/processed
-  raw_data_dir: ./data/raw
-  reports_dir: ./reports
-  trained_models_dir: ./models/rl_agents
-portfolio:
-  default_position_pct: 0.7
-  include_portfolio_state: true
-  initial_balance: 20.5
-  min_order_value_usdt: 11.0
-  portfolio_state_features: 20
-preprocessing:
-  normalization:
-    clip_values: true
-    method: minmax
-    scale_per_asset: true
-    scale_per_timeframe: true
-  stationarity:
-    price_transform: diff
-    volume_transform: log
-  technical_indicators:
-    price_indicators:
-    - rsi
-    - macd
-    - atr
-    - bb
-    use_price_indicators: true
-    use_volatility_indicators: true
-    use_volume_indicators: true
-    volatility_indicators:
-    - atr
-    volume_indicators:
-    - obv
-  window_config:
-    min_window_size: 20
-    step_size: 1
-    window_sizes:
-      1h: 20
-      4h: 20
-      5m: 20
-regularization:
-  batch_norm_epsilon: 1.0e-05
-  batch_norm_momentum: 0.99
-  dropout_rate: 0.3
-  gradient_clip: 1.0
-  use_batch_norm: true
-  weight_decay: 0.0001
-reset_parameters:
-  check_interval: 100
-  max_consecutive_losses: 5
-  min_capital_before_reset: 11.0
-  reset_mode: soft
-reward_shaping:
-  duration_penalty_weight: 0.01
-  early_close_bonus: 0.3
-  early_exit_bonus: 0.5
-  min_holding_period_steps: 6
-  exploration_tutor:
-    discovery_bonus: 0.5
-    enabled: true
-    exit_on_successful_trades:
-      4h: 10
-      5m: 15
-  frequency_weights:
-    in_range: 2.0
-    out_of_range: 0.2
-  invalid_trade_penalty_weight: 5.0e-05
-  logging:
-    disable_existing_loggers: false
-    formatters:
-      console:
-        datefmt: '%Y-%m-%d %H:%M:%S'
-        format: '[%(levelname)s] %(asctime)s - %(name)s - %(message)s'
-      json:
-        (): pythonjsonlogger.jsonlogger.JsonFormatter
-        format: '%(asctime)s %(name)s %(levelname)s %(message)s'
-    handlers:
-      console:
-        class: logging.StreamHandler
-        formatter: console
-        level: INFO
-        stream: ext://sys.stdout
-      main_file:
-        backupCount: 5
-        class: logging.handlers.RotatingFileHandler
-        encoding: utf-8
-        filename: ./logs/adan_trading_bot.jsonl
-        formatter: json
-        level: INFO
-        maxBytes: 10485760
-    loggers:
-      matplotlib:
-        level: WARNING
-      pyarrow:
-        level: WARNING
-      urllib3:
-        level: WARNING
-    root:
-      handlers:
-      - console
-      - main_file
-      level: INFO
-    version: 1
-  missed_penalty: -0.5
-  multi_traque_bonus: 1.5
-  overstay_penalty: -1.0
-  pnl_normalization: 50.0
-  pnl_weight: 50.0
-  profiles:
-    Adaptive:
-      duration_penalty_weight: 0.01
-      early_exit_bonus: 0.15
-      missed_opportunity_penalty: -0.25
-      stop_loss_penalty: -1.0
-      take_profit_bonus: 0.5
-    Aggressive:
-      duration_penalty_weight: 0.005
-      early_exit_bonus: 0.3
-      missed_opportunity_penalty: -0.3
-      stop_loss_penalty: -0.8
-      take_profit_bonus: 0.8
-    Conservative:
-      duration_penalty_weight: 0.02
-      early_exit_bonus: 0.0
-      missed_opportunity_penalty: -0.1
-      stop_loss_penalty: -1.5
-      take_profit_bonus: 0.4
-    Moderate:
-      duration_penalty_weight: 0.015
-      early_exit_bonus: 0.1
-      missed_opportunity_penalty: -0.2
-      stop_loss_penalty: -1.0
-      take_profit_bonus: 0.6
-  progressive_difficulty: true
-  risk_formulas:
-    capital_protection:
-      bonus_weight: 0.3
-      enabled: true
-      threshold: 0.9
-    entry_quality:
-      bonus_weight: 0.15
-      enabled: true
-      max_ratio: 3.0
-      min_ratio: 2.0
-    liquidity:
-      enabled: true
-      max_position_volume_ratio: 0.05
-      penalty_weight: -0.2
-    market_timing:
-      bonus_weight: 0.1
-      enabled: true
-      optimal_range:
-      - 0.3
-      - 0.4
-    portfolio_concentration:
-      enabled: true
-      max_concentration: 0.7
-      penalty_weight: -0.1
-    risk_score:
-      bonus_weight: 0.2
-      enabled: true
-      max_risk_per_trade: 0.02
-      threshold: 80
-    trade_performance:
-      bonus_weight: 0.25
-      enabled: true
-      min_ratio: 2.0
-    volatility:
-      bonus_weight: 0.1
-      enabled: true
-      high_threshold: 0.03
-      optimal_range:
-      - 0.01
-      - 0.02
-      penalty_weight: -0.15
-  spot_trading:
-    capital_management:
-      efficiency_bonus: 0.2
-      idle_capital_penalty: -0.1
-      max_utilization: 0.9
-      min_utilization: 0.3
-    key_levels:
-      support_resistance_bonus: 0.3
-      trend_alignment_bonus: 0.2
-    liquidity_zones:
-      avoidance_bonus: 0.3
-      proximity_penalty: -0.4
-    order_efficiency:
-      efficient_execution_bonus: 0.15
-      slippage_penalty_per_pct: -0.2
-  trade_outcome:
-    stop_loss_multiplier: 0.05
-    take_profit_multiplier: 0.6
-risk_parameters:
-  base_sl_pct: 0.1
-  base_tp_pct: 0.15
-  daily_loss_limit: 0.1
-  drawdown_risk_multiplier: 1.5
-  max_drawdown_pct: 0.25
-  max_risk_level: 2.0
-  max_sl_pct: 0.1
-  max_tp_pct: 0.2
-  min_risk_level: 0.5
-  min_sl_pct: 0.01
-  min_tp_pct: 0.01
-  risk_step: 0.1
-  volatility_impact: 0.5
-  volatility_sl_factor: 1.2
-  weekly_loss_limit: 0.2
-  winrate_tp_factor: 1.1
-trading_rules:
-  commission_pct: 0.001
-  duration_tracking:
-    1h:
-      max_duration_steps: 20
-    4h:
-      max_duration_steps: 15
-    5m:
-      max_duration_steps: 50
-      optimal_duration: 25
-  frequency:
-    action_threshold: 0.01
-    bonus_weight: 0.6
-    force_trade_steps:
-      1h: 150
-      4h: 200
-      5m: 100
-    grace_period_steps: 5
-    max_positions:
-      1h: 13
-      4h: 4
-      5m: 13
-    min_positions:
-      1h: 0
-      4h: 0
-      5m: 0
-    penalty_weight: 0.05
-    total_daily_max: 50
-    total_daily_min: 1
-  futures_enabled: false
-  leverage: 1
-  max_position_steps: 144
-  min_order_value_usdt: 11.0
-  slippage_pct: 0.0005
-  stop_loss_pct: 0.02
-  take_profit_pct: 0.04
-  trailing_stop:
-    activation_pct: 0.01
-    enabled: false
-    trailing_pct: 0.005
-training:
-  batch_size: 64
-  checkpointing:
-    enabled: true
-    model_name: ppo_trading_bot
-    save_freq: 5000
-    save_path: ./models/rl_agents
-  final_model_export:
-    enabled: true
-    export_path: ./models/rl_agents/final
-    formats:
-    - pytorch
-    - onnx
-    include_preprocessing: true
-    onnx_config:
-      do_constant_folding: true
-      dynamic_axes:
-        input:
-          0: batch_size
-          1: sequence_length
-        output:
-          0: batch_size
-      export_params: true
-      input_names:
-      - observation
-      opset_version: 11
-      output_names:
-      - action
-      - value
-  num_instances: 4
-  progress_bar: true
-  save_freq: 5000
-  timesteps_per_instance: 350000
-  use_custom_progress: true
-workers:
-  w1:
-    agent_config:
-      batch_size: 128
-      clip_range: 0.21084844859190754
-      ent_coef: 0.010970372201012518
-      gae_lambda: 0.9328383156897404
-      gamma: 0.9745456241801775
-      learning_rate: 1.0838581269344744e-05
-      max_grad_norm: 0.5164916560792168
-      n_epochs: 7
-      n_steps: 2048
-      vf_coef: 0.5159725093210579
-      ppo_hyperparams:
-        batch_size: 32
-        clip_range: 0.2716743745284256
-        ent_coef: 0.0083184226004126
-        gae_lambda: 0.9661952867996083
-        gamma: 0.9916926551807859
-        learning_rate: 0.00017533232613106234
-        max_grad_norm: 0.5712987001858788
-        n_epochs: 14
-        n_steps: 512
-        vf_coef: 0.38241310168655024
-    assets:
-    - BTCUSDT
-    data_split: train
-    description: "\u2705 OPTIMIZED - Trial 1 - Score 51.46 - Ultra-Stable Scalper"
-    min_confidence: 0.6
-    name: W1 Ultra-Stable (Scalper)
-    position_size_pct: 0.1121
-    reward_config:
-      consecutive_loss_penalty: -3.0063
-      consistency_bonus: 1.1413
-      overtrading_penalty: -1.069
-      patience_bonus: 1.4807
-      pnl_weight: 85.0998512978671
-      stop_loss_penalty: -1.9435441748407962
-      take_profit_bonus: 1.622947827413278
-      win_rate_bonus: 1.3421466016073853
-    risk_management:
-      position_size_pct: 0.14159863754897406
-      risk_per_trade_pct: 0.019903972812986285
-      stop_loss_pct: 0.03885747982638574
-      take_profit_pct: 0.03524358220837648
-    risk_multiplier: 0.8012145777083237
-    risk_per_trade_pct_by_tier:
-      Enterprise: 0.0548
-      High: 0.064
-      Medium: 0.0731
-      Micro: 0.0914
-      Small: 0.0823
-    specialization:
-      patience: 6
-      reward_profile:
-        duration_bonus: 2.0
-        missed_penalty: -0.5
-        overexposure_penalty: -3.0
-        overstay_penalty: -5.0
-        position_size_bonus: 1.5
-        precision_bonus: 2.0
-        premature_penalty: -2.0
-        speed_bonus: 0.0
-        stop_loss_penalty: -1.617
-        take_profit_bonus: 3.2846
-      risk_mult: 1.3441
-      timeframe: 4h
-      tracking_periods:
-        1h:
-          grace_period: 1
-          max_tracking_steps: 47
-          min_tracking_steps: 1
-          optimal_duration: 15
-        4h:
-          grace_period: 1
-          max_tracking_steps: 70
-          min_tracking_steps: 1
-          optimal_duration: 40
-        5m:
-          grace_period: 2
-          max_tracking_steps: 42
-          min_tracking_steps: 1
-          optimal_duration: 12
-    stop_loss_pct_by_tier:
-      Enterprise: 0.0883973356558337
-      High: 0.0883973356558337
-      Medium: 0.0883973356558337
-      Micro: 0.0883973356558337
-      Small: 0.0883973356558337
-    take_profit_pct_by_tier:
-      Enterprise: 0.12220566795734734
-      High: 0.12220566795734734
-      Medium: 0.12220566795734734
-      Micro: 0.12220566795734734
-      Small: 0.12220566795734734
-    timeframes:
-    - 5m
-    - 1h
-    - 4h
-    trading:
-      stop_loss_pct: 0.10117711563917646
-      take_profit_pct: 0.08553709510801683
-    trading_mode: spot
-    trading_parameters:
-      max_concurrent_positions: 3
-      min_holding_period_steps: 5
-      position_size_pct: 0.1121
-      risk_per_trade_pct: 0.01
-      stop_loss_pct: 0.0253
-      take_profit_pct: 0.0321
-    trading_rules:
-      daily_max_forced_trades: 10
-      frequency:
-        force_trade_steps:
-          1h: 18
-          4h: 24
-          5m: 33
-        freq_penalty_weight: 0.05
-      max_consecutive_losses: 4
-      max_positions:
-        total: 4
-      max_trades_per_session:
-        1h: 15
-        4h: 10
-        5m: 20
-      min_trade_quality_score: 0.8984
-      position_hold_max: 70
-      position_hold_min: 11
-    training_mode: full
-    optuna_metrics:
-      drawdown: 0.05849711551921559
-      profit_factor: 1.5917285139671318
-      sharpe: 29.312183925589622
-      total_return: 3.513649419739048
-      trades: 519
-      win_rate: 0.6146435452793835
-  w2:
-    agent_config:
-      batch_size: 64
-      clip_range: 0.2516337775011062
-      ent_coef: 0.012868975786679728
-      gae_lambda: 0.9511102652474991
-      gamma: 0.9903706810126471
-      learning_rate: 1.6173512248439632e-05
-      max_grad_norm: 0.5512548096461941
-      n_epochs: 9
-      n_steps: 1024
-      vf_coef: 0.621948009123721
-      ppo_hyperparams:
-        batch_size: 64
-        clip_range: 0.3203034772380114
-        ent_coef: 0.01576014099534621
-        gae_lambda: 0.9501316458032528
-        gamma: 0.9702257230618241
-        learning_rate: 0.00046629309920400753
-        max_grad_norm: 0.6509679306459871
-        n_epochs: 12
-        n_steps: 1024
-        vf_coef: 0.32118850786031583
-    assets:
-    - BTCUSDT
-    data_split: train
-    description: "\u2705 OPTIMIZED - Trial 15 - Score 34.79 - Moderate Swing Trader"
-    min_confidence: 0.6
-    name: W2 Moderate Optimized (Swing)
-    position_size_pct: 0.25
-    reward_config:
-      drawdown_penalty: 0.4
-      pnl_weight: 96.40385709344584
-      profit_factor_bonus: 0.3
-      sharpe_ratio_bonus: 0.2
-      stop_loss_penalty: -1.5237843121836676
-      take_profit_bonus: 4.328263076608351
-      win_rate_bonus: 1.0341368350024904
-    risk_management:
-      position_size_pct: 0.27209383908141693
-      risk_per_trade_pct: 0.017135075385833358
-      stop_loss_pct: 0.04703154479370312
-      take_profit_pct: 0.17480670394168155
-    risk_multiplier: 0.8063627791962789
-    risk_per_trade_pct_by_tier:
-      Enterprise: 0.6
-      High: 0.8
-      Medium: 0.9
-      Micro: 1.8
-    specialization:
-      reward_profile:
-        drift_penalty: -0.8
-        early_exit_penalty: -1.0
-        missed_penalty: -0.3563387198099056
-        overstay_penalty: -5.835269
-        precision_bonus: 0.0
-        speed_bonus: 0.0
-        stop_loss_penalty: -5.061458
-        swing_efficiency_bonus: 2.0
-        take_profit_bonus: 7.397326
-        trend_capture_bonus: 4.0
-      timeframe: 1h
-      tracking_periods:
-        1h:
-          grace_period: 1
-          max_tracking_steps: 43
-          min_tracking_steps: 1
-          optimal_duration: 14
-        4h:
-          grace_period: 1
-          max_tracking_steps: 16
-          min_tracking_steps: 1
-          optimal_duration: 8
-        5m:
-          grace_period: 2
-          max_tracking_steps: 52
-          min_tracking_steps: 1
-          optimal_duration: 33
-    timeframes:
-    - 5m
-    - 1h
-    - 4h
-    trading:
-      stop_loss_pct: 0.07838422657101739
-      take_profit_pct: 0.11849204218837435
-    trading_mode: spot
-    trading_parameters:
-      max_concurrent_positions: 3
-      min_holding_period_steps: 10
-      position_size_pct: 0.25
-      risk_per_trade_pct: 0.015
-      stop_loss_pct: 0.025
-      take_profit_pct: 0.05
-    trading_rules:
-      frequency:
-        daily_max_forced_trades: 10
-        force_trade_steps:
-          1h: 33
-          4h: 22
-          5m: 39
-        freq_penalty_weight: 0.05
-      max_positions:
-        total: 2
-      position_hold_min: 26
-    training_mode: full
-    optuna_metrics:
-      drawdown: 0.06827714762529404
-      profit_factor: 1.9143610628217544
-      sharpe: 31.975012797304217
-      total_return: 1.4391619165789344
-      trades: 165
-      win_rate: 0.6242424242424243
-  w3:
-    agent_config:
-      batch_size: 64
-      clip_range: 0.25558529442048455
-      ent_coef: 0.01911122901556083
-      gae_lambda: 0.9644910540809394
-      gamma: 0.9915241842142017
-      learning_rate: 0.00019135050567284858
-      max_grad_norm: 0.5522588418833745
-      n_epochs: 14
-      n_steps: 1024
-      vf_coef: 0.7592144646973444
-      ppo_hyperparams:
-        batch_size: 32
-        clip_range: 0.18993475643167193
-        ent_coef: 0.010770454329858622
-        gae_lambda: 0.9749623172975109
-        gamma: 0.9814017496054259
-        learning_rate: 0.00010952662748632558
-        max_grad_norm: 0.4185801650879991
-        n_epochs: 9
-        n_steps: 512
-        vf_coef: 0.5962072844310212
-    assets:
-    - BTCUSDT
-    data_split: train
-    description: "\u26A0\uFE0F OPTIMIZED - Trial 6 - Score 8.80 - Aggressive Position\
-      \ Trader (RE-OPTIMIZE RECOMMENDED)"
-    min_confidence: 0.6
-    name: W3 Aggressive Optimized (Position)
-    position_size_pct: 0.45
-    reward_config:
-      drawdown_penalty: 0.19397282317018047
-      pnl_weight: 96.40385709344584
-      profit_factor_bonus: 0.4
-      sharpe_ratio_bonus: 0.20289024927946636
-      stop_loss_penalty: -1.5237843121836676
-      take_profit_bonus: 4.328263076608351
-      win_rate_bonus: 1.0341368350024904
-    risk_management:
-      position_size_pct: 0.3416145155592091
-      risk_per_trade_pct: 0.03202230023486417
-      stop_loss_pct: 0.05406585285177397
-      take_profit_pct: 0.273235229154987
-    risk_multiplier: 0.8063627791962789
-    risk_per_trade_pct_by_tier:
-      Enterprise: 1.0
-      High: 1.2
-      Medium: 1.5
-      Micro: 3.5
-    specialization:
-      reward_profile:
-        missed_penalty: -0.38816035153826756
-        overstay_penalty: -7.615179
-        precision_bonus: 3.0
-        speed_bonus: 2.0
-        stop_loss_penalty: -0.965334
-        take_profit_bonus: 8.340914
-      timeframe: 5m
-      tracking_periods:
-        1h:
-          grace_period: 1
-          max_tracking_steps: 45
-          min_tracking_steps: 1
-          optimal_duration: 15
-        4h:
-          grace_period: 1
-          max_tracking_steps: 13
-          min_tracking_steps: 1
-          optimal_duration: 6
-        5m:
-          grace_period: 2
-          max_tracking_steps: 49
-          min_tracking_steps: 1
-          optimal_duration: 30
-    timeframes:
-    - 5m
-    - 1h
-    - 4h
-    trading:
-      stop_loss_pct: 0.05498424198669284
-      take_profit_pct: 0.09835333186208438
-    trading_mode: spot
-    trading_parameters:
-      max_concurrent_positions: 2
-      min_holding_period_steps: 40
-      position_size_pct: 0.5
-      risk_per_trade_pct: 0.03
-      stop_loss_pct: 0.1
-      take_profit_pct: 0.18
-    trading_rules:
-      frequency:
-        daily_max_forced_trades: 10
-        force_trade_steps:
-          1h: 30
-          4h: 9
-          5m: 27
-        freq_penalty_weight: 0.05
-      max_positions:
-        total: 1
-      position_hold_min: 147
-    training_mode: full
-    optuna_metrics:
-      drawdown: 0.054756879310477014
-      profit_factor: 1.6247705550280716
-      sharpe: 12.672907983789852
-      total_return: 0.02098395342964955
-      trades: 5
-      win_rate: 0.4
-  w4:
-    agent_config:
-      batch_size: 128
-      clip_range: 0.2
-      ent_coef: 0.01
-      gae_lambda: 0.95
-      gamma: 0.98
-      learning_rate: 5.0e-05
-      max_grad_norm: 0.6
-      n_epochs: 10
-      n_steps: 1024
-      vf_coef: 0.7
-      ppo_hyperparams:
-        batch_size: 64
-        clip_range: 0.18926022587145405
-        ent_coef: 0.00731498526212002
-        gae_lambda: 0.9657355396079869
-        gamma: 0.9796077083072322
-        learning_rate: 1.0580000882650805e-05
-        max_grad_norm: 0.6394943838310455
-        n_epochs: 5
-        n_steps: 1024
-        vf_coef: 0.5499877290066507
-    assets:
-    - BTCUSDT
-    data_split: train
-    description: "\u2B50 OPTIMIZED - Trial 5 - Score 79.29 - Sharpe Optimized Day\
-      \ Trader (BEST WORKER)"
-    min_confidence: 0.6
-    name: W4 Sharpe Optimized (Day Trading)
-    position_size_pct: 0.2
-    reward_config:
-      drawdown_penalty: 0.19397282317018047
-      pnl_weight: 96.40385709344584
-      profit_factor_bonus: 0.4
-      sharpe_ratio_bonus: 0.20289024927946636
-      stop_loss_penalty: -1.5237843121836676
-      take_profit_bonus: 4.328263076608351
-      win_rate_bonus: 1.0341368350024904
-    risk_management:
-      position_size_pct: 0.1451700562185014
-      risk_per_trade_pct: 0.008999669076221791
-      stop_loss_pct: 0.008849343056814276
-      take_profit_pct: 0.03683618801477559
-    risk_multiplier: 0.8063627791962789
-    risk_per_trade_pct_by_tier:
-      Enterprise: 0.01
-      High: 0.012
-      Medium: 0.015
-      Micro: 0.025
-      Small: 0.02
-    timeframes:
-    - 5m
-    - 1h
-    - 4h
-    trading:
-      stop_loss_pct: 0.0884034972972207
-      take_profit_pct: 0.06838831784981789
-    trading_mode: spot
-    trading_parameters:
-      max_concurrent_positions: 4
-      min_holding_period_steps: 5
-      position_size_pct: 0.2
-      risk_per_trade_pct: 0.012
-      stop_loss_pct: 0.012
-      take_profit_pct: 0.02
-    trading_rules:
-      frequency:
-        force_trade_steps:
-          1h: 15
-          4h: 19
-          5m: 27
-        freq_penalty_weight: 1.1309727879060552
-      max_positions:
-        total: 5
-      position_hold_min: 3
-    training_mode: full
-    optuna_metrics:
-      drawdown: 0.08129494463280418
-      profit_factor: 1.6162397907653627
-      sharpe: 28.074111476356983
-      total_return: 2.3039782139672926
-      trades: 357
-      win_rate: 0.5938375350140056
-
-# ═══════════════════════════════════════════════════════════════════════
-# PRODUCTION SETTINGS - Local Machine (10GB RAM, 8 cores, 8GB swap)
-# Validated: OMEGA-5 session (2026-03-30)
-# Usage: Merge omega_on_adan0 -> main, then launch training directly.
-# ═══════════════════════════════════════════════════════════════════════
 production:
   hardware:
+    cpu_cores: 8
+    cpu_model: Intel 11th Gen (8 cores)
+    gpu: false
     ram_gb: 10
     swap_gb: 8
-    cpu_cores: 8
-    gpu: false  # CPU-only training
-
-  training:
-    # PBT config (8 cores -> 4 workers, 2 envs each)
-    num_cpus: 8
-    num_samples: 4           # 4 PBT trials (one per profile)
-    envs_per_worker: 2       # 2 sub-envs per worker
-    use_subproc: true        # SubprocVecEnv for parallelism
-    total_steps: 1_000_000   # 1M steps for final run
-    interval_timesteps: 10_000
-    profiles:
-      - Scalper
-      - Intraday
-      - Swing
-      - Position
-
-  # Simple PPO fallback (no Ray Tune)
-  simple_ppo:
-    steps: 500_000
-    n_steps: 1024
-    batch_size: 128
-    learning_rate: 3.0e-4
-    n_epochs: 10
-    gamma: 0.99
-    gae_lambda: 0.95
-    clip_range: 0.2
-    ent_coef: 0.01
-
-  # Memory management
   memory:
     gc_collect_every_n_steps: 500
-    max_rollout_buffer_mb: 2048
+    max_rollout_buffer_mb: 4096
     vecnormalize_clip_obs: 10.0
     vecnormalize_clip_reward: 10.0
-
-  # Validated parameters (DO NOT MODIFY)
+  simple_ppo:
+    aux_loss_coef: 0.1
+    batch_size: 256
+    clip_range: 0.2
+    ent_coef: 0.01
+    gae_lambda: 0.95
+    gamma: 0.99
+    learning_rate: 0.0003
+    n_epochs: 10
+    n_steps: 1024
+    steps: 500000
+  sota_architecture:
+    context_vector_dim: 12
+    cyclical_time_encoding: true
+    feature_extractor: ContextualTemporalFusionExtractor
+    hmm_min_obs: 30
+    hmm_n_states: 3
+    hmm_regime_detection: true
+    hmm_window: 120
+    ppo_class: WorldModelPPO
+    symlog_rewards: true
+    world_model_prediction: true
+  training:
+    envs_per_worker: 2
+    interval_timesteps: 10000
+    num_cpus: 8
+    num_samples: 4
+    profiles:
+    - Scalper
+    - Intraday
+    - Swing
+    - Position
+    total_steps: 1000000
+    use_subproc: true
   validated:
+    action_space_dim: 25
+    anti_spam_threshold: 0.1
+    audit_verdict: PASS
+    context_vector_dim: 12
     initial_balance: 20.5
-    action_space_dim: 25       # 5 assets x 5 dims
-    context_vector_dim: 6      # volatility, trend, ADX, regime, drawdown, candle_progress
     min_order_value_usdt: 11.0
-    anti_spam_threshold: 0.10
-    tier: "Micro Capital"
-    audit_verdict: "PASS"
-    unit_tests_passed: 43
+    tier: Micro Capital
     unit_tests_failed: 0
+    unit_tests_passed: 62
+regularization:
+  batch_norm_epsilon: 1.0e-05
+  batch_norm_momentum: 0.99
+  dropout_rate: 0.3
+  gradient_clip: 1.0
+  use_batch_norm: true
+  weight_decay: 0.0001
+reset_parameters:
+  check_interval: 100
+  max_consecutive_losses: 5
+  min_capital_before_reset: 11.0
+  reset_mode: soft
+reward_shaping:
+  duration_penalty_weight: 0.01
+  early_close_bonus: 0.3
+  early_exit_bonus: 0.5
+  exploration_tutor:
+    discovery_bonus: 0.5
+    enabled: true
+    exit_on_successful_trades:
+      4h: 10
+      5m: 15
+  frequency_weights:
+    in_range: 2.0
+    out_of_range: 0.2
+  invalid_trade_penalty_weight: 5.0e-05
+  logging:
+    disable_existing_loggers: false
+    formatters:
+      console:
+        datefmt: '%Y-%m-%d %H:%M:%S'
+        format: '[%(levelname)s] %(asctime)s - %(name)s - %(message)s'
+      json:
+        (): pythonjsonlogger.jsonlogger.JsonFormatter
+        format: '%(asctime)s %(name)s %(levelname)s %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: console
+        level: INFO
+        stream: ext://sys.stdout
+      main_file:
+        backupCount: 5
+        class: logging.handlers.RotatingFileHandler
+        encoding: utf-8
+        filename: ./logs/adan_trading_bot.jsonl
+        formatter: json
+        level: INFO
+        maxBytes: 10485760
+    loggers:
+      matplotlib:
+        level: WARNING
+      pyarrow:
+        level: WARNING
+      urllib3:
+        level: WARNING
+    root:
+      handlers:
+      - console
+      - main_file
+      level: INFO
+    version: 1
+  min_holding_period_steps: 6
+  missed_penalty: -0.5
+  multi_traque_bonus: 1.5
+  overstay_penalty: -1.0
+  pnl_normalization: 50.0
+  pnl_weight: 50.0
+  profiles:
+    Adaptive:
+      duration_penalty_weight: 0.01
+      early_exit_bonus: 0.15
+      missed_opportunity_penalty: -0.25
+      stop_loss_penalty: -1.0
+      take_profit_bonus: 0.5
+    Aggressive:
+      duration_penalty_weight: 0.005
+      early_exit_bonus: 0.3
+      missed_opportunity_penalty: -0.3
+      stop_loss_penalty: -0.8
+      take_profit_bonus: 0.8
+    Conservative:
+      duration_penalty_weight: 0.02
+      early_exit_bonus: 0.0
+      missed_opportunity_penalty: -0.1
+      stop_loss_penalty: -1.5
+      take_profit_bonus: 0.4
+    Moderate:
+      duration_penalty_weight: 0.015
+      early_exit_bonus: 0.1
+      missed_opportunity_penalty: -0.2
+      stop_loss_penalty: -1.0
+      take_profit_bonus: 0.6
+  progressive_difficulty: true
+  risk_formulas:
+    capital_protection:
+      bonus_weight: 0.3
+      enabled: true
+      threshold: 0.9
+    entry_quality:
+      bonus_weight: 0.15
+      enabled: true
+      max_ratio: 3.0
+      min_ratio: 2.0
+    liquidity:
+      enabled: true
+      max_position_volume_ratio: 0.05
+      penalty_weight: -0.2
+    market_timing:
+      bonus_weight: 0.1
+      enabled: true
+      optimal_range:
+      - 0.3
+      - 0.4
+    portfolio_concentration:
+      enabled: true
+      max_concentration: 0.7
+      penalty_weight: -0.1
+    risk_score:
+      bonus_weight: 0.2
+      enabled: true
+      max_risk_per_trade: 0.02
+      threshold: 80
+    trade_performance:
+      bonus_weight: 0.25
+      enabled: true
+      min_ratio: 2.0
+    volatility:
+      bonus_weight: 0.1
+      enabled: true
+      high_threshold: 0.03
+      optimal_range:
+      - 0.01
+      - 0.02
+      penalty_weight: -0.15
+  spot_trading:
+    capital_management:
+      efficiency_bonus: 0.2
+      idle_capital_penalty: -0.1
+      max_utilization: 0.9
+      min_utilization: 0.3
+    key_levels:
+      support_resistance_bonus: 0.3
+      trend_alignment_bonus: 0.2
+    liquidity_zones:
+      avoidance_bonus: 0.3
+      proximity_penalty: -0.4
+    order_efficiency:
+      efficient_execution_bonus: 0.15
+      slippage_penalty_per_pct: -0.2
+  trade_outcome:
+    stop_loss_multiplier: 0.05
+    take_profit_multiplier: 0.6
+risk_parameters:
+  base_sl_pct: 0.1
+  base_tp_pct: 0.15
+  daily_loss_limit: 0.1
+  drawdown_risk_multiplier: 1.5
+  max_drawdown_pct: 0.25
+  max_risk_level: 2.0
+  max_sl_pct: 0.1
+  max_tp_pct: 0.2
+  min_risk_level: 0.5
+  min_sl_pct: 0.01
+  min_tp_pct: 0.01
+  risk_step: 0.1
+  volatility_impact: 0.5
+  volatility_sl_factor: 1.2
+  weekly_loss_limit: 0.2
+  winrate_tp_factor: 1.1
+trading_rules:
+  commission_pct: 0.001
+  duration_tracking:
+    1h:
+      max_duration_steps: 20
+    4h:
+      max_duration_steps: 15
+    5m:
+      max_duration_steps: 50
+      optimal_duration: 25
+  frequency:
+    action_threshold: 0.01
+    bonus_weight: 0.6
+    force_trade_steps:
+      1h: 150
+      4h: 200
+      5m: 100
+    grace_period_steps: 5
+    max_positions:
+      1h: 13
+      4h: 4
+      5m: 13
+    min_positions:
+      1h: 0
+      4h: 0
+      5m: 0
+    penalty_weight: 0.05
+    total_daily_max: 50
+    total_daily_min: 1
+  futures_enabled: false
+  leverage: 1
+  max_position_steps: 144
+  min_order_value_usdt: 11.0
+  slippage_pct: 0.0005
+  stop_loss_pct: 0.02
+  take_profit_pct: 0.04
+  trailing_stop:
+    activation_pct: 0.01
+    enabled: false
+    trailing_pct: 0.005
+training:
+  batch_size: 64
+  checkpointing:
+    enabled: true
+    model_name: ppo_trading_bot
+    save_freq: 5000
+    save_path: ./models/rl_agents
+  final_model_export:
+    enabled: true
+    export_path: ./models/rl_agents/final
+    formats:
+    - pytorch
+    - onnx
+    include_preprocessing: true
+    onnx_config:
+      do_constant_folding: true
+      dynamic_axes:
+        input:
+          0: batch_size
+          1: sequence_length
+        output:
+          0: batch_size
+      export_params: true
+      input_names:
+      - observation
+      opset_version: 11
+      output_names:
+      - action
+      - value
+  num_instances: 4
+  progress_bar: true
+  save_freq: 5000
+  timesteps_per_instance: 350000
+  use_custom_progress: true
+workers:
+  # ============================================================================
+  # ARCHITECTURE RULE: Workers define ONLY temporal specialization.
+  # ALL risk/exposure parameters (exposure_range, risk_per_trade_pct,
+  # sl_pct_range, tp_pct_range) are dictated by Capital Tiers above.
+  # ============================================================================
+  w1:
+    name: W1 Scalper
+    specialization:
+      timeframe: 5m
+      tracking_periods:
+        5m: {grace_period: 2, max_tracking_steps: 42, min_tracking_steps: 1, optimal_duration: 12}
+        1h: {grace_period: 1, max_tracking_steps: 47, min_tracking_steps: 1, optimal_duration: 15}
+        4h: {grace_period: 1, max_tracking_steps: 70, min_tracking_steps: 1, optimal_duration: 40}
+    max_position_steps: 50
+    max_trades_per_episode: 20
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+  w2:
+    name: W2 Intraday
+    specialization:
+      timeframe: 1h
+      tracking_periods:
+        5m: {grace_period: 2, max_tracking_steps: 52, min_tracking_steps: 1, optimal_duration: 33}
+        1h: {grace_period: 1, max_tracking_steps: 43, min_tracking_steps: 1, optimal_duration: 14}
+        4h: {grace_period: 1, max_tracking_steps: 16, min_tracking_steps: 1, optimal_duration: 8}
+    max_position_steps: 100
+    max_trades_per_episode: 15
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+  w3:
+    name: W3 Swing
+    specialization:
+      timeframe: 4h
+      tracking_periods:
+        5m: {grace_period: 2, max_tracking_steps: 49, min_tracking_steps: 1, optimal_duration: 30}
+        1h: {grace_period: 1, max_tracking_steps: 45, min_tracking_steps: 1, optimal_duration: 15}
+        4h: {grace_period: 1, max_tracking_steps: 13, min_tracking_steps: 1, optimal_duration: 6}
+    max_position_steps: 200
+    max_trades_per_episode: 10
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+  w4:
+    name: W4 Position
+    specialization:
+      timeframe: 4h
+      tracking_periods:
+        5m: {grace_period: 2, max_tracking_steps: 60, min_tracking_steps: 1, optimal_duration: 40}
+        1h: {grace_period: 1, max_tracking_steps: 50, min_tracking_steps: 1, optimal_duration: 20}
+        4h: {grace_period: 1, max_tracking_steps: 80, min_tracking_steps: 1, optimal_duration: 50}
+    max_position_steps: 500
+    max_trades_per_episode: 5
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train

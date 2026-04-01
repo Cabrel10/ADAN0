@@ -114,14 +114,14 @@ class TestContextVectorSafety:
             for tf, df in tfs.items():
                 flat[tf] = df
         ctx = sb.build_context_vector(data=flat, current_idx=50)
-        assert ctx.shape == (6,), f"Context vector should be (6,), got {ctx.shape}"
+        assert ctx.shape == (12,), f"Context vector should be (12,), got {ctx.shape}"
         assert np.all(np.isfinite(ctx)), f"Context vector has NaN/Inf: {ctx}"
 
     def test_context_vector_with_none_data(self):
         from adan_trading_bot.data_processing.state_builder import StateBuilder
         sb = StateBuilder(normalize=False)
         ctx = sb.build_context_vector(data=None, current_idx=0)
-        assert ctx.shape == (6,)
+        assert ctx.shape == (12,)
         assert np.all(ctx == 0.0), f"Context with None data should be zeros: {ctx}"
 
     def test_context_vector_with_empty_data(self):
@@ -129,7 +129,7 @@ class TestContextVectorSafety:
         sb = StateBuilder(normalize=False)
         empty_data = {"5m": pd.DataFrame(), "1h": pd.DataFrame()}
         ctx = sb.build_context_vector(data=empty_data, current_idx=0)
-        assert ctx.shape == (6,)
+        assert ctx.shape == (12,)
         assert np.all(np.isfinite(ctx)), f"Context with empty data has NaN/Inf: {ctx}"
 
     def test_context_vector_with_constant_prices(self):
@@ -138,7 +138,7 @@ class TestContextVectorSafety:
         const_df = _make_constant_data()
         data = {"5m": const_df}
         ctx = sb.build_context_vector(data=data, current_idx=25)
-        assert ctx.shape == (6,)
+        assert ctx.shape == (12,)
         assert np.all(np.isfinite(ctx)), f"Context with constant prices has NaN/Inf: {ctx}"
 
 
@@ -286,7 +286,7 @@ class TestObservationFiniteness:
         obs = sb.build_observation(current_idx=50, data=data, portfolio_manager=None)
         cv = obs.get("context_vector")
         assert cv is not None, "context_vector should always be present"
-        assert cv.shape == (6,), f"context_vector shape should be (6,), got {cv.shape}"
+        assert cv.shape == (12,), f"context_vector shape should be (12,), got {cv.shape}"
         assert np.all(np.isfinite(cv)), f"context_vector has NaN/Inf: {cv}"
 
 

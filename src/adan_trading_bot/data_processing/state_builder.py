@@ -816,6 +816,11 @@ class StateBuilder:
             logger.error(f"Error building portfolio state: {e}")
             return np.zeros(20, dtype=np.float32)  # Return zero-padded portfolio state
 
+    # ------------------------------------------------------------------
+    # SOTA 2025: Context vector dimension (6 market + 6 cyclical time)
+    # ------------------------------------------------------------------
+    CONTEXT_DIM = 12
+
     def build_context_vector(
         self,
         data: Dict[str, pd.DataFrame] = None,
@@ -824,18 +829,19 @@ class StateBuilder:
     ) -> np.ndarray:
         """Build a market context vector for FiLM Meta-RL modulation.
 
-        The context vector encodes high-level market state information that
-        the FiLM layer in ContextualTemporalFusionExtractor uses to
-        dynamically modulate CNN features.  This replaces hand-coded DBE
-        heuristics with a learnable conditioning mechanism.
-
-        The vector contains six components:
-            [0] volatility  – normalised ATR / price  (0-1)
-            [1] trend       – EMA crossover direction (-1 to 1)
-            [2] adx         – ADX / 100  (0-1)
-            [3] regime_score – composite regime indicator (-1 to 1)
-            [4] drawdown    – current portfolio drawdown (0-1)
-            [5] candle_progress_pct – progress within current candle (0-1)
+        SOTA 2025 – The vector contains 12 components:
+            [0]  volatility           – normalised ATR / price  (0-1)
+            [1]  trend                – EMA crossover direction (-1 to 1)
+            [2]  adx                  – ADX / 100  (0-1)
+            [3]  regime_score         – composite regime indicator (-1 to 1)
+            [4]  drawdown             – current portfolio drawdown (0-1)
+            [5]  candle_progress_pct  – progress within current candle (0-1)
+            [6]  sin_hour             – sin(2*pi*hour/24)
+            [7]  cos_hour             – cos(2*pi*hour/24)
+            [8]  sin_dow              – sin(2*pi*dayofweek/7)
+            [9]  cos_dow              – cos(2*pi*dayofweek/7)
+            [10] sin_dom              – sin(2*pi*dayofmonth/31)
+            [11] cos_dom              – cos(2*pi*dayofmonth/31)
 
         Args:
             data: Dict mapping timeframes to DataFrames (optional).
@@ -843,9 +849,9 @@ class StateBuilder:
             portfolio_manager: Optional portfolio manager for drawdown info.
 
         Returns:
-            np.ndarray of shape (6,) with dtype float32.
+            np.ndarray of shape (12,) with dtype float32.
         """
-        context = np.zeros(6, dtype=np.float32)
+        context = np.zeros(self.CONTEXT_DIM, dtype=np.float32)
 
         if data is None:
             return context
@@ -924,6 +930,42 @@ class StateBuilder:
 
         except Exception as e:
             logger.warning(f"Error building context vector: {e}. Returning zeros.")
+
+        # -----------------------------------------------------------
+        # SOTA 2025 – Cyclical Time Encoding (Time2Vec-inspired)
+        # Preserves temporal continuity: 23h59 is near 00h01.
+        # -----------------------------------------------------------
+        try:
+            timestamp = None
+            if data is not None:
+                for tf in self.timeframes:
+                    if tf in data and not data[tf].empty:
+                        df = data[tf]
+                        idx = min(current_idx, len(df) - 1)
+                        if idx >= 0:
+                            # Try to get timestamp from index or column
+                            if isinstance(df.index, pd.DatetimeIndex):
+                                timestamp = df.index[idx]
+                            elif 'timestamp' in df.columns:
+                                timestamp = pd.Timestamp(df['timestamp'].iloc[idx])
+                            elif 'TIMESTAMP' in df.columns:
+                                timestamp = pd.Timestamp(df['TIMESTAMP'].iloc[idx])
+                        if timestamp is not None:
+                            break
+
+            if timestamp is not None:
+                hour = timestamp.hour + timestamp.minute / 60.0
+                dow = timestamp.dayofweek  # 0=Monday .. 6=Sunday
+                dom = timestamp.day
+
+                context[6]  = float(np.sin(2.0 * np.pi * hour / 24.0))
+                context[7]  = float(np.cos(2.0 * np.pi * hour / 24.0))
+                context[8]  = float(np.sin(2.0 * np.pi * dow / 7.0))
+                context[9]  = float(np.cos(2.0 * np.pi * dow / 7.0))
+                context[10] = float(np.sin(2.0 * np.pi * dom / 31.0))
+                context[11] = float(np.cos(2.0 * np.pi * dom / 31.0))
+        except Exception as e:
+            logger.debug(f"Cyclical time encoding fallback: {e}")
 
         return context
 
@@ -1157,7 +1199,7 @@ class StateBuilder:
             )
         except Exception as e:
             logger.warning(f"Error building context_vector in build_observation: {e}")
-            observations["context_vector"] = np.zeros(6, dtype=np.float32)
+            observations["context_vector"] = np.zeros(self.CONTEXT_DIM, dtype=np.float32)
 
         return observations
     def build_adaptive_observation(
