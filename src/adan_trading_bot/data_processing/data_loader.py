@@ -247,17 +247,25 @@ class ChunkedDataLoader:
             KeyError: Si la configuration est manquante
         """
         try:
+            # Project root = 4 levels up from this file:
+            # data_loader.py -> data_processing -> adan_trading_bot -> src -> PROJECT_ROOT
+            _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
             # Récupérer le répertoire de base des données
-            base_dir = Path(self.config["paths"]["processed_data_dir"])
+            raw_base = self.config["paths"]["processed_data_dir"]
+            base_dir = Path(raw_base) if Path(raw_base).is_absolute() else _PROJECT_ROOT / raw_base
 
             # Utiliser directement le répertoire du split spécifié dans data_dirs
             data_dirs = self.config.get("data", {}).get("data_dirs", {})
 
             # Déterminer le répertoire de données en fonction du split
             if self.data_split in data_dirs:
-                data_dir = Path(data_dirs[self.data_split])
+                raw = data_dirs[self.data_split]
+                data_dir = Path(raw) if Path(raw).is_absolute() else _PROJECT_ROOT / raw
             elif "base" in data_dirs:
-                data_dir = Path(data_dirs["base"]) / self.data_split
+                raw = data_dirs["base"]
+                base = Path(raw) if Path(raw).is_absolute() else _PROJECT_ROOT / raw
+                data_dir = base / self.data_split
             else:
                 data_dir = base_dir / "indicators" / self.data_split
 
