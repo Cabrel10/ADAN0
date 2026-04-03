@@ -4887,170 +4887,87 @@ class MultiAssetChunkedEnv(gym.Env):
         return getattr(self, "current_timeframe_for_trade", "5m")
 
     def _calculate_reward(self, action: np.ndarray, realized_pnl: float) -> float:
-        """Calcule la récompense finale alignée pour chaque worker.
-        
-        Logs detailed information about each reward component to help with debugging.
+        """TRUE QUANT REWARD — Alpha-Omega.
+
+        reward = symlog(PnL_net - trade_cost - drawdown_penalty)
+
+        No frequency bonus. No outcome bonus. No multi-hunt bonus.
+        The agent earns points ONLY from real money.
         """
-        # Initialize reward components dictionary for logging
-        reward_components = {
-            'base_reward': 0.0,
-            'pnl': 0.0,
-            'duration_penalties': 0.0,
-            'frequency_reward': 0.0,
-            'pos_limit_penalty': 0.0,
-            'outcome_reward': 0.0,
-            'early_close_bonus': 0.0,
-            'invalid_trade_penalty': 0.0,
-            'inaction_penalty': 0.0,
-            'missed_penalty': 0.0,
-            'multi_bonus': 0.0,
-            'final_reward': 0.0
-        }
+        import numpy as _np
 
-        reward_shaping_config = self.config.get("reward_shaping", {})
+        def _symlog(x: float) -> float:
+            return float(_np.sign(x) * _np.log1p(_np.abs(x)))
 
-        # --- Load worker-specific reward profile ---
-        worker_name = self.worker_config.get(
-            "name", "Default"
-        )  # e.g., Conservative, Moderate, Aggressive, Adaptive
-        worker_profile_config = reward_shaping_config.get("profiles", {}).get(
-            worker_name, {}
-        )
+        # ── 1. Net PnL after commission ───────────────────────────────────
+        commission = float(self.portfolio_manager.get_metrics().get(
+            "total_commission", 0.0
+        ) if hasattr(self, "portfolio_manager") else 0.0)
+        pnl_net = float(realized_pnl) - commission * 1.5
 
-        # Override global reward shaping parameters with worker-specific ones if they exist
-        pnl_weight = worker_profile_config.get(
-            "pnl_weight", reward_shaping_config.get("pnl_weight", 1.0)
-        )
-        missed_penalty_value = worker_profile_config.get(
-            "missed_opportunity_penalty",
-            reward_shaping_config.get("missed_penalty", 0.0),
-        )
-        multi_traque_bonus_value = worker_profile_config.get(
-            "multi_traque_bonus", reward_shaping_config.get("multi_traque_bonus", 0.0)
-        )
-        invalid_trade_penalty_weight = worker_profile_config.get(
-            "invalid_trade_penalty_weight",
-            reward_shaping_config.get("invalid_trade_penalty_weight", 0.5),
-        )
-        # Note: early_close_bonus and overstay_penalty are handled in their respective functions, which will need to be updated to use worker_profile_config as well.
+        # ── 2. Trade cost penalty (slippage proxy, only on actual trades) ─
+        trade_cost = 0.0
+        if realized_pnl != 0.0:
+            # Estimate notional from last trade
+            last_notional = getattr(self, "_last_trade_notional", 0.0)
+            trade_cost = float(last_notional) * 0.0015 if last_notional > 0 else 0.001
 
-        # 1. RÉCOMPENSE DE BASE SPÉCIALISÉE (PnL + Résultat)
-        pnl = realized_pnl
-        reward_components['pnl'] = float(pnl)
-        
-        # Apply non-linear scaling to PnL
-        base_reward = pnl_weight * np.tanh(pnl / pnl_weight)  # Apply pnl_weight
-        reward_components['base_reward'] = float(base_reward)
-
-        # Conditional inaction penalty and missed opportunity penalty
-        current_timeframe = self.get_current_timeframe()
-        if not self.dbe.is_hunting(self.worker_id) and not self.has_open_trade(
-            current_timeframe
-        ):
-            inaction_penalty = self.calculate_inaction_penalty()
-            base_reward += inaction_penalty
-            reward_components['inaction_penalty'] = float(inaction_penalty)
-            
-            # Add missed penalty if no open trade and not hunting
-            base_reward += missed_penalty_value
-            reward_components['missed_penalty'] = float(missed_penalty_value)
-            
-            self.smart_logger.info(
-                f"[REWARD] Inaction penalty: {inaction_penalty:.4f}, Missed opportunity penalty: {missed_penalty_value:.4f}",
-                rotate=True,
-            )
-        elif not self.dbe.is_hunting(self.worker_id) and self.portfolio_manager.get_cash() < self.config.get(
-            "trading_rules", {}
-        ).get("min_order_value_usdt", 11.0):
-            # If not hunting and not enough cash, still apply inaction penalty if applicable
-            inaction_penalty = self.calculate_inaction_penalty()
-            base_reward += inaction_penalty
-            reward_components['inaction_penalty'] = float(inaction_penalty)
-
-        # 2. PÉNALITÉS DE GESTION TEMPORELLE
-        # calculate_duration_penalty now includes overstay_penalty
-        duration_penalties = self.calculate_duration_penalty()
-        reward_components['duration_penalties'] = float(duration_penalties) if duration_penalties is not None else 0.0
-
-        # 3. RÉCOMPENSE DE FRÉQUENCE
-        frequency_reward = self._calculate_frequency_reward()
-        reward_components['frequency_reward'] = float(frequency_reward) if frequency_reward is not None else 0.0
-
-        # 4. PÉNALITÉ DE LIMITE DE POSITION
-        pos_limit_penalty = self.calculate_position_limit_penalty()
-        reward_components['pos_limit_penalty'] = float(pos_limit_penalty) if pos_limit_penalty is not None else 0.0
-
-        # 5. RÉCOMPENSE DE RÉSULTAT DE TRADE (inclut bonus early close)
-        outcome_reward = self.calculate_outcome_reward()
-        early_close_bonus = self.calculate_early_close_bonus()
-        outcome_reward += early_close_bonus
-        reward_components['outcome_reward'] = float(outcome_reward) if outcome_reward is not None else 0.0
-        reward_components['early_close_bonus'] = float(early_close_bonus) if early_close_bonus is not None else 0.0
-
-        # 6. PÉNALITÉ POUR TENTATIVES DE TRADE INVALIDE
-        invalid_trade_attempt_penalty = -invalid_trade_penalty_weight * self.invalid_trade_attempts
-        reward_components['invalid_trade_penalty'] = float(invalid_trade_attempt_penalty)
-        self.invalid_trade_attempts = 0  # Reset counter after use
-
-        # 7. BONUS MULTI-TRAQUE (si capital élevé)
-        multi_bonus = 0.0
+        # ── 3. Drawdown penalty (quadratic above 2%) ──────────────────────
+        drawdown_penalty = 0.0
         if hasattr(self, "portfolio_manager"):
-            initial_capital = self.portfolio_manager.initial_capital
-            current_equity = self.portfolio_manager.get_equity()
-            open_trades_count = len(
-                [p for p in self.portfolio_manager.positions.values() if p.is_open]
-            )
+            try:
+                metrics = self.portfolio_manager.get_metrics()
+                dd = float(metrics.get("drawdown", 0.0) or 0.0)
+                if dd < -0.02:
+                    drawdown_penalty = (abs(dd) - 0.02) ** 2 * 50.0
+            except Exception:
+                pass
 
-            multi_bonus_threshold_factor = reward_shaping_config.get(
-                "multi_traque_bonus_threshold_factor", 1.5
-            )  # This should be configurable per worker or globally
-            multi_bonus_min_open_trades = reward_shaping_config.get(
-                "multi_traque_bonus_min_open_trades", 2
-            )  # This should be configurable per worker or globally
+        # ── 4. Soft inaction signal (tiny, just to break ties) ────────────
+        inaction = 0.0
+        if realized_pnl == 0.0:
+            inaction = -0.0001
 
-            if (
-                current_equity > initial_capital * multi_bonus_threshold_factor
-                and open_trades_count >= multi_bonus_min_open_trades
-            ):
-                multi_bonus = multi_traque_bonus_value * open_trades_count
-                reward_components['multi_bonus'] = float(multi_bonus)
-                self.smart_logger.info(
-                    f"[REWARD] Multi-hunt bonus applied: {multi_bonus:.2f}", rotate=True
-                )
+        # ── 5. Capital survival bonus ─────────────────────────────────────
+        survival = 0.0
+        if hasattr(self, "portfolio_manager"):
+            try:
+                pv = float(self.portfolio_manager.get_portfolio_value() or 0.0)
+                ie = float(self.portfolio_manager.initial_capital or 20.5)
+                if pv > ie:
+                    survival = (pv - ie) / ie * 0.01
+            except Exception:
+                pass
 
-        # Somme de toutes les composantes
-        total_reward = (
-            base_reward
-            + frequency_reward
-            + pos_limit_penalty
-            + outcome_reward
-            + duration_penalties
-            + invalid_trade_attempt_penalty
-            + multi_bonus
-        )
+        # ── 6. Compose and apply symlog ───────────────────────────────────
+        raw = pnl_net - trade_cost - drawdown_penalty + inaction + survival
+        final_reward = _symlog(raw)
 
-        # Clipping asymétrique pour favoriser les gains
-        final_reward = np.clip(total_reward, -3.0, 10.0)
-
-        # Journalisation pour debug
+        # ── 7. Log components for monitoring ─────────────────────────────
         self.logger.info(
-            f"[REWARD Worker {self.worker_id}] Base: {base_reward:.4f}, Freq: {frequency_reward:.4f}, PosLimit: {pos_limit_penalty:.4f}, Outcome: {outcome_reward:.4f}, Duration: {duration_penalties:.4f}, InvalidTrade: {invalid_trade_attempt_penalty:.4f}, MultiHunt: {multi_bonus:.4f}, Total: {final_reward:.4f}, Counts: {self.positions_count}"
+            f"[REWARD Worker {self.worker_id}] "
+            f"Base: {pnl_net:.4f}, "
+            f"Freq: 0.0000, "
+            f"PosLimit: 0.0000, "
+            f"Outcome: 0.0000, "
+            f"Duration: 0.0000, "
+            f"InvalidTrade: -{trade_cost:.4f}, "
+            f"MultiHunt: 0.0000, "
+            f"Total: {final_reward:.4f}, "
+            f"Counts: {self.positions_count}"
         )
 
-        # Store reward components for info dict
         self._last_reward_components = {
-            "pnl": float(pnl),
-            "base_reward": float(base_reward),
-            "frequency_reward": float(frequency_reward),
-            "pos_limit_penalty": float(pos_limit_penalty),
-            "outcome_reward": float(outcome_reward),
-            "duration_penalties": float(duration_penalties),
-            "invalid_trade_attempt_penalty": float(invalid_trade_attempt_penalty),
-            "multi_bonus": float(multi_bonus),
-            "total_reward": float(final_reward),
+            "pnl": float(realized_pnl),
+            "pnl_net": pnl_net,
+            "trade_cost": -trade_cost,
+            "drawdown_penalty": -drawdown_penalty,
+            "survival_bonus": survival,
+            "raw": raw,
+            "final_reward": final_reward,
         }
 
-        return final_reward
+        return float(final_reward)
 
     def _save_checkpoint(self) -> Dict[str, Any]:
         """Sauvegarde l'état actuel de l'environnement et du portefeuille.
