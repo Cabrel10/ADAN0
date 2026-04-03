@@ -5803,6 +5803,25 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.invalid_trade_attempts += 1
                     continue
 
+                # ==============================================================
+                # FEE-TO-TARGET GATE -- Only open if expected gross profit
+                # exceeds 3x estimated round-trip fees.  Prevents the agent
+                # from churning on micro-moves that are consumed by fees.
+                #   estimated_fees = notional * 0.001 * 2  (0.1% maker+taker)
+                #   expected_gross = notional * tp_pct
+                #   gate: expected_gross >= 3 * estimated_fees
+                # ==============================================================
+                estimated_fees = notional_usd * 0.001 * 2.0  # round-trip
+                expected_gross = notional_usd * tp_pct
+                if expected_gross < 3.0 * estimated_fees:
+                    self.invalid_trade_attempts += 1
+                    if self.current_step % 100 == 0:
+                        self.logger.info(
+                            f"[FEE_GATE] {asset} expected_gross={expected_gross:.4f} "
+                            f"< 3x fees={3.0*estimated_fees:.4f} -- trade cancelled"
+                        )
+                    continue
+
                 # Check cash
                 available_cash = self.portfolio_manager.get_cash()
                 if notional_usd < min_order_value or available_cash < notional_usd:

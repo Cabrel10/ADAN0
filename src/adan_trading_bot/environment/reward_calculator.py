@@ -476,147 +476,103 @@ class RewardCalculator:
         risk_horizon: float = 0.0,
         trade_reason: Optional[str] = None,
     ) -> float:
-        """
-        Calculate the total reward for the current timestep using multi-objective optimization.
+        """Calculate reward using the True Quant formula.
+
+        Alpha-Omega reward = symlog(PnL_Net - trade_cost - drawdown_penalty)
+
+        Three components only:
+          1. PnL_Net  = trade_pnl (realised P&L from the environment step)
+          2. Cost     = number_of_trades * cost_penalty  (penalise churn)
+          3. Drawdown = current_drawdown * drawdown_penalty_weight
+
+        No tutor_bonus, no duration_bonus, no chunk_bonus, no complex
+        multi-objective weighting.  The agent learns directly from PnL.
         """
         try:
+            # Track returns history for risk metrics
             if trade_pnl != 0:
                 self._update_returns_history(trade_pnl)
 
-            commission = portfolio_metrics.get("total_commission", 0.0)
-            commission_penalty = commission * self.commission_penalty
-            base_reward = (trade_pnl - commission_penalty) * self.pnl_multiplier
+            # ----------------------------------------------------------
+            # 1. PnL_Net (the ground truth -- what actually happened)
+            # ----------------------------------------------------------
+            commission = float(portfolio_metrics.get("total_commission", 0.0))
+            pnl_net = float(trade_pnl) - commission
 
-            drawdown_penalty = 0.0
-            min_profit = self.min_profit_multiplier * commission
-            if trade_pnl > 0 and commission > 0 and trade_pnl < min_profit:
-                drawdown_penalty = (min_profit - trade_pnl) * 2
-                base_reward -= drawdown_penalty
+            # Log raw PnL before any transform (critical for audit)
+            self._raw_pnl_log = pnl_net
 
-            chunk_bonus = 0.0
-            if (
-                chunk_id is not None
-                and optimal_chunk_pnl is not None
-                and optimal_chunk_pnl > 0
-                and chunk_id != self.current_chunk_id
-            ):
-                self.current_chunk_id = chunk_id
-                if (
-                    performance_ratio is not None
-                    and performance_ratio >= self.performance_threshold
-                ):
-                    chunk_bonus = self.optimal_trade_bonus * (
-                        performance_ratio - self.performance_threshold
-                    )
-                    self.chunk_rewards[chunk_id] = {
-                        "optimal_pnl": optimal_chunk_pnl,
-                        "performance_ratio": performance_ratio,
-                        "bonus": chunk_bonus,
-                    }
+            # ----------------------------------------------------------
+            # 2. Cost penalty: penalise excessive trading (churn)
+            # ----------------------------------------------------------
+            # Count trades this step from closed_positions list
+            closed_trades = portfolio_metrics.get("closed_positions", [])
+            trade_count = len(closed_trades) if isinstance(closed_trades, list) else 0
+            # Also count if a trade was just opened (trade_pnl == 0 but action != 0)
+            if trade_pnl == 0 and action != 0:
+                trade_count = max(trade_count, 1)
+            cost_penalty = trade_count * self.config.get("cost_penalty", 0.001)
 
-            final_reward = 0.0
-            if len(self.returns_history) >= 5:
-                sharpe_ratio = self._calculate_sharpe_ratio()
-                sortino_ratio = self._calculate_sortino_ratio()
-                calmar_ratio = self._calculate_calmar_ratio(portfolio_metrics)
-                position_metadata = portfolio_metrics.get("position_metadata", {})
-                kelly_bonus = self._calculate_kelly_bonus(position_metadata)
-                risk_parity_bonus = self._calculate_risk_parity_bonus(position_metadata)
-                stress_var_penalty = self._calculate_stress_var_penalty(
-                    portfolio_metrics
-                )
+            # ----------------------------------------------------------
+            # 3. Drawdown penalty (continuous, proportional)
+            # ----------------------------------------------------------
+            current_equity = float(portfolio_metrics.get(
+                "portfolio_value", portfolio_metrics.get("balance", 0.0)
+            ))
+            if current_equity > 0:
+                self._equity_history.append(current_equity)
+                if current_equity > self._max_equity:
+                    self._max_equity = current_equity
 
-                composite_score = (
-                    self.weights["pnl"] * base_reward
-                    + self.weights["sharpe"] * sharpe_ratio
-                    + self.weights["sortino"] * sortino_ratio
-                    + self.weights["calmar"] * calmar_ratio
-                    + chunk_bonus
-                    + kelly_bonus
-                    + risk_parity_bonus
-                    + stress_var_penalty
-                )
+            dd_penalty = 0.0
+            if self._max_equity > 0 and current_equity > 0:
+                dd = (self._max_equity - current_equity) / self._max_equity
+                if dd > 0.005:  # penalise drawdowns > 0.5%
+                    dd_penalty = self.drawdown_penalty_weight * dd
 
-                drawdown = portfolio_metrics.get("drawdown", 0.0)
-                if drawdown < -0.05:
-                    drawdown_penalty = abs(drawdown) * 10
-                    composite_score -= drawdown_penalty
+            # ----------------------------------------------------------
+            # Combine: reward = PnL_Net - cost - drawdown
+            # ----------------------------------------------------------
+            raw_reward = pnl_net - cost_penalty - dd_penalty
 
-                inaction_penalty = 0.0
-                if action == 0 and not is_hunting:
-                    inaction_penalty = self.inaction_penalty
-                    composite_score += inaction_penalty
+            # ----------------------------------------------------------
+            # Symlog transform: sign(x) * ln(|x| + 1)
+            # Compresses extreme values while preserving sign.
+            # ----------------------------------------------------------
+            final_reward = symlog(raw_reward)
 
-                duration_penalty = 0.0
-                if trade_reason == "MaxDuration":
-                    duration_penalty = -1.0 * (1.0 - risk_horizon)
-                    composite_score += duration_penalty
-
-                final_reward = composite_score
-            else:
-                final_reward = base_reward + chunk_bonus
-                inaction_penalty = 0.0
-                if action == 0 and not is_hunting:
-                    inaction_penalty = self.inaction_penalty
-                    final_reward += inaction_penalty
-
-                duration_penalty = 0.0
-                if trade_reason == "MaxDuration":
-                    duration_penalty = -1.0 * (1.0 - risk_horizon)
-                    final_reward += duration_penalty
-
-            # Calculate final reward with tutor bonus
-            final_reward += self._calculate_tutor_bonus(portfolio_metrics)
-
-            # OMEGA-3 CH3: Early exit bonus for dynamic exits
-            early_exit_bonus = self._calculate_early_exit_bonus(portfolio_metrics)
-            final_reward += early_exit_bonus
-
-            # SOTA 2026: Risk-averse reward shaping
-            risk_averse_adj = self._calculate_risk_averse_adjustment(
-                portfolio_metrics
-            )
-            final_reward += risk_averse_adj
-
-            # Update DBE parameters and episode tracking
-            self._update_dbe_parameters(portfolio_metrics)
+            # Episode tracking
             self.current_episode_rewards.append(final_reward)
-            
-            # Log DBE metrics
+
+            # Update internal risk state (DBE)
+            self._update_dbe_parameters(portfolio_metrics)
+
+            # Debug log every N steps
             logger.debug(
-                f"DBE ADAPT | Winrate: {self.winrate:.2%} | "
-                f"Drawdown: {self.drawdown:.2%} | "
-                f"Risk Level: {self.risk_level:.2f}"
+                f"REWARD | raw_pnl={pnl_net:+.6f} cost={cost_penalty:.6f} "
+                f"dd_pen={dd_penalty:.6f} raw={raw_reward:+.6f} "
+                f"symlog={final_reward:+.6f}"
             )
-            
-            # SOTA 2025: Symlog transform (DreamerV3) instead of hard clipping.
-            # Preserves the signal from extreme black-swan events while
-            # keeping the reward mathematically bounded.
-            final_reward = symlog(final_reward)
-            
-            # ✅ PHASE FINALE: Logger avec le système unifié
+
+            # Unified metrics logging (optional)
             if UNIFIED_SYSTEM_AVAILABLE and central_logger:
                 central_logger.metric("Reward Final", float(final_reward))
-                central_logger.metric("Reward PnL Component", base_reward)
-                central_logger.metric("Reward Sharpe Component", sharpe_ratio if len(self.returns_history) >= 5 else 0.0)
-                central_logger.metric("Reward Sortino Component", sortino_ratio if len(self.returns_history) >= 5 else 0.0)
-                central_logger.metric("Reward Calmar Component", calmar_ratio if len(self.returns_history) >= 5 else 0.0)
-                
-                # Ajouter à UnifiedMetrics si disponible
+                central_logger.metric("Reward Raw PnL", float(pnl_net))
+                central_logger.metric("Reward Cost Penalty", float(cost_penalty))
+                central_logger.metric("Reward DD Penalty", float(dd_penalty))
                 if self.unified_metrics:
-                    # Ajouter le return pour le calcul des métriques
                     if trade_pnl != 0:
                         self.unified_metrics.add_return(trade_pnl)
-                    
-                    # Ajouter la valeur du portefeuille
-                    if 'portfolio_value' in portfolio_metrics:
-                        self.unified_metrics.add_portfolio_value(portfolio_metrics['portfolio_value'])
-            
+                    if "portfolio_value" in portfolio_metrics:
+                        self.unified_metrics.add_portfolio_value(
+                            portfolio_metrics["portfolio_value"]
+                        )
+
             return float(final_reward)
 
         except Exception as e:
             logger.error(f"Error in reward calculation: {str(e)}")
-            logger.error(traceback.format_exc())  # Ajouter la trace complète pour le débogage
+            logger.error(traceback.format_exc())
             return 0.0
 
     def get_reward_statistics(self) -> Dict[str, Any]:

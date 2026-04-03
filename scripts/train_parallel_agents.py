@@ -345,58 +345,58 @@ class MetricsMonitor(BaseCallback):
 
 WORKER_PROFILES: Dict[str, Dict[str, Any]] = {
     # ── W0 Scalper 5m ────────────────────────────────────────────────────────
-    # Research: SL=0.3-0.5%, TP=0.5-1%, 50-100 trades/day, tight stops
-    # gamma=0.92 → horizon ~12 steps = 1h of 5m candles (short-sighted by design)
-    # n_steps=256 → fast rollout to handle 5m noise
-    # High ent_coef → more exploration on noisy 5m signal
+    # Horizon: gamma=0.95 -> ~20 steps = ~1.7h of 5m candles
+    # n_steps=512: small rollout, fast learning on noisy 5m signal
+    # ent_coef=0.01: moderate exploration, enough to escape local optima
     "scalper": {
         "name": "Scalper",
         "specialization": {"timeframe": "5m"},
-        "n_steps": 256,
+        "n_steps": 512,
         "batch_size": 64,
         "learning_rate": 3e-5,
-        "ent_coef": 0.02,
-        "gamma": 0.92,
+        "ent_coef": 0.01,
+        "gamma": 0.95,
         "clip_range": 0.15,
     },
     # ── W1 Intraday 1h ───────────────────────────────────────────────────────
-    # Research: SL=1-2%, TP=3-4%, 3-8 trades/day, R/R >= 2
-    # gamma=0.98 → horizon ~50 steps = ~2 days of 1h candles
+    # Horizon: gamma=0.99 -> ~100 steps = ~4 days of 1h candles
+    # n_steps=2048: large enough to capture intraday patterns
+    # ent_coef=0.015: higher exploration for diverse intraday regimes
     "intraday": {
         "name": "Intraday",
         "specialization": {"timeframe": "1h"},
-        "n_steps": 1024,
+        "n_steps": 2048,
         "batch_size": 128,
         "learning_rate": 1e-4,
-        "ent_coef": 0.01,
-        "gamma": 0.98,
+        "ent_coef": 0.015,
+        "gamma": 0.99,
         "clip_range": 0.20,
     },
     # ── W2 Swing 4h ──────────────────────────────────────────────────────────
-    # Research: SL=2-3% (1 ATR), TP=6-9% (2-3x SL), 2-5 trades/WEEK
-    # gamma=0.995 → horizon ~200 steps = ~33 days of 4h candles
-    # Low ent_coef → exploit known patterns, be patient
+    # Horizon: gamma=0.995 -> ~200 steps = ~33 days of 4h candles
+    # n_steps=8192: very large rollout for long-horizon swing trades
+    # ent_coef=0.025: high exploration -- swing must discover rare setups
     "swing": {
         "name": "Swing",
         "specialization": {"timeframe": "4h"},
-        "n_steps": 4096,
+        "n_steps": 8192,
         "batch_size": 256,
-        "learning_rate": 1e-4,
-        "ent_coef": 0.005,
+        "learning_rate": 3e-4,
+        "ent_coef": 0.025,
         "gamma": 0.995,
         "clip_range": 0.25,
     },
     # ── W3 Position 4h ───────────────────────────────────────────────────────
-    # Research: SL=3-5%, TP=10-15%, 0.5-1% risk/trade, hold days-weeks
-    # gamma=0.999 → horizon ~1000 steps = ~166 days of 4h candles
-    # Very low ent_coef → exploit long-term macro trends
+    # Horizon: gamma=0.999 -> ~1000 steps = ~166 days of 4h candles
+    # n_steps=16384: ultra-long rollout for macro trend following
+    # ent_coef=0.04: maximum exploration for rare multi-month signals
     "position": {
         "name": "Position",
         "specialization": {"timeframe": "4h"},
-        "n_steps": 8192,
+        "n_steps": 16384,
         "batch_size": 512,
-        "learning_rate": 5e-5,
-        "ent_coef": 0.002,
+        "learning_rate": 5e-4,
+        "ent_coef": 0.04,
         "gamma": 0.999,
         "clip_range": 0.30,
     },
