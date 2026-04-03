@@ -1,0 +1,112 @@
+# Configuration de l'extracteur de caractéristiques avancé
+feature_extractor:
+  # Type d'extracteur (cnn, attention, etc.)
+  type: "attention_cnn"
+
+  # Paramètres du réseau de neurones
+  model_params:
+    channels: 3  # Nombre de canaux d'entrée (OHLC, Volume, etc.)
+    features_per_step: 15  # Nombre de caractéristiques par pas de temps
+    timesteps: 100  # Nombre de pas de temps dans la fenêtre
+    out_dim: 256  # Dimension de sortie de l'extracteur
+
+  # Configuration des blocs convolutifs
+  conv_blocks:
+    - filters: 32
+      kernel_sizes: [3, 5, 7]  # Taille des noyaux pour chaque échelle
+      pool_size: 2
+      dropout: 0.25
+    - filters: 64
+      kernel_sizes: [3, 5, 7]
+      pool_size: 2
+      dropout: 0.25
+
+  # Configuration de l'attention
+  attention:
+    num_heads: 4
+    dropout: 0.1
+
+  # Configuration de la normalisation par lots
+  batch_norm: True
+
+  # Configuration de l'activation
+  activation: "leaky_relu"
+
+  # Configuration du bloc SE (Squeeze-and-Excitation)
+  se_block:
+    reduction: 8  # Facteur de réduction pour le SE block
+
+  # Configuration du dropout global
+  dropout: 0.25
+
+  # Configuration de l'initialisation des poids
+  weight_init: "kaiming"  # ou "xavier"
+
+  # Configuration du gradient clipping
+  grad_clip: 1.0  # Valeur maximale du gradient (None pour désactiver)
+
+# Configuration du pré-traitement des données
+preprocessing:
+  # Normalisation
+  normalize: True
+  normalization_type: "standard"  # ou "minmax" ou "robust"
+
+  # Configuration du padding
+  padding: "pre"  # ou "post"
+  pad_value: 0.0
+
+  # Configuration du fenêtrage
+  window_size: 100
+  step_size: 1
+
+  # Configuration des caractéristiques
+  features:
+    - name: "open"
+      type: "price"
+      normalize: True
+    - name: "high"
+      type: "price"
+      normalize: True
+    - name: "low"
+      type: "price"
+      normalize: True
+    - name: "close"
+      type: "price"
+      normalize: True
+    - name: "volume"
+      type: "volume"
+      normalize: True
+    - name: "rsi"
+      type: "indicator"
+      normalize: True
+      params: [14]  # Période RSI
+    - name: "macd"
+      type: "indicator"
+      normalize: True
+      params: [12, 26, 9]  # fast, slow, signal
+    - name: "bb_upper"
+      type: "indicator"
+      normalize: True
+      params: [20, 2]  # période, écart-type
+    - name: "bb_middle"
+      type: "indicator"
+      normalize: True
+      params: [20]
+    - name: "bb_lower"
+      type: "indicator"
+      normalize: True
+      params: [20, 2]
+
+# Configuration du logging et du débogage
+debug:
+  log_gradients: True
+  log_activations: False
+  log_attention_weights: True
+  save_attention_maps: True
+  attention_map_dir: "attention_maps/"
+
+# Configuration du stockage des modèles
+model_storage:
+  save_dir: "models/"
+  save_freq: 1000  # Fréquence de sauvegarde (en étapes)
+  max_to_keep: 5   # Nombre maximum de modèles à conserver

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adan_trading_bot"
+version = "0.1.0"
+description = "ADAN Trading Bot - Advanced Deep Adaptive Networks for Algorithmic Trading"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    {name = "ADAN Team", email = "info@adan.trading"}
+]
+license = {text = "MIT"}
+
+# Les dépendances sont gérées séparément dans le notebook pour éviter les conflits.
+
+[tool.setuptools.packages.find]
+where = ["src"]

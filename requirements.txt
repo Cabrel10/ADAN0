@@ -1,0 +1,17 @@
+numpy>=1.26.4
+pandas>=2.2.0
+pandas-ta>=0.3.14b0
+ccxt>=4.0.0
+torch>=2.0.0
+stable-baselines3>=2.3.0
+gymnasium>=0.29.0
+shimmy>=1.3.0
+pyyaml>=6.0
+rich>=13.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+hmmlearn>=0.3.0
+tensorboard>=2.14.0
+psutil>=5.9.0

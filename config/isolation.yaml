@@ -1,0 +1,23 @@
+# Configuration d'isolation des modèles
+# À charger APRÈS config.yaml pour surcharger les paramètres critiques
+
+# ISOLATION CRITIQUE: Tous les chemins modèles pointent vers le dossier local autonome
+paths:
+  trained_models_dir: ./models
+  vecnormalize_dir: ./models
+  checkpoint_dir: ./models
+  ensemble_config: ./models/ensemble/adan_ensemble_config.json
+
+# MODE ISOLATION: Paper trading pur - pas de forçage
+training:
+  trading_mode: paper_trading
+
+# DÉSACTIVATION CRITIQUE: Pas de forçage - ADAN décide seul
+environment:
+  frequency_validation:
+    force_trade:
+      enabled: false
+      progressive_forcing: false
+
+# Source de données: Binance Testnet (données réelles, pas fallback)
+data_source: binance_testnet

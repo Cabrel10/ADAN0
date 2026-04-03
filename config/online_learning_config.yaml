@@ -1,0 +1,54 @@
+# ==============================================================================
+# CONFIGURATION DE L'APPRENTISSAGE EN LIGNE
+# ==============================================================================
+# Ce fichier définit les paramètres pour l'apprentissage en ligne du modèle DRL.
+
+# ------------------------------------------------------------------------------
+# Paramètres de Base
+# ------------------------------------------------------------------------------
+# Taille du buffer d'expérience (doit être suffisamment grand pour la diversité)
+experience_buffer_size: 200000  # Augmenté pour plus de stabilité
+
+# Taille du batch pour l'apprentissage
+batch_size: 32  # Réduit pour des mises à jour plus fréquentes
+
+# Fréquence d'apprentissage (nombre de pas entre chaque mise à jour)
+learn_every: 50  # Mises à jour plus fréquentes
+
+# Taux d'apprentissage
+learning_rate: 1e-5  # Réduit pour une convergence plus stable
+
+# Fréquence de sauvegarde du modèle (en pas)
+save_freq: 500  # Sauvegardes plus fréquentes
+
+# Chemin de sauvegarde des modèles
+save_path: "models/online"
+
+# ------------------------------------------------------------------------------
+# Configuration de la Mémoire de Rejeu
+# ------------------------------------------------------------------------------
+use_prioritized_replay: true
+prioritized_replay_alpha: 0.7  # Plus de priorité aux expériences importantes
+prioritized_replay_beta: 0.5   # Correction d'échantillonnage plus forte
+prioritized_replay_eps: 1e-6   # Évite les probabilités nulles
+
+# ------------------------------------------------------------------------------
+# Configuration de l'EWC (Elastic Weight Consolidation)
+# ------------------------------------------------------------------------------
+use_ewc: true
+ewc_lambda: 0.3  # Augmenté pour une meilleure rétention des connaissances
+
+# ------------------------------------------------------------------------------
+# Configuration du Réseau Cible
+# ------------------------------------------------------------------------------
+# Fréquence de mise à jour du réseau cible (en pas)
+target_update_freq: 500  # Mises à jour plus fréquentes
+
+# ------------------------------------------------------------------------------
+# Paramètres de l'Environnement
+# ------------------------------------------------------------------------------
+env_params:
+  window_size: 50     # Taille de la fenêtre temporelle
+  frame_stack: 4      # Nombre de frames empilées
+  normalize: true     # Normalisation des données
+  clip_reward: 3.0    # Clipping des récompenses (-3.0 à 3.0)
