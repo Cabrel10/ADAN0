@@ -291,9 +291,16 @@ class MetricsMonitor(BaseCallback):
                     continue
                 metrics = pm.metrics.get_metrics_summary()
                 try:
-                    current_balance = float(pm.get_portfolio_value())
+                    # Cap at 10x initial to detect unrealized-position inflation bugs
+                    total_val = float(pm.get_portfolio_value())
+                    initial = float(getattr(pm, "initial_capital", None) or
+                                    self.config.get("portfolio", {}).get("initial_balance", 20.5))
+                    if total_val > initial * 10:
+                        current_balance = initial  # bug detected, use initial
+                    else:
+                        current_balance = total_val
                 except Exception:
-                    current_balance = float(self.config.get("portfolio", {}).get("initial_balance", 20))
+                    current_balance = float(self.config.get("portfolio", {}).get("initial_balance", 20.5))
                 current_pnl = metrics.get("total_return", 0.0) * current_balance / 100.0
 
                 self.tier_trackers[worker_id].update(self.step_count, current_balance, current_pnl)
@@ -499,13 +506,15 @@ class ADAN_PBT_Worker(tune.Trainable):
           3. No latency simulator: MultiAssetChunkedEnv used directly.
         """
         self.adan_config = config["adan_config"]
-        self.worker_idx = config.get("worker_idx", 0)
+        # Support paired worker_config dict (avoids cartesian product bug)
+        wc = config.get("worker_config", {})
+        self.worker_idx = wc.get("worker_idx", config.get("worker_idx", 0))
+        self.profile = wc.get("profile", config.get("profile", None))  # scalper / swing / ...
         self.envs_per_worker = config.get("envs_per_worker", 2)
         self.use_subproc = config.get("use_subproc", False)
         self.interval_timesteps = config.get("interval_timesteps", 10_000)
         self._total_timesteps = 0
         self._max_iterations = config.get("_max_iterations", 100)
-        self.profile = config.get("profile", None)  # scalper / swing / ...
 
         # Mutable hyper-parameters (PBT will perturb these)
         self.learning_rate = config.get("learning_rate", 3e-4)
@@ -764,6 +773,7 @@ def run_pbt(
     config: dict,
     num_cpus: int = 8,
     num_samples: int = 4,
+    resume: bool = False,
     envs_per_worker: int = 2,
     use_subproc: bool = False,
     total_steps: int = 1_000_000,
@@ -811,19 +821,33 @@ def run_pbt(
         _profiles[i % len(_profiles)] if _profiles else None
         for i in range(num_samples)
     ]
-    param_space = {
-        "adan_config": config,
-        "worker_idx": tune.grid_search(list(range(num_samples))),
-        "envs_per_worker": envs_per_worker,
-        "use_subproc": use_subproc,
-        "interval_timesteps": interval_timesteps,
-        "learning_rate": tune.loguniform(1e-5, 1e-3),
-        "ent_coef": tune.uniform(0.0, 0.05),
-        "gamma": tune.uniform(0.95, 0.999),
-    }
-    # Only add profile to param_space if profiles are provided
+    # Build paired worker_idx + profile configs to avoid cartesian product
     if _profiles:
-        param_space["profile"] = tune.grid_search(trial_profiles)
+        worker_configs = [
+            {"worker_idx": i, "profile": _profiles[i % len(_profiles)]}
+            for i in range(num_samples)
+        ]
+        param_space = {
+            "adan_config": config,
+            "worker_config": tune.grid_search(worker_configs),
+            "envs_per_worker": envs_per_worker,
+            "use_subproc": use_subproc,
+            "interval_timesteps": interval_timesteps,
+            "learning_rate": tune.loguniform(1e-5, 1e-3),
+            "ent_coef": tune.uniform(0.0, 0.05),
+            "gamma": tune.uniform(0.95, 0.999),
+        }
+    else:
+        param_space = {
+            "adan_config": config,
+            "worker_idx": tune.grid_search(list(range(num_samples))),
+            "envs_per_worker": envs_per_worker,
+            "use_subproc": use_subproc,
+            "interval_timesteps": interval_timesteps,
+            "learning_rate": tune.loguniform(1e-5, 1e-3),
+            "ent_coef": tune.uniform(0.0, 0.05),
+            "gamma": tune.uniform(0.95, 0.999),
+        }
 
     # Stop criteria
     if stop_config is None:
@@ -834,20 +858,35 @@ def run_pbt(
     # Pass max_iterations through param_space so the worker can self-stop.
     param_space["_max_iterations"] = max_iterations
 
-    tuner = tune.Tuner(
-        ADAN_PBT_Worker,
-        tune_config=tune.TuneConfig(
-            scheduler=pbt_scheduler,
-            num_samples=num_samples,
-            max_concurrent_trials=num_samples,
-            reuse_actors=False,
-        ),
-        run_config=tune.RunConfig(
-            name="adan_pbt_training",
-            storage_path=str(storage_path),
-        ),
-        param_space=param_space,
-    )
+    tuner = None
+    if resume and Path(storage_path).exists():
+        try:
+            tuner = tune.Tuner.restore(
+                str(Path(storage_path) / "adan_pbt_training"),
+                trainable=ADAN_PBT_Worker,
+                resume_errored=True,
+                restart_errored=False,
+            )
+            logger.info(f"Resuming training from {storage_path}")
+        except Exception as e:
+            logger.warning(f"Could not resume: {e}. Starting fresh.")
+            tuner = None
+
+    if tuner is None:
+        tuner = tune.Tuner(
+            ADAN_PBT_Worker,
+            tune_config=tune.TuneConfig(
+                scheduler=pbt_scheduler,
+                num_samples=num_samples,
+                max_concurrent_trials=num_samples,
+                reuse_actors=False,
+            ),
+            run_config=tune.RunConfig(
+                name="adan_pbt_training",
+                storage_path=str(storage_path),
+            ),
+            param_space=param_space,
+        )
 
     results = tuner.fit()
 
@@ -940,6 +979,7 @@ def main(
             config=config,
             num_cpus=num_cpus,
             num_samples=num_samples,
+            resume=resume,
             envs_per_worker=envs_per_worker,
             use_subproc=use_subproc,
             total_steps=total_steps,

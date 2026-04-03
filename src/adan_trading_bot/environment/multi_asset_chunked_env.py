@@ -5502,8 +5502,11 @@ class MultiAssetChunkedEnv(gym.Env):
         )
         if sl_tp_receipts:
             self._step_closed_receipts.extend(sl_tp_receipts)
-        if pnl_from_update > 0:
+        if pnl_from_update != 0.0:
             realized_pnl += pnl_from_update
+            trade_executed_this_step = True
+        elif sl_tp_receipts:
+            # SL/TP triggered but pnl may be 0 (fees only) — still count as executed
             trade_executed_this_step = True
 
         # ================================================================
