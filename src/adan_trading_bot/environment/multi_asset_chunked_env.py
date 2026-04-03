@@ -1034,35 +1034,66 @@ class MultiAssetChunkedEnv(gym.Env):
                 self.max_position_size,
             )
 
-            # Limites pour les stop loss et take profit
-            # Calibrated per trading style (research-based):
-            # Scalper 5m:  SL 0.3-0.8%,  TP 0.5-1.5%
-            # Intraday 1h: SL 0.8-2.0%,  TP 1.5-4.0%
-            # Swing/Position 4h: SL 1.5-4.0%, TP 3.0-8.0%
+            # ── Per-profile SL/TP bounds ──────────────────────────────────
+            # Rule: TP_min >= 3x round-trip fees (0.1% maker + 0.1% taker = 0.2%)
+            #       => TP_min = 0.6% absolute minimum to cover fees
+            #
+            # SCALPER (5m): fast moves, tight stops
+            #   SL: 0.3-0.8%  |  TP: 0.6-1.5%  |  R/R target: 2:1
+            #   Rationale: 5m candles move 0.1-0.3% avg, SL must be tight
+            #
+            # INTRADAY (1h): medium moves, balanced
+            #   SL: 0.8-2.0%  |  TP: 1.6-4.0%  |  R/R target: 2:1
+            #   Rationale: 1h candles move 0.3-1.0% avg
+            #
+            # SWING (4h): trend following, wider stops
+            #   SL: 1.5-3.5%  |  TP: 3.0-7.0%  |  R/R target: 2:1
+            #   Rationale: 4h candles move 0.5-2.0% avg, need room to breathe
+            #
+            # POSITION (4h): macro trends, widest stops
+            #   SL: 2.0-5.0%  |  TP: 4.0-10.0%  |  R/R target: 2:1
+            #   Rationale: holds days-weeks, needs wide SL to avoid noise
+            #
+            # Fee gate: TP must cover 3x round-trip fees (0.6% minimum)
+            ROUND_TRIP_FEES = 0.002   # 0.1% maker + 0.1% taker
+            FEE_MULTIPLIER  = 3.0     # TP must be >= 3x fees to be worth trading
+
             profile = self.worker_config.get("profile") or self.worker_config.get("name", "intraday")
             profile = str(profile).lower()
-            if profile in ("conservative",):
-                profile = "scalper"
-            elif profile in ("moderate", "balanced"):
-                profile = "intraday"
-            elif profile in ("aggressive", "adaptive"):
-                profile = "swing"
-            if profile == "scalper":
-                sl_min, sl_max = 0.003, 0.008   # 0.3% - 0.8%
-                tp_min, tp_max = 0.005, 0.015   # 0.5% - 1.5%
-            elif profile == "swing" or profile == "position":
-                sl_min, sl_max = 0.015, 0.040   # 1.5% - 4.0%
-                tp_min, tp_max = 0.030, 0.080   # 3.0% - 8.0%
-            else:  # intraday default
-                sl_min, sl_max = 0.008, 0.020   # 0.8% - 2.0%
-                tp_min, tp_max = 0.015, 0.040   # 1.5% - 4.0%
+            # Map legacy profile names
+            _profile_map = {
+                "conservative": "scalper",
+                "moderate": "intraday", "balanced": "intraday",
+                "aggressive": "swing",  "adaptive": "position",
+            }
+            profile = _profile_map.get(profile, profile)
 
-            risk_params["stop_loss_pct"] = np.clip(
+            _PROFILE_BOUNDS = {
+                "scalper":  {"sl": (0.003, 0.008), "tp": (0.006, 0.015)},
+                "intraday": {"sl": (0.008, 0.020), "tp": (0.016, 0.040)},
+                "swing":    {"sl": (0.015, 0.035), "tp": (0.030, 0.070)},
+                "position": {"sl": (0.020, 0.050), "tp": (0.040, 0.100)},
+            }
+            bounds = _PROFILE_BOUNDS.get(profile, _PROFILE_BOUNDS["intraday"])
+            sl_min, sl_max = bounds["sl"]
+            tp_min, tp_max = bounds["tp"]
+
+            # Enforce fee gate: TP_min >= 3x round-trip fees
+            tp_min = max(tp_min, ROUND_TRIP_FEES * FEE_MULTIPLIER)
+
+            risk_params["stop_loss_pct"] = float(np.clip(
                 risk_params["stop_loss_pct"], sl_min, sl_max
-            )
-            risk_params["take_profit_pct"] = np.clip(
+            ))
+            risk_params["take_profit_pct"] = float(np.clip(
                 risk_params["take_profit_pct"], tp_min, tp_max
-            )
+            ))
+
+            # Enforce minimum R/R = 1.5 (TP >= 1.5 * SL)
+            min_rr = 1.5
+            if risk_params["take_profit_pct"] < risk_params["stop_loss_pct"] * min_rr:
+                risk_params["take_profit_pct"] = float(
+                    min(risk_params["stop_loss_pct"] * min_rr, tp_max)
+                )
 
             # Ajustement pour les micro-capitaux
             if hasattr(self, "portfolio") and hasattr(
