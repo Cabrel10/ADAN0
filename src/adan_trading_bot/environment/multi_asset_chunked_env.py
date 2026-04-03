@@ -1035,16 +1035,26 @@ class MultiAssetChunkedEnv(gym.Env):
             )
 
             # Limites pour les stop loss et take profit
-            risk_params["stop_loss_pct"] = np.clip(
-                risk_params["stop_loss_pct"],
-                0.005,
-                0.10,  # 0.5% minimum  # 10% maximum
-            )
+            # Calibrated per trading style (research-based):
+            # Scalper 5m:  SL 0.3-0.8%,  TP 0.5-1.5%
+            # Intraday 1h: SL 0.8-2.0%,  TP 1.5-4.0%
+            # Swing/Position 4h: SL 1.5-4.0%, TP 3.0-8.0%
+            profile = self.worker_config.get("profile", "intraday")
+            if profile == "scalper":
+                sl_min, sl_max = 0.003, 0.008   # 0.3% - 0.8%
+                tp_min, tp_max = 0.005, 0.015   # 0.5% - 1.5%
+            elif profile == "swing" or profile == "position":
+                sl_min, sl_max = 0.015, 0.040   # 1.5% - 4.0%
+                tp_min, tp_max = 0.030, 0.080   # 3.0% - 8.0%
+            else:  # intraday default
+                sl_min, sl_max = 0.008, 0.020   # 0.8% - 2.0%
+                tp_min, tp_max = 0.015, 0.040   # 1.5% - 4.0%
 
+            risk_params["stop_loss_pct"] = np.clip(
+                risk_params["stop_loss_pct"], sl_min, sl_max
+            )
             risk_params["take_profit_pct"] = np.clip(
-                risk_params["take_profit_pct"],
-                0.005,  # 0.5% minimum
-                0.20,  # 20% maximum
+                risk_params["take_profit_pct"], tp_min, tp_max
             )
 
             # Ajustement pour les micro-capitaux
