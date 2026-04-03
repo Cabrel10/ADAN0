@@ -292,7 +292,7 @@ class DynamicBehaviorEngine:
             if HMM_AVAILABLE:
                 self._hmm_model = GaussianHMM(
                     n_components=N_HMM_STATES,
-                    covariance_type="full",
+                    covariance_type="diag",  # diag is more numerically stable than full
                     n_iter=50,
                     random_state=42,
                     tol=0.01,
