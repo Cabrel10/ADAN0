@@ -1039,7 +1039,14 @@ class MultiAssetChunkedEnv(gym.Env):
             # Scalper 5m:  SL 0.3-0.8%,  TP 0.5-1.5%
             # Intraday 1h: SL 0.8-2.0%,  TP 1.5-4.0%
             # Swing/Position 4h: SL 1.5-4.0%, TP 3.0-8.0%
-            profile = self.worker_config.get("profile", "intraday")
+            profile = self.worker_config.get("profile") or self.worker_config.get("name", "intraday")
+            profile = str(profile).lower()
+            if profile in ("conservative",):
+                profile = "scalper"
+            elif profile in ("moderate", "balanced"):
+                profile = "intraday"
+            elif profile in ("aggressive", "adaptive"):
+                profile = "swing"
             if profile == "scalper":
                 sl_min, sl_max = 0.003, 0.008   # 0.3% - 0.8%
                 tp_min, tp_max = 0.005, 0.015   # 0.5% - 1.5%
