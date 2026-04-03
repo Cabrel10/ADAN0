@@ -107,6 +107,11 @@ except ImportError:
 _THIS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = _THIS_DIR.parent  # bot/
 
+# Training output directory — use external mount if available to avoid
+# filling the system disk (/dev/sda3 is limited).
+_EXTERNAL_TRAIN_DIR = Path("/mnt/new_data/t10_training")
+TRAIN_OUTPUT_DIR = _EXTERNAL_TRAIN_DIR if _EXTERNAL_TRAIN_DIR.exists() else PROJECT_ROOT / "logs"
+
 
 logger = logging.getLogger(__name__)
 
@@ -339,45 +344,61 @@ class MetricsMonitor(BaseCallback):
 # ===========================================================================
 
 WORKER_PROFILES: Dict[str, Dict[str, Any]] = {
+    # ── W0 Scalper 5m ────────────────────────────────────────────────────────
+    # Research: SL=0.3-0.5%, TP=0.5-1%, 50-100 trades/day, tight stops
+    # gamma=0.92 → horizon ~12 steps = 1h of 5m candles (short-sighted by design)
+    # n_steps=256 → fast rollout to handle 5m noise
+    # High ent_coef → more exploration on noisy 5m signal
     "scalper": {
         "name": "Scalper",
         "specialization": {"timeframe": "5m"},
-        "n_steps": 512,
+        "n_steps": 256,
         "batch_size": 64,
-        # SOTA hyperparameters: high-frequency, low lr, high exploration
         "learning_rate": 3e-5,
-        "ent_coef": 0.015,
-        "gamma": 0.95,
+        "ent_coef": 0.02,
+        "gamma": 0.92,
+        "clip_range": 0.15,
     },
+    # ── W1 Intraday 1h ───────────────────────────────────────────────────────
+    # Research: SL=1-2%, TP=3-4%, 3-8 trades/day, R/R >= 2
+    # gamma=0.98 → horizon ~50 steps = ~2 days of 1h candles
     "intraday": {
         "name": "Intraday",
         "specialization": {"timeframe": "1h"},
-        "n_steps": 512,
-        "batch_size": 64,
-        # SOTA hyperparameters: balanced lr and discount
+        "n_steps": 1024,
+        "batch_size": 128,
         "learning_rate": 1e-4,
         "ent_coef": 0.01,
-        "gamma": 0.97,
+        "gamma": 0.98,
+        "clip_range": 0.20,
     },
+    # ── W2 Swing 4h ──────────────────────────────────────────────────────────
+    # Research: SL=2-3% (1 ATR), TP=6-9% (2-3x SL), 2-5 trades/WEEK
+    # gamma=0.995 → horizon ~200 steps = ~33 days of 4h candles
+    # Low ent_coef → exploit known patterns, be patient
     "swing": {
         "name": "Swing",
         "specialization": {"timeframe": "4h"},
-        "n_steps": 512,
-        "batch_size": 64,
-        # SOTA hyperparameters: higher lr, longer horizon
-        "learning_rate": 3e-4,
-        "ent_coef": 0.008,
-        "gamma": 0.99,
+        "n_steps": 4096,
+        "batch_size": 256,
+        "learning_rate": 1e-4,
+        "ent_coef": 0.005,
+        "gamma": 0.995,
+        "clip_range": 0.25,
     },
+    # ── W3 Position 4h ───────────────────────────────────────────────────────
+    # Research: SL=3-5%, TP=10-15%, 0.5-1% risk/trade, hold days-weeks
+    # gamma=0.999 → horizon ~1000 steps = ~166 days of 4h candles
+    # Very low ent_coef → exploit long-term macro trends
     "position": {
         "name": "Position",
         "specialization": {"timeframe": "4h"},
-        "n_steps": 1024,
-        "batch_size": 128,
-        # SOTA hyperparameters: highest lr, longest horizon, low exploration
-        "learning_rate": 5e-4,
-        "ent_coef": 0.005,
-        "gamma": 0.995,
+        "n_steps": 8192,
+        "batch_size": 512,
+        "learning_rate": 5e-5,
+        "ent_coef": 0.002,
+        "gamma": 0.999,
+        "clip_range": 0.30,
     },
 }
 
@@ -572,9 +593,21 @@ class ADAN_PBT_Worker(tune.Trainable):
         if total_rollout % batch_size != 0:
             batch_size = max(1, total_rollout // max(1, total_rollout // batch_size))
 
+        # Profile overrides for gamma and clip_range (research-calibrated per trading style)
+        gamma_final     = prof_cfg.get("gamma",      self.gamma)
+        clip_range_final= prof_cfg.get("clip_range", agent_cfg.get("clip_range", 0.2))
+        ent_coef_final  = prof_cfg.get("ent_coef",   self.ent_coef)
+        lr_final        = prof_cfg.get("learning_rate", self.learning_rate)
+
+        logger.info(
+            f"Worker {self.worker_idx} ({self.profile}): "
+            f"n_steps={n_steps} batch={batch_size} gamma={gamma_final:.4f} "
+            f"clip={clip_range_final} ent={ent_coef_final:.4f} lr={lr_final:.2e}"
+        )
+
         # Each worker gets its own TB log dir so curves are separate
         profile_tag = self.profile or f"w{self.worker_idx}"
-        tb_log_dir = str(PROJECT_ROOT / "logs" / "tb_workers" / f"worker_{self.worker_idx}_{profile_tag}")
+        tb_log_dir = str(TRAIN_OUTPUT_DIR / "tb_workers" / f"worker_{self.worker_idx}_{profile_tag}")
 
         # SOTA 2026: Use WorldModelPPO for auxiliary forward-prediction loss
         PPOClass = WorldModelPPO if WorldModelPPO is not None else PPO
@@ -582,14 +615,14 @@ class ADAN_PBT_Worker(tune.Trainable):
             policy="MultiInputPolicy",
             env=self.vec_env,
             device=device,
-            learning_rate=self.learning_rate,
+            learning_rate=lr_final,
             n_steps=n_steps,
             batch_size=batch_size,
             n_epochs=agent_cfg.get("n_epochs", 10),
-            gamma=self.gamma,
+            gamma=gamma_final,
             gae_lambda=agent_cfg.get("gae_lambda", 0.95),
-            clip_range=agent_cfg.get("clip_range", 0.2),
-            ent_coef=self.ent_coef,
+            clip_range=clip_range_final,
+            ent_coef=ent_coef_final,
             vf_coef=agent_cfg.get("vf_coef", 0.5),
             max_grad_norm=agent_cfg.get("max_grad_norm", 0.5),
             policy_kwargs=policy_kwargs if policy_kwargs else None,
@@ -754,7 +787,7 @@ def run_pbt(
         profiles: Optional list of profile names (e.g. ['scalper', 'swing']).
     """
     if storage_path is None:
-        storage_path = str(PROJECT_ROOT / "logs" / "ray_results")
+        storage_path = str(TRAIN_OUTPUT_DIR / "ray_results")
 
     max_iterations = max(1, total_steps // interval_timesteps)
 
@@ -885,13 +918,14 @@ def main(
         config.setdefault("training", {})["timesteps_per_instance"] = total_steps
 
     # Storage path
-    storage_path = checkpoint_dir or str(PROJECT_ROOT / "logs" / "ray_results")
+    storage_path = checkpoint_dir or str(TRAIN_OUTPUT_DIR / "ray_results")
 
-    # Init Ray
+    # Init Ray — redirect temp dir to external mount to avoid filling /tmp
     ray.init(
         num_cpus=num_cpus,
         include_dashboard=False,
         ignore_reinit_error=True,
+        _temp_dir="/mnt/new_data/t10_training/ray_tmp",
     )
 
     logger.info("=" * 80)
