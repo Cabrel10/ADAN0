@@ -5676,18 +5676,34 @@ class MultiAssetChunkedEnv(gym.Env):
                 notional_usd = min_order_value
                 target_exposure_pct = min_order_value / capital if capital > 0 else 0
 
-            # ---- Dynamic SL bounded by tier risk ----
-            if notional_usd > 0:
-                max_sl_pct = (capital * max_risk_pct) / notional_usd
-            else:
-                max_sl_pct = 0.02  # fallback
-            normalized_sl = (sl_raw + 1.0) / 2.0
-            sl_pct = 0.005 + normalized_sl * (max(max_sl_pct, 0.005) - 0.005)
-            sl_pct = min(sl_pct, 0.10)  # hard cap 10%
+            # ---- Dynamic SL/TP bounded by profile (fee-aware) ----
+            # TP must cover 3x round-trip fees (0.1%+0.1%=0.2% RT -> TP_min=0.6%)
+            # R/R must be >= 1.5 (TP >= 1.5 * SL)
+            _prof = str(self.worker_config.get("profile") or
+                        self.worker_config.get("name", "intraday")).lower()
+            _pmap = {"conservative": "scalper", "moderate": "intraday",
+                     "balanced": "intraday", "aggressive": "swing", "adaptive": "position"}
+            _prof = _pmap.get(_prof, _prof)
+            _BOUNDS = {
+                "scalper":  {"sl": (0.003, 0.008), "tp": (0.006, 0.015)},
+                "intraday": {"sl": (0.008, 0.020), "tp": (0.016, 0.040)},
+                "swing":    {"sl": (0.015, 0.035), "tp": (0.030, 0.070)},
+                "position": {"sl": (0.020, 0.050), "tp": (0.040, 0.100)},
+            }
+            _b = _BOUNDS.get(_prof, _BOUNDS["intraday"])
+            sl_lo, sl_hi = _b["sl"]
+            tp_lo, tp_hi = _b["tp"]
+            tp_lo = max(tp_lo, 0.006)  # fee gate: 3x 0.2% RT fees
 
-            # Dynamic TP (agent decides, 1% to 20%)
+            normalized_sl = (sl_raw + 1.0) / 2.0
+            sl_pct = float(np.clip(sl_lo + normalized_sl * (sl_hi - sl_lo), sl_lo, sl_hi))
+
             normalized_tp = (tp_raw + 1.0) / 2.0
-            tp_pct = 0.01 + normalized_tp * (0.20 - 0.01)
+            tp_pct = float(np.clip(tp_lo + normalized_tp * (tp_hi - tp_lo), tp_lo, tp_hi))
+
+            # Enforce R/R >= 1.5
+            if tp_pct < sl_pct * 1.5:
+                tp_pct = float(min(sl_pct * 1.5, tp_hi))
 
             # ---- Anti-spam HOLD ----
             # If already open and target exposure ~ current exposure -> HOLD
