@@ -291,14 +291,20 @@ class MetricsMonitor(BaseCallback):
                     continue
                 metrics = pm.metrics.get_metrics_summary()
                 try:
-                    # Cap at 10x initial to detect unrealized-position inflation bugs
-                    total_val = float(pm.get_portfolio_value())
+                    # Use cash only (no unrealized positions) for clean balance tracking
+                    # portfolio_value includes open positions which causes false spikes
+                    pm_metrics = pm.get_metrics()
+                    cash = float(pm_metrics.get("cash", 0.0))
+                    realized = float(pm_metrics.get("realized_pnl_total", 0.0))
                     initial = float(getattr(pm, "initial_capital", None) or
                                     self.config.get("portfolio", {}).get("initial_balance", 20.5))
-                    if total_val > initial * 10:
-                        current_balance = initial  # bug detected, use initial
-                    else:
-                        current_balance = total_val
+                    current_balance = cash + realized + initial if cash > 0 else initial
+                    # Sanity cap: if still unreasonable, use total_value with 3x cap
+                    total_val = float(pm.get_portfolio_value())
+                    if total_val > initial * 3:
+                        current_balance = initial  # spike detected
+                    elif current_balance <= 0 or current_balance > initial * 3:
+                        current_balance = max(total_val, initial * 0.1)
                 except Exception:
                     current_balance = float(self.config.get("portfolio", {}).get("initial_balance", 20.5))
                 current_pnl = metrics.get("total_return", 0.0) * current_balance / 100.0
