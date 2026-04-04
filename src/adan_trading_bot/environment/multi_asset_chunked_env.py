@@ -5609,21 +5609,16 @@ class MultiAssetChunkedEnv(gym.Env):
             target_exposure_pct = min_exp + normalized_size * (max_exp - min_exp)
 
             # ==============================================================
-            # HALF-KELLY CRITERION -- Institutional Position Sizing
-            # Fuses HMM regime probabilities with historical performance
-            # to mathematically bound the maximum position size.
-            #
-            #   Kelly_F = W - (1 - W) / R
-            #   Applied as Half-Kelly: modifier = clamp(Kelly_F / 2, 0.1, 1.0)
-            #   target_exposure_pct *= modifier
-            #
-            # W = win probability (from HMM bull/bear posteriors or win_rate)
-            # R = average win / average loss (historical, default 1.5)
+            # TIER-CLAMPED KELLY CRITERION (CHANTIER 3)
+            # f* = max(0, (W*RR - (1-W)) / RR)
+            # Then clamp to [exp_min_pct, exp_max_pct] from tier config.
+            # Ensures position sizing respects capital tier boundaries.
             # ==============================================================
             kelly_modifier = 1.0  # neutral if computation fails
+            p_hmm = 0.5  # HMM win probability (used later by EV gate)
+            rr_ratio = 2.0  # default risk-reward ratio
             try:
-                # --- W (Win Probability) ---
-                # Try HMM posteriors from context_vector [3..5] = [bull, sideways, bear]
+                # --- W (Win Probability from HMM) ---
                 hmm_w = None
                 obs = getattr(self, '_last_observation', None)
                 if obs is not None and isinstance(obs, dict):
@@ -5636,43 +5631,45 @@ class MultiAssetChunkedEnv(gym.Env):
                         elif discrete_action == 2:  # SELL
                             hmm_w = max(0.01, bear_prob)
 
-                # Fallback: historical win_rate from performance_metrics
+                # Fallback: historical win_rate
                 perf = getattr(self, 'performance_metrics', None)
                 hist_wr = getattr(perf, 'win_rate', None) if perf else None
                 if hist_wr is None:
                     hist_wr = getattr(self, '_historical_win_rate', 0.5)
                 W = hmm_w if hmm_w is not None else float(hist_wr)
-                W = max(0.01, min(W, 0.99))  # clamp to avoid degenerate
+                W = max(0.01, min(W, 0.99))
+                p_hmm = W  # save for EV gate
 
-                # --- R (Risk/Reward Ratio = avg_win / avg_loss) ---
-                avg_win = getattr(perf, 'avg_win', None) if perf else None
-                avg_loss = getattr(perf, 'avg_loss', None) if perf else None
-                if avg_win and avg_loss and abs(avg_loss) > 1e-9:
-                    R = abs(float(avg_win) / float(avg_loss))
-                else:
-                    R = 1.5  # conservative default
+                # --- Tier exposure limits ---
+                exp_limits = tier.get("exposure_range", [10, 90])
+                exp_min_pct = float(exp_limits[0]) / 100.0
+                exp_max_pct = float(exp_limits[1]) / 100.0
 
-                # --- Kelly Fraction ---
-                kelly_f = W - (1.0 - W) / R
-                # Half-Kelly for institutional safety margin
-                half_kelly = kelly_f / 2.0
-                kelly_modifier = max(0.1, min(1.0, half_kelly))
+                # --- Kelly optimal fraction ---
+                # f* = max(0, (W * RR - (1-W)) / RR)
+                f_star = max(0.0, (W * rr_ratio - (1.0 - W)) / rr_ratio)
 
-                # Log Kelly periodically (every 100 steps)
+                # Clamp to tier exposure boundaries
+                kelly_modifier = max(exp_min_pct, min(exp_max_pct, f_star))
+
+                # Override target_exposure_pct with Kelly-clamped value
+                target_exposure_pct = kelly_modifier
+
+                # Notional with floor of 11 USD
+                notional_usd = max(11.0, capital * target_exposure_pct)
+
+                # Log Kelly periodically
                 if self.current_step % 100 == 0:
                     self.logger.info(
-                        f"[KELLY] {asset} | W={W:.3f} R={R:.2f} | "
-                        f"Kelly_F={kelly_f:+.4f} HalfKelly={half_kelly:+.4f} | "
-                        f"Modifier={kelly_modifier:.3f} | "
-                        f"Exposure {target_exposure_pct:.3f}->{target_exposure_pct*kelly_modifier:.3f}"
+                        f"[KELLY_CLAMPED] {asset} | W={W:.3f} RR={rr_ratio:.2f} | "
+                        f"f*={f_star:.4f} | tier_range=[{exp_min_pct:.2f},{exp_max_pct:.2f}] | "
+                        f"kelly_mod={kelly_modifier:.4f} | notional=${notional_usd:.2f}"
                     )
             except Exception as e:
-                self.logger.debug(f"[KELLY] Computation skipped: {e}")
+                self.logger.debug(f"[KELLY_CLAMPED] Computation skipped: {e}")
                 kelly_modifier = 1.0
-
-            # Apply Half-Kelly modifier to the PPO-decided exposure
-            target_exposure_pct *= kelly_modifier
-            notional_usd = capital * target_exposure_pct
+                notional_usd = capital * target_exposure_pct
+                notional_usd = max(11.0, notional_usd)
 
             # Clamp to min order value
             if notional_usd < min_order_value and capital >= min_order_value:
@@ -5707,6 +5704,35 @@ class MultiAssetChunkedEnv(gym.Env):
             # Enforce R/R >= 1.5
             if tp_pct < sl_pct * 1.5:
                 tp_pct = float(min(sl_pct * 1.5, tp_hi))
+
+            # ==============================================================
+            # CHANTIER 4: ATR-BASED SCALPER SL (Survival mechanism)
+            # On 5m, SL must NEVER be below 3x market noise (~0.2% ATR)
+            # This prevents the scalper from being stopped out by noise.
+            # ==============================================================
+            if _prof == "scalper":
+                # Try to get ATR from observation context
+                atr_pct_estimate = 0.002  # default: 0.2% ATR
+                try:
+                    _obs = getattr(self, '_last_observation', None)
+                    if _obs is not None and isinstance(_obs, dict):
+                        _ctx = _obs.get('context_vector')
+                        if _ctx is not None and hasattr(_ctx, '__len__') and len(_ctx) >= 1:
+                            # context[0] = ATR/close ratio
+                            atr_pct_estimate = max(0.001, float(_ctx[0]))
+                except Exception:
+                    pass
+                min_scalp_sl = max(0.006, 3.0 * atr_pct_estimate)  # 3x ATR floor
+                if sl_pct < min_scalp_sl:
+                    sl_pct = min_scalp_sl
+                    # Re-enforce R/R after SL adjustment
+                    if tp_pct < sl_pct * 1.5:
+                        tp_pct = float(min(sl_pct * 1.5, tp_hi))
+                    if self.current_step % 100 == 0:
+                        self.logger.info(
+                            f"[ATR_SL] {asset} scalper SL raised to {sl_pct:.4f} "
+                            f"(3x ATR={atr_pct_estimate:.4f})"
+                        )
 
             # ---- Anti-spam HOLD ----
             # If already open and target exposure ~ current exposure -> HOLD
@@ -5788,21 +5814,26 @@ class MultiAssetChunkedEnv(gym.Env):
                     continue
 
                 # ==============================================================
-                # FEE-TO-TARGET GATE -- Only open if expected gross profit
-                # exceeds 3x estimated round-trip fees.  Prevents the agent
-                # from churning on micro-moves that are consumed by fees.
-                #   estimated_fees = notional * 0.001 * 2  (0.1% maker+taker)
-                #   expected_gross = notional * tp_pct
-                #   gate: expected_gross >= 3 * estimated_fees
+                # CHANTIER 2: EV-BASED FEE GATE
+                # Instead of rigid 3x fee check, we compute the minimum
+                # win probability for positive expected value:
+                #   p_min = (1 + fee_pct/SL) / (1 + RR)
+                # If W <= p_min, the trade has negative EV and is cancelled.
                 # ==============================================================
-                estimated_fees = notional_usd * 0.001 * 2.0  # round-trip
-                expected_gross = notional_usd * tp_pct
-                if expected_gross < 3.0 * estimated_fees:
+                estimated_fees_pct = 0.002  # 0.2% round-trip (0.1% maker + 0.1% taker)
+                if sl_pct > 0:
+                    _rr_for_ev = tp_pct / sl_pct
+                    p_min_required = (1.0 + estimated_fees_pct / sl_pct) / (1.0 + _rr_for_ev)
+                else:
+                    p_min_required = 0.99  # no SL = reject
+
+                if p_hmm <= p_min_required:
                     self.invalid_trade_attempts += 1
                     if self.current_step % 100 == 0:
                         self.logger.info(
-                            f"[FEE_GATE] {asset} expected_gross={expected_gross:.4f} "
-                            f"< 3x fees={3.0*estimated_fees:.4f} -- trade cancelled"
+                            f"[EV_GATE] {asset} W={p_hmm:.3f} <= p_min={p_min_required:.3f} "
+                            f"(RR={tp_pct/sl_pct if sl_pct>0 else 0:.2f}, SL={sl_pct:.4f}) "
+                            f"-- EV<0, trade cancelled"
                         )
                     continue
 
