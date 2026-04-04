@@ -119,7 +119,7 @@ class RewardCalculator:
         # ============================================================
         self._scale = 1.0        # Symlog normalisation scale
         self._alpha = 2.0        # Continuous loss penalty multiplier
-        self._beta = 1.0         # EV bonus multiplier
+        self._beta = 0.1         # EV bonus multiplier (REDUCED from 1.0 to prevent hacking)
         self._gamma_streak = 0.5 # Consecutive loss streak penalty
         self._delta = 2.0        # Failsafe binary anti-hack multiplier
         self._consecutive_losses = 0  # Streak tracker
@@ -227,8 +227,11 @@ class RewardCalculator:
             # 5. FAILSAFE BINARY ANTI-HACK
             # It is MATHEMATICALLY IMPOSSIBLE to get positive reward
             # from a negative PnL trade
+            failsafe_triggered = False
             if pnl_net < 0 and r > 0:
                 r *= -delta
+                failsafe_triggered = True
+                logger.info(f"FAILSAFE_TRIGGERED | pnl_net={pnl_net:+.6f} | r_before={r/-delta:+.6f} | r_after={r:+.6f}")
 
             final_reward = float(r)
 

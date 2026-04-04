@@ -129,8 +129,13 @@ class JsonLogHandler(RotatingFileHandler):
         """
         Do a rollover, as described in __init__().
         """
-        # Let the parent class handle the actual rollover
-        super().doRollover()
+        try:
+            # Let the parent class handle the actual rollover
+            super().doRollover()
+        except FileNotFoundError:
+            # Race condition: file was already moved/deleted by another process
+            # This is safe to ignore - just continue with compression
+            pass
 
         if not self.compress_backups:
             return

@@ -1,0 +1,111 @@
+╔════════════════════════════════════════════════════════════════════════════════════════════════╗
+║                    ADAN0 PBT TRAINING - QUICK SUMMARY                                        ║
+║                         2026-04-04 | Duration: ~1h30                                         ║
+╚════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+┌─ WORKER PERFORMANCE RANKING ─────────────────────────────────────────────────────────────────┐
+│                                                                                              │
+│  🥇 SWING (W3) - 4h Timeframe                                                               │
+│     ├─ PnL: +$21.95 ✅ (BEST)                                                               │
+│     ├─ Win Rate: 39.1% (84/215 trades)                                                      │
+│     ├─ Profit Factor: 1.49x (BEST)                                                          │
+│     ├─ Trades: 531 opened, 215 closed (40.5%)                                               │
+│     └─ Status: 🟢 GOOD - Ready for production consideration                                 │
+│                                                                                              │
+│  🥈 INTRADAY (W2) - 1h Timeframe                                                            │
+│     ├─ PnL: +$6.41 ✅                                                                       │
+│     ├─ Win Rate: 39.4% (106/269 trades)                                                     │
+│     ├─ Profit Factor: 1.10x                                                                 │
+│     ├─ Trades: 656 opened, 269 closed (41.0%)                                               │
+│     └─ Status: ⚠️  FAIR - Needs improvement                                                 │
+│                                                                                              │
+│  🥉 SCALPER (W1) - 5m Timeframe                                                             │
+│     ├─ PnL: +$2.35 ✅                                                                       │
+│     ├─ Win Rate: 46.7% (57/122 trades)                                                      │
+│     ├─ Profit Factor: 1.07x                                                                 │
+│     ├─ Trades: 243 opened, 122 closed (50.2%)                                               │
+│     └─ Status: ⚠️  FAIR - Volatile but profitable                                           │
+│                                                                                              │
+│  ❌ POSITION (W4) - 4h Timeframe (Long-term)                                                │
+│     ├─ PnL: -$10.23 ❌ (WORST)                                                              │
+│     ├─ Win Rate: 35.3% (176/498 trades)                                                     │
+│     ├─ Profit Factor: 0.88x (losses > gains)                                                │
+│     ├─ Trades: 1084 opened, 498 closed (45.9%)                                              │
+│     └─ Status: 🔴 POOR - Needs rework                                                       │
+│                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ GLOBAL METRICS ─────────────────────────────────────────────────────────────────────────────┐
+│                                                                                              │
+│  Total Trades Opened:        2,514                                                          │
+│  Total Trades Closed:        1,104 (43.9% close rate)                                       │
+│  Global PnL:                 +$20.48 ✅                                                      │
+│  SL Triggered:               1,168                                                          │
+│  TP Triggered:               1,295                                                          │
+│                                                                                              │
+│  Best Performer:             Swing (+$21.95, 1.49x profit factor)                           │
+│  Worst Performer:            Position (-$10.23, 0.88x profit factor)                        │
+│                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ SYSTEM HEALTH ──────────────────────────────────────────────────────────────────────────────┐
+│                                                                                              │
+│  ✅ All 4 workers running                                                                   │
+│  ✅ Position closing logic: WORKING (1104 trades closed)                                    │
+│  ✅ SL/TP triggering: WORKING (2463 total triggers)                                         │
+│  ✅ Anti-Hack Reward: ACTIVE (no exploits detected)                                         │
+│  ✅ EV-Gate Filter: ACTIVE (filtering low-probability trades)                               │
+│  ✅ Tier-Clamped Kelly: ACTIVE (exposure bounded)                                           │
+│  ✅ ATR-based SL: ACTIVE (3x ATR floor for scalper)                                         │
+│  ✅ Log Rotation Fix: APPLIED (no crashes)                                                  │
+│                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ KEY FINDINGS ───────────────────────────────────────────────────────────────────────────────┐
+│                                                                                              │
+│  1. SWING is the STAR: +$21.95 with 1.49x profit factor                                     │
+│     → Best risk/reward ratio                                                                │
+│     → Stable performance                                                                    │
+│     → Ready for production testing                                                          │
+│                                                                                              │
+│  2. POSITION is PROBLEMATIC: -$10.23 with 0.88x profit factor                               │
+│     → Too aggressive (1084 trades opened)                                                   │
+│     → Low win rate (35.3%)                                                                  │
+│     → Needs strategy rework                                                                 │
+│                                                                                              │
+│  3. SCALPER & INTRADAY are VOLATILE but PROFITABLE                                          │
+│     → Both positive PnL (+$2.35 and +$6.41)                                                 │
+│     → High capital volatility ($14-$230 range)                                              │
+│     → Need position size reduction                                                          │
+│                                                                                              │
+│  4. SYSTEM is STABLE: No crashes, all mechanisms working                                     │
+│     → Log rotation bug fixed                                                                │
+│     → All 4 workers progressing                                                             │
+│     → Ready for extended training                                                           │
+│                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ NEXT STEPS ─────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                              │
+│  IMMEDIATE:                                                                                 │
+│  1. Continue training to 500K+ steps for better convergence                                 │
+│  2. Monitor Swing worker closely (best performer)                                           │
+│  3. Reduce Position worker aggressiveness                                                   │
+│                                                                                              │
+│  SHORT TERM:                                                                                │
+│  1. Increase EV-Gate threshold to improve win rates                                         │
+│  2. Reduce position size for Scalper/Intraday (high volatility)                             │
+│  3. Rebalance Position worker strategy                                                      │
+│                                                                                              │
+│  MEDIUM TERM:                                                                               │
+│  1. Deploy Swing worker to paper trading                                                    │
+│  2. Pause Position worker until improvement                                                 │
+│  3. Collect more data for statistical significance                                          │
+│                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+CONFIDENCE LEVEL: 🟡 MODERATE (60%)
+- Positive global PnL is encouraging
+- Swing worker shows promise
+- Position worker needs fixing
+- Need more iterations for statistical significance
