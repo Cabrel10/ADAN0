@@ -2107,6 +2107,26 @@ class MultiAssetChunkedEnv(gym.Env):
         if hasattr(self, "current_chunk"):
             self.current_chunk = 0
 
+        # ==============================================================
+        # TIER LOCKING: Determine the tier ONCE at episode start.
+        # The locked tier remains fixed for the entire episode/chunk.
+        # This prevents phantom tier upgrades from unrealized gains
+        # that would increase max_concurrent_positions mid-episode.
+        # ==============================================================
+        try:
+            self._locked_tier = self.portfolio_manager.get_current_tier()
+            _tier_name = self._locked_tier.get("name", "Unknown") if isinstance(self._locked_tier, dict) else str(self._locked_tier)
+            _max_pos = self._locked_tier.get("max_concurrent_positions", 1) if isinstance(self._locked_tier, dict) else 1
+            logger.info(
+                f"[TIER_LOCKED] Worker {getattr(self, 'worker_id', 0)} | "
+                f"Tier='{_tier_name}' | max_concurrent={_max_pos} | "
+                f"cash={getattr(self.portfolio_manager, 'cash', 0):.2f} | "
+                f"Locked for entire episode."
+            )
+        except Exception:
+            self._locked_tier = {"name": "Micro Capital", "max_concurrent_positions": 1,
+                                 "exposure_range": [70, 90], "max_position_size_pct": 90}
+
         logger.info(
             f"[RESET Worker {getattr(self, 'worker_id', 0)}] Starting new episode - Loading chunk 1/{getattr(self, 'total_chunks', 'unknown')}"
         )
@@ -4746,10 +4766,10 @@ class MultiAssetChunkedEnv(gym.Env):
         """Calculates the penalty for exceeding the position limit for the current tier."""
         pos_limit_penalty = 0.0
         try:
-            tier_cfg = self.portfolio_manager.get_current_tier()
+            tier_cfg = getattr(self, '_locked_tier', None) or self.portfolio_manager.get_current_tier()
             limit = 1
             if isinstance(tier_cfg, dict):
-                limit = int(tier_cfg.get("max_open_positions", 1))
+                limit = int(tier_cfg.get("max_concurrent_positions", tier_cfg.get("max_open_positions", 1)))
             open_count = 0
             try:
                 open_count = len(
@@ -4976,14 +4996,16 @@ class MultiAssetChunkedEnv(gym.Env):
         if realized_pnl == 0.0:
             inaction = -0.0001
 
-        # ── 5. Capital survival bonus ─────────────────────────────────────
+        # ── 5. Capital survival bonus (CASH TRUTH: uses cash only) ────────
+        # NO unrealized PnL in the survival bonus.
+        # Only realized profit (cash > initial) earns the bonus.
         survival = 0.0
         if hasattr(self, "portfolio_manager"):
             try:
-                pv = float(self.portfolio_manager.get_portfolio_value() or 0.0)
+                cash = float(self.portfolio_manager.cash)
                 ie = float(self.portfolio_manager.initial_capital or 20.5)
-                if pv > ie:
-                    survival = (pv - ie) / ie * 0.01
+                if cash > ie:
+                    survival = (cash - ie) / ie * 0.01
             except Exception:
                 pass
 
@@ -5515,17 +5537,16 @@ class MultiAssetChunkedEnv(gym.Env):
         # by the worker profile. A Scalper at 20$ (Micro) exposes 70-90%;
         # the same Scalper at 10000$ (Enterprise) exposes only 5-15%.
         # ================================================================
-        capital = self.portfolio_manager.get_total_value()
-        tier = None
+        # ============================================================
+        # TIER LOCKING: Use the tier locked at episode start (reset).
+        # This prevents the runaway feedback loop:
+        #   unrealized gains → tier upgrade → more positions → more gains → ...
+        # Capital for sizing uses cash only (realized money).
+        # ============================================================
+        capital = float(self.portfolio_manager.cash)  # CASH TRUTH: no unrealized
+        tier = getattr(self, '_locked_tier', None)
 
-        # 1. Try DBE tier resolution (preferred, uses live capital)
-        if hasattr(self, 'dbe') and self.dbe:
-            tier_func = getattr(self.dbe, 'get_capital_tier',
-                                getattr(self.dbe, '_get_capital_tier', None))
-            if tier_func:
-                tier = tier_func(capital)
-
-        # 2. Fallback: search capital_tiers from master config
+        # Fallback if _locked_tier not yet set (first call before reset)
         if not tier:
             for t in self.config.get("capital_tiers", []):
                 lo = t.get("min_capital", 0)
@@ -5533,11 +5554,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 if lo <= capital < hi:
                     tier = t
                     break
-
-        # 3. Last resort: Micro Capital defaults (safest assumption)
-        if not tier:
-            tier = {"exposure_range": [70, 90], "risk_per_trade_pct": 4.0,
-                    "name": "Micro Capital"}
+            if not tier:
+                tier = {"exposure_range": [70, 90], "risk_per_trade_pct": 4.0,
+                        "name": "Micro Capital", "max_concurrent_positions": 1}
 
         # Store for monitoring / reward calculator
         self.current_tier = tier
@@ -5747,9 +5766,27 @@ class MultiAssetChunkedEnv(gym.Env):
                 if exposure_diff < 0.10:  # Within 10% -> no action needed (OMEGA-4E)
                     discrete_action = 0  # Override to HOLD
 
-            # ---- Force close max duration ----
-            max_steps = self.config.get("trading_rules", {}).get("max_position_steps")
-            if is_open and max_steps and (self.current_step - position.open_step > max_steps):
+            # ---- Force close max duration (PROFILE-AWARE KILL SWITCH) ----
+            # Positions held too long are zombie positions that:
+            # 1) Inflate unrealized PnL (Paper Wealth Trap)
+            # 2) Saturate RAM in PortfolioManager
+            # 3) Block new trades (max_concurrent gate)
+            # Profile-specific limits ensure scalper doesn't hold for hours.
+            _DURATION_MAP = {"scalper": 20, "intraday": 50, "swing": 200, "position": 500}
+            _wname_dur = str(self.worker_config.get("profile",
+                             self.worker_config.get("name", "intraday"))).lower()
+            max_steps = None
+            for _dk, _dv in _DURATION_MAP.items():
+                if _dk in _wname_dur:
+                    max_steps = _dv
+                    break
+            if max_steps is None:
+                max_steps = self.config.get("trading_rules", {}).get("max_position_steps", 100)
+            if is_open and (self.current_step - position.open_step > max_steps):
+                self.logger.info(
+                    f"[MAX_DURATION] {asset} | held {self.current_step - position.open_step} steps "
+                    f"> limit {max_steps} ({_wname_dur}) | FORCE CLOSE at ${price:.2f}"
+                )
                 receipt = self.portfolio_manager.close_position(
                     asset=asset.upper(), price=price, timestamp=current_timestamp,
                     current_prices=current_prices, reason="MAX_DURATION",
@@ -5794,6 +5831,30 @@ class MultiAssetChunkedEnv(gym.Env):
             # B. OPEN position
             elif discrete_action == 1 and not is_open:
                 self.trade_attempts += 1
+
+                # ==============================================================
+                # STRICT CONCURRENT POSITIONS LIMIT (RISK_GATE)
+                # Micro=1, Small=2, Medium=3, High=4, Enterprise=5
+                # This is a HARD gate. No exceptions. No bypasses.
+                # Prevents the "Paper Wealth Trap" where the agent opens
+                # infinite positions, never closes them, and inflates PnL
+                # with unrealized gains while saturating RAM.
+                # ==============================================================
+                _max_concurrent = int(tier.get("max_concurrent_positions", 1))
+                _open_positions = [
+                    p for p in self.portfolio_manager.positions.values()
+                    if getattr(p, "is_open", False)
+                ]
+                _open_count = len(_open_positions)
+                if _open_count >= _max_concurrent:
+                    self.invalid_trade_attempts += 1
+                    if self.current_step % 50 == 0:
+                        self.logger.info(
+                            f"[RISK_GATE] {asset} | Tier '{tier.get('name', '?')}' limit: "
+                            f"{_open_count} >= {_max_concurrent} concurrent positions. "
+                            f"Trade BLOCKED. Close existing first."
+                        )
+                    continue
 
                 # OMEGA-4E: Per-worker cooldown
                 _COOLDOWN_MAP = {"scalper": 3, "intraday": 2, "swing": 1, "position": 1}

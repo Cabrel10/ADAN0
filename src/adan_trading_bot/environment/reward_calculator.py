@@ -241,14 +241,18 @@ class RewardCalculator:
             # Update internal risk state (DBE)
             self._update_dbe_parameters(portfolio_metrics)
 
-            # Audit log
-            logger.debug(
-                f"REWARD_ANTIHACK | pnl_net={pnl_net:+.6f} "
-                f"r_symlog={float(np.sign(base_pnl)*np.log1p(abs(base_pnl)/scale)):+.6f} "
-                f"loss_pen={alpha*max(0,-pnl_net)/scale:.6f} "
-                f"ev={ev_norm:+.3f} streak={self._consecutive_losses} "
-                f"dd_pen={dd_penalty:.6f} final={final_reward:+.6f}"
-            )
+            # Audit log — INFO level so it appears in training output
+            # This is essential to verify the anti-hack formula is active
+            if trade_pnl != 0 or self.current_episode_rewards and len(self.current_episode_rewards) % 50 == 0:
+                logger.info(
+                    f"REWARD_ANTIHACK | pnl_net={pnl_net:+.6f} "
+                    f"r_symlog={float(np.sign(base_pnl)*np.log1p(abs(base_pnl)/scale)):+.6f} "
+                    f"loss_pen={alpha*max(0,-pnl_net)/scale:.6f} "
+                    f"ev={ev_norm:+.3f} streak={self._consecutive_losses} "
+                    f"dd_pen={dd_penalty:.6f} cost_pen={cost_penalty:.6f} "
+                    f"failsafe={'YES' if failsafe_triggered else 'no'} "
+                    f"final={final_reward:+.6f}"
+                )
 
             # Unified metrics logging
             if UNIFIED_SYSTEM_AVAILABLE and central_logger:

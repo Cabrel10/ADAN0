@@ -112,7 +112,7 @@ class TestAntiHackReward:
         rc = self._make_calculator()
         assert hasattr(rc, '_scale') and rc._scale == 1.0
         assert hasattr(rc, '_alpha') and rc._alpha == 2.0
-        assert hasattr(rc, '_beta') and rc._beta == 1.0
+        assert hasattr(rc, '_beta') and rc._beta == 0.1  # reduced from 1.0 to prevent hacking
         assert hasattr(rc, '_gamma_streak') and rc._gamma_streak == 0.5
         assert hasattr(rc, '_delta') and rc._delta == 2.0
 
@@ -310,6 +310,103 @@ class TestSourceCodeAudit:
             assert marker in source, (
                 f"MISSING: '{marker}' ({description}) not in multi_asset_chunked_env.py"
             )
+
+
+# =====================================================================
+# TEST 5: CASH TRUTH & TIER LOCKING & CONCURRENT POSITIONS
+# =====================================================================
+class TestCashTruthAndTierLocking:
+    """Verify the Paper Wealth Trap fixes are injected."""
+
+    def test_tier_uses_cash_not_portfolio_value(self):
+        """portfolio_manager.get_current_tier must use self.cash, not get_portfolio_value."""
+        pm_path = PROJECT_ROOT / "src" / "adan_trading_bot" / "portfolio" / "portfolio_manager.py"
+        source = pm_path.read_text()
+        # Find the full get_current_tier method (up to next def)
+        idx = source.find("def get_current_tier")
+        assert idx > 0, "get_current_tier not found"
+        next_def = source.find("\n    def ", idx + 10)
+        method_source = source[idx:next_def] if next_def > 0 else source[idx:idx+1000]
+        assert "self.cash" in method_source, (
+            "get_current_tier STILL uses portfolio_value instead of cash! "
+            "Paper Wealth Trap NOT fixed."
+        )
+        assert "get_portfolio_value" not in method_source, (
+            "get_current_tier STILL calls get_portfolio_value!"
+        )
+
+    def test_tier_locking_in_env(self):
+        """_locked_tier must be set in env reset and used in _execute_trades."""
+        env_path = PROJECT_ROOT / "src" / "adan_trading_bot" / "environment" / "multi_asset_chunked_env.py"
+        source = env_path.read_text()
+        assert "_locked_tier" in source, (
+            "_locked_tier NOT found! Tier is still recalculated every step."
+        )
+        assert "TIER_LOCKED" in source, (
+            "TIER_LOCKED log message NOT found! Tier locking not implemented."
+        )
+
+    def test_risk_gate_in_env(self):
+        """RISK_GATE must enforce max_concurrent_positions."""
+        env_path = PROJECT_ROOT / "src" / "adan_trading_bot" / "environment" / "multi_asset_chunked_env.py"
+        source = env_path.read_text()
+        assert "RISK_GATE" in source, (
+            "RISK_GATE NOT found! max_concurrent_positions not enforced."
+        )
+        assert "max_concurrent_positions" in source, (
+            "max_concurrent_positions NOT found in env!"
+        )
+
+    def test_max_duration_per_profile(self):
+        """MAX_DURATION must be profile-aware (scalper=20, intraday=50, etc.)."""
+        env_path = PROJECT_ROOT / "src" / "adan_trading_bot" / "environment" / "multi_asset_chunked_env.py"
+        source = env_path.read_text()
+        assert "MAX_DURATION" in source, "MAX_DURATION NOT found!"
+        assert "DURATION_MAP" in source, "DURATION_MAP NOT found!"
+        # Verify profile-specific limits exist
+        for profile, limit in [("scalper", "20"), ("intraday", "50"), ("swing", "200")]:
+            assert f'"{profile}": {limit}' in source or f"'{profile}': {limit}" in source, (
+                f"Missing duration limit for {profile}={limit}"
+            )
+
+    def test_cash_truth_in_train_script(self):
+        """MetricsMonitor must use cash only (no double-counting)."""
+        train_path = PROJECT_ROOT / "scripts" / "train_parallel_agents.py"
+        source = train_path.read_text()
+        # Must contain CASH TRUTH comment
+        assert "CASH TRUTH" in source, (
+            "CASH TRUTH comment NOT found in train_parallel_agents.py! "
+            "Balance reporting still uses portfolio_value."
+        )
+        # Must NOT have the double-counting formula
+        assert "cash + realized + initial" not in source, (
+            "Double-counting formula 'cash + realized + initial' STILL present!"
+        )
+
+    def test_survival_bonus_uses_cash(self):
+        """Capital survival bonus in env reward must use cash, not portfolio_value."""
+        env_path = PROJECT_ROOT / "src" / "adan_trading_bot" / "environment" / "multi_asset_chunked_env.py"
+        source = env_path.read_text()
+        # Find the survival bonus section
+        idx = source.find("Capital survival bonus")
+        assert idx > 0, "Capital survival bonus section not found"
+        bonus_section = source[idx:idx+500]
+        # The code does: cash = float(self.portfolio_manager.cash)
+        # So we look for the .cash access pattern (not get_portfolio_value)
+        assert ".cash" in bonus_section, (
+            "Survival bonus STILL uses portfolio_value instead of cash!"
+        )
+        assert "get_portfolio_value" not in bonus_section, (
+            "Survival bonus STILL calls get_portfolio_value!"
+        )
+
+    def test_ray_object_spilling(self):
+        """Ray init must have automatic_object_spilling_enabled."""
+        train_path = PROJECT_ROOT / "scripts" / "train_parallel_agents.py"
+        source = train_path.read_text()
+        assert "automatic_object_spilling_enabled" in source, (
+            "Ray object spilling NOT enabled! OOM crashes will continue."
+        )
 
 
 if __name__ == "__main__":

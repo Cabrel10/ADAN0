@@ -1457,9 +1457,11 @@ class PortfolioManager:
             return tiers
 
         # 2) Sélection basée sur capital_tiers (liste de paliers par capital)
+        # CASH TRUTH: Use cash only (no unrealized) for tier determination.
+        # This prevents phantom tier upgrades from unrealized gains in bull markets.
         capital_tiers = self.config.get("capital_tiers")
         if isinstance(capital_tiers, list):
-            current_capital = float(self.get_portfolio_value())
+            current_capital = float(self.cash)
             for tier in capital_tiers:
                 try:
                     min_cap = tier.get("min_capital", float("-inf"))

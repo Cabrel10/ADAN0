@@ -291,37 +291,49 @@ class MetricsMonitor(BaseCallback):
                     continue
                 metrics = pm.metrics.get_metrics_summary()
                 try:
-                    # Use cash only (no unrealized positions) for clean balance tracking
-                    # portfolio_value includes open positions which causes false spikes
+                    # ============================================================
+                    # CASH TRUTH: Only count REALIZED money (cash on hand).
+                    # pm.cash = initial_capital - cost_of_open_positions + proceeds_from_closed
+                    # This is the TRUE financial state. Unrealized PnL is a mirage.
+                    # ============================================================
                     pm_metrics = pm.get_metrics()
                     cash = float(pm_metrics.get("cash", 0.0))
-                    realized = float(pm_metrics.get("realized_pnl_total", 0.0))
                     initial = float(getattr(pm, "initial_capital", None) or
                                     self.config.get("portfolio", {}).get("initial_balance", 20.5))
-                    current_balance = cash + realized + initial if cash > 0 else initial
-                    # Sanity cap: if still unreasonable, use total_value with 3x cap
-                    total_val = float(pm.get_portfolio_value())
-                    if total_val > initial * 3:
-                        current_balance = initial  # spike detected
-                    elif current_balance <= 0 or current_balance > initial * 3:
-                        current_balance = max(total_val, initial * 0.1)
+                    # current_balance = cash only (NO double-counting, NO unrealized)
+                    current_balance = cash
+                    # Sanity: cash should never be negative or absurdly high
+                    if current_balance <= 0:
+                        current_balance = initial * 0.1  # bankrupt floor
+                    elif current_balance > initial * 5:
+                        current_balance = initial  # spike detected, reset
+                    # Realized PnL = cash - initial (the REAL profit/loss)
+                    realized_pnl = cash - initial
+                    # For info only: unrealized (NOT used for scoring)
+                    unrealized = float(pm_metrics.get("unrealized_pnl_total", 0.0))
+                    open_count = int(pm_metrics.get("open_positions_count", 0))
                 except Exception:
                     current_balance = float(self.config.get("portfolio", {}).get("initial_balance", 20.5))
-                current_pnl = metrics.get("total_return", 0.0) * current_balance / 100.0
+                    realized_pnl = 0.0
+                    unrealized = 0.0
+                    open_count = 0
+                    initial = current_balance
 
-                self.tier_trackers[worker_id].update(self.step_count, current_balance, current_pnl)
+                self.tier_trackers[worker_id].update(self.step_count, current_balance, realized_pnl)
 
                 self.worker_metrics[worker_id]["total_steps"] = self.step_count
                 self.worker_metrics[worker_id]["portfolio_values"].append(current_balance)
-                self.worker_metrics[worker_id]["realized_pnls"].append(current_pnl)
+                self.worker_metrics[worker_id]["realized_pnls"].append(realized_pnl)
                 self.worker_metrics[worker_id]["sharpe_ratios"].append(metrics.get("sharpe_ratio", 0.0))
                 self.worker_metrics[worker_id]["drawdowns"].append(metrics.get("max_drawdown", 0.0))
                 self.worker_metrics[worker_id]["trade_counts"].append(metrics.get("total_trades", 0))
                 self.worker_metrics[worker_id]["win_rates"].append(metrics.get("win_rate", 0.0))
 
                 if worker_id == 0 or self.step_count % (self.log_interval * 5) == 0:
-                    self.logger.record(f"worker_{worker_id}/balance", current_balance)
-                    self.logger.record(f"worker_{worker_id}/pnl", current_pnl)
+                    self.logger.record(f"worker_{worker_id}/cash_balance", current_balance)
+                    self.logger.record(f"worker_{worker_id}/realized_pnl", realized_pnl)
+                    self.logger.record(f"worker_{worker_id}/unrealized_info", unrealized)
+                    self.logger.record(f"worker_{worker_id}/open_positions", open_count)
                     self.logger.record(f"worker_{worker_id}/tier", self.tier_trackers[worker_id].current_tier)
                     self.logger.record(f"worker_{worker_id}/sharpe", metrics.get("sharpe_ratio", 0.0))
         except Exception as e:
@@ -688,6 +700,8 @@ class ADAN_PBT_Worker(tune.Trainable):
         mean_reward = 0.0
         mean_sharpe = 0.0
         mean_balance = 0.0
+        open_positions = 0
+        realized_pnl = 0.0
         try:
             ep_rewards = self.model.ep_info_buffer
             if ep_rewards and len(ep_rewards) > 0:
@@ -700,7 +714,9 @@ class ADAN_PBT_Worker(tune.Trainable):
             if wm.get("sharpe_ratios"):
                 mean_sharpe = wm["sharpe_ratios"][-1]
             if wm.get("portfolio_values"):
-                mean_balance = wm["portfolio_values"][-1]
+                mean_balance = wm["portfolio_values"][-1]  # Now = cash only
+            if wm.get("realized_pnls"):
+                realized_pnl = wm["realized_pnls"][-1]
         except Exception:
             pass
 
@@ -711,7 +727,8 @@ class ADAN_PBT_Worker(tune.Trainable):
         return {
             "mean_reward": mean_reward,
             "mean_sharpe": mean_sharpe,
-            "mean_balance": mean_balance,
+            "mean_balance": mean_balance,       # = cash only (realized)
+            "realized_pnl": realized_pnl,       # = cash - initial
             "learning_rate": self.learning_rate,
             "ent_coef": self.ent_coef,
             "gamma": self.gamma,
@@ -780,7 +797,7 @@ def run_pbt(
     num_cpus: int = 8,
     num_samples: int = 4,
     resume: bool = False,
-    envs_per_worker: int = 2,
+    envs_per_worker: int = 1,   # OOM FIX: 1 env per worker to minimize RAM
     use_subproc: bool = False,
     total_steps: int = 1_000_000,
     interval_timesteps: int = 10_000,
@@ -794,7 +811,7 @@ def run_pbt(
         config: Full ADAN config dict (from ConfigLoader).
         num_cpus: CPUs available to Ray.
         num_samples: Number of concurrent PBT trials.
-        envs_per_worker: Sub-envs per trial (DummyVecEnv by default).
+        envs_per_worker: Sub-envs per trial (1 = minimal RAM, DummyVecEnv).
         use_subproc: Whether to use SubprocVecEnv (default False to avoid Ray/fork conflicts).
         total_steps: Total training timesteps per trial.
         interval_timesteps: Timesteps per PBT iteration.
@@ -966,11 +983,22 @@ def main(
     storage_path = checkpoint_dir or str(TRAIN_OUTPUT_DIR / "ray_results")
 
     # Init Ray — redirect temp dir to external mount to avoid filling /tmp
+    # OOM PROTECTION: Enable object spilling to disk when RAM is exhausted
+    # instead of crashing the GCS and killing the entire training session.
+    _ray_tmp = "/mnt/new_data/t10_training/ray_tmp"
+    os.makedirs(_ray_tmp, exist_ok=True)
     ray.init(
         num_cpus=num_cpus,
         include_dashboard=False,
         ignore_reinit_error=True,
-        _temp_dir="/mnt/new_data/t10_training/ray_tmp",
+        _temp_dir=_ray_tmp,
+        _system_config={
+            "automatic_object_spilling_enabled": True,
+            "object_spilling_config": json.dumps({
+                "type": "filesystem",
+                "params": {"directory_path": _ray_tmp},
+            }),
+        },
     )
 
     logger.info("=" * 80)
