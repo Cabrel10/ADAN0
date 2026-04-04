@@ -585,7 +585,7 @@ class ADAN_PBT_Worker(tune.Trainable):
             )
             valid_fe_keys = {"features_dim", "context_dim", "cnn_hidden", "dropout"}
             safe_fe_kwargs = {k: v for k, v in fe_kwargs.items() if k in valid_fe_keys}
-            safe_fe_kwargs.setdefault("context_dim", 6)
+            safe_fe_kwargs.setdefault("context_dim", 14)
             policy_kwargs.setdefault("features_extractor_kwargs", safe_fe_kwargs)
 
         # CRITICAL: share the feature extractor between actor and critic.

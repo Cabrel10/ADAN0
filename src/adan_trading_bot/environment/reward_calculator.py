@@ -45,53 +45,36 @@ logger = logging.getLogger(__name__)
 
 
 class RewardCalculator:
-    """
-    Calculates the reward for a given step in the trading environment.
+    """True Quant reward calculator for the ADAN trading bot.
 
-    The reward function is designed to guide the agent towards profitable and
-    consistent trading behavior.
+    Alpha-Omega reward = symlog(PnL_Net - trade_cost - drawdown_penalty)
+
+    Three components only:
+      1. PnL_Net  = trade_pnl - commissions
+      2. Cost     = trade_count * cost_penalty  (penalise churn)
+      3. Drawdown = current_drawdown * drawdown_penalty_weight
+
+    No tutor_bonus, no duration_bonus, no chunk_bonus, no complex
+    multi-objective weighting.  The agent learns directly from PnL.
     """
 
     def __init__(self, env_config: Dict[str, Any]):
-        """
-        Initializes the RewardCalculator.
-
-        Args:
-            env_config: The environment configuration dictionary, containing the
-                        `reward_shaping` section.
-        """
         self.config = env_config.get("reward_shaping", {})
+
+        # Legacy attributes kept for backward compatibility with callers
         self.pnl_multiplier = self.config.get("realized_pnl_multiplier", 1.0)
-        self.unrealized_pnl_multiplier = self.config.get(
-            "unrealized_pnl_multiplier", 0.1
-        )
+        self.unrealized_pnl_multiplier = self.config.get("unrealized_pnl_multiplier", 0.1)
         self.inaction_penalty = self.config.get("inaction_penalty", -0.0001)
-        self.clipping_range = self.config.get(
-            "reward_clipping_range", [-5.0, 5.0]
-        )
-
-        # Commission and profit threshold parameters
-        self.commission_penalty = self.config.get(
-            "commission_penalty", 1.5
-        )  # Multiplier for commission penalty
-        self.min_profit_multiplier = self.config.get(
-            "min_profit_multiplier", 3.0
-        )  # Minimum profit multiple of commission
-
-        # Chunk-based reward parameters
+        self.clipping_range = self.config.get("reward_clipping_range", [-5.0, 5.0])
+        self.commission_penalty = self.config.get("commission_penalty", 1.5)
+        self.min_profit_multiplier = self.config.get("min_profit_multiplier", 3.0)
         self.optimal_trade_bonus = self.config.get("optimal_trade_bonus", 1.0)
-        # 80% of optimal performance threshold
-        self.performance_threshold = self.config.get(
-            "performance_threshold", 0.8
-        )
+        self.performance_threshold = self.config.get("performance_threshold", 0.8)
 
-        # Track chunk information
-        self.chunk_rewards = {}
-
-        # Initialize reward logger
+        # Reward logger
         self.reward_logger = RewardLogger(env_config)
 
-        # ✅ PHASE FINALE: Initialiser le système unifié
+        # Unified metrics (optional)
         self.unified_metrics = None
         if UNIFIED_SYSTEM_AVAILABLE and UnifiedMetrics:
             try:
@@ -100,369 +83,48 @@ class RewardCalculator:
                 logger.warning(f"Could not initialize UnifiedMetrics: {e}")
 
         # Episode tracking
-        # Track rewards for current episode
         self.current_episode_rewards = []
-        # Track the current episode ID
         self.current_episode_id = 0
 
-        # Initialize DBE parameters
-        # Initialize DBE state
-        self.winrate = 0.5  # Initial winrate estimate
-        self.drawdown = 0.0  # Current drawdown
-        self.risk_level = 1.0  # Current risk level (0.0 to 1.0)
-        # Position sizing parameters
-        self.max_position_size_pct = 0.1  # Max position size (10%)
-        self.min_position_size_pct = 0.01  # Min position size (1% of portfolio)
-        self.position_size_step = 0.01  # Step for position size adjustments
-        # Risk metrics tracking
-        self.risk_free_rate = 0.0  # Risk-free rate for risk-adjusted metrics
-        self.returns_history = []  # Store returns for risk metrics
-        self.max_drawdown = 0.0  # Track maximum drawdown
-
-        self.max_lookback = (
-            252  # Maximum number of returns to store (1 year of daily data)
-        )
-        # Risk-free and trading parameters
-        self.risk_free_rate = 0.01  # Annual risk-free rate (1%)
-        # Number of trading days in a year (crypto 24/7)
+        # DBE risk state
+        self.winrate = 0.5
+        self.drawdown = 0.0
+        self.risk_level = 1.0
+        self.max_position_size_pct = 0.1
+        self.min_position_size_pct = 0.01
+        self.position_size_step = 0.01
+        self.returns_history: list = []
+        self.max_drawdown = 0.0
+        self.max_lookback = 252
+        self.risk_free_rate = 0.01
         self.annual_trading_days = 365
-        # Decay factor for time-weighted calculations
         self.decay_factor = 0.99
-        
-        # CRITICAL FIX: Initialize missing attributes
-        self.returns_dates = []  # Track dates for returns
-        self.current_chunk_id = None  # Track current chunk ID
+        self.returns_dates: list = []
+        self.current_chunk_id = None
+        self.chunk_rewards: dict = {}
 
-        # Weights for composite reward calculation
-        # ✅ PHASE FINALE: Rééquilibrer pour éviter le biais de récompense
-        self.weights = {
-            "pnl": 0.25,   # 25% - Réduit (évite prise de risque excessive)
-            "sharpe": 0.30,  # 30% - Augmenté (risque-ajusté)
-            "sortino": 0.30,  # 30% - Augmenté (downside risk)
-            "calmar": 0.15,  # 15% - Augmenté (drawdown-adjusted)
-        }
+        # Drawdown penalty (the ONLY shaping component besides symlog)
+        self.drawdown_penalty_weight = self.config.get("drawdown_penalty_weight", 1.5)
 
-        # Exploration Tutor configuration
-        self.tutor_config = self.config.get("exploration_tutor", {})
-        self.tutor_enabled = self.tutor_config.get("enabled", False)
-        self.discovery_bonus = self.tutor_config.get("discovery_bonus", 0.0)
-        self.exit_criteria = self.tutor_config.get(
-            "exit_on_successful_trades", {}
-        )
-        # Initialize with default values for each key
-        self.successful_trade_counts = dict.fromkeys(self.exit_criteria, 0)
-        self._processed_trades = set()  # Track processed trades for bonus
-
-        # Risk management formula bonus parameters
-        # Bonus weight for respecting Kelly criterion
-        self.kelly_bonus_weight = 0.1
-        # Bonus weight for respecting risk parity
-        self.risk_parity_bonus_weight = 0.05
-        # Penalty weight for exceeding stress VaR
-        self.stress_var_penalty_weight = 0.15
-
-        # Cache for expensive calculations
-        # Initialize empty cache
-        self._ratio_cache = dict()
-        self._last_calculation_time = 0
-
-        # OMEGA-3 CH3: Early exit bonus for dynamic exits
-        self.early_exit_bonus_weight = self.config.get("early_exit_bonus", 0.5)
-
-        # SOTA 2026: Risk-averse reward shaping
-        self.drawdown_penalty_weight = self.config.get(
-            "drawdown_penalty_weight", 1.5
-        )
-        self.stability_bonus_weight = self.config.get(
-            "stability_bonus_weight", 0.2
-        )
-        self.volatility_penalty_weight = self.config.get(
-            "volatility_penalty_weight", 0.5
-        )
-        # Track rolling equity for stability calculations
+        # Rolling equity for drawdown calculation
         self._equity_history: list = []
         self._max_equity: float = 0.0
 
+        # Cache for ratio calculations (used by statistics helpers)
+        self._ratio_cache: dict = {}
+        self._last_calculation_time = 0
+
         logger.info(
-            "RewardCalculator initialized with "
-            "multi-objective optimization, risk-averse shaping, and detailed logging."
+            "RewardCalculator initialized -- True Quant formula: "
+            "symlog(PnL_Net - cost - drawdown)"
         )
 
     # ------------------------------------------------------------------
-    # SOTA 2026: Risk-averse reward adjustments
+    # NOTE: Old bonus methods (_calculate_tutor_bonus, _calculate_early_exit_bonus,
+    # _calculate_kelly_bonus, _calculate_risk_parity_bonus, _calculate_stress_var_penalty,
+    # _log_reward_components) have been REMOVED as part of the True Quant cleanup.
+    # The calculate() method below is the ONLY reward path.
     # ------------------------------------------------------------------
-    def _calculate_risk_averse_adjustment(
-        self,
-        portfolio_metrics: Dict[str, Any],
-    ) -> float:
-        """Compute risk-averse reward adjustments.
-
-        Three components:
-        1. **Drawdown penalty** -- penalises sustained drawdowns proportionally
-           to their depth (weight: drawdown_penalty_weight, default 1.5).
-        2. **Stability bonus** -- rewards low equity volatility over the last
-           N steps (weight: stability_bonus_weight, default 0.2).
-        3. **Volatility penalty** -- penalises high portfolio return variance
-           (weight: volatility_penalty_weight, default 0.5).
-        """
-        adjustment = 0.0
-
-        # -- 1. Drawdown penalty (continuous, proportional) ----------------
-        current_equity = float(portfolio_metrics.get("portfolio_value",
-                               portfolio_metrics.get("balance", 0.0)))
-        if current_equity > 0:
-            self._equity_history.append(current_equity)
-            if current_equity > self._max_equity:
-                self._max_equity = current_equity
-
-        if self._max_equity > 0 and current_equity > 0:
-            dd = (self._max_equity - current_equity) / self._max_equity
-            if dd > 0.01:  # only penalise drawdowns > 1%
-                adjustment -= self.drawdown_penalty_weight * dd
-
-        # -- 2. Stability bonus (low equity variance) ----------------------
-        lookback = min(50, len(self._equity_history))
-        if lookback >= 10:
-            recent_eq = np.array(self._equity_history[-lookback:])
-            eq_std = float(np.std(recent_eq))
-            eq_mean = float(np.mean(recent_eq))
-            if eq_mean > 0:
-                cv = eq_std / eq_mean  # coefficient of variation
-                # Bonus: higher when CV is low (stable equity curve)
-                stability = max(0.0, 1.0 - cv * 20.0)
-                adjustment += self.stability_bonus_weight * stability
-
-        # -- 3. Volatility penalty (high return variance) ------------------
-        if len(self.returns_history) >= 10:
-            recent_rets = np.array(self.returns_history[-50:])
-            vol = float(np.std(recent_rets))
-            # Penalise when annualised vol is very high
-            annualised_vol = vol * np.sqrt(365)
-            if annualised_vol > 0.5:  # > 50% annualised
-                adjustment -= self.volatility_penalty_weight * (
-                    annualised_vol - 0.5
-                )
-
-        return float(adjustment)
-
-    def _calculate_early_exit_bonus(
-        self,
-        portfolio_metrics: Optional[Dict[str, Any]] = None,
-        *,
-        trade_pnl: Optional[float] = None,
-        trade_reason: Optional[str] = None,
-    ) -> float:
-        """Calculate a bonus for profitable early exits (dynamic agent closes).
-
-        Can be called in two modes:
-        1. Batch mode (from step reward): pass *portfolio_metrics* containing
-           a ``closed_positions`` list.
-        2. Single-trade mode (unit tests / direct call): pass *trade_pnl* and
-           *trade_reason* directly.
-
-        Only triggers when:
-        - Close reason is AGENT_CLOSE (not SL/TP/MaxDuration)
-        - Trade PnL > 0
-
-        Returns:
-            float: early exit bonus (positive) or 0.0
-        """
-        # --- Single-trade shortcut (unit-test / direct call) ----------------
-        if trade_pnl is not None and trade_reason is not None:
-            reason = str(trade_reason).upper()
-            if reason not in ("AGENT_CLOSE", "AGENT_REQUEST_CLOSE"):
-                return 0.0
-            if trade_pnl <= 0:
-                return 0.0
-            return float(self.early_exit_bonus_weight * np.tanh(trade_pnl * 10.0))
-
-        # --- Batch mode (full portfolio_metrics) ----------------------------
-        if portfolio_metrics is None:
-            portfolio_metrics = {}
-
-        bonus = 0.0
-        closed_trades = portfolio_metrics.get("closed_positions", [])
-        min_hold = self.config.get("reward_shaping", {}).get(
-            "min_holding_period_steps", 6
-        )
-
-        for trade in closed_trades:
-            reason = str(trade.get("close_reason", "")).upper()
-            if reason not in ("AGENT_CLOSE", "AGENT_REQUEST_CLOSE"):
-                continue
-
-            pnl = float(trade.get("pnl", 0.0))
-            if pnl <= 0:
-                continue
-
-            # Check holding period
-            hold_steps = int(
-                trade.get("hold_steps", trade.get("duration_steps", 0))
-            )
-            if hold_steps < min_hold:
-                continue
-
-            # Check net PnL > 2 x estimated fees
-            notional = float(
-                trade.get("notional", trade.get("size_usd", 0.0))
-            )
-            estimated_fees = 0.001 * notional * 2  # 0.1% x notional x 2
-            if pnl <= estimated_fees * 2:
-                continue
-
-            trade_bonus = self.early_exit_bonus_weight * float(
-                np.tanh(pnl * 10.0)
-            )
-            bonus += trade_bonus
-
-        return bonus
-
-    def _calculate_tutor_bonus(
-        self, portfolio_metrics: Dict[str, Any]
-    ) -> float:
-        """Calculate a one-time bonus for successful trades on new timeframes.
-
-        This system acts as 'training wheels' and disables itself once
-        criteria are met.
-        """
-        if not self.tutor_enabled:
-            return 0.0
-
-        bonus = 0.0
-        closed_trades = portfolio_metrics.get("closed_positions", [])
-
-        for trade in closed_trades:
-            trade_id = trade.get("order_id")
-            if not trade_id or trade_id in self._processed_trades:
-                continue
-
-            self._processed_trades.add(trade_id)
-
-            pnl = trade.get("pnl", 0.0)
-            timeframe = trade.get("timeframe")
-
-            if pnl > 0 and timeframe in self.exit_criteria:
-                if (
-                    self.successful_trade_counts[timeframe]
-                    < self.exit_criteria[timeframe]
-                ):
-                    bonus += self.discovery_bonus
-                    self.successful_trade_counts[timeframe] += 1
-                    logger.info(
-                    f"[TUTOR] Discovery bonus of {self.discovery_bonus} "
-                    f"applied for successful trade on {timeframe}."
-                )
-
-        # Check if the tutor can be disabled
-        tutor_complete = all(
-            self.successful_trade_counts.get(tf, 0) >= count
-            for tf, count in self.exit_criteria.items()
-        )
-
-        if tutor_complete:
-            self.tutor_enabled = False
-            logger.info(
-                "[TUTOR] All discovery objectives met. "
-                "Exploration tutor is now disabled."
-            )
-
-        return bonus
-
-    def _calculate_kelly_bonus(self, position_metadata: Dict[str, Any]) -> float:
-        """
-        Calculate bonus for respecting Kelly criterion.
-
-        Args:
-            position_metadata: Metadata from position sizing including Kelly information
-
-        Returns:
-            Kelly bonus (positive if Kelly criterion is respected)
-        """
-        kelly_respected = position_metadata.get("kelly_respected", False)
-        if kelly_respected:
-            return self.kelly_bonus_weight
-        return 0.0
-
-    def _calculate_risk_parity_bonus(self, position_metadata: Dict[str, Any]) -> float:
-        """
-        Calculate bonus for respecting risk parity.
-
-        Args:
-            position_metadata: Metadata from position sizing including risk parity information
-
-        Returns:
-            Risk parity bonus (positive if risk parity is respected)
-        """
-        risk_respected = position_metadata.get("risk_respected", False)
-        if risk_respected:
-            return self.risk_parity_bonus_weight
-        return 0.0
-
-    def _calculate_stress_var_penalty(self, portfolio_metrics: Dict[str, Any]) -> float:
-        """
-        Calculate penalty for exceeding stress VaR thresholds.
-
-        Args:
-            portfolio_metrics: Portfolio risk metrics including stress VaR
-
-        Returns:
-            Stress VaR penalty (negative if exceeding thresholds)
-        """
-        stress_var_99 = portfolio_metrics.get("stress_var_0.99", 0.0)
-        var_threshold = 0.1  # 10% stress VaR threshold
-
-        if stress_var_99 > var_threshold:
-            excess_var = stress_var_99 - var_threshold
-            penalty = -self.stress_var_penalty_weight * excess_var
-            return penalty
-        return 0.0
-
-    def _log_reward_components(self, components: Dict[str, Any]) -> None:
-        """
-        Log detailed information about reward components.
-
-        Args:
-            components: Dictionary containing all reward components
-        """
-        try:
-            # Log to debug
-            logger.debug(
-                f"REWARD COMPONENTS | "
-                f"Base: {components['base_reward']:.4f} | "
-                f"Commission: -{components['commission_penalty']:.4f} | "
-                f"Chunk: +{components['chunk_bonus']:.4f} | "
-                f"Sharpe: {components['sharpe_ratio']:.2f} | "
-                f"Sortino: {components['sortino_ratio']:.2f} | "
-                f"Kelly Bonus: {components.get('kelly_bonus', 0):.4f} | "
-                f"Risk Parity Bonus: {components.get('risk_parity_bonus', 0):.4f} | "
-                f"Stress VaR Penalty: {components.get('stress_var_penalty', 0):.4f} | "
-                f"Calmar: {components['calmar_ratio']:.2f} | "
-                f"Drawdown: {components['drawdown']:.2%} | "
-                f"Action: {components['action']} | "
-                f"Final: {components['final_reward']:.4f}"
-            )
-
-            # Log to reward logger for analysis
-            self.reward_logger.log_reward_calculation(
-                {
-                    "total_reward": components["final_reward"],
-                    "components": {
-                        "realized_pnl": components["base_reward"],
-                        "commission_penalty": -components["commission_penalty"],
-                        "chunk_bonus": components["chunk_bonus"],
-                        "sharpe_ratio": components["sharpe_ratio"],
-                        "sortino_ratio": components["sortino_ratio"],
-                        "calmar_ratio": components["calmar_ratio"],
-                        "drawdown_penalty": components.get("drawdown_penalty", 0.0),
-                        "inaction_penalty": components.get("inaction_penalty", 0.0),
-                        "action": components["action"],
-                        "trade_pnl": components["trade_pnl"],
-                    },
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Error logging reward components: {str(e)}")
 
     def calculate(
         self,

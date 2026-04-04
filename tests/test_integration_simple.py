@@ -102,17 +102,19 @@ class TestRewardCalculatorIntegration(unittest.TestCase):
             
             calc = RewardCalculator(config)
             
-            # Vérifier les poids
-            self.assertEqual(calc.weights["pnl"], 0.25)
-            self.assertEqual(calc.weights["sharpe"], 0.30)
-            self.assertEqual(calc.weights["sortino"], 0.30)
-            self.assertEqual(calc.weights["calmar"], 0.15)
+            # True Quant reward: verify core attributes exist
+            self.assertAlmostEqual(calc.drawdown_penalty_weight, 1.5)
+            self.assertIsInstance(calc._equity_history, list)
+            self.assertEqual(calc._max_equity, 0.0)
             
-            # Vérifier que la somme est 1.0
-            total_weight = sum(calc.weights.values())
-            self.assertAlmostEqual(total_weight, 1.0, places=2)
+            # Verify calculate() returns float via symlog
+            reward = calc.calculate(
+                portfolio_metrics={"portfolio_value": 100.0},
+                trade_pnl=0.0, action=0,
+            )
+            self.assertIsInstance(reward, float)
             
-            print(f"✅ Poids de récompense corrects: {calc.weights}")
+            print(f"✅ True Quant RewardCalculator initialized correctly")
         except Exception as e:
             self.fail(f"Erreur poids: {e}")
 

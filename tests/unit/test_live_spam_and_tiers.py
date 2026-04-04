@@ -174,39 +174,42 @@ class TestDBESensorOnly:
 
 
 # ---------------------------------------------------------------------------
-# 5. Early-exit bonus
+# 5. True Quant reward (replaces old early-exit bonus tests)
 # ---------------------------------------------------------------------------
 
-class TestEarlyExitBonus:
-    def test_bonus_on_profitable_agent_close(self):
-        """Agent-initiated close with profit should get a bonus."""
+class TestTrueQuantReward:
+    def test_positive_pnl_gives_positive_reward(self):
+        """Profitable trade should produce positive symlog reward."""
         from adan_trading_bot.environment.reward_calculator import RewardCalculator
 
-        rc = RewardCalculator({"reward_shaping": {"early_exit_bonus": 0.5}})
-        bonus = rc._calculate_early_exit_bonus(
-            trade_pnl=0.05, trade_reason="AGENT_CLOSE", portfolio_metrics={}
+        rc = RewardCalculator({"reward_shaping": {}})
+        reward = rc.calculate(
+            portfolio_metrics={"portfolio_value": 100.0},
+            trade_pnl=0.05, action=2,
         )
-        assert bonus > 0.0
+        assert reward > 0.0
 
-    def test_no_bonus_on_sl_close(self):
-        """SL-triggered close should not get a bonus."""
+    def test_zero_pnl_no_cost_gives_near_zero(self):
+        """No PnL and no trade should yield ~0 reward."""
         from adan_trading_bot.environment.reward_calculator import RewardCalculator
 
-        rc = RewardCalculator({"reward_shaping": {"early_exit_bonus": 0.5}})
-        bonus = rc._calculate_early_exit_bonus(
-            trade_pnl=0.05, trade_reason="SL", portfolio_metrics={}
+        rc = RewardCalculator({"reward_shaping": {}})
+        reward = rc.calculate(
+            portfolio_metrics={"portfolio_value": 100.0},
+            trade_pnl=0.0, action=0,
         )
-        assert bonus == 0.0
+        assert abs(reward) < 0.01
 
-    def test_no_bonus_on_loss(self):
-        """Losing trade should not get a bonus."""
+    def test_negative_pnl_gives_negative_reward(self):
+        """Losing trade should produce negative symlog reward."""
         from adan_trading_bot.environment.reward_calculator import RewardCalculator
 
-        rc = RewardCalculator({"reward_shaping": {"early_exit_bonus": 0.5}})
-        bonus = rc._calculate_early_exit_bonus(
-            trade_pnl=-0.02, trade_reason="AGENT_CLOSE", portfolio_metrics={}
+        rc = RewardCalculator({"reward_shaping": {}})
+        reward = rc.calculate(
+            portfolio_metrics={"portfolio_value": 100.0},
+            trade_pnl=-0.05, action=2,
         )
-        assert bonus == 0.0
+        assert reward < 0.0
 
 
 if __name__ == "__main__":
