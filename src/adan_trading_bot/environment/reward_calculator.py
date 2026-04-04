@@ -103,7 +103,7 @@ class RewardCalculator:
         self.current_chunk_id = None
         self.chunk_rewards: dict = {}
 
-        # Drawdown penalty (the ONLY shaping component besides symlog)
+        # Drawdown penalty weight
         self.drawdown_penalty_weight = self.config.get("drawdown_penalty_weight", 1.5)
 
         # Rolling equity for drawdown calculation
@@ -114,9 +114,19 @@ class RewardCalculator:
         self._ratio_cache: dict = {}
         self._last_calculation_time = 0
 
+        # ============================================================
+        # TRUE QUANT ANTI-HACK PARAMETERS
+        # ============================================================
+        self._scale = 1.0        # Symlog normalisation scale
+        self._alpha = 2.0        # Continuous loss penalty multiplier
+        self._beta = 1.0         # EV bonus multiplier
+        self._gamma_streak = 0.5 # Consecutive loss streak penalty
+        self._delta = 2.0        # Failsafe binary anti-hack multiplier
+        self._consecutive_losses = 0  # Streak tracker
+
         logger.info(
-            "RewardCalculator initialized -- True Quant formula: "
-            "symlog(PnL_Net - cost - drawdown)"
+            "RewardCalculator initialized -- True Quant Anti-Hack formula: "
+            "symlog + alpha*loss_penalty + streak_penalty + failsafe"
         )
 
     # ------------------------------------------------------------------
@@ -137,47 +147,44 @@ class RewardCalculator:
         is_hunting: bool = False,
         risk_horizon: float = 0.0,
         trade_reason: Optional[str] = None,
+        **kwargs,
     ) -> float:
-        """Calculate reward using the True Quant formula.
+        """TRUE QUANT ANTI-HACK REWARD.
 
-        Alpha-Omega reward = symlog(PnL_Net - trade_cost - drawdown_penalty)
+        Five components:
+          1. Symlog of PnL_Net / scale
+          2. Continuous loss penalty: -alpha * max(0, -pnl_net) / scale
+          3. EV bonus: beta * clip(ev_norm, -1, 1)
+          4. Consecutive loss streak penalty: -gamma * max(0, streak - 2)
+          5. Failsafe: if pnl_net < 0 and r > 0 => r *= -delta
 
-        Three components only:
-          1. PnL_Net  = trade_pnl (realised P&L from the environment step)
-          2. Cost     = number_of_trades * cost_penalty  (penalise churn)
-          3. Drawdown = current_drawdown * drawdown_penalty_weight
-
-        No tutor_bonus, no duration_bonus, no chunk_bonus, no complex
-        multi-objective weighting.  The agent learns directly from PnL.
+        This makes it MATHEMATICALLY IMPOSSIBLE for the agent to
+        get a positive reward from a losing trade.
         """
         try:
-            # Track returns history for risk metrics
+            # --- PnL extraction ---
+            commission = float(portfolio_metrics.get("total_commission", 0.0))
+            pnl_net = float(trade_pnl) - commission
+            self._raw_pnl_log = pnl_net
+
+            # --- Track returns history ---
             if trade_pnl != 0:
                 self._update_returns_history(trade_pnl)
 
-            # ----------------------------------------------------------
-            # 1. PnL_Net (the ground truth -- what actually happened)
-            # ----------------------------------------------------------
-            commission = float(portfolio_metrics.get("total_commission", 0.0))
-            pnl_net = float(trade_pnl) - commission
+            # --- Consecutive loss tracking ---
+            if pnl_net < 0:
+                self._consecutive_losses += 1
+            elif pnl_net > 0:
+                self._consecutive_losses = 0
 
-            # Log raw PnL before any transform (critical for audit)
-            self._raw_pnl_log = pnl_net
-
-            # ----------------------------------------------------------
-            # 2. Cost penalty: penalise excessive trading (churn)
-            # ----------------------------------------------------------
-            # Count trades this step from closed_positions list
+            # --- Cost penalty (churn deterrent) ---
             closed_trades = portfolio_metrics.get("closed_positions", [])
             trade_count = len(closed_trades) if isinstance(closed_trades, list) else 0
-            # Also count if a trade was just opened (trade_pnl == 0 but action != 0)
             if trade_pnl == 0 and action != 0:
                 trade_count = max(trade_count, 1)
             cost_penalty = trade_count * self.config.get("cost_penalty", 0.001)
 
-            # ----------------------------------------------------------
-            # 3. Drawdown penalty (continuous, proportional)
-            # ----------------------------------------------------------
+            # --- Drawdown penalty ---
             current_equity = float(portfolio_metrics.get(
                 "portfolio_value", portfolio_metrics.get("balance", 0.0)
             ))
@@ -189,19 +196,41 @@ class RewardCalculator:
             dd_penalty = 0.0
             if self._max_equity > 0 and current_equity > 0:
                 dd = (self._max_equity - current_equity) / self._max_equity
-                if dd > 0.005:  # penalise drawdowns > 0.5%
+                if dd > 0.005:
                     dd_penalty = self.drawdown_penalty_weight * dd
 
-            # ----------------------------------------------------------
-            # Combine: reward = PnL_Net - cost - drawdown
-            # ----------------------------------------------------------
-            raw_reward = pnl_net - cost_penalty - dd_penalty
+            # ==========================================================
+            # TRUE QUANT ANTI-HACK REWARD FORMULA
+            # ==========================================================
+            scale = self._scale
+            alpha = self._alpha
+            beta = self._beta
+            gamma_s = self._gamma_streak
+            delta = self._delta
 
-            # ----------------------------------------------------------
-            # Symlog transform: sign(x) * ln(|x| + 1)
-            # Compresses extreme values while preserving sign.
-            # ----------------------------------------------------------
-            final_reward = symlog(raw_reward)
+            # 1. Symlog of base PnL
+            base_pnl = pnl_net - cost_penalty - dd_penalty
+            r = float(np.sign(base_pnl) * np.log1p(abs(base_pnl) / scale))
+
+            # 2. Continuous loss penalty (every centime lost is penalised)
+            r -= alpha * max(0.0, -pnl_net) / scale
+
+            # 3. EV bonus (approximation: positive PnL = good decision)
+            ev_norm = kwargs.get("ev_norm", 0.0)
+            if ev_norm == 0.0:
+                ev_norm = 0.5 if pnl_net > 0 else (-0.5 if pnl_net < 0 else 0.0)
+            r += beta * float(np.clip(ev_norm, -1.0, 1.0))
+
+            # 4. Consecutive loss streak penalty
+            r -= gamma_s * max(0.0, float(self._consecutive_losses - 2))
+
+            # 5. FAILSAFE BINARY ANTI-HACK
+            # It is MATHEMATICALLY IMPOSSIBLE to get positive reward
+            # from a negative PnL trade
+            if pnl_net < 0 and r > 0:
+                r *= -delta
+
+            final_reward = float(r)
 
             # Episode tracking
             self.current_episode_rewards.append(final_reward)
@@ -209,19 +238,20 @@ class RewardCalculator:
             # Update internal risk state (DBE)
             self._update_dbe_parameters(portfolio_metrics)
 
-            # Debug log every N steps
+            # Audit log
             logger.debug(
-                f"REWARD | raw_pnl={pnl_net:+.6f} cost={cost_penalty:.6f} "
-                f"dd_pen={dd_penalty:.6f} raw={raw_reward:+.6f} "
-                f"symlog={final_reward:+.6f}"
+                f"REWARD_ANTIHACK | pnl_net={pnl_net:+.6f} "
+                f"r_symlog={float(np.sign(base_pnl)*np.log1p(abs(base_pnl)/scale)):+.6f} "
+                f"loss_pen={alpha*max(0,-pnl_net)/scale:.6f} "
+                f"ev={ev_norm:+.3f} streak={self._consecutive_losses} "
+                f"dd_pen={dd_penalty:.6f} final={final_reward:+.6f}"
             )
 
-            # Unified metrics logging (optional)
+            # Unified metrics logging
             if UNIFIED_SYSTEM_AVAILABLE and central_logger:
-                central_logger.metric("Reward Final", float(final_reward))
-                central_logger.metric("Reward Raw PnL", float(pnl_net))
-                central_logger.metric("Reward Cost Penalty", float(cost_penalty))
-                central_logger.metric("Reward DD Penalty", float(dd_penalty))
+                central_logger.metric("Reward Final", final_reward)
+                central_logger.metric("Reward Raw PnL", pnl_net)
+                central_logger.metric("Reward ConsecLosses", float(self._consecutive_losses))
                 if self.unified_metrics:
                     if trade_pnl != 0:
                         self.unified_metrics.add_return(trade_pnl)
@@ -230,7 +260,7 @@ class RewardCalculator:
                             portfolio_metrics["portfolio_value"]
                         )
 
-            return float(final_reward)
+            return final_reward
 
         except Exception as e:
             logger.error(f"Error in reward calculation: {str(e)}")
