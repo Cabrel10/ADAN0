@@ -70,7 +70,7 @@ class RealisticTradingEnv(MultiAssetChunkedEnv):
         self.min_hold_steps = min_hold_steps
         self.min_notional = min_notional
         self.circuit_breaker_pct = circuit_breaker_pct
-        self.use_stable_reward = use_stable_reward
+        self.use_stable_reward = False
         
         # Initialize TradeFrequencyController
         freq_config = FrequencyConfig(
@@ -85,16 +85,16 @@ class RealisticTradingEnv(MultiAssetChunkedEnv):
         )
         self.freq_controller = TradeFrequencyController(freq_config)
         
-        # Initialize StableRewardCalculator
-        if self.use_stable_reward:
-            r_cfg = reward_config or {}
-            self.reward_calculator = StableRewardCalculator(
-                pnl_normalization_factor=r_cfg.get("pnl_normalization", 100.0),
-                sharpe_weight=r_cfg.get("sharpe_weight", 0.2),
-                drawdown_penalty_weight=r_cfg.get("drawdown_weight", 0.3),
-                frequency_penalty_weight=r_cfg.get("frequency_weight", 0.1),
-                consistency_bonus_weight=r_cfg.get("consistency_weight", 0.1)
-            )
+        # Initialize StableRewardCalculator - DISABLED for unique + borné reward
+        # if self.use_stable_reward:
+        #     r_cfg = reward_config or {}
+        #     self.reward_calculator = StableRewardCalculator(
+        #         pnl_normalization_factor=r_cfg.get("pnl_normalization", 100.0),
+        #         sharpe_weight=r_cfg.get("sharpe_weight", 0.2),
+        #         drawdown_penalty_weight=r_cfg.get("drawdown_weight", 0.3),
+        #         frequency_penalty_weight=r_cfg.get("frequency_weight", 0.1),
+        #         consistency_bonus_weight=r_cfg.get("consistency_weight", 0.1)
+        #     )
         
         # Circuit breaker state
         self.circuit_breaker_triggered = False
@@ -262,7 +262,10 @@ class RealisticTradingEnv(MultiAssetChunkedEnv):
         Override to use StableRewardCalculator.
         """
         if not self.use_stable_reward:
-            return super()._calculate_reward(action, realized_pnl)
+            reward = super()._calculate_reward(action, realized_pnl)
+            # REWARD UNIQUE + BORNÉ: clip pour éviter explosion PPO
+            reward = float(np.clip(reward, -10.0, 10.0))
+            return reward
             
         # Gather metrics
         current_value = self.portfolio_manager.get_total_value()
@@ -289,7 +292,9 @@ class RealisticTradingEnv(MultiAssetChunkedEnv):
         if hasattr(self, '_step_info') and isinstance(self._step_info, dict):
             self._step_info['reward_breakdown'] = reward_dict
             
-        return reward_dict['total_reward']
+        # REWARD UNIQUE + BORNÉ: clip pour éviter explosion PPO
+        total_reward = float(np.clip(reward_dict['total_reward'], -10.0, 10.0))
+        return total_reward
 
     def _validate_market_data(self, current_prices: Dict[str, float] = None) -> bool:
         """

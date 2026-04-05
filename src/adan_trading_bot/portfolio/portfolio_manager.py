@@ -249,12 +249,15 @@ class PortfolioManager:
             logger.error("Inputs non finis dans calculate_position_size")
             return 0.0
 
-        if self.current_value <= 0 or entry_price <= 0:
-            logger.error(f"Capital ou prix invalide: capital={self.current_value}, price={entry_price}")
+        # CASH TRUTH: Use cash only (no unrealized) for position sizing.
+        # This prevents phantom position sizing from unrealized gains.
+        available_capital = float(self.cash)
+        if available_capital <= 0 or entry_price <= 0:
+            logger.error(f"Capital ou prix invalide: cash={available_capital}, price={entry_price}")
             return 0.0
 
         # Calcul du risque
-        risk_amount = self.current_value * float(risk_pct)
+        risk_amount = available_capital * float(risk_pct)
         price_distance = abs(entry_price - stop_loss)
 
         # Fallback si distance trop petite (évite division par zéro)
@@ -271,7 +274,7 @@ class PortfolioManager:
         
         # Vérification de la taille max en valeur
         position_value = position_units * entry_price
-        max_position_value = self.current_value * float(max_position_pct)
+        max_position_value = available_capital * float(max_position_pct)
         
         if position_value > max_position_value:
             position_units = max_position_value / entry_price
@@ -364,12 +367,12 @@ class PortfolioManager:
             logger.error("Inputs non finis dans calculate_position_size")
             return 0.0
 
-        if self.current_value <= 0 or entry_price <= 0:
-            logger.error(f"Capital ou prix invalide: capital={self.current_value}, price={entry_price}")
+        if self.cash <= 0 or entry_price <= 0:
+            logger.error(f"Capital ou prix invalide: capital={self.cash}, price={entry_price}")
             return 0.0
 
-        # Calcul du risque
-        risk_amount = self.current_value * float(risk_pct)
+        # Calcul du risque - CASH TRUTH
+        risk_amount = self.cash * float(risk_pct)
         price_distance = abs(entry_price - stop_loss)
 
         # Fallback si distance trop petite (évite division par zéro)
@@ -384,9 +387,9 @@ class PortfolioManager:
         # Calcul de la taille basée sur le risque
         position_units = risk_amount / price_distance
         
-        # Vérification de la taille max en valeur
+        # Vérification de la taille max en valeur - CASH TRUTH
         position_value = position_units * entry_price
-        max_position_value = self.current_value * float(max_position_pct)
+        max_position_value = self.cash * float(max_position_pct)
         
         if position_value > max_position_value:
             position_units = max_position_value / entry_price
@@ -781,7 +784,8 @@ class PortfolioManager:
             enable_cap = True
         if enable_cap:
             try:
-                tier_cfg = self.get_current_tier()
+                # TIER LOCK: prefer _locked_tier if set by env, fallback to get_current_tier()
+                tier_cfg = getattr(self, '_locked_tier', None) or self.get_current_tier()
                 tier_cap_pct = None
                 if isinstance(tier_cfg, dict):
                     rng = tier_cfg.get("exposure_range")
@@ -792,15 +796,12 @@ class PortfolioManager:
             except Exception:
                 pos_cap_pct = float(getattr(self, "pos_size_pct", 0.1) or 0.1)
 
-            try:
-                equity = float(self.get_equity()) if hasattr(self, "get_equity") else float(self.portfolio_value)
-            except Exception:
-                equity = float(self.portfolio_value)
-
-            max_notional = max(0.0, equity * pos_cap_pct)
+            # CASH TRUTH: Use cash only (no unrealized) for position sizing.
+            available_cash = float(self.cash)
+            max_notional = max(0.0, available_cash * pos_cap_pct)
             if cost > max_notional + 1e-9:
-                logger.warning(
-                    f"[OPEN GUARD] Notional demandé {cost:.2f} USDT > cap {max_notional:.2f} USDT ({pos_cap_pct*100:.1f}% de l'equity {equity:.2f}). Rejet."
+                self.log_warning(
+                    f"[SIZING_REJECTED] cost={cost:.2f} > max_notional={max_notional:.2f} (cash={available_cash:.2f})"
                 )
                 try:
                     if hasattr(self, "metrics") and self.metrics:
@@ -811,7 +812,7 @@ class PortfolioManager:
                                 "requested_notional": float(cost),
                                 "cap_notional": float(max_notional),
                                 "cap_pct": float(pos_cap_pct),
-                                "equity": float(equity),
+                                "cash": float(available_cash),
                             },
                         )
                 except Exception:
@@ -1093,23 +1094,31 @@ class PortfolioManager:
         return log_entry
 
     def update_market_price(
-        self, current_prices: Dict[str, float], current_step: int
+        self, current_prices: Dict[str, float], current_step: int,
+        current_lows: Optional[Dict[str, float]] = None,
+        current_highs: Optional[Dict[str, float]] = None
     ) -> tuple[float, list[dict[str, Any]]]:
         """Met à jour la valeur des positions, vérifie les SL/TP, et retourne le PnL et les reçus."""
- 
+
         realized_pnl = 0.0
         closed_receipts = []
+
+        # Use lows/highs if provided, otherwise fallback to close prices
+        lows = current_lows or current_prices
+        highs = current_highs or current_prices
+
         for asset, position in self.positions.items():
             if position.is_open and asset in current_prices:
                 price = current_prices[asset]
+                low_price = lows.get(asset, price)
+                high_price = highs.get(asset, price)
                 position.current_price = price
 
-                # Vérification Stop Loss
+                # Vérification Stop Loss - check against LOW of candle
                 sl_pct = getattr(position, "stop_loss_pct", None)
                 sl_price = None
                 try:
                     if sl_pct is None or not np.isfinite(sl_pct) or sl_pct <= 0:
-                        # Optionnel: SL par défaut à 2% si non défini
                         sl_price = position.entry_price * (1 - 0.02)
                     else:
                         sl_price = position.entry_price * (1 - float(sl_pct))
@@ -1118,16 +1127,16 @@ class PortfolioManager:
 
                 if sl_price is None:
                     self.log_info(f"[update_market_price] sl_price is None for asset={asset} — skipping SL check")
-                elif price <= sl_price:
+                elif low_price <= sl_price:
                     self.log_info(
-                        f"STOP LOSS atteint pour {asset} @ {price:.2f} (SL: {sl_price:.2f})"
+                        f"STOP LOSS atteint pour {asset} @ {low_price:.2f} (low) <= SL: {sl_price:.2f}"
                     )
                     receipt = self.close_position(
                         asset,
-                        price,
+                        sl_price,
                         timestamp=self._last_market_timestamp,
                         current_prices=current_prices,
-                        reason="SL",
+                        reason="stop_loss",
                         risk_horizon=position.risk_horizon,
                     )
                     if isinstance(receipt, dict):
@@ -1137,19 +1146,19 @@ class PortfolioManager:
                             realized_pnl += float(val)
                     continue
 
-                # Vérification Take Profit
+                # Vérification Take Profit - check against HIGH of candle
                 if position.take_profit_pct > 0:
                     tp_price = position.entry_price * (1 + position.take_profit_pct)
-                    if price >= tp_price:
+                    if high_price >= tp_price:
                         self.log_info(
-                            f"TAKE PROFIT atteint pour {asset} @ {price:.2f} (TP: {tp_price:.2f})"
+                            f"TAKE PROFIT atteint pour {asset} @ {high_price:.2f} (high) >= TP: {tp_price:.2f}"
                         )
                         receipt = self.close_position(
                             asset,
-                            price,
+                            tp_price,
                             timestamp=self._last_market_timestamp,
                             current_prices=current_prices,
-                            reason="TP",
+                            reason="take_profit",
                             risk_horizon=position.risk_horizon,
                         )
                         if isinstance(receipt, dict):

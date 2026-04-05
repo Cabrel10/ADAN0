@@ -39,6 +39,12 @@ RELOAD_FALLBACK_CHUNK = 0
 # Delay between reload attempts (seconds)
 RELOAD_RETRY_DELAY = 0.5
 
+try:
+    from ..utils.reward_collector import get_reward_collector, RewardCollector
+    REWARD_COLLECTOR_AVAILABLE = True
+except ImportError:
+    REWARD_COLLECTOR_AVAILABLE = False
+
 # Excellence system (optional)
 try:
     from ..rewards.excellence_system import (
@@ -2117,6 +2123,8 @@ class MultiAssetChunkedEnv(gym.Env):
             self._locked_tier = self.portfolio_manager.get_current_tier()
             _tier_name = self._locked_tier.get("name", "Unknown") if isinstance(self._locked_tier, dict) else str(self._locked_tier)
             _max_pos = self._locked_tier.get("max_concurrent_positions", 1) if isinstance(self._locked_tier, dict) else 1
+            # CRITICAL FIX: Update portfolio_manager.max_positions to match the locked tier
+            self.portfolio_manager.max_positions = _max_pos
             logger.info(
                 f"[TIER_LOCKED] Worker {getattr(self, 'worker_id', 0)} | "
                 f"Tier='{_tier_name}' | max_concurrent={_max_pos} | "
@@ -2126,6 +2134,8 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             self._locked_tier = {"name": "Micro Capital", "max_concurrent_positions": 1,
                                  "exposure_range": [70, 90], "max_position_size_pct": 90}
+            # Fallback: ensure max_positions is set to 1 for Micro Capital
+            self.portfolio_manager.max_positions = 1
 
         logger.info(
             f"[RESET Worker {getattr(self, 'worker_id', 0)}] Starting new episode - Loading chunk 1/{getattr(self, 'total_chunks', 'unknown')}"
@@ -2320,7 +2330,7 @@ class MultiAssetChunkedEnv(gym.Env):
         if not hasattr(self, "portfolio"):
             return False, False
 
-        current_tier = self.portfolio.get_current_tier()
+        current_tier = getattr(self, '_locked_tier', None) or self.portfolio.get_current_tier()
 
         # Si c'est la première initialisation
         if self.current_tier is None:
@@ -2635,6 +2645,21 @@ class MultiAssetChunkedEnv(gym.Env):
                 info["termination_reason"] = "emergency_reset"
                 return observation, 0.0, True, False, info
 
+            # DRAWDOWN KILL-SWITCH
+            # Refresh equity with current prices before checking drawdown
+            try:
+                _cur_prices = self._get_current_prices()
+                if _cur_prices:
+                    self.portfolio_manager._update_equity(_cur_prices)
+            except Exception:
+                pass
+            if self._check_drawdown_termination():
+                observation = self._get_observation()
+                info = self._get_info()
+                info["termination_reason"] = "max_drawdown_exceeded"
+                # Punition sévère + terminaison
+                return observation, -10.0, True, False, info
+
         # Validate action
         if not self._check_array("action", action):
             self.logger.warning("Invalid action detected, using no-op action")
@@ -2771,8 +2796,12 @@ class MultiAssetChunkedEnv(gym.Env):
                         k: v.is_open
                         for k, v in self.portfolio_manager.positions.items()
                     }
+                    # Extraire lows/highs pour SL/TP précis (OHLC)
+                    current_lows = {asset: self._get_price_for_asset(asset, 'low') for asset in self.assets}
+                    current_highs = {asset: self._get_price_for_asset(asset, 'high') for asset in self.assets}
+                    
                     self.portfolio_manager.update_market_price(
-                        current_prices, self.current_step
+                        current_prices, self.current_step, current_lows, current_highs
                     )
                     positions_after = {
                         k: v.is_open
@@ -3277,9 +3306,395 @@ class MultiAssetChunkedEnv(gym.Env):
                         },
                     )
 
+            # REWARD COLLECTOR: Capture pre-reward state
+            reward_collector = None
+            if REWARD_COLLECTOR_AVAILABLE:
+                try:
+                    reward_collector = get_reward_collector()
+                    cash_before = float(self.portfolio_manager.cash) if hasattr(self.portfolio_manager, 'cash') else 0.0
+                    portfolio_value_before = float(self.portfolio_manager.get_portfolio_value()) if hasattr(self.portfolio_manager, 'get_portfolio_value') else 0.0
+                    num_positions_before = len([p for p in self.portfolio_manager.positions.values() if p.is_open]) if hasattr(self.portfolio_manager, 'positions') else 0
+                except Exception as e:
+                    self.logger.warning(f"[REWARD_COLLECTOR] Failed to init: {e}")
+                    reward_collector = None
+
             # Reward calculation moved after trade execution for synchronization.
             reward = self._calculate_reward(action, realized_pnl)
             self._last_reward = reward
+
+            # ── ENRICH _last_reward_components with all other components ──
+            try:
+                rc = self._last_reward_components
+
+                # Outcome: TP / SL / passivity from closed receipts
+                for receipt in getattr(self, "_step_closed_receipts", []):
+                    if not isinstance(receipt, dict):
+                        continue
+                    pnl = float(receipt.get("pnl", 0.0))
+                    reason = receipt.get("reason", "")
+                    if reason == "TP":
+                        rc["outcome_tp"] += pnl
+                    elif reason == "SL":
+                        rc["outcome_sl"] += pnl
+                    elif reason == "MaxDuration":
+                        rc["outcome_passivity"] += float(
+                            self.config.get("reward_shaping", {}).get("passivity_penalty", -5.0)
+                        )
+
+                # Frequency per TF
+                freq_cfg = getattr(self, "frequency_config", {})
+                freq_weights = self.config.get("reward_shaping", {}).get("frequency_weights", {})
+                oor_w = float(freq_weights.get("out_of_range", 0.0))
+                ir_w  = float(freq_weights.get("in_range", 0.0))
+                for tf in ("5m", "1h", "4h"):
+                    if tf in freq_cfg:
+                        cnt = self.positions_count.get(tf, 0)
+                        mn  = freq_cfg[tf].get("min_positions", 0)
+                        mx  = freq_cfg[tf].get("max_positions", 999)
+                        if mn <= cnt <= mx:
+                            rc[f"frequency_{tf}"] = ir_w * (cnt / max(mx, 1))
+                        else:
+                            rc[f"frequency_{tf}"] = -oor_w * (abs(cnt - mn) if cnt < mn else abs(cnt - mx))
+                # Daily frequency
+                d_min = freq_cfg.get("total_daily_min", 5)
+                d_max = freq_cfg.get("total_daily_max", 15)
+                d_cnt = self.positions_count.get("daily_total", 0)
+                if d_min <= d_cnt <= d_max:
+                    rc["frequency_daily"] = ir_w * (d_cnt / max(d_max, 1))
+                else:
+                    rc["frequency_daily"] = -oor_w * (abs(d_cnt - d_min) if d_cnt < d_min else abs(d_cnt - d_max))
+
+                # Position limit penalty
+                rc["pos_limit_penalty"] = self.calculate_position_limit_penalty()
+
+                # Duration penalty
+                rc["duration_penalty"] = self.calculate_duration_penalty()
+
+                # Capacity reward
+                rc["capacity_reward"] = self.calculate_capacity_based_reward()
+
+                # Inaction penalty
+                rc["inaction_penalty"] = self.calculate_inaction_penalty()
+
+                # Excellence breakdown (if available)
+                if hasattr(self, "excellence_rewards") and self.excellence_rewards:
+                    try:
+                        metrics_summary = self.portfolio_manager.metrics.get_metrics_summary()
+                        from adan_trading_bot.patches.gugu_march_excellence_rewards import ExcellenceMetrics
+                        metrics = ExcellenceMetrics(
+                            sharpe_ratio=metrics_summary.get("sharpe_ratio", 0.0),
+                            profit_factor=metrics_summary.get("profit_factor", 1.0),
+                            win_rate=metrics_summary.get("win_rate", 0.5),
+                            winning_streak=getattr(self.excellence_rewards, "last_winning_streak", 0),
+                            total_trades=metrics_summary.get("total_trades", 0),
+                        )
+                        _, breakdown = self.excellence_rewards.calculate_excellence_bonus(
+                            reward, metrics, trade_won=(reward > 0)
+                        )
+                        rc["excellence_sharpe"]     = float(breakdown.get("sharpe_excellence", 0.0))
+                        rc["excellence_streak"]     = float(breakdown.get("winning_streak", 0.0))
+                        rc["excellence_confluence"] = float(breakdown.get("confluence_bonus", 0.0))
+                        rc["excellence_chunk"]      = float(breakdown.get("chunk_penalty", 0.0))
+                    except Exception:
+                        pass
+
+                # Regime
+                rc["regime"] = str(getattr(self, "_last_regime", "unknown"))
+
+                # State context refresh
+                rc["open_positions"] = len([
+                    p for p in self.portfolio_manager.positions.values()
+                    if getattr(p, "is_open", False)
+                ]) if hasattr(self, "portfolio_manager") else 0
+                rc["daily_trades"]   = self.positions_count.get("daily_total", 0)
+                rc["invalid_attempts"] = int(getattr(self, "invalid_trade_attempts", 0))
+                rc["trade_attempts"]   = int(getattr(self, "trade_attempts", 0))
+                if getattr(self, "last_trade_steps_by_tf", {}):
+                    rc["steps_since_trade"] = self.current_step - max(
+                        self.last_trade_steps_by_tf.values()
+                    )
+            except Exception:
+                pass
+
+            # REWARD COLLECTOR: Log step data (COMPLETE VERSION - 50+ metrics)
+            if reward_collector and REWARD_COLLECTOR_AVAILABLE:
+                try:
+                    cash_after = float(self.portfolio_manager.cash) if hasattr(self.portfolio_manager, 'cash') else 0.0
+                    portfolio_value_after = float(self.portfolio_manager.get_portfolio_value()) if hasattr(self.portfolio_manager, 'get_portfolio_value') else 0.0
+                    num_positions_after = len([p for p in self.portfolio_manager.positions.values() if p.is_open]) if hasattr(self.portfolio_manager, 'positions') else 0
+                    
+                    # Get reward breakdown
+                    reward_breakdown = getattr(self, '_last_reward_components', {})
+                    if not reward_breakdown:
+                        reward_breakdown = {'total_reward': reward}
+                    
+                    # Get tier info
+                    tier = getattr(self, '_locked_tier', None) or {}
+                    tier_name = tier.get('name', 'Unknown') if isinstance(tier, dict) else str(tier)
+                    tier_level = tier.get('level', 0) if isinstance(tier, dict) else 0
+                    
+                    # Determine action and triggers
+                    action_taken = "hold"
+                    sl_triggered = False
+                    tp_triggered = False
+                    trade_reason = ""
+                    trade_duration = 0.0
+                    
+                    if hasattr(self, '_step_closed_receipts') and self._step_closed_receipts:
+                        for receipt in self._step_closed_receipts:
+                            if receipt and isinstance(receipt, dict):
+                                reason = receipt.get('reason', '')
+                                trade_reason = reason
+                                if reason == 'SL':
+                                    action_taken = "stop_loss"
+                                    sl_triggered = True
+                                elif reason == 'TP':
+                                    action_taken = "take_profit"
+                                    tp_triggered = True
+                                elif reason in ['sell', 'close']:
+                                    action_taken = "close"
+                                elif reason == 'MaxDuration':
+                                    action_taken = "force_close"
+                                trade_duration = receipt.get('duration_seconds', 0.0)
+                    
+                    # Get metrics
+                    pm_metrics = {}
+                    try:
+                        if hasattr(self.portfolio_manager, 'get_metrics'):
+                            pm_metrics = self.portfolio_manager.get_metrics()
+                    except:
+                        pass
+                    
+                    # Get drawdown
+                    drawdown_pct = 0.0
+                    max_dd_pct = 0.0
+                    try:
+                        if hasattr(self.portfolio_manager, 'calculate_drawdown'):
+                            drawdown_pct = self.portfolio_manager.calculate_drawdown() * 100
+                        max_dd_pct = getattr(self.portfolio_manager, 'max_drawdown_pct', 0.25) * 100
+                    except:
+                        pass
+                    
+                    # Get profile
+                    profile = getattr(self, 'worker_profile', 'unknown')
+                    if profile == 'unknown' and hasattr(self, 'worker_id'):
+                        profiles = {0: 'scalper', 1: 'intraday', 2: 'swing', 3: 'position'}
+                        profile = profiles.get(self.worker_id, 'unknown')
+                    
+                    # Calculate unrealized PnL
+                    unrealized_pnl = 0.0
+                    try:
+                        for p in self.portfolio_manager.positions.values():
+                            if hasattr(p, 'unrealized_pnl') and p.is_open:
+                                unrealized_pnl += p.unrealized_pnl
+                    except:
+                        pass
+                    
+                    # Get position details
+                    open_pos_details = []
+                    closed_pos_details = []
+                    position_sizes = {}
+                    try:
+                        for asset, pos in self.portfolio_manager.positions.items():
+                            if pos.is_open:
+                                open_pos_details.append({
+                                    'asset': asset,
+                                    'size': pos.size,
+                                    'entry': pos.entry_price,
+                                    'unrealized_pnl': getattr(pos, 'unrealized_pnl', 0.0)
+                                })
+                                position_sizes[asset] = pos.size
+                    except:
+                        pass
+                    
+                    # Get frequency counts
+                    freq_5m = self.positions_count.get('5m', 0)
+                    freq_1h = self.positions_count.get('1h', 0)
+                    freq_4h = self.positions_count.get('4h', 0)
+                    freq_daily = self.positions_count.get('daily_total', 0)
+                    
+                    # Get risk metrics
+                    sharpe = pm_metrics.get('sharpe_ratio', 0.0)
+                    sortino = pm_metrics.get('sortino_ratio', 0.0)
+                    profit_factor = pm_metrics.get('profit_factor', 1.0)
+                    calmar = pm_metrics.get('calmar_ratio', 0.0)
+                    win_rate = pm_metrics.get('win_rate', 0.5)
+                    volatility = pm_metrics.get('volatility', 0.0)
+                    total_commission = pm_metrics.get('total_commission', 0.0)
+                    
+                    # Trade counts
+                    total_trades = pm_metrics.get('total_trades', 0)
+                    winning_trades = pm_metrics.get('winning_trades', 0)
+                    losing_trades = pm_metrics.get('losing_trades', 0)
+                    neutral_trades = total_trades - winning_trades - losing_trades
+                    
+                    # Steps since last trade
+                    steps_since_last = 0
+                    if hasattr(self, 'last_trade_steps_by_tf') and self.last_trade_steps_by_tf:
+                        steps_since_last = self.current_step - max(self.last_trade_steps_by_tf.values())
+                    
+                    # Capital usage
+                    capital_usage = 0.0
+                    cash_util = 0.0
+                    capacity_usage = 0.0
+                    try:
+                        total_val = self.portfolio_manager.get_total_value()
+                        cash = float(self.portfolio_manager.cash)
+                        initial = float(self.portfolio_manager.initial_capital)
+                        if total_val > 0:
+                            capital_usage = (total_val - cash) / total_val * 100
+                            cash_util = cash / total_val * 100
+                        if initial > 0:
+                            capacity_usage = (total_val - cash) / initial * 100
+                    except:
+                        pass
+                    
+                    # Extract all penalty/bonus values from reward_breakdown
+                    inaction_pen = reward_breakdown.get('inaction', reward_breakdown.get('inaction_penalty', 0.0))
+                    survival = reward_breakdown.get('survival_bonus', 0.0)
+                    trade_cost = reward_breakdown.get('trade_cost', 0.0)
+                    dd_penalty = reward_breakdown.get('drawdown_penalty', 0.0)
+                    pos_limit_pen = reward_breakdown.get('pos_limit_penalty', 0.0)
+                    outcome_tp = reward_breakdown.get('outcome_tp', 0.0)
+                    outcome_sl = reward_breakdown.get('outcome_sl', 0.0)
+                    passivity = reward_breakdown.get('outcome_passivity', 0.0)
+                    early_close = reward_breakdown.get('early_exit_bonus', 0.0)
+                    duration_pen = reward_breakdown.get('duration_penalty', 0.0)
+                    capacity = reward_breakdown.get('capacity_reward', 0.0)
+                    freq_pen = reward_breakdown.get('frequency_penalty', 0.0)
+                    consistency = reward_breakdown.get('consistency_bonus', 0.0)
+                    invalid_sell = reward_breakdown.get('invalid_sell_penalty', 0.0)
+                    
+                    # Excellence bonuses
+                    sharpe_exc = reward_breakdown.get('excellence_sharpe', 0.0)
+                    streak_bonus = reward_breakdown.get('excellence_streak', 0.0)
+                    confluence = reward_breakdown.get('excellence_confluence', 0.0)
+                    consistency_exc = reward_breakdown.get('consistency', 0.0)
+                    pf_bonus = reward_breakdown.get('profit_factor_bonus', 0.0)
+                    chunk_pen = reward_breakdown.get('excellence_chunk', 0.0)
+                    
+                    # Streaks and failsafe
+                    win_streak = getattr(self, 'winning_streak', 0)
+                    consec_losses = getattr(self, 'consecutive_losses', 0)
+                    failsafe = reward_breakdown.get('failsafe_triggered', False)
+                    ev_norm = reward_breakdown.get('ev_norm', 0.0)
+                    
+                    # Market context
+                    regime = str(getattr(self, '_last_regime', 'unknown'))
+                    chunk_num = getattr(self, 'current_chunk', 0)
+                    step_in_chunk = getattr(self, '_step_in_chunk', 0)
+                    total_chunks = getattr(self, 'total_chunks', 12)
+                    
+                    # Position limits
+                    pos_limits = {}
+                    try:
+                        if isinstance(tier, dict):
+                            pos_limits['max_positions'] = tier.get('max_open_positions', tier.get('max_concurrent_positions', 1))
+                    except:
+                        pass
+                    
+                    # Log all 50+ metrics
+                    reward_collector.log_step(
+                        worker_id=str(getattr(self, 'worker_id', 0)),
+                        step=int(self.current_step),
+                        episode=int(getattr(self, '_episode_count', 0)),
+                        profile=str(profile),
+                        reward=float(reward),
+                        reward_breakdown=reward_breakdown,
+                        realized_pnl=float(realized_pnl),
+                        unrealized_pnl=float(unrealized_pnl),
+                        total_commission=float(total_commission),
+                        pnl_net=float(realized_pnl) - float(total_commission),
+                        cash_before=cash_before,
+                        cash_after=cash_after,
+                        portfolio_value=float(portfolio_value_after),
+                        initial_capital=float(getattr(self.portfolio_manager, 'initial_capital', 20.5)),
+                        equity=float(portfolio_value_after),
+                        balance=float(cash_after),
+                        num_positions=int(num_positions_after),
+                        num_positions_before=int(num_positions_before),
+                        open_positions_details=open_pos_details,
+                        closed_positions_details=closed_pos_details,
+                        position_sizes=position_sizes,
+                        position_limits=pos_limits,
+                        action_taken=action_taken,
+                        action_raw=action,
+                        sl_triggered=sl_triggered,
+                        tp_triggered=tp_triggered,
+                        trade_duration_seconds=float(trade_duration),
+                        trade_reason=trade_reason,
+                        drawdown_pct=float(drawdown_pct),
+                        max_drawdown_pct=float(max_dd_pct),
+                        sharpe_ratio=float(sharpe),
+                        sortino_ratio=float(sortino),
+                        profit_factor=float(profit_factor),
+                        calmar_ratio=float(calmar),
+                        win_rate=float(win_rate),
+                        volatility=float(volatility),
+                        risk_level=float(getattr(self, 'risk_level', 1.0)),
+                        trades_count_5m=int(freq_5m),
+                        trades_count_1h=int(freq_1h),
+                        trades_count_4h=int(freq_4h),
+                        trades_count_daily=int(freq_daily),
+                        trades_total=int(total_trades),
+                        winning_trades=int(winning_trades),
+                        losing_trades=int(losing_trades),
+                        neutral_trades=int(neutral_trades),
+                        trade_attempts=int(getattr(self, 'trade_attempts', 0)),
+                        invalid_trade_attempts=int(getattr(self, 'invalid_trade_attempts', 0)),
+                        steps_since_last_trade=int(steps_since_last),
+                        inaction_penalty=float(inaction_pen),
+                        survival_bonus=float(survival),
+                        trade_cost_penalty=float(trade_cost),
+                        drawdown_penalty=float(dd_penalty),
+                        position_limit_penalty=float(pos_limit_pen),
+                        outcome_tp_bonus=float(outcome_tp),
+                        outcome_sl_penalty=float(outcome_sl),
+                        passivity_penalty=float(passivity),
+                        early_close_bonus=float(early_close),
+                        duration_penalty=float(duration_pen),
+                        capacity_reward=float(capacity),
+                        frequency_penalty=float(freq_pen),
+                        consistency_bonus=float(consistency),
+                        invalid_sell_penalty=float(invalid_sell),
+                        sharpe_excellence_bonus=float(sharpe_exc),
+                        winning_streak_bonus=float(streak_bonus),
+                        confluence_bonus=float(confluence),
+                        consistency_excellence_bonus=float(consistency_exc),
+                        profit_factor_bonus=float(pf_bonus),
+                        chunk_progression_penalty=float(chunk_pen),
+                        winning_streak_count=int(win_streak),
+                        consecutive_losses=int(consec_losses),
+                        failsafe_triggered=bool(failsafe),
+                        ev_norm=float(ev_norm),
+                        tier_name=str(tier_name),
+                        tier_level=int(tier_level),
+                        tier_progress_pct=0.0,
+                        regime=str(regime),
+                        market_regime=str(regime),
+                        chunk_number=int(chunk_num),
+                        step_in_chunk=int(step_in_chunk),
+                        total_chunks=int(total_chunks),
+                        capital_usage_pct=float(capital_usage),
+                        cash_utilization=float(cash_util),
+                        capacity_usage_pct=float(capacity_usage),
+                        margin_used=0.0,
+                        margin_available=float(cash_after),
+                        leverage_used=1.0,
+                        buying_power=float(cash_after),
+                        action_buy_score=float(action[0]) if len(action) > 0 else 0.0,
+                        action_sell_score=float(action[1]) if len(action) > 1 else 0.0,
+                        action_hold_score=float(action[2]) if len(action) > 2 else 0.0,
+                        action_size_pct=float(action[3]) if len(action) > 3 else 0.0,
+                        action_confidence=abs(float(action[0])) if len(action) > 0 else 0.0,
+                        current_price=0.0,
+                        entry_price=0.0,
+                        stop_loss_price=0.0,
+                        take_profit_price=0.0,
+                        unrealized_pnl_pct=(unrealized_pnl / portfolio_value_after * 100) if portfolio_value_after > 0 else 0.0,
+                    )
+                except Exception as e:
+                    self.logger.warning(f"[REWARD_COLLECTOR] Error logging step: {type(e).__name__}: {e}")
 
             # Mise à jour des métriques de risque
             if hasattr(self, "portfolio_manager"):
@@ -3903,6 +4318,30 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception as e:
             logger.warning(f"Failed to update DBE state: {e}")
 
+    def _check_drawdown_termination(self) -> bool:
+        """Kill-switch drawdown - termine l'épisode si le drawdown dépasse le max du tier.
+
+        Uses EQUITY (cash + unrealized positions value), not raw cash.
+        Cash alone drops when positions open — that is not a real drawdown.
+        """
+        if not hasattr(self, '_locked_tier') or self._locked_tier is None:
+            return False
+
+        max_dd = float(self._locked_tier.get('max_drawdown_pct', 4.0)) / 100.0
+        initial_cap = float(self.portfolio_manager.initial_capital)
+        # equity = cash + value of open positions (no phantom gains)
+        current_equity = float(self.portfolio_manager.equity)
+
+        drawdown = (initial_cap - current_equity) / max(initial_cap, 1e-9)
+
+        if drawdown >= max_dd:
+            self.logger.warning(
+                f"[DRAWDOWN_KILL] equity={current_equity:.2f} initial={initial_cap:.2f} "
+                f"drawdown={drawdown:.2%} >= max={max_dd:.2%}"
+            )
+            return True
+        return False
+
     def _check_array(self, name: str, arr: np.ndarray) -> bool:
         """Vérifie la présence de NaN/Inf dans un tableau et enregistre un rapport détaillé.
 
@@ -3944,6 +4383,7 @@ class MultiAssetChunkedEnv(gym.Env):
             return False
 
         return True
+
 
     def _get_current_prices(self) -> Dict[str, float]:
         """
@@ -4060,6 +4500,46 @@ class MultiAssetChunkedEnv(gym.Env):
                 continue # Keep price as None
         
         return prices
+
+    def _get_price_for_asset(self, asset: str, price_type: str = 'close') -> float:
+        """Extract a specific OHLC price (close/low/high) for an asset at current step.
+        Falls back to close price if the requested column is unavailable.
+        """
+        asset_key = asset.upper()
+        tf_map = self.current_data.get(asset) if hasattr(self, "current_data") else None
+        if not isinstance(tf_map, dict) or not tf_map:
+            return 0.0
+
+        preferred_order = [getattr(self, "current_timeframe_for_trade", None), "5m", "1h", "4h"]
+        timeframe = next((tf for tf in preferred_order if tf and tf in tf_map), next(iter(tf_map)))
+        df = tf_map.get(timeframe)
+        if df is None or df.empty:
+            return 0.0
+
+        # Resolve column name (case-insensitive)
+        lowered = {col.lower(): col for col in df.columns}
+        col = lowered.get(price_type.lower()) or lowered.get("close") or lowered.get("closing_price")
+        if col is None:
+            return 0.0
+
+        # Same index logic as _get_current_prices
+        tf_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
+        base_step = int(getattr(self, "step_in_chunk", 0))
+        tf_min = tf_minutes.get(timeframe, 5)
+        step_idx = min(int(base_step / (tf_min / 5)), len(df) - 1)
+        step_idx = max(step_idx, 0)
+
+        for offset in range(6):
+            idx = step_idx - offset
+            if idx < 0:
+                break
+            try:
+                val = float(df.iloc[idx][col])
+                if np.isfinite(val) and val > 0:
+                    return val
+            except (ValueError, IndexError):
+                continue
+        return 0.0
 
     def _check_excessive_forward_fill(self):
         """Vérifier si le taux de forward-fill dépasse le seuil acceptable."""
@@ -5028,13 +5508,52 @@ class MultiAssetChunkedEnv(gym.Env):
         )
 
         self._last_reward_components = {
-            "pnl": float(realized_pnl),
-            "pnl_net": pnl_net,
-            "trade_cost": -trade_cost,
+            # ── Core PnL ──────────────────────────────────────────────────
+            "pnl":              float(realized_pnl),
+            "pnl_net":          pnl_net,
+            "commission":       -commission * 1.5,
+            "trade_cost":       -trade_cost,
+            # ── Risk penalties ────────────────────────────────────────────
             "drawdown_penalty": -drawdown_penalty,
-            "survival_bonus": survival,
-            "raw": raw,
-            "final_reward": final_reward,
+            "drawdown_pct":     float(self.portfolio_manager.get_metrics().get("drawdown", 0.0) or 0.0)
+                                if hasattr(self, "portfolio_manager") else 0.0,
+            # ── Inaction / survival ───────────────────────────────────────
+            "inaction":         inaction,
+            "survival_bonus":   survival,
+            # ── Composition ───────────────────────────────────────────────
+            "raw":              raw,
+            "final_reward":     final_reward,
+            # ── Trade context (filled by _execute_trades caller) ──────────
+            "outcome_tp":       0.0,
+            "outcome_sl":       0.0,
+            "outcome_passivity":0.0,
+            "frequency_5m":     0.0,
+            "frequency_1h":     0.0,
+            "frequency_4h":     0.0,
+            "frequency_daily":  0.0,
+            "pos_limit_penalty":0.0,
+            "duration_penalty": 0.0,
+            "capacity_reward":  0.0,
+            "excellence_sharpe":0.0,
+            "excellence_streak":0.0,
+            "excellence_confluence": 0.0,
+            "excellence_chunk": 0.0,
+            "promotion_bonus":  0.0,
+            "demotion_penalty": 0.0,
+            "inaction_penalty": 0.0,
+            # ── State context ─────────────────────────────────────────────
+            "regime":           str(getattr(self, "_last_regime", "unknown")),
+            "open_positions":   len([p for p in self.portfolio_manager.positions.values()
+                                     if getattr(p, "is_open", False)])
+                                if hasattr(self, "portfolio_manager") else 0,
+            "steps_since_trade":self.current_step - max(
+                                    getattr(self, "last_trade_steps_by_tf", {}).values(),
+                                    default=[self.current_step]
+                                ) if getattr(self, "last_trade_steps_by_tf", {}) else 0,
+            "daily_trades":     self.positions_count.get("daily_total", 0)
+                                if hasattr(self, "positions_count") else 0,
+            "invalid_attempts": int(getattr(self, "invalid_trade_attempts", 0)),
+            "trade_attempts":   int(getattr(self, "trade_attempts", 0)),
         }
 
         return float(final_reward)
@@ -5294,11 +5813,12 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # Compute desired position using DBE to stay consistent with tier ranges and DBE ±10% modulation
             try:
-                tier_cfg = self.portfolio_manager.get_current_tier() if hasattr(self, "portfolio_manager") else {}
+                tier_cfg = getattr(self, '_locked_tier', None) or (self.portfolio_manager.get_current_tier() if hasattr(self, "portfolio_manager") else {})
             except Exception:
                 tier_cfg = {}
             try:
-                capital = float(self.portfolio_manager.get_equity()) if hasattr(self, "portfolio_manager") else float(self.portfolio.get_portfolio_value())
+                # CASH TRUTH: use cash only for force_trade capital
+                capital = float(self.portfolio_manager.cash) if hasattr(self, "portfolio_manager") else float(self.portfolio.get_portfolio_value())
             except Exception:
                 capital = float(self.portfolio.get_portfolio_value())
 
@@ -5506,8 +6026,12 @@ class MultiAssetChunkedEnv(gym.Env):
 
             if not current_prices or not self._validate_market_data(current_prices):
                 if hasattr(self, "portfolio_manager"):
+                    # Extraire lows/highs pour SL/TP précis (OHLC)
+                    current_lows = {asset: self._get_price_for_asset(asset, 'low') for asset in self.assets}
+                    current_highs = {asset: self._get_price_for_asset(asset, 'high') for asset in self.assets}
+                    
                     self.portfolio_manager.update_market_price(
-                        current_prices if current_prices else {}, self.current_step
+                        current_prices if current_prices else {}, self.current_step, current_lows, current_highs
                     )
                 return 0.0, 0, 0
         except Exception as e:
@@ -5518,9 +6042,13 @@ class MultiAssetChunkedEnv(gym.Env):
         trade_executed_this_step = False
         first_discrete_action = 0
 
-        # 1. Update positions & check SL/TP
+        # 1. Update positions & check SL/TP with OHLC data
+        # Extraire lows/highs pour SL/TP précis
+        current_lows = {asset: self._get_price_for_asset(asset, 'low') for asset in self.assets}
+        current_highs = {asset: self._get_price_for_asset(asset, 'high') for asset in self.assets}
+        
         pnl_from_update, sl_tp_receipts = self.portfolio_manager.update_market_price(
-            current_prices, self.current_step
+            current_prices, self.current_step, current_lows, current_highs
         )
         if sl_tp_receipts:
             self._step_closed_receipts.extend(sl_tp_receipts)

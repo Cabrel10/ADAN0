@@ -32,11 +32,11 @@ class ActionTranslator:
             if asset not in current_prices:
                 raise KeyError(f"Missing price for asset {asset}")
         
-        tier = portfolio_manager.get_current_tier()
+        tier = getattr(portfolio_manager, '_locked_tier', None) or portfolio_manager.get_current_tier()
         position_size_pct = tier.get('max_position_size_pct', 0.5)
         
-        # Utiliser le capital total pour le calcul de la position
-        total_capital = portfolio_manager.initial_capital
+        # CASH TRUTH: Utiliser le cash disponible, pas le capital initial
+        total_capital = portfolio_manager.cash
         
         for i, asset in enumerate(self.assets):            
             action_value = action[i]

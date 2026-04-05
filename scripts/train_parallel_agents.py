@@ -336,6 +336,57 @@ class MetricsMonitor(BaseCallback):
                     self.logger.record(f"worker_{worker_id}/open_positions", open_count)
                     self.logger.record(f"worker_{worker_id}/tier", self.tier_trackers[worker_id].current_tier)
                     self.logger.record(f"worker_{worker_id}/sharpe", metrics.get("sharpe_ratio", 0.0))
+
+                    # ── REWARD COMPONENTS COLLECTOR ──────────────────────────
+                    # Read _last_reward_components from the env (not pm)
+                    try:
+                        envs = self.training_env.get_attr("_last_reward_components")
+                        rc = envs[worker_id] if envs and worker_id < len(envs) else None
+                        if rc and isinstance(rc, dict):
+                            # Core PnL
+                            self.logger.record(f"reward_{worker_id}/pnl_net",       float(rc.get("pnl_net", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/commission",     float(rc.get("commission", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/trade_cost",     float(rc.get("trade_cost", 0.0)))
+                            # Risk
+                            self.logger.record(f"reward_{worker_id}/drawdown_pen",   float(rc.get("drawdown_penalty", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/drawdown_pct",   float(rc.get("drawdown_pct", 0.0)))
+                            # Inaction / survival
+                            self.logger.record(f"reward_{worker_id}/inaction",       float(rc.get("inaction", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/survival",       float(rc.get("survival_bonus", 0.0)))
+                            # Outcome
+                            self.logger.record(f"reward_{worker_id}/outcome_tp",     float(rc.get("outcome_tp", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/outcome_sl",     float(rc.get("outcome_sl", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/outcome_passiv", float(rc.get("outcome_passivity", 0.0)))
+                            # Frequency
+                            self.logger.record(f"reward_{worker_id}/freq_5m",        float(rc.get("frequency_5m", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/freq_1h",        float(rc.get("frequency_1h", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/freq_4h",        float(rc.get("frequency_4h", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/freq_daily",     float(rc.get("frequency_daily", 0.0)))
+                            # Position / duration / capacity
+                            self.logger.record(f"reward_{worker_id}/pos_limit_pen",  float(rc.get("pos_limit_penalty", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/duration_pen",   float(rc.get("duration_penalty", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/capacity_rew",   float(rc.get("capacity_reward", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/inaction_pen",   float(rc.get("inaction_penalty", 0.0)))
+                            # Excellence (Gugu-March)
+                            self.logger.record(f"reward_{worker_id}/exc_sharpe",     float(rc.get("excellence_sharpe", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/exc_streak",     float(rc.get("excellence_streak", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/exc_confluence", float(rc.get("excellence_confluence", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/exc_chunk",      float(rc.get("excellence_chunk", 0.0)))
+                            # Tier events
+                            self.logger.record(f"reward_{worker_id}/promotion",      float(rc.get("promotion_bonus", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/demotion",       float(rc.get("demotion_penalty", 0.0)))
+                            # Composition
+                            self.logger.record(f"reward_{worker_id}/raw",            float(rc.get("raw", 0.0)))
+                            self.logger.record(f"reward_{worker_id}/final",          float(rc.get("final_reward", 0.0)))
+                            # State context
+                            self.logger.record(f"state_{worker_id}/regime",          0.0)  # string — skip scalar
+                            self.logger.record(f"state_{worker_id}/open_positions",  float(rc.get("open_positions", 0)))
+                            self.logger.record(f"state_{worker_id}/steps_no_trade",  float(rc.get("steps_since_trade", 0)))
+                            self.logger.record(f"state_{worker_id}/daily_trades",    float(rc.get("daily_trades", 0)))
+                            self.logger.record(f"state_{worker_id}/invalid_attempts",float(rc.get("invalid_attempts", 0)))
+                            self.logger.record(f"state_{worker_id}/trade_attempts",  float(rc.get("trade_attempts", 0)))
+                    except Exception:
+                        pass
         except Exception as e:
             logging.getLogger(__name__).error(f"Error collecting worker metrics: {e}", exc_info=True)
 

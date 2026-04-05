@@ -523,7 +523,17 @@ class DynamicBehaviorEngine:
         
         base_sl = float(trading_params.get("stop_loss_pct", 0.02))
         base_tp = float(trading_params.get("take_profit_pct", 0.04))
-        base_pos = float(trading_params.get("position_size_pct", 0.1))
+
+        # CASH TRUTH: base_pos from exposure_range if trading_parameters absent
+        # exposure_range = [70, 90] → base_pos = 0.70 (lower bound)
+        # This prevents the 10% default when Optuna hasn't set position_size_pct
+        if "position_size_pct" in trading_params:
+            base_pos = float(trading_params["position_size_pct"])
+        elif isinstance(current_tier, dict) and "exposure_range" in current_tier:
+            exp_range = current_tier["exposure_range"]
+            base_pos = float(exp_range[0]) / 100.0  # use lower bound of tier range
+        else:
+            base_pos = float(trading_params.get("position_size_pct", 0.70))
 
         logger.debug(
             f"[TIER_PARAMS_V2] {worker_key} | Optuna base: SL={base_sl:.2%}, TP={base_tp:.2%}, Pos={base_pos:.2%}"
@@ -577,11 +587,16 @@ class DynamicBehaviorEngine:
                 except Exception:
                     worker_key = f"w{getattr(self, 'worker_id', 0)}"
 
-            # Récupère current_tier
+            # Récupère current_tier - use locked tier if available
             try:
-                current_tier = self.env.portfolio.get_current_tier()
+                if hasattr(self.env, '_locked_tier') and self.env._locked_tier is not None:
+                    current_tier = self.env._locked_tier
+                    # NE PAS appeler get_current_tier() ici — source de vérité = _locked_tier
+                else:
+                    self.logger.warning("[TIER_FALLBACK] _locked_tier absent, fallback sur get_current_tier()")
+                    current_tier = self.env.portfolio.get_current_tier()
             except Exception:
-                current_tier = "Micro"
+                current_tier = "Micro Capital"  # fallback sécurisé
 
             # Récupère regime
             regime = str(getattr(self, "current_regime", "sideways")).lower()
@@ -767,8 +782,8 @@ class DynamicBehaviorEngine:
         self._process_trade_result(trade_result)
 
     def _get_position_size(self, regime: str, portfolio_manager) -> float:
-        # 1. Récupérer la taille du palier (70–90%) depuis capital_tiers
-        tier = portfolio_manager.get_current_tier()
+        # 1. Récupérer la taille du palier (70–90%) depuis capital_tiers - utilise _locked_tier
+        tier = getattr(portfolio_manager, '_locked_tier', None) or portfolio_manager.get_current_tier()
         tier_size = 0.70  # Default fallback
         
         if isinstance(tier, dict):
