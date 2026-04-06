@@ -379,7 +379,7 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # WAIT post-SELL cooldown tracking (per asset)
         # After SELL, BUY is forbidden for M steps (varies by timeframe).
-        # 5m=72 steps, 1h=100 steps, 4h=200 steps.
+        # 5m=6 steps, 1h=10 steps, 4h=20 steps (from config).
         # This prevents rapid SELL→BUY cycles that drain capital via fees.
         self._last_sell_step_by_asset: Dict[str, int] = {}
 
@@ -409,6 +409,29 @@ class MultiAssetChunkedEnv(gym.Env):
 
         self.trade_attempts = 0
         self.invalid_trade_attempts = 0
+
+        # ================================================================
+        # REJECTION REASONS TRACKER
+        # Tracks why trades are rejected to diagnose the "zero trades" trap.
+        # Logged at episode end for full transparency.
+        # ================================================================
+        self.rejection_reasons: Dict[str, int] = {
+            "fee_gate": 0,      # EV-based fee gate (p_hmm <= p_min)
+            "risk_gate": 0,     # Max concurrent positions exceeded
+            "cooldown_wait": 0, # WAIT post-SELL cooldown active
+            "cooldown_hold_min": 0,  # HOLD_MIN post-BUY cooldown active
+            "cooldown_omega4e": 0,   # Anti-spam cooldown between BUYs
+            "min_notional": 0,  # Cash < min_order_value or notional too small
+            "hysteresis": 0,    # Exposure too small to justify fees on SELL
+            "anti_spam_hold": 0,# BUY while already open + exposure ~= target
+            "daily_limit": 0,   # Daily trade count exceeded
+            "pm_rejected": 0,   # Portfolio manager rejected the open
+        }
+        # Accumulate invalid_trade_penalty per step (reset each step)
+        self._step_invalid_penalty = 0.0
+        # Track requested vs executed action per step
+        self._last_discrete_action_requested = 0
+        self._last_discrete_action = 0
         self.last_reset_date = None
         try:
             self._initialize_components()
@@ -2133,6 +2156,24 @@ class MultiAssetChunkedEnv(gym.Env):
         self._last_sell_step_by_asset = {}   # WAIT post-SELL cooldown
         self._buy_step_by_asset = {}          # HOLD_MIN post-BUY cooldown
 
+        # Log and reset rejection reasons from previous episode
+        if hasattr(self, 'rejection_reasons') and any(v > 0 for v in self.rejection_reasons.values()):
+            self.logger.info(
+                f"[EPISODE_REJECTIONS] Worker {self.worker_id} | "
+                f"Reasons: {self.rejection_reasons} | "
+                f"trade_attempts={getattr(self, 'trade_attempts', 0)} "
+                f"invalid={getattr(self, 'invalid_trade_attempts', 0)}"
+            )
+        self.rejection_reasons = {
+            "fee_gate": 0, "risk_gate": 0, "cooldown_wait": 0,
+            "cooldown_hold_min": 0, "cooldown_omega4e": 0,
+            "min_notional": 0, "hysteresis": 0, "anti_spam_hold": 0,
+            "daily_limit": 0, "pm_rejected": 0,
+        }
+        self.trade_attempts = 0
+        self.invalid_trade_attempts = 0
+        self._step_invalid_penalty = 0.0
+
         # Reset portfolio and load initial data chunk
         if hasattr(self, "last_trade_step"):
             self.last_trade_step = -1
@@ -2595,6 +2636,7 @@ class MultiAssetChunkedEnv(gym.Env):
     def step(self, action: np.ndarray) -> tuple:
         """Execute one time step within the environment."""
         self._step_closed_receipts = []
+        self._step_invalid_penalty = 0.0  # Reset per-step penalty
 
         # Generate correlation_id for this step
         correlation_id = str(uuid.uuid4())
@@ -2970,7 +3012,7 @@ class MultiAssetChunkedEnv(gym.Env):
 
 
             # --- PHASE 1: EXÉCUTION DES TRADES NORMAUX ---
-            realized_pnl, discrete_action, _ = self._execute_trades(
+            realized_pnl, discrete_action, discrete_action_requested = self._execute_trades(
                 action, dbe_modulation, action_threshold, force_trade=False
             )
 
@@ -5543,11 +5585,17 @@ class MultiAssetChunkedEnv(gym.Env):
             except Exception:
                 pass
 
+        # ── 5b. Invalid trade penalty (accumulated from _execute_trades) ──
+        inv_penalty = float(getattr(self, '_step_invalid_penalty', 0.0))
+
         # ── 6. Compose and apply symlog ───────────────────────────────────
-        raw = pnl_net - trade_cost - drawdown_penalty + inaction + survival
+        raw = pnl_net - trade_cost - drawdown_penalty + inaction + survival + inv_penalty
         final_reward = _symlog(raw)
 
         # ── 7. Log components for monitoring ─────────────────────────────
+        _action_names_r = {0: "HOLD", 1: "BUY", 2: "SELL"}
+        _da_exe = getattr(self, '_last_discrete_action', 0)
+        _da_req = getattr(self, '_last_discrete_action_requested', _da_exe)
         self.logger.info(
             f"[REWARD Worker {self.worker_id}] "
             f"Base: {pnl_net:.4f}, "
@@ -5555,11 +5603,20 @@ class MultiAssetChunkedEnv(gym.Env):
             f"PosLimit: 0.0000, "
             f"Outcome: 0.0000, "
             f"Duration: 0.0000, "
-            f"InvalidTrade: -{trade_cost:.4f}, "
-            f"MultiHunt: 0.0000, "
+            f"InvalidTrade: {inv_penalty:.4f}, "
+            f"TradeCost: -{trade_cost:.4f}, "
             f"Total: {final_reward:.4f}, "
             f"Counts: {self.positions_count}"
         )
+        # REWARD_ANTIHACK: log requested vs executed actions + penalty
+        if realized_pnl != 0.0 or self.current_step % 50 == 0:
+            self.logger.info(
+                f"[REWARD_ANTIHACK] Step {self.current_step} | "
+                f"pnl_net={pnl_net:+.6f} inv_pen={inv_penalty:.6f} "
+                f"action_req={_action_names_r.get(_da_req, '?')} "
+                f"action_exe={_action_names_r.get(_da_exe, '?')} "
+                f"raw={raw:.6f} final={final_reward:+.6f}"
+            )
 
         self._last_reward_components = {
             # ── Core PnL ──────────────────────────────────────────────────
@@ -5571,9 +5628,10 @@ class MultiAssetChunkedEnv(gym.Env):
             "drawdown_penalty": -drawdown_penalty,
             "drawdown_pct":     float(self.portfolio_manager.get_metrics().get("drawdown", 0.0) or 0.0)
                                 if hasattr(self, "portfolio_manager") else 0.0,
-            # ── Inaction / survival ───────────────────────────────────────
+            # ── Inaction / survival / invalid penalty ──────────────────────
             "inaction":         inaction,
             "survival_bonus":   survival,
+            "invalid_penalty":  inv_penalty,
             # ── Composition ───────────────────────────────────────────────
             "raw":              raw,
             "final_reward":     final_reward,
@@ -6095,6 +6153,14 @@ class MultiAssetChunkedEnv(gym.Env):
         realized_pnl = 0.0
         trade_executed_this_step = False
         first_discrete_action = 0
+        first_discrete_action_requested = 0  # raw action before cooldown/gate filtering
+
+        # Reset per-step penalty accumulator
+        self._step_invalid_penalty = 0.0
+
+        # Invalid trade penalty weight from config (default 0.005)
+        _inv_pen_weight = float(self.config.get(
+            "reward_shaping", {}).get("invalid_trade_penalty_weight", 0.005))
 
         # 1. Update positions & check SL/TP with OHLC data
         # Extraire lows/highs pour SL/TP précis
@@ -6193,6 +6259,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 discrete_action = 0  # Hold — no signal strong enough
 
             if i == 0:
+                first_discrete_action_requested = discrete_action  # before gates
                 first_discrete_action = discrete_action
 
             # Log intention (every 50 steps to reduce spam)
@@ -6330,6 +6397,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 exposure_diff = abs(target_exposure_pct - current_exposure)
                 if exposure_diff < 0.10:  # Within 10% -> no action needed (OMEGA-4E)
                     discrete_action = 0  # Override to HOLD
+                    self.rejection_reasons["anti_spam_hold"] += 1
 
             # ---- Force close max duration (PROFILE-AWARE KILL SWITCH) ----
             # Positions held too long are zombie positions that:
@@ -6387,14 +6455,14 @@ class MultiAssetChunkedEnv(gym.Env):
                 if _steps_held < _hold_min:
                     # SELL trop tôt — pénalité proportionnelle au manque
                     self.invalid_trade_attempts += 1
-                    _pen_weight = float(self.config.get(
-                        "reward_shaping", {}).get("invalid_trade_penalty_weight", 5e-5))
-                    _early_pen = -_pen_weight * (_hold_min - _steps_held)
-                    realized_pnl += _early_pen
-                    self.logger.debug(
-                        f"[HOLD_MIN] {asset} | TF={_tf} | held={_steps_held}/{_hold_min} steps "
-                        f"— SELL bloqué, pénalité={_early_pen:.5f}"
-                    )
+                    self.rejection_reasons["cooldown_hold_min"] += 1
+                    _early_pen = -_inv_pen_weight * (_hold_min - _steps_held)
+                    self._step_invalid_penalty += _early_pen
+                    if self.current_step % 50 == 0:
+                        self.logger.info(
+                            f"[HOLD_MIN] {asset} | TF={_tf} | held={_steps_held}/{_hold_min} steps "
+                            f"— SELL bloqué, pénalité={_early_pen:.5f}"
+                        )
                     # Action ignorée, reste en HOLD
                 else:
                     # HOLD_MIN respecté — vérifier exposition minimale
@@ -6408,6 +6476,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     if _exposure < 0.05:
                         # Position trop petite pour valoir les frais
                         discrete_action = 0
+                        self.rejection_reasons["hysteresis"] += 1
                     else:
                         self.trade_attempts += 1
                         receipt = self.portfolio_manager.close_position(
@@ -6426,12 +6495,14 @@ class MultiAssetChunkedEnv(gym.Env):
                             trade_executed_this_step = True
                             # Déclenche WAIT post-SELL pour cet asset
                             self._last_sell_step_by_asset[asset] = self.current_step
-                            self.logger.debug(
-                                f"[WAIT_START] {asset} | TF={_tf} | SELL exécuté step={self.current_step} "
-                                f"→ WAIT actif jusqu'au step {self.current_step + _hold_min_map.get(_tf, 72)}"
+                            _wait_map = {"5m": 6, "1h": 10, "4h": 20}
+                            self.logger.info(
+                                f"[AGENT_CLOSE] {asset} | TF={_tf} | SELL step={self.current_step} "
+                                f"pnl={val:.4f} | WAIT until step {self.current_step + _wait_map.get(_tf, 6)}"
                             )
                         else:
                             self.invalid_trade_attempts += 1
+                            self.rejection_reasons["pm_rejected"] += 1
 
             # ================================================================
             # B. BUY — ouvre une position (USDT → crypto)
@@ -6454,17 +6525,16 @@ class MultiAssetChunkedEnv(gym.Env):
                 _wait_cfg = self.config.get("trading_rules", {}).get(
                     "cooldown", {}).get("wait_steps_post_sell", {})
                 _tf = self.current_timeframe_for_trade
-                _wait_min = int(_wait_cfg.get(_tf, {"5m": 72, "1h": 100, "4h": 200}.get(_tf, 72)))
+                _wait_min = int(_wait_cfg.get(_tf, {"5m": 6, "1h": 10, "4h": 20}.get(_tf, 6)))
                 _last_sell = self._last_sell_step_by_asset.get(asset, -9999)
                 _steps_since_sell = self.current_step - _last_sell
 
                 if _steps_since_sell < _wait_min:
                     # BUY trop tôt après SELL — pénalité + ignoré
                     self.invalid_trade_attempts += 1
-                    _pen_weight = float(self.config.get(
-                        "reward_shaping", {}).get("invalid_trade_penalty_weight", 5e-5))
-                    _wait_pen = -_pen_weight * (_wait_min - _steps_since_sell)
-                    realized_pnl += _wait_pen
+                    self.rejection_reasons["cooldown_wait"] += 1
+                    _wait_pen = -_inv_pen_weight * (_wait_min - _steps_since_sell)
+                    self._step_invalid_penalty += _wait_pen
                     if self.current_step % 50 == 0:
                         self.logger.info(
                             f"[WAIT_BLOCK] {asset} | TF={_tf} | "
@@ -6489,6 +6559,8 @@ class MultiAssetChunkedEnv(gym.Env):
                 _open_count = len(_open_positions)
                 if _open_count >= _max_concurrent:
                     self.invalid_trade_attempts += 1
+                    self.rejection_reasons["risk_gate"] += 1
+                    self._step_invalid_penalty += -_inv_pen_weight
                     if self.current_step % 50 == 0:
                         self.logger.info(
                             f"[RISK_GATE] {asset} | Tier '{tier.get('name', '?')}' limit: "
@@ -6509,11 +6581,15 @@ class MultiAssetChunkedEnv(gym.Env):
                         break
                 if self.current_step - self._last_open_step_by_asset.get(asset, -999) < _min_cd:
                     self.invalid_trade_attempts += 1
+                    self.rejection_reasons["cooldown_omega4e"] += 1
+                    self._step_invalid_penalty += -_inv_pen_weight
                     continue
 
                 # Check daily limits
                 if not self.can_open_trade(self.current_timeframe_for_trade):
                     self.invalid_trade_attempts += 1
+                    self.rejection_reasons["daily_limit"] += 1
+                    self._step_invalid_penalty += -_inv_pen_weight
                     continue
 
                 # ==============================================================
@@ -6532,6 +6608,8 @@ class MultiAssetChunkedEnv(gym.Env):
 
                 if p_hmm <= p_min_required:
                     self.invalid_trade_attempts += 1
+                    self.rejection_reasons["fee_gate"] += 1
+                    self._step_invalid_penalty += -_inv_pen_weight
                     if self.current_step % 100 == 0:
                         self.logger.info(
                             f"[EV_GATE] {asset} W={p_hmm:.3f} <= p_min={p_min_required:.3f} "
@@ -6544,6 +6622,8 @@ class MultiAssetChunkedEnv(gym.Env):
                 available_cash = self.portfolio_manager.get_cash()
                 if notional_usd < min_order_value or available_cash < notional_usd:
                     self.invalid_trade_attempts += 1
+                    self.rejection_reasons["min_notional"] += 1
+                    self._step_invalid_penalty += -_inv_pen_weight
                     if self.current_step % 100 == 0:
                         self.logger.warning(
                             f"[SIZE_GATE] {asset} notional={notional_usd:.2f} min={min_order_value} cash={available_cash:.2f}"
@@ -6597,17 +6677,45 @@ class MultiAssetChunkedEnv(gym.Env):
                     )
                 else:
                     self.invalid_trade_attempts += 1
+                    self.rejection_reasons["pm_rejected"] += 1
 
         # 3. Update last trade step
         if trade_executed_this_step:
             self.last_trade_step = self.current_step
 
+        # Determine effective executed action:
+        # - If a trade opened this step: BUY (1)
+        # - If a position was closed this step (via AGENT_CLOSE or SL/TP): SELL (2)
+        # - Otherwise: HOLD (0)
+        if trade_executed_this_step:
+            if self._step_closed_receipts:
+                first_discrete_action = 2  # SELL executed
+            else:
+                first_discrete_action = 1  # BUY executed
+        else:
+            first_discrete_action = 0  # No trade = HOLD
+
         # Store for reward collector
         self._last_discrete_action = first_discrete_action
         # _last_discrete_action_requested = action demandée avant filtrage cooldown
         # Permet au collecteur de voir si le modèle a été bloqué par WAIT/HOLD_MIN
-        self._last_discrete_action_requested = first_discrete_action
-        return realized_pnl, first_discrete_action, first_discrete_action
+        self._last_discrete_action_requested = first_discrete_action_requested
+
+        # Propagate accumulated invalid_trade_penalty to realized_pnl
+        realized_pnl += self._step_invalid_penalty
+
+        # Log requested vs executed every 50 steps
+        if self.current_step % 50 == 0:
+            _action_names = {0: "HOLD", 1: "BUY", 2: "SELL"}
+            self.logger.info(
+                f"[ACTION_DIFF] Step {self.current_step} | "
+                f"Requested={_action_names.get(first_discrete_action_requested, '?')} "
+                f"Executed={_action_names.get(first_discrete_action, '?')} | "
+                f"inv_penalty={self._step_invalid_penalty:.5f} | "
+                f"rejections={self.rejection_reasons}"
+            )
+
+        return realized_pnl, first_discrete_action, first_discrete_action_requested
 
     def _should_force_close_timeframe(
         self, timeframe: str, steps_since_open: int, force_after: int

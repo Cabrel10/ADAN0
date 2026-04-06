@@ -666,10 +666,13 @@ diagnostics:
     track_calculation_methods: true
     validate_volatility_range: true
 environment:
+  # Action thresholds: tanh output must exceed |threshold| for BUY/SELL.
+  # Lower values = more trading activity; higher = more conservative.
+  # With PPO tanh output ~[-0.5, 0.5], threshold of 0.05 allows ~90% of signals.
   action_thresholds:
-    1h: 0.4
-    4h: 0.5
-    5m: 0.3
+    1h: 0.08
+    4h: 0.10
+    5m: 0.05
   assets:
   - btcusdt
   base_currency: USDT
@@ -822,7 +825,9 @@ environment:
     - 5m
     - 1h
     - 4h
-    warmup_steps: 500
+    # Warmup steps: number of steps at episode start where the model observes
+    # but does not trade. Reduced from 500 to 50 to maximize usable episode length.
+    warmup_steps: 50
     window_sizes:
       1h: 20
       4h: 20
@@ -1242,7 +1247,10 @@ reward_shaping:
   # Poids de la pénalité par step de violation de cooldown.
   # Formule : pénalité = -weight × steps_manquants
   # SELL avant hold_min_steps → pénalité. BUY avant wait_steps_post_sell → pénalité.
-  invalid_trade_penalty_weight: 5.0e-05
+  # Penalty per cooldown-violation step or per gate rejection.
+  # Applied additively before symlog: -weight per step of violation.
+  # At 0.005, a 5-step HOLD_MIN violation costs -0.025 reward.
+  invalid_trade_penalty_weight: 0.005
   logging:
     disable_existing_loggers: false
     formatters:
@@ -1420,16 +1428,21 @@ trading_rules:
   #   scalper=3, intraday=2, swing=1, position=1
   # ============================================================================
   cooldown:
+    # HOLD_MIN: minimum steps between BUY and SELL (prevents instant flip).
+    # BUY at step N -> SELL allowed from step N + hold_min_steps.
     hold_min_steps:
-      5m: 1    # 30 min minimum avant de pouvoir vendre après un achat
-      1h: 3   # 3h minimum
-      4h: 12    # 8h minimum
+      5m: 3    # 15 min minimum hold after BUY
+      1h: 2    # 2h minimum hold
+      4h: 2    # 8h minimum hold
+    # WAIT post-SELL: minimum steps between SELL and next BUY.
+    # SELL at step N -> BUY allowed from step N + wait_steps_post_sell.
     wait_steps_post_sell:
-      5m: 6   # ≈6h — 1 journée / 20 trades cibles
-      1h: 10  # Plus long car timeframe plus haute
-      4h: 20  # Encore plus long
+      5m: 6    # 30 min wait after SELL (~6 x 5min candles)
+      1h: 10   # 10h wait after SELL
+      4h: 20   # ~3.3 days wait after SELL
+    # Anti-spam cooldown between consecutive BUY signals per worker profile.
     omega4e_cooldown_by_profile:
-      scalper: 3    # 3 steps entre 2 BUY consécutifs
+      scalper: 2    # 2 steps between BUY attempts
       intraday: 2
       swing: 1
       position: 1

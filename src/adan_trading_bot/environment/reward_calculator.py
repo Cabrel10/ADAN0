@@ -243,6 +243,10 @@ class RewardCalculator:
 
             # Audit log — INFO level so it appears in training output
             # This is essential to verify the anti-hack formula is active
+            # Includes both requested and executed actions for transparency
+            _action_requested = kwargs.get("action_requested", action)
+            _action_names = {0: "HOLD", 1: "BUY", 2: "SELL"}
+            _inv_penalty = kwargs.get("invalid_penalty", 0.0)
             if trade_pnl != 0 or self.current_episode_rewards and len(self.current_episode_rewards) % 50 == 0:
                 logger.info(
                     f"REWARD_ANTIHACK | pnl_net={pnl_net:+.6f} "
@@ -250,6 +254,9 @@ class RewardCalculator:
                     f"loss_pen={alpha*max(0,-pnl_net)/scale:.6f} "
                     f"ev={ev_norm:+.3f} streak={self._consecutive_losses} "
                     f"dd_pen={dd_penalty:.6f} cost_pen={cost_penalty:.6f} "
+                    f"inv_pen={_inv_penalty:.6f} "
+                    f"action_req={_action_names.get(_action_requested, '?')} "
+                    f"action_exe={_action_names.get(action, '?')} "
                     f"failsafe={'YES' if failsafe_triggered else 'no'} "
                     f"final={final_reward:+.6f}"
                 )
