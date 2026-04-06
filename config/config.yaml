@@ -226,13 +226,26 @@ agent:
   vf_coef: 0.5
   window_size: 20
 capital_tiers:
+# ============================================================================
+# CAPITAL TIERS — Définissent TOUS les paramètres de risque et d'exposition.
+# Les workers définissent UNIQUEMENT la spécialisation temporelle.
+#
+# exposure_range    : [min%, max%] du capital à exposer par trade.
+#                     Utilisé par LINEAR_EXPO : exposure = min + (max-min) × bull_prob_HMM
+# max_concurrent_positions : Nombre max de positions ouvertes simultanément.
+#                     Micro=1, Small=2, Medium=3, High=4, Enterprise=5
+# max_drawdown_pct  : Seuil de drawdown (sur equity) déclenchant le kill-switch.
+#                     TRAINING : valeur élevée (40%) pour permettre l'exploration.
+#                     PRODUCTION : revenir à 4% pour Micro Capital.
+# risk_per_trade_pct: % du capital risqué par trade (pour SL sizing).
+# ============================================================================
 - exposure_range:
   - 70
   - 90
   leverage: 1.0
   max_capital: 30.0
   max_concurrent_positions: 1
-  max_drawdown_pct: 4.0
+  max_drawdown_pct: 40.0   # Training: 40% = ~130 losing trades before kill. Allows full exploration.
   max_position_size_pct: 90
   min_capital: 11.0
   name: Micro Capital
@@ -854,17 +867,17 @@ environment:
     1h:
       action_threshold: 0.08
       description: Medium-term trading optimized
-      force_trade_steps: 150
+      force_trade_steps: 120
       min_magnitude: 0.05
     4h:
       action_threshold: 0.1
       description: Long-term trading enabled
-      force_trade_steps: 200
+      force_trade_steps: 240
       min_magnitude: 0.08
     5m:
       action_threshold: 0.05
       description: High-frequency trading enabled
-      force_trade_steps: 100
+      force_trade_steps: 72
       min_magnitude: 0.03
   trading_mode: backtest
   volatility_handling:
@@ -1226,6 +1239,9 @@ reward_shaping:
   frequency_weights:
     in_range: 2.0
     out_of_range: 0.2
+  # Poids de la pénalité par step de violation de cooldown.
+  # Formule : pénalité = -weight × steps_manquants
+  # SELL avant hold_min_steps → pénalité. BUY avant wait_steps_post_sell → pénalité.
   invalid_trade_penalty_weight: 5.0e-05
   logging:
     disable_existing_loggers: false
@@ -1263,6 +1279,8 @@ reward_shaping:
       - main_file
       level: INFO
     version: 1
+  # Alias de trading_rules.cooldown.hold_min_steps[5m].
+  # Fallback si la config cooldown n'est pas disponible. 6 steps = 30 min en 5m.
   min_holding_period_steps: 6
   missed_penalty: -0.5
   multi_traque_bonus: 1.5
@@ -1381,18 +1399,52 @@ trading_rules:
     5m:
       max_duration_steps: 50
       optimal_duration: 25
+  # ============================================================================
+  # COOLDOWN RULES — Empêchent les cycles BUY→SELL trop rapides
+  # Cycle : BUY → HOLD (position ouverte) → SELL → WAIT → BUY → ...
+  #
+  # hold_min_steps : Nombre minimum de steps entre BUY et SELL autorisé.
+  #   Pendant ce délai, le modèle est en HOLD (position ouverte, SL/TP actifs).
+  #   Si SELL tenté avant → pénalité proportionnelle + action ignorée.
+  #   Logique : plus la timeframe est haute, plus on tient longtemps.
+  #   5m = 6 steps (30 min), 1h = 3 steps (3h), 4h = 2 steps (8h)
+  #
+  # wait_steps_post_sell : Nombre minimum de steps entre SELL et BUY autorisé.
+  #   Pendant ce délai, le modèle est en WAIT (en USDT, cherche point d'entrée).
+  #   Si BUY tenté avant → pénalité proportionnelle + action ignorée.
+  #   Logique : calé sur force_trade_steps (1 journée / nb_trades_cibles).
+  #   5m = 72 steps (≈6h), 1h = 100 steps, 4h = 200 steps
+  #
+  # omega4e_cooldown : Cooldown anti-spam par profil worker (steps entre 2 BUY).
+  #   Empêche le modèle d'ouvrir plusieurs positions en rafale.
+  #   scalper=3, intraday=2, swing=1, position=1
+  # ============================================================================
+  cooldown:
+    hold_min_steps:
+      5m: 1    # 30 min minimum avant de pouvoir vendre après un achat
+      1h: 3   # 3h minimum
+      4h: 12    # 8h minimum
+    wait_steps_post_sell:
+      5m: 6   # ≈6h — 1 journée / 20 trades cibles
+      1h: 10  # Plus long car timeframe plus haute
+      4h: 20  # Encore plus long
+    omega4e_cooldown_by_profile:
+      scalper: 3    # 3 steps entre 2 BUY consécutifs
+      intraday: 2
+      swing: 1
+      position: 1
   frequency:
     action_threshold: 0.01
     bonus_weight: 0.6
     force_trade_steps:
-      1h: 150
-      4h: 200
-      5m: 100
+      1h: 180
+      4h: 3000
+      5m: 80
     grace_period_steps: 5
     max_positions:
       1h: 13
       4h: 4
-      5m: 13
+      5m: 30
     min_positions:
       1h: 0
       4h: 0

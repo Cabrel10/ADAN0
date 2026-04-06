@@ -136,9 +136,20 @@ class MultiAssetChunkedEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
     # Constantes pour les actions
+    # Cycle : BUY → HOLD → SELL → WAIT → BUY → ...
+    #
+    # BUY  : En USDT, ouvre position (USDT → crypto). SL/TP placés.
+    # HOLD : Position ouverte (on a des crypto). Cherche meilleur prix de vente.
+    #        SL/TP actifs. Durée libre, bornée par max_duration_steps.
+    # SELL : Ferme position (crypto → USDT). Déclenche cooldown WAIT.
+    # WAIT : En USDT après vente. Cooldown obligatoire avant re-entrée.
+    #        Durée : 5m=72 steps, 1h=100 steps, 4h=200 steps.
+    #        Pendant WAIT, le modèle cherche le prochain point d'entrée.
+    #        Si BUY tenté avant fin du cooldown → pénalité + ignoré.
     HOLD = 0
-    BUY = 1
+    BUY  = 1
     SELL = 2
+    WAIT = 3  # post-SELL cooldown uniquement
 
     def __init__(
         self,
@@ -365,6 +376,18 @@ class MultiAssetChunkedEnv(gym.Env):
         # OMEGA-3/4: Episode receipts tracking and anti-spam cooldown
         self._all_episode_receipts: List[dict] = []
         self._last_open_step_by_asset: Dict[str, int] = {}
+
+        # WAIT post-SELL cooldown tracking (per asset)
+        # After SELL, BUY is forbidden for M steps (varies by timeframe).
+        # 5m=72 steps, 1h=100 steps, 4h=200 steps.
+        # This prevents rapid SELL→BUY cycles that drain capital via fees.
+        self._last_sell_step_by_asset: Dict[str, int] = {}
+
+        # HOLD_MIN post-BUY cooldown tracking (per asset)
+        # After BUY, SELL is forbidden for N steps (varies by timeframe).
+        # 5m=6 steps, 1h=3 steps, 4h=2 steps.
+        # This prevents immediate BUY→SELL that causes cash to swing wildly.
+        self._buy_step_by_asset: Dict[str, int] = {}
 
         self.last_trade_step = -1
         self.risk_metrics = {
@@ -1628,15 +1651,26 @@ class MultiAssetChunkedEnv(gym.Env):
 
         dbe_state_file = f"dbe_state_{self.worker_id}.pkl"
 
-        # 1. Sauvegarder l'état du DBE
+        # 1. Sauvegarder l'état du DBE — skip pickle (module objects not picklable)
+        # DBE state is rebuilt from env reference on each reset, no need to persist
         if hasattr(self, "dbe") and self.dbe is not None:
             try:
+                # Only save serializable scalar state, not the full object
+                dbe_minimal = {
+                    "current_regime": getattr(self.dbe, "current_regime", "sideways"),
+                    "worker_id": getattr(self.dbe, "worker_id", self.worker_id),
+                }
                 with open(dbe_state_file, "wb") as f:
-                    # Utiliser directement l'objet, ce qui appelle __getstate__
-                    pickle.dump(self.dbe, f) 
-                self.smart_logger.debug(f"[DBE_STATE] Worker {self.worker_id}: DBE state saved to {dbe_state_file}")
+                    pickle.dump(dbe_minimal, f)
+                self.smart_logger.debug(f"[DBE_STATE] Worker {self.worker_id}: minimal state saved")
             except Exception as e:
-                self.smart_logger.warning(f"[DBE_STATE] Worker {self.worker_id}: Failed to save DBE state: {e}")
+                self.smart_logger.debug(f"[DBE_STATE] Worker {self.worker_id}: save skipped: {e}")
+                # Clean up any corrupt file
+                try:
+                    if os.path.exists(dbe_state_file):
+                        os.remove(dbe_state_file)
+                except Exception:
+                    pass
 
         for attempt in range(MAX_RELOAD_ATTEMPTS):
             try:
@@ -1668,20 +1702,27 @@ class MultiAssetChunkedEnv(gym.Env):
                         import copy
                         chunk_data = copy.deepcopy(chunk_data)
 
-                        # 2. Charger l'état du DBE
+                        # 2. Charger l'état du DBE — restore minimal state only
                         if hasattr(self, "dbe") and self.dbe is not None and os.path.exists(dbe_state_file):
                             try:
                                 with open(dbe_state_file, "rb") as f:
-                                    loaded_dbe = pickle.load(f)
-                                self.dbe = loaded_dbe
-                                if hasattr(self.dbe, 'set_env_reference'):
-                                    self.dbe.set_env_reference(self)
-                                
-                                # ✅ NOUVEAU: Nettoyage du fichier
+                                    minimal_state = pickle.load(f)
+                                # Only restore scalar attributes, not the full object
+                                if isinstance(minimal_state, dict):
+                                    for k, v in minimal_state.items():
+                                        try:
+                                            setattr(self.dbe, k, v)
+                                        except Exception:
+                                            pass
                                 os.remove(dbe_state_file)
-                                self.smart_logger.debug(f"[DBE_STATE] Cleaned up pickle: {dbe_state_file}")
+                                self.smart_logger.debug(f"[DBE_STATE] Minimal state restored")
                             except Exception as e:
-                                self.smart_logger.warning(f"[DBE_STATE] Load or cleanup failed: {e}")
+                                self.smart_logger.debug(f"[DBE_STATE] Load skipped: {e}")
+                                try:
+                                    if os.path.exists(dbe_state_file):
+                                        os.remove(dbe_state_file)
+                                except Exception:
+                                    pass
                         return chunk_data
                     else:
                         self.smart_logger.warning(
@@ -2089,6 +2130,8 @@ class MultiAssetChunkedEnv(gym.Env):
         # OMEGA-3/4: Reset episode receipts and per-asset cooldown
         self._all_episode_receipts = []
         self._last_open_step_by_asset = {}
+        self._last_sell_step_by_asset = {}   # WAIT post-SELL cooldown
+        self._buy_step_by_asset = {}          # HOLD_MIN post-BUY cooldown
 
         # Reset portfolio and load initial data chunk
         if hasattr(self, "last_trade_step"):
@@ -3433,26 +3476,32 @@ class MultiAssetChunkedEnv(gym.Env):
                     tier_name = tier.get('name', 'Unknown') if isinstance(tier, dict) else str(tier)
                     tier_level = tier.get('level', 0) if isinstance(tier, dict) else 0
                     
-                    # Determine action and triggers
-                    action_taken = "hold"
+                    # Determine action and triggers — use first_discrete_action from _execute_trades
+                    _da = getattr(self, '_last_discrete_action', 0)
+                    # _last_discrete_action = action demandée par le modèle (avant filtrage WAIT/HOLD_MIN)
+                    # L'action effective peut différer si bloquée par cooldown
+                    _da_requested = getattr(self, '_last_discrete_action_requested', _da)
+                    _action_map = {0: "hold", 1: "buy", 2: "sell"}
+                    action_taken = _action_map.get(_da, "hold")
+                    action_requested = _action_map.get(_da_requested, "hold")
                     sl_triggered = False
                     tp_triggered = False
                     trade_reason = ""
                     trade_duration = 0.0
-                    
+
                     if hasattr(self, '_step_closed_receipts') and self._step_closed_receipts:
                         for receipt in self._step_closed_receipts:
                             if receipt and isinstance(receipt, dict):
                                 reason = receipt.get('reason', '')
                                 trade_reason = reason
-                                if reason == 'SL':
+                                if reason in ('SL', 'stop_loss'):
                                     action_taken = "stop_loss"
                                     sl_triggered = True
-                                elif reason == 'TP':
+                                elif reason in ('TP', 'take_profit'):
                                     action_taken = "take_profit"
                                     tp_triggered = True
-                                elif reason in ['sell', 'close']:
-                                    action_taken = "close"
+                                elif reason in ('sell', 'close', 'AGENT_CLOSE'):
+                                    action_taken = "sell"
                                 elif reason == 'MaxDuration':
                                     action_taken = "force_close"
                                 trade_duration = receipt.get('duration_seconds', 0.0)
@@ -4325,6 +4374,11 @@ class MultiAssetChunkedEnv(gym.Env):
         Cash alone drops when positions open — that is not a real drawdown.
         """
         if not hasattr(self, '_locked_tier') or self._locked_tier is None:
+            return False
+
+        # Skip kill-switch during warmup — agent needs to explore freely
+        warmup = getattr(self, 'warmup_period', 200)
+        if getattr(self, 'current_step', 0) < warmup:
             return False
 
         max_dd = float(self._locked_tier.get('max_drawdown_pct', 4.0)) / 100.0
@@ -6135,6 +6189,8 @@ class MultiAssetChunkedEnv(gym.Env):
                 discrete_action = 2  # Sell
             elif main_decision > action_threshold:
                 discrete_action = 1  # Buy
+            else:
+                discrete_action = 0  # Hold — no signal strong enough
 
             if i == 0:
                 first_discrete_action = discrete_action
@@ -6156,67 +6212,48 @@ class MultiAssetChunkedEnv(gym.Env):
             target_exposure_pct = min_exp + normalized_size * (max_exp - min_exp)
 
             # ==============================================================
-            # TIER-CLAMPED KELLY CRITERION (CHANTIER 3)
-            # f* = max(0, (W*RR - (1-W)) / RR)
-            # Then clamp to [exp_min_pct, exp_max_pct] from tier config.
-            # Ensures position sizing respects capital tier boundaries.
+            # EXPOSITION LINÉAIRE PAR PALIER (remplace Kelly)
+            # exposure = exp_min + (exp_max - exp_min) * confidence_hmm
+            # confidence = probabilité bull issue du HMM (ctx[3])
+            # Reste STRICTEMENT dans les bornes du palier.
             # ==============================================================
-            kelly_modifier = 1.0  # neutral if computation fails
-            p_hmm = 0.5  # HMM win probability (used later by EV gate)
-            rr_ratio = 2.0  # default risk-reward ratio
+            p_hmm = 0.5  # used later by EV gate
             try:
-                # --- W (Win Probability from HMM) ---
-                hmm_w = None
+                # Bornes du palier
+                exp_limits = tier.get("exposure_range", [70, 90])
+                exp_min_pct = float(exp_limits[0]) / 100.0
+                exp_max_pct = float(exp_limits[1]) / 100.0
+
+                # Confiance HMM (bull probability)
+                confidence = 0.5
                 obs = getattr(self, '_last_observation', None)
                 if obs is not None and isinstance(obs, dict):
                     ctx = obs.get('context_vector')
                     if ctx is not None and hasattr(ctx, '__len__') and len(ctx) >= 6:
                         bull_prob = float(ctx[3])
-                        bear_prob = float(ctx[5])
-                        if discrete_action == 1:  # BUY
-                            hmm_w = max(0.01, bull_prob)
-                        elif discrete_action == 2:  # SELL
-                            hmm_w = max(0.01, bear_prob)
+                        confidence = max(0.01, min(0.99, bull_prob))
+                        p_hmm = confidence  # save for EV gate
 
-                # Fallback: historical win_rate
-                perf = getattr(self, 'performance_metrics', None)
-                hist_wr = getattr(perf, 'win_rate', None) if perf else None
-                if hist_wr is None:
-                    hist_wr = getattr(self, '_historical_win_rate', 0.5)
-                W = hmm_w if hmm_w is not None else float(hist_wr)
-                W = max(0.01, min(W, 0.99))
-                p_hmm = W  # save for EV gate
+                # Exposition linéaire garantie dans [exp_min, exp_max]
+                target_exposure_pct = exp_min_pct + (exp_max_pct - exp_min_pct) * confidence
 
-                # --- Tier exposure limits ---
-                exp_limits = tier.get("exposure_range", [10, 90])
-                exp_min_pct = float(exp_limits[0]) / 100.0
-                exp_max_pct = float(exp_limits[1]) / 100.0
+                # Montant à investir (respecte le minimum de 11$)
+                notional_usd = max(min_order_value, capital * target_exposure_pct)
 
-                # --- Kelly optimal fraction ---
-                # f* = max(0, (W * RR - (1-W)) / RR)
-                f_star = max(0.0, (W * rr_ratio - (1.0 - W)) / rr_ratio)
-
-                # Clamp to tier exposure boundaries
-                kelly_modifier = max(exp_min_pct, min(exp_max_pct, f_star))
-
-                # Override target_exposure_pct with Kelly-clamped value
-                target_exposure_pct = kelly_modifier
-
-                # Notional with floor of 11 USD
-                notional_usd = max(11.0, capital * target_exposure_pct)
-
-                # Log Kelly periodically
                 if self.current_step % 100 == 0:
                     self.logger.info(
-                        f"[KELLY_CLAMPED] {asset} | W={W:.3f} RR={rr_ratio:.2f} | "
-                        f"f*={f_star:.4f} | tier_range=[{exp_min_pct:.2f},{exp_max_pct:.2f}] | "
-                        f"kelly_mod={kelly_modifier:.4f} | notional=${notional_usd:.2f}"
+                        f"[LINEAR_EXPO] {asset} | confidence={confidence:.3f} | "
+                        f"exposure={target_exposure_pct:.2%} "
+                        f"(range [{exp_min_pct:.0%},{exp_max_pct:.0%}]) | "
+                        f"notional=${notional_usd:.2f}"
                     )
             except Exception as e:
-                self.logger.debug(f"[KELLY_CLAMPED] Computation skipped: {e}")
-                kelly_modifier = 1.0
-                notional_usd = capital * target_exposure_pct
-                notional_usd = max(11.0, notional_usd)
+                self.logger.debug(f"[LINEAR_EXPO] Computation skipped: {e}")
+                exp_limits = tier.get("exposure_range", [70, 90])
+                exp_min_pct = float(exp_limits[0]) / 100.0
+                exp_max_pct = float(exp_limits[1]) / 100.0
+                target_exposure_pct = (exp_min_pct + exp_max_pct) / 2.0
+                notional_usd = max(min_order_value, capital * target_exposure_pct)
 
             # Clamp to min order value
             if notional_usd < min_order_value and capital >= min_order_value:
@@ -6327,38 +6364,114 @@ class MultiAssetChunkedEnv(gym.Env):
                     trade_executed_this_step = True
                 continue
 
-            # A. CLOSE position - with SELL hysteresis
+            # ================================================================
+            # A. SELL — ferme la position (crypto → USDT)
+            #    Conditions :
+            #    1. Signal SELL (discrete_action == 2)
+            #    2. Position ouverte (is_open)
+            #    3. HOLD_MIN respecté : N steps minimum depuis le BUY
+            #       5m=6 steps, 1h=3 steps, 4h=2 steps
+            #       Si non respecté → pénalité + action ignorée (reste en HOLD)
+            #    Après SELL réussi → déclenche WAIT post-SELL (M steps)
+            # ================================================================
             if discrete_action == 2 and is_open:
-                # SELL hysteresis: skip close if exposure < 5%
-                current_exposure_for_sell = 0.0
-                try:
-                    pos_val = position.size * price if hasattr(position, 'size') else 0
-                    current_exposure_for_sell = pos_val / capital if capital > 0 else 0
-                except Exception:
-                    pass
-                if current_exposure_for_sell < 0.05:
-                    discrete_action = 0  # Override to HOLD, position too small
-                else:
-                    self.trade_attempts += 1
-                    receipt = self.portfolio_manager.close_position(
-                        asset=asset.upper(), price=price, timestamp=current_timestamp,
-                        current_prices=current_prices, reason="AGENT_CLOSE",
-                        risk_horizon=getattr(position, 'risk_horizon', 0.0),
-                    )
-                    if receipt and isinstance(receipt, dict):
-                        self._step_closed_receipts.append(receipt)
-                        self._all_episode_receipts.append(receipt)
-                        val = receipt.get("pnl", 0.0)
-                        fees = receipt.get("fees", 0.0)
-                        realized_pnl += float(val)
-                        self._apply_trade_results_safely(pnl_value=float(val), fees=float(fees))
-                        trade_executed_this_step = True
-                    else:
-                        self.invalid_trade_attempts += 1
+                # Cooldown post-BUY par timeframe (HOLD_MIN)
+                # Durée lue depuis trading_rules.cooldown.hold_min_steps
+                _hold_min_cfg = self.config.get("trading_rules", {}).get(
+                    "cooldown", {}).get("hold_min_steps", {})
+                _tf = self.current_timeframe_for_trade
+                _hold_min = int(_hold_min_cfg.get(_tf, {"5m": 6, "1h": 3, "4h": 2}.get(_tf, 6)))
+                _buy_step = self._buy_step_by_asset.get(asset, -999)
+                _steps_held = self.current_step - _buy_step
 
-            # B. OPEN position
+                if _steps_held < _hold_min:
+                    # SELL trop tôt — pénalité proportionnelle au manque
+                    self.invalid_trade_attempts += 1
+                    _pen_weight = float(self.config.get(
+                        "reward_shaping", {}).get("invalid_trade_penalty_weight", 5e-5))
+                    _early_pen = -_pen_weight * (_hold_min - _steps_held)
+                    realized_pnl += _early_pen
+                    self.logger.debug(
+                        f"[HOLD_MIN] {asset} | TF={_tf} | held={_steps_held}/{_hold_min} steps "
+                        f"— SELL bloqué, pénalité={_early_pen:.5f}"
+                    )
+                    # Action ignorée, reste en HOLD
+                else:
+                    # HOLD_MIN respecté — vérifier exposition minimale
+                    _pos_val = 0.0
+                    try:
+                        _pos_val = position.size * price if hasattr(position, 'size') else 0
+                    except Exception:
+                        pass
+                    _exposure = _pos_val / capital if capital > 0 else 0
+
+                    if _exposure < 0.05:
+                        # Position trop petite pour valoir les frais
+                        discrete_action = 0
+                    else:
+                        self.trade_attempts += 1
+                        receipt = self.portfolio_manager.close_position(
+                            asset=asset.upper(), price=price, timestamp=current_timestamp,
+                            current_prices=current_prices, reason="AGENT_CLOSE",
+                            risk_horizon=getattr(position, 'risk_horizon', 0.0),
+                        )
+                        if receipt and isinstance(receipt, dict):
+                            self._step_closed_receipts.append(receipt)
+                            self._all_episode_receipts.append(receipt)
+                            val = receipt.get("pnl", 0.0)
+                            fees = receipt.get("fees", 0.0)
+                            realized_pnl += float(val)
+                            self._apply_trade_results_safely(
+                                pnl_value=float(val), fees=float(fees))
+                            trade_executed_this_step = True
+                            # Déclenche WAIT post-SELL pour cet asset
+                            self._last_sell_step_by_asset[asset] = self.current_step
+                            self.logger.debug(
+                                f"[WAIT_START] {asset} | TF={_tf} | SELL exécuté step={self.current_step} "
+                                f"→ WAIT actif jusqu'au step {self.current_step + _hold_min_map.get(_tf, 72)}"
+                            )
+                        else:
+                            self.invalid_trade_attempts += 1
+
+            # ================================================================
+            # B. BUY — ouvre une position (USDT → crypto)
+            #    Conditions :
+            #    1. Signal BUY (discrete_action == 1)
+            #    2. Pas de position ouverte (!is_open)
+            #    3. WAIT post-SELL respecté : M steps depuis le dernier SELL
+            #       5m=72 steps, 1h=100 steps, 4h=200 steps
+            #       Si non respecté → pénalité + action ignorée (reste en HOLD)
+            #    4. RISK_GATE : max_concurrent_positions du tier
+            #    5. EV gate, daily limits, etc.
+            # ================================================================
             elif discrete_action == 1 and not is_open:
                 self.trade_attempts += 1
+
+                # ── WAIT post-SELL check ──────────────────────────────────
+                # BUY interdit pendant M steps après un SELL.
+                # Durée par timeframe lue depuis trading_rules.cooldown.wait_steps_post_sell
+                # (plus la TF est haute, plus l'attente est longue).
+                _wait_cfg = self.config.get("trading_rules", {}).get(
+                    "cooldown", {}).get("wait_steps_post_sell", {})
+                _tf = self.current_timeframe_for_trade
+                _wait_min = int(_wait_cfg.get(_tf, {"5m": 72, "1h": 100, "4h": 200}.get(_tf, 72)))
+                _last_sell = self._last_sell_step_by_asset.get(asset, -9999)
+                _steps_since_sell = self.current_step - _last_sell
+
+                if _steps_since_sell < _wait_min:
+                    # BUY trop tôt après SELL — pénalité + ignoré
+                    self.invalid_trade_attempts += 1
+                    _pen_weight = float(self.config.get(
+                        "reward_shaping", {}).get("invalid_trade_penalty_weight", 5e-5))
+                    _wait_pen = -_pen_weight * (_wait_min - _steps_since_sell)
+                    realized_pnl += _wait_pen
+                    if self.current_step % 50 == 0:
+                        self.logger.info(
+                            f"[WAIT_BLOCK] {asset} | TF={_tf} | "
+                            f"steps_since_sell={_steps_since_sell}/{_wait_min} "
+                            f"— BUY bloqué (WAIT actif), pénalité={_wait_pen:.5f}"
+                        )
+                    continue
 
                 # ==============================================================
                 # STRICT CONCURRENT POSITIONS LIMIT (RISK_GATE)
@@ -6384,15 +6497,16 @@ class MultiAssetChunkedEnv(gym.Env):
                         )
                     continue
 
-                # OMEGA-4E: Per-worker cooldown
-                _COOLDOWN_MAP = {"scalper": 3, "intraday": 2, "swing": 1, "position": 1}
+                # OMEGA-4E: Per-worker cooldown anti-spam entre 2 BUY consécutifs
+                # Durée lue depuis trading_rules.cooldown.omega4e_cooldown_by_profile
+                _cd_cfg = self.config.get("trading_rules", {}).get(
+                    "cooldown", {}).get("omega4e_cooldown_by_profile", {})
                 _wname = str(self.worker_config.get("profile", self.worker_config.get("name", "scalper"))).lower()
-                for _pkey in _COOLDOWN_MAP:
+                _min_cd = 2  # fallback
+                for _pkey, _pval in _cd_cfg.items():
                     if _pkey in _wname:
-                        _min_cd = _COOLDOWN_MAP[_pkey]
+                        _min_cd = int(_pval)
                         break
-                else:
-                    _min_cd = 2
                 if self.current_step - self._last_open_step_by_asset.get(asset, -999) < _min_cd:
                     self.invalid_trade_attempts += 1
                     continue
@@ -6457,6 +6571,8 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.receipts.append(receipt)
                     self._all_episode_receipts.append(receipt)
                     self._last_open_step_by_asset[asset] = self.current_step
+                    # Enregistre le step du BUY pour le cooldown HOLD_MIN post-BUY
+                    self._buy_step_by_asset[asset] = self.current_step
                     trade_executed_this_step = True
                     # Update frequency counters
                     if not force_trade:
@@ -6486,6 +6602,11 @@ class MultiAssetChunkedEnv(gym.Env):
         if trade_executed_this_step:
             self.last_trade_step = self.current_step
 
+        # Store for reward collector
+        self._last_discrete_action = first_discrete_action
+        # _last_discrete_action_requested = action demandée avant filtrage cooldown
+        # Permet au collecteur de voir si le modèle a été bloqué par WAIT/HOLD_MIN
+        self._last_discrete_action_requested = first_discrete_action
         return realized_pnl, first_discrete_action, first_discrete_action
 
     def _should_force_close_timeframe(
