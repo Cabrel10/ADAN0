@@ -4459,6 +4459,18 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"< ${BANKRUPT_FLOOR}. Episode terminated — total value below Binance minimum."
             )
             self._step_invalid_penalty += -5.0  # catastrophic penalty
+            # Force-close all open positions before terminating
+            try:
+                _prices = self._get_current_prices() if hasattr(self, '_get_current_prices') else {}
+                for _asset, _pos in list(self.portfolio_manager.positions.items()):
+                    if _pos.is_open:
+                        _p = _prices.get(_asset, _pos.current_price or _pos.entry_price)
+                        if _p > 0:
+                            self.portfolio_manager.close_position(
+                                asset=_asset, price=_p, reason="BANKRUPT_FORCE_CLOSE"
+                            )
+            except Exception:
+                pass
             return True
         
         # Additional check: if no positions open AND cash < floor, also bankrupt
@@ -4489,6 +4501,30 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"[DRAWDOWN_KILL] equity={current_equity:.2f} initial={initial_cap:.2f} "
                 f"drawdown={drawdown:.2%} >= max={max_dd:.2%}"
             )
+            # CRITICAL: force-close all open positions before terminating.
+            # Without this, positions opened this episode survive into the next
+            # episode's first step, causing SL/TP to fire on stale positions
+            # and corrupting the open/close ratio.
+            try:
+                current_prices = {}
+                if hasattr(self, '_get_current_prices'):
+                    current_prices = self._get_current_prices() or {}
+                open_assets = [
+                    a for a, p in self.portfolio_manager.positions.items()
+                    if p.is_open
+                ]
+                for asset in open_assets:
+                    price = current_prices.get(asset, 0.0)
+                    if price > 0:
+                        self.portfolio_manager.close_position(
+                            asset=asset, price=price,
+                            reason="DRAWDOWN_KILL_FORCE_CLOSE"
+                        )
+                        self.logger.info(
+                            f"[DRAWDOWN_KILL] Force-closed {asset} @ {price:.2f}"
+                        )
+            except Exception as _e:
+                self.logger.warning(f"[DRAWDOWN_KILL] Force-close failed: {_e}")
             return True
         return False
 

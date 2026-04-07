@@ -997,36 +997,65 @@ class PortfolioManager:
         lows = current_lows or current_prices
         highs = current_highs or current_prices
 
-        for asset, position in self.positions.items():
-            if position.is_open and asset in current_prices:
-                price = current_prices[asset]
-                low_price = lows.get(asset, price)
-                high_price = highs.get(asset, price)
-                position.current_price = price
+        # CRITICAL: iterate over a snapshot of keys to avoid dict-mutation
+        # issues if close_position() is called inside the loop.
+        # Also guards against double-trigger: once is_open=False, skip.
+        for asset in list(self.positions.keys()):
+            position = self.positions[asset]
+            if not position.is_open:
+                continue  # already closed this step or previously — skip
+            if asset not in current_prices:
+                continue
+            price = current_prices[asset]
+            low_price = lows.get(asset, price)
+            high_price = highs.get(asset, price)
+            position.current_price = price
 
-                # Vérification Stop Loss - check against LOW of candle
-                sl_pct = getattr(position, "stop_loss_pct", None)
+            # Vérification Stop Loss - check against LOW of candle
+            sl_pct = getattr(position, "stop_loss_pct", None)
+            sl_price = None
+            try:
+                if sl_pct is None or not np.isfinite(sl_pct) or sl_pct <= 0:
+                    sl_price = position.entry_price * (1 - 0.02)
+                else:
+                    sl_price = position.entry_price * (1 - float(sl_pct))
+            except Exception:
                 sl_price = None
-                try:
-                    if sl_pct is None or not np.isfinite(sl_pct) or sl_pct <= 0:
-                        sl_price = position.entry_price * (1 - 0.02)
-                    else:
-                        sl_price = position.entry_price * (1 - float(sl_pct))
-                except Exception:
-                    sl_price = None
 
-                if sl_price is None:
-                    self.log_info(f"[update_market_price] sl_price is None for asset={asset} — skipping SL check")
-                elif low_price <= sl_price:
+            if sl_price is None:
+                self.log_info(f"[update_market_price] sl_price is None for asset={asset} — skipping SL check")
+            elif low_price <= sl_price:
+                self.log_info(
+                    f"STOP LOSS atteint pour {asset} @ {low_price:.2f} (low) <= SL: {sl_price:.2f}"
+                )
+                receipt = self.close_position(
+                    asset,
+                    sl_price,
+                    timestamp=self._last_market_timestamp,
+                    current_prices=current_prices,
+                    reason="stop_loss",
+                    risk_horizon=position.risk_horizon,
+                )
+                if isinstance(receipt, dict):
+                    closed_receipts.append(receipt)
+                    val = receipt.get("pnl")
+                    if isinstance(val, (int, float)):
+                        realized_pnl += float(val)
+                continue
+
+            # Vérification Take Profit - check against HIGH of candle
+            if position.take_profit_pct > 0:
+                tp_price = position.entry_price * (1 + position.take_profit_pct)
+                if high_price >= tp_price:
                     self.log_info(
-                        f"STOP LOSS atteint pour {asset} @ {low_price:.2f} (low) <= SL: {sl_price:.2f}"
+                        f"TAKE PROFIT atteint pour {asset} @ {high_price:.2f} (high) >= TP: {tp_price:.2f}"
                     )
                     receipt = self.close_position(
                         asset,
-                        sl_price,
+                        tp_price,
                         timestamp=self._last_market_timestamp,
                         current_prices=current_prices,
-                        reason="stop_loss",
+                        reason="take_profit",
                         risk_horizon=position.risk_horizon,
                     )
                     if isinstance(receipt, dict):
@@ -1036,58 +1065,36 @@ class PortfolioManager:
                             realized_pnl += float(val)
                     continue
 
-                # Vérification Take Profit - check against HIGH of candle
-                if position.take_profit_pct > 0:
-                    tp_price = position.entry_price * (1 + position.take_profit_pct)
-                    if high_price >= tp_price:
-                        self.log_info(
-                            f"TAKE PROFIT atteint pour {asset} @ {high_price:.2f} (high) >= TP: {tp_price:.2f}"
-                        )
-                        receipt = self.close_position(
-                            asset,
-                            tp_price,
-                            timestamp=self._last_market_timestamp,
-                            current_prices=current_prices,
-                            reason="take_profit",
-                            risk_horizon=position.risk_horizon,
-                        )
-                        if isinstance(receipt, dict):
-                            closed_receipts.append(receipt)
-                            val = receipt.get("pnl")
-                            if isinstance(val, (int, float)):
-                                realized_pnl += float(val)
-                        continue
+            # Vérification de la durée maximale de la position
+            duration_config = self.config.get("trading_rules", {}).get(
+                "duration_tracking", {}
+            )
+            timeframe = position.timeframe or "5m"
+            max_duration = duration_config.get(timeframe, {}).get(
+                "max_duration_steps", 144
+            )
 
-                # Vérification de la durée maximale de la position
-                duration_config = self.config.get("trading_rules", {}).get(
-                    "duration_tracking", {}
+            current_duration = current_step - position.open_step
+            is_overstay = current_duration > max_duration
+
+            if is_overstay:
+                self.log_info(
+                    f"MAX DURATION atteinte pour {asset} @ {price:.2f} (durée: {current_duration} > {max_duration})"
                 )
-                timeframe = position.timeframe or "5m"
-                max_duration = duration_config.get(timeframe, {}).get(
-                    "max_duration_steps", 144
+                receipt = self.close_position(
+                    asset,
+                    price,
+                    timestamp=self._last_market_timestamp,
+                    current_prices=current_prices,
+                    reason="MaxDuration",
+                    risk_horizon=position.risk_horizon,
                 )
-
-                current_duration = current_step - position.open_step
-                is_overstay = current_duration > max_duration
-
-                if is_overstay:
-                    self.log_info(
-                        f"MAX DURATION atteinte pour {asset} @ {price:.2f} (durée: {current_duration} > {max_duration})"
-                    )
-                    receipt = self.close_position(
-                        asset,
-                        price,
-                        timestamp=self._last_market_timestamp,
-                        current_prices=current_prices,
-                        reason="MaxDuration",
-                        risk_horizon=position.risk_horizon,
-                    )
-                    if isinstance(receipt, dict):
-                        closed_receipts.append(receipt)
-                        val = receipt.get("pnl")
-                        if isinstance(val, (int, float)):
-                            realized_pnl += float(val)
-                    continue
+                if isinstance(receipt, dict):
+                    closed_receipts.append(receipt)
+                    val = receipt.get("pnl")
+                    if isinstance(val, (int, float)):
+                        realized_pnl += float(val)
+                continue
 
         self._update_equity(current_prices)
 
