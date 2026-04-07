@@ -64,12 +64,17 @@ class Position:
         self.risk_horizon = risk_horizon
 
     def close(self, close_time: Optional[datetime] = None):
-        """Ferme la position."""
+        """Ferme la position.
+        
+        NOTE: size is preserved after close for accurate equity calculations
+        and trade logging. The is_open flag prevents double-counting.
+        """
         if close_time is None:
             raise ValueError("close_time must be provided when closing a position")
         self.is_open = False
         self.closed_at = close_time
-        self.size = 0.0
+        # DO NOT reset size to 0 — close_position() needs it for receipt
+        # and _update_equity() already skips closed positions via is_open check
 
     def get_status(self) -> str:
         """Retourne le statut de la position."""
@@ -275,121 +280,6 @@ class PortfolioManager:
         # Vérification de la taille max en valeur
         position_value = position_units * entry_price
         max_position_value = available_capital * float(max_position_pct)
-        
-        if position_value > max_position_value:
-            position_units = max_position_value / entry_price
-            logger.debug(f"Taille clampée à {max_position_value:.2f} (units: {position_units:.6f})")
-
-        # Validation finale
-        if not np.isfinite(position_units) or position_units < 0:
-            logger.error(f"Taille de position invalide: {position_units}. Forçage à 0")
-            return 0.0
-
-        return float(position_units)
-
-    def apply_trade_result(self, pnl_value: float, fees: float = 0.0) -> float:
-        """
-        Applique un PnL au portefeuille avec protections contre l'explosion
-        
-        Args:
-            pnl_value: Profit/perte en valeur monétaire
-            fees: Frais de transaction
-            
-        Returns:
-            Nouvelle valeur du portefeuille
-        """
-        # Vérifications de sécurité
-        if not all(np.isfinite(x) for x in [pnl_value, fees]):
-            logger.error(f"Valeurs non finies: pnl_value={pnl_value}, fees={fees}")
-            pnl_value, fees = 0.0, 0.0
-
-        # Calcul de la nouvelle valeur
-        new_value = self.current_value + float(pnl_value) - float(fees)
-        
-        # Protection contre les valeurs négatives ou NaN
-        if not np.isfinite(new_value) or new_value < 0:
-            logger.warning(f"Valeur invalide détectée: {new_value}. Réinitialisation à MIN_PORTFOLIO_VALUE")
-            new_value = self.MIN_PORTFOLIO_VALUE
-
-        # Clamp de croissance par step (empêche l'explosion exponentielle)
-        max_allowed_growth = self.current_value * self.MAX_PORTFOLIO_GROWTH_PER_STEP
-        if new_value > max_allowed_growth:
-            logger.warning(
-                f"Croissance excessive détectée: {new_value:.2f} > {max_allowed_growth:.2f}. "
-                f"Clamping à {max_allowed_growth:.2f}"
-            )
-            new_value = max_allowed_growth
-
-        # Clamp de sécurité absolue
-        if new_value > self.MAX_PORTFOLIO_VALUE:
-            logger.error(
-                f"🚨 EXPLOSION NUMÉRIQUE: valeur {new_value:.2f} > MAX {self.MAX_PORTFOLIO_VALUE}. "
-                f"Clamping à {self.MAX_PORTFOLIO_VALUE}"
-            )
-            new_value = self.MAX_PORTFOLIO_VALUE
-
-        # Mise à jour
-        old_value = self.current_value
-        self.current_value = float(new_value)
-        
-        # Log de sécurité
-        growth_pct = (new_value - old_value) / old_value * 100 if old_value > 0 else 0
-        if abs(growth_pct) > 50:  # Alert si croissance > 50% en un step
-            logger.warning(f"Growth anormal: {growth_pct:.1f}% en un step")
-
-        return self.current_value
-
-    def calculate_position_size(
-        self, 
-        entry_price: float, 
-        stop_loss: float, 
-        risk_pct: float = 0.01,
-        max_position_pct: float = 0.1,
-        atr: float = None,
-        atr_multiplier: float = 1.0
-    ) -> float:
-        """
-        Calcule la taille de position avec protections
-        
-        Args:
-            entry_price: Prix d'entrée
-            stop_loss: Prix de stop-loss
-            risk_pct: Pourcentage de risque (0.01 = 1%)
-            max_position_pct: Pourcentage max du capital (0.1 = 10%)
-            atr: Average True Range pour fallback
-            atr_multiplier: Multiplicateur ATR
-            
-        Returns:
-            Taille de position en unités
-        """
-        # Vérifications d'entrée
-        if not all(np.isfinite(x) for x in [entry_price, stop_loss, risk_pct, max_position_pct]):
-            logger.error("Inputs non finis dans calculate_position_size")
-            return 0.0
-
-        if self.cash <= 0 or entry_price <= 0:
-            logger.error(f"Capital ou prix invalide: capital={self.cash}, price={entry_price}")
-            return 0.0
-
-        # Calcul du risque - CASH TRUTH
-        risk_amount = self.cash * float(risk_pct)
-        price_distance = abs(entry_price - stop_loss)
-
-        # Fallback si distance trop petite (évite division par zéro)
-        if price_distance < self.SAFETY_EPSILON:
-            if atr is not None and atr > 0:
-                price_distance = atr * float(atr_multiplier)
-                logger.debug(f"Utilisation ATR fallback: {price_distance}")
-            else:
-                price_distance = max(entry_price * 0.001, self.SAFETY_EPSILON)  # 0.1% du prix
-                logger.warning(f"Distance stop-loss trop petite, using fallback: {price_distance}")
-
-        # Calcul de la taille basée sur le risque
-        position_units = risk_amount / price_distance
-        
-        # Vérification de la taille max en valeur - CASH TRUTH
-        position_value = position_units * entry_price
-        max_position_value = self.cash * float(max_position_pct)
         
         if position_value > max_position_value:
             position_units = max_position_value / entry_price
@@ -1494,6 +1384,10 @@ class PortfolioManager:
         """Log un message avec le préfixe du worker."""
         logger.info(f"[Worker {self.worker_id}] {message}")
 
+    def log_warning(self, message: str):
+        """Log un warning avec le préfixe du worker."""
+        logger.warning(f"[Worker {self.worker_id}] {message}")
+
     def update_risk_parameters(
         self, risk_params: Dict[str, Any], tier: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -1834,14 +1728,17 @@ class PortfolioManager:
 
         return self.fund_operations_log[-limit:] if limit > 0 else []
 
-    def close_all_positions(self, current_step: int, reason: str = "MANUAL", current_prices: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
+    def close_all_positions(self, current_step: int = 0, reason: str = "MANUAL", 
+                            current_prices: Optional[Dict[str, float]] = None,
+                            timestamp: Optional[Any] = None) -> List[Dict[str, Any]]:
         """
         Ferme toutes les positions ouvertes immédiatement.
         
         Args:
-            current_step: Étape actuelle de l'entraînement
+            current_step: Étape actuelle de l'entraînement (unused, kept for API compat)
             reason: Raison de la fermeture (ex: "CIRCUIT_BREAKER", "MANUAL")
             current_prices: Prix actuels des actifs (optionnel)
+            timestamp: Horodatage pour la fermeture (optionnel)
             
         Returns:
             Liste des reçus de fermeture
@@ -1856,7 +1753,7 @@ class PortfolioManager:
                     current_prices[asset] = position.current_price
         
         # Fermer chaque position ouverte
-        for asset, position in self.positions.items():
+        for asset, position in list(self.positions.items()):
             if position.is_open:
                 try:
                     price = current_prices.get(asset, position.current_price)
@@ -1867,7 +1764,8 @@ class PortfolioManager:
                     receipt = self.close_position(
                         asset=asset,
                         price=price,
-                        current_step=current_step,
+                        timestamp=timestamp or self._last_market_timestamp,
+                        current_prices=current_prices,
                         reason=f"{reason}_BULK_CLOSE"
                     )
                     if receipt:
@@ -1876,5 +1774,5 @@ class PortfolioManager:
                 except Exception as e:
                     logger.error(f"Erreur lors de la fermeture de {asset}: {e}")
         
-        logger.info(f"🔒 Fermeture en masse: {len(closed_receipts)} positions fermées (raison: {reason})")
+        logger.info(f"Fermeture en masse: {len(closed_receipts)} positions fermées (raison: {reason})")
         return closed_receipts

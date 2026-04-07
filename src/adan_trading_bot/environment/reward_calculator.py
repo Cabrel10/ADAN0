@@ -149,17 +149,43 @@ class RewardCalculator:
         trade_reason: Optional[str] = None,
         **kwargs,
     ) -> float:
-        """TRUE QUANT ANTI-HACK REWARD.
+        """TRUE QUANT ANTI-HACK REWARD (RewardCalculator standalone version).
+
+        Computes a mathematically anti-hackable reward signal that guarantees:
+          - Positive PnL trades always receive positive reward
+          - Negative PnL trades NEVER receive positive reward (failsafe enforced)
+          - No-trade steps receive near-zero reward
 
         Five components:
-          1. Symlog of PnL_Net / scale
+          1. Symlog of base_pnl (PnL_Net - cost_penalty - dd_penalty):
+             r = sign(base_pnl) * ln(|base_pnl/scale| + 1)
           2. Continuous loss penalty: -alpha * max(0, -pnl_net) / scale
+             Every cent of loss is penalized proportionally (alpha=2.0)
           3. EV bonus: beta * clip(ev_norm, -1, 1)
+             Soft signal for expected-value positive trades (beta=0.1, reduced to prevent hacking)
           4. Consecutive loss streak penalty: -gamma * max(0, streak - 2)
-          5. Failsafe: if pnl_net < 0 and r > 0 => r *= -delta
+             Escalating penalty after 2+ consecutive losses (gamma=0.5)
+          5. FAILSAFE BINARY ANTI-HACK: if pnl_net < 0 and r > 0 => r *= -delta
+             Absolute guarantee: negative PnL cannot produce positive reward (delta=2.0)
 
-        This makes it MATHEMATICALLY IMPOSSIBLE for the agent to
-        get a positive reward from a losing trade.
+        Parameters (from __init__):
+          _scale=1.0, _alpha=2.0, _beta=0.1, _gamma_streak=0.5, _delta=2.0
+
+        Audit trail:
+          Logs REWARD_ANTIHACK with full breakdown (pnl_net, r_symlog, loss_pen,
+          ev, streak, dd_pen, cost_pen, inv_pen, action_req, action_exe, failsafe, final)
+          on every trade and every 50th step.
+
+        Args:
+            portfolio_metrics: Dict with keys 'total_commission', 'closed_positions',
+                             'portfolio_value'/'balance', 'drawdown', etc.
+            trade_pnl: float — gross realized PnL from this step.
+            action: int — executed action (0=HOLD, 1=BUY, 2=SELL).
+            chunk_id: int — current data chunk (for tracking).
+            **kwargs: action_requested (int), invalid_penalty (float), ev_norm (float).
+
+        Returns:
+            float: Anti-hack reward value, clipped to [-5.0, 5.0] range by default.
         """
         try:
             # --- PnL extraction ---

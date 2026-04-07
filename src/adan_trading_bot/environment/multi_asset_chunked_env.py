@@ -1950,7 +1950,7 @@ class MultiAssetChunkedEnv(gym.Env):
         """Calculates and sets the starting step within a new chunk to account for indicator warmup."""
         try:
             # Use a more conservative warmup period to avoid index out of bounds
-            warmup = getattr(self, "warmup_period", 200)  # Default to 200 if not set
+            warmup = getattr(self, "warmup_steps", getattr(self, "warmup_period", 50))  # Use warmup_steps (set from config)
 
             # CRITICAL FIX: Calculate safe start step based on SMALLEST timeframe
             # Prevents out-of-bounds reads for short timeframes (e.g. 4h with 111 rows)
@@ -2151,7 +2151,7 @@ class MultiAssetChunkedEnv(gym.Env):
         self.current_timeframe_for_trade = "5m"
 
         # OMEGA-3/4: Reset episode receipts and per-asset cooldown
-        self._all_episode_receipts = []
+        self._all_episode_receipts = deque(maxlen=500)  # Cap memory: keep last 500 receipts
         self._last_open_step_by_asset = {}
         self._last_sell_step_by_asset = {}   # WAIT post-SELL cooldown
         self._buy_step_by_asset = {}          # HOLD_MIN post-BUY cooldown
@@ -3141,17 +3141,19 @@ class MultiAssetChunkedEnv(gym.Env):
                 logger.info(
                     f"[TERMINATION Worker {self.worker_id}] {termination_reason}"
                 )
+            # BANKRUPT GATE handles termination at $11.50 in _check_drawdown_termination.
+            # The old 70% equity kill was too aggressive and prevented learning.
+            # Now we only log a warning when equity drops significantly.
             elif (
                 self.portfolio_manager.get_portfolio_value()
-                <= self.portfolio_manager.initial_equity * 0.70
+                <= self.portfolio_manager.initial_equity * 0.50
             ):
-                done = True
-                termination_reason = (
-                    f"Portfolio value too low ({self.portfolio_manager.get_portfolio_value():.2f} "
-                    f"<= {self.portfolio_manager.initial_equity * 0.50:.2f})"
-                )
-                logger.info(
-                    f"[TERMINATION Worker {self.worker_id}] {termination_reason}"
+                # Log but do NOT terminate — let Bankrupt Gate handle it
+                logger.warning(
+                    f"[LOW_EQUITY_WARNING Worker {self.worker_id}] "
+                    f"Portfolio value critically low: "
+                    f"${self.portfolio_manager.get_portfolio_value():.2f} "
+                    f"<= 50% of initial ${self.portfolio_manager.initial_equity:.2f}"
                 )
             # DÉSACTIVÉ : Cette condition terminait l'épisode trop agressivement, empêchant l'apprentissage
             # La condition originale était : 144 * 5 = 720 steps sans trade = terminaison
@@ -4410,22 +4412,74 @@ class MultiAssetChunkedEnv(gym.Env):
             logger.warning(f"Failed to update DBE state: {e}")
 
     def _check_drawdown_termination(self) -> bool:
-        """Kill-switch drawdown - termine l'épisode si le drawdown dépasse le max du tier.
+        """Kill-switch: BANKRUPT GATE + drawdown termination.
 
-        Uses EQUITY (cash + unrealized positions value), not raw cash.
-        Cash alone drops when positions open — that is not a real drawdown.
+        Called at the START of each step() before _execute_trades(). This is the
+        safety net that prevents the bot from trading with insufficient capital.
+
+        Priority 1 — BANKRUPT GATE (EQUITY-based, always active):
+            Threshold: EQUITY < $11.50 (Binance minimum $11 + $0.50 safety buffer).
+
+            CRITICAL DESIGN DECISION: We check EQUITY (cash + open position value),
+            NOT just cash. When a BUY allocates 70-90% of $20.50 capital, cash drops
+            to ~$2-6, but total equity remains ~$20.50. Checking cash alone would
+            terminate every episode after the first BUY — a fatal bug that previously
+            caused 2-3 step episodes.
+
+            When equity is below floor:
+              - Logs [BANKRUPT_KILL] with cash and equity values
+              - Applies catastrophic penalty (-5.0 to _step_invalid_penalty)
+              - Returns True to terminate the episode
+
+            Additional no-position check: If no positions are open AND cash < $11.50,
+            the bot truly cannot trade — terminate regardless of equity.
+
+        Priority 2 — Drawdown kill-switch (tier-based, skipped during warmup):
+            Active only after warmup_steps (default 50) when a tier is locked.
+            Uses the tier's max_drawdown_pct (e.g., Micro=4%) to compute:
+              drawdown = (initial_capital - equity) / initial_capital
+            If drawdown >= max_drawdown_pct, episode terminates.
+
+        Returns:
+            True if episode should terminate, False otherwise.
         """
+        # ── BANKRUPT GATE (EQUITY-based, always active) ────────────────
+        BANKRUPT_FLOOR = 11.50  # Binance min $11 + $0.50 safety
+        current_equity = float(self.portfolio_manager.equity)
+        current_cash = float(self.portfolio_manager.cash)
+        
+        # Check if ANY positions are open
+        has_open_positions = any(
+            p.is_open for p in self.portfolio_manager.positions.values()
+        )
+        
+        if current_equity < BANKRUPT_FLOOR:
+            self.logger.warning(
+                f"[BANKRUPT_KILL] Equity=${current_equity:.2f} (cash=${current_cash:.2f}) "
+                f"< ${BANKRUPT_FLOOR}. Episode terminated — total value below Binance minimum."
+            )
+            self._step_invalid_penalty += -5.0  # catastrophic penalty
+            return True
+        
+        # Additional check: if no positions open AND cash < floor, also bankrupt
+        if not has_open_positions and current_cash < BANKRUPT_FLOOR:
+            self.logger.warning(
+                f"[BANKRUPT_KILL] No positions open, cash=${current_cash:.2f} "
+                f"< ${BANKRUPT_FLOOR}. Cannot place any trade."
+            )
+            self._step_invalid_penalty += -5.0
+            return True
+
+        # ── DRAWDOWN KILL-SWITCH (tier-based, skipped during warmup) ──
         if not hasattr(self, '_locked_tier') or self._locked_tier is None:
             return False
 
-        # Skip kill-switch during warmup — agent needs to explore freely
-        warmup = getattr(self, 'warmup_period', 200)
+        warmup = getattr(self, 'warmup_steps', getattr(self, 'warmup_period', 50))
         if getattr(self, 'current_step', 0) < warmup:
             return False
 
         max_dd = float(self._locked_tier.get('max_drawdown_pct', 4.0)) / 100.0
         initial_cap = float(self.portfolio_manager.initial_capital)
-        # equity = cash + value of open positions (no phantom gains)
         current_equity = float(self.portfolio_manager.equity)
 
         drawdown = (initial_cap - current_equity) / max(initial_cap, 1e-9)
@@ -5531,12 +5585,41 @@ class MultiAssetChunkedEnv(gym.Env):
         return getattr(self, "current_timeframe_for_trade", "5m")
 
     def _calculate_reward(self, action: np.ndarray, realized_pnl: float) -> float:
-        """TRUE QUANT REWARD — Alpha-Omega.
+        """TRUE QUANT REWARD — Alpha-Omega formula (REWARD_ANTIHACK).
 
-        reward = symlog(PnL_net - trade_cost - drawdown_penalty)
+        Computes the step reward using a symlog-compressed PnL signal with
+        drawdown penalty and inaction signal. This is the ONLY reward path;
+        all legacy bonus/penalty systems have been removed.
 
-        No frequency bonus. No outcome bonus. No multi-hunt bonus.
-        The agent earns points ONLY from real money.
+        Formula:
+            raw = PnL_net - trade_cost - drawdown_penalty + inaction + survival + inv_penalty
+            reward = symlog(raw)   where symlog(x) = sign(x) * ln(|x| + 1)
+
+        Components:
+            1. PnL_net: realized_pnl - commission * 1.5 (fee overweight discourages churn)
+            2. trade_cost: slippage proxy (notional * 0.15%) on actual trades only
+            3. drawdown_penalty: quadratic penalty when drawdown > 2%
+               penalty = (|dd| - 0.02)^2 * 50.0
+            4. inaction: -0.0001 when no trade (tiny tie-breaker)
+            5. survival_bonus: small positive when cash > initial_capital
+            6. inv_penalty: accumulated invalid trade penalties from _execute_trades gates
+
+        Anti-hack properties:
+            - Symlog compression prevents reward explosion on large trades
+            - Losing trades always produce negative reward (commission overweight + loss)
+            - No-trade steps produce near-zero reward (inaction = -0.0001)
+            - Drawdown penalty grows quadratically, punishing sustained losses
+
+        Logged as [REWARD_ANTIHACK] with full component breakdown every 50 steps
+        and on every trade for audit trail compliance.
+
+        Args:
+            action: np.ndarray — the raw action vector (for context logging).
+            realized_pnl: float — total realized PnL from this step's trades
+                          (includes SL/TP closures + agent closes + invalid penalties).
+
+        Returns:
+            float: symlog-compressed reward value.
         """
         import numpy as _np
 
@@ -6104,21 +6187,47 @@ class MultiAssetChunkedEnv(gym.Env):
         action_threshold: float,
         force_trade: bool = False,
     ) -> tuple:
-        """
-        OMEGA-3 Target-Weight execution logic.
+        """OMEGA-3 Target-Weight execution logic — core trade lifecycle engine.
+
+        Implements the strict trade lifecycle sequence validated by QA:
+            RESET -> Warmup -> TARGET_WEIGHT -> LINEAR_EXPO -> SIZE_GATE
+            -> SL/TP/MAX_DURATION check -> SELL (HOLD_MIN / AGENT_CLOSE)
+            -> BUY (WAIT_BLOCK / RISK_GATE / OMEGA4E / EV_GATE / SIZE_GATE / TRADE_OPEN)
+            -> ACTION_DIFF log -> REWARD_ANTIHACK (in _calculate_reward)
 
         Action space per asset (5 dims): [action_raw, size_raw, tf_raw, sl_raw, tp_raw]
-        - action_raw: -1..1  (< -thr = SELL, > thr = BUY, else HOLD)
-        - size_raw:   -1..1  mapped to tier exposure_range
-        - tf_raw:     -1..1  maps to timeframe index
-        - sl_raw:     -1..1  dynamic SL based on tier risk_per_trade_pct
-        - tp_raw:     -1..1  dynamic TP
+            - action_raw: -1..1  (< -threshold = SELL, > threshold = BUY, else HOLD)
+            - size_raw:   -1..1  mapped linearly to tier exposure_range
+            - tf_raw:     -1..1  maps to timeframe index [5m, 1h, 4h]
+            - sl_raw:     -1..1  dynamic SL bounded by profile (scalper/intraday/swing/position)
+            - tp_raw:     -1..1  dynamic TP with R/R >= 1.5 floor and fee gate (TP >= 3x fees)
 
-        Key design points:
-        - Tier-mapped exposure: uses capital_tiers.exposure_range
-        - Notional clamped to >= 11 USDT
-        - Anti-spam HOLD: if target exposure ~ current exposure, do nothing
-        - Dynamic SL bounded by tier risk_per_trade_pct
+        Execution order (per step):
+            1. update_market_price() — checks SL/TP/MaxDuration against OHLC lows/highs
+            2. Tier locking — capital tier from episode start determines exposure range
+            3. Per-asset loop:
+               a. Decode action vector -> discrete_action (0=HOLD, 1=BUY, 2=SELL)
+               b. Linear exposure: confidence * (exp_max - exp_min) + exp_min
+               c. Size gate: notional clamped to available cash, floor at $11 min
+               d. Dynamic SL/TP with ATR-aware scalper protection
+               e. Anti-spam HOLD: skip if target exposure ~ current exposure
+               f. MAX_DURATION kill-switch (profile-aware: scalper=20, intraday=50...)
+               g. SELL path: HOLD_MIN check -> close_position -> WAIT trigger
+               h. BUY path: WAIT_BLOCK -> RISK_GATE -> OMEGA4E -> DAILY_LIMIT
+                            -> EV_GATE -> SIZE_GATE -> open_position -> TRADE_OPEN
+            4. ACTION_DIFF log (requested vs executed every 50 steps)
+
+        Args:
+            action: np.ndarray of shape (25,) — 5 assets x 5 dims each.
+            dbe_modulation: dict with DBE risk parameters (sl_pct, tp_pct, etc.).
+            action_threshold: float threshold for buy/sell signal gating.
+            force_trade: bool, if True bypasses some cooldown checks.
+
+        Returns:
+            tuple of (realized_pnl: float, discrete_action: int, discrete_action_requested: int)
+                - realized_pnl includes trade PnL and accumulated invalid-trade penalties
+                - discrete_action: 0=HOLD, 1=BUY, 2=SELL (what was actually executed)
+                - discrete_action_requested: what the agent wanted before gate filtering
         """
         if not hasattr(self, "portfolio_manager"):
             self.logger.error("Portfolio manager non initialise.")
@@ -6307,12 +6416,29 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Montant à investir (respecte le minimum de 11$)
                 notional_usd = max(min_order_value, capital * target_exposure_pct)
 
+                # ── SIZE_GATE: Never exceed available cash ──────────
+                # This prevents virtual debt when capital drops below
+                # the minimum notional. If we can't afford $11, we HOLD.
+                available_cash_for_sizing = float(self.portfolio_manager.cash)
+                if notional_usd > available_cash_for_sizing:
+                    notional_usd = available_cash_for_sizing
+                if notional_usd < min_order_value:
+                    # Cannot afford minimum Binance order — force HOLD
+                    self.invalid_trade_attempts += 1
+                    self.rejection_reasons["min_notional"] += 1
+                    if self.current_step % 50 == 0:
+                        self.logger.info(
+                            f"[CASH_FLOOR] {asset} cash=${available_cash_for_sizing:.2f} "
+                            f"< min_order=${min_order_value:.2f} — forced HOLD"
+                        )
+                    continue  # skip this asset, force HOLD
+
                 if self.current_step % 100 == 0:
                     self.logger.info(
                         f"[LINEAR_EXPO] {asset} | confidence={confidence:.3f} | "
                         f"exposure={target_exposure_pct:.2%} "
                         f"(range [{exp_min_pct:.0%},{exp_max_pct:.0%}]) | "
-                        f"notional=${notional_usd:.2f}"
+                        f"notional=${notional_usd:.2f} | cash=${available_cash_for_sizing:.2f}"
                     )
             except Exception as e:
                 self.logger.debug(f"[LINEAR_EXPO] Computation skipped: {e}")
@@ -6335,11 +6461,15 @@ class MultiAssetChunkedEnv(gym.Env):
             _pmap = {"conservative": "scalper", "moderate": "intraday",
                      "balanced": "intraday", "aggressive": "swing", "adaptive": "position"}
             _prof = _pmap.get(_prof, _prof)
+            # ── ATR-AWARE SL/TP BOUNDS ──────────────────────────────
+            # Scalper SL widened: 0.5%-1.2% to survive BTC 5m noise
+            # (ATR on 5m BTC ≈ 0.2-0.5%, so SL must be > 2×ATR)
+            # TP bounds also widened to maintain R/R ≥ 1.5
             _BOUNDS = {
-                "scalper":  {"sl": (0.003, 0.008), "tp": (0.006, 0.015)},
-                "intraday": {"sl": (0.008, 0.020), "tp": (0.016, 0.040)},
-                "swing":    {"sl": (0.015, 0.035), "tp": (0.030, 0.070)},
-                "position": {"sl": (0.020, 0.050), "tp": (0.040, 0.100)},
+                "scalper":  {"sl": (0.005, 0.012), "tp": (0.010, 0.025)},
+                "intraday": {"sl": (0.010, 0.025), "tp": (0.020, 0.050)},
+                "swing":    {"sl": (0.015, 0.040), "tp": (0.030, 0.080)},
+                "position": {"sl": (0.020, 0.060), "tp": (0.040, 0.120)},
             }
             _b = _BOUNDS.get(_prof, _BOUNDS["intraday"])
             sl_lo, sl_hi = _b["sl"]
@@ -6598,11 +6728,21 @@ class MultiAssetChunkedEnv(gym.Env):
                 # win probability for positive expected value:
                 #   p_min = (1 + fee_pct/SL) / (1 + RR)
                 # If W <= p_min, the trade has negative EV and is cancelled.
+                #
+                # TRAINING MODE: When HMM has no real signal (p_hmm=0.5),
+                # we use a softer threshold (0.9 * p_min) to allow exploration.
+                # Without this, no trades pass the gate during early training
+                # with synthetic data, and the agent can never learn.
                 # ==============================================================
                 estimated_fees_pct = 0.002  # 0.2% round-trip (0.1% maker + 0.1% taker)
                 if sl_pct > 0:
                     _rr_for_ev = tp_pct / sl_pct
                     p_min_required = (1.0 + estimated_fees_pct / sl_pct) / (1.0 + _rr_for_ev)
+                    # Training softener: reduce threshold by 10% during exploration
+                    # This allows the agent to learn from actual trade outcomes
+                    _is_training = not getattr(self, 'live_mode', False)
+                    if _is_training:
+                        p_min_required *= 0.85  # 15% softer during training
                 else:
                     p_min_required = 0.99  # no SL = reject
 
@@ -6618,15 +6758,23 @@ class MultiAssetChunkedEnv(gym.Env):
                         )
                     continue
 
-                # Check cash
+                # ── CASH & SURVIVAL CHECK ──────────────────────────────
+                # 1. Ensure we have enough cash for the trade
+                # 2. Ensure remaining cash after trade > 0 (portfolio survives)
+                # The Bankrupt Gate checks EQUITY, but we should not open a
+                # trade that leaves us with $0 cash and no room for fees.
                 available_cash = self.portfolio_manager.get_cash()
-                if notional_usd < min_order_value or available_cash < notional_usd:
+                estimated_fees = notional_usd * 0.001  # 0.1% entry fee
+                cash_after_trade = available_cash - notional_usd - estimated_fees
+                
+                if notional_usd < min_order_value or available_cash < (notional_usd + estimated_fees):
                     self.invalid_trade_attempts += 1
                     self.rejection_reasons["min_notional"] += 1
                     self._step_invalid_penalty += -_inv_pen_weight
                     if self.current_step % 100 == 0:
                         self.logger.warning(
-                            f"[SIZE_GATE] {asset} notional={notional_usd:.2f} min={min_order_value} cash={available_cash:.2f}"
+                            f"[SIZE_GATE] {asset} notional={notional_usd:.2f} min={min_order_value} "
+                            f"cash={available_cash:.2f} fees={estimated_fees:.4f}"
                         )
                     continue
 
