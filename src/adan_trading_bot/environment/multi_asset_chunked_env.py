@@ -6324,6 +6324,46 @@ class MultiAssetChunkedEnv(gym.Env):
             # SL/TP triggered but pnl may be 0 (fees only) — still count as executed
             trade_executed_this_step = True
 
+        # ── COOLDOWN PATCH: SL/TP/MaxDuration closures must trigger WAIT ──────
+        # When the MARKET closes a position (SL/TP/MaxDuration), the agent did
+        # not choose to sell — but the position IS closed. Without this patch,
+        # _last_sell_step_by_asset is never updated, so WAIT_BLOCK never fires
+        # after a market-triggered close. The agent can immediately re-BUY on
+        # the very next step, catching a falling knife repeatedly until DD=40%.
+        #
+        # Fix: for every market-triggered close, register the sell step so the
+        # WAIT cooldown applies exactly as it would for an AGENT_CLOSE.
+        # SL closures get a 2× WAIT multiplier (trauma penalty) because they
+        # indicate a momentum collapse — the worst time to re-enter.
+        for _receipt in sl_tp_receipts:
+            _closed_asset = str(_receipt.get("asset", "")).upper()
+            _close_reason = str(_receipt.get("reason", ""))
+            if _closed_asset:
+                self._last_sell_step_by_asset[_closed_asset] = self.current_step
+                # Also reset HOLD_MIN tracker so a stale BUY step doesn't
+                # accidentally allow an immediate re-entry after SL.
+                self._buy_step_by_asset.pop(_closed_asset, None)
+                if "stop_loss" in _close_reason.lower():
+                    # Trauma penalty: double WAIT after a stop-loss hit.
+                    # Overwrite with a step 2× wait_min steps in the past
+                    # so the effective cooldown is 2× the normal WAIT.
+                    _wait_cfg = self.config.get("trading_rules", {}).get(
+                        "cooldown", {}).get("wait_steps_post_sell", {})
+                    _tf_now = getattr(self, "current_timeframe_for_trade", "5m")
+                    _wait_base = int(_wait_cfg.get(
+                        _tf_now, {"5m": 6, "1h": 10, "4h": 20}.get(_tf_now, 6)
+                    ))
+                    # Shift the registered sell step back by wait_base so the
+                    # agent must wait 2× wait_base before re-entering.
+                    self._last_sell_step_by_asset[_closed_asset] = (
+                        self.current_step - _wait_base
+                    )
+                    self.logger.info(
+                        f"[SL_TRAUMA_WAIT] {_closed_asset} | "
+                        f"SL hit at step {self.current_step} | "
+                        f"WAIT 2×{_wait_base}={2*_wait_base} steps before re-BUY"
+                    )
+
         # ================================================================
         # CAPITAL TIER SUPREMACY: exposure_range and risk_per_trade_pct
         # are dictated EXCLUSIVELY by the current Capital Tier, NEVER
