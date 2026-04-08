@@ -6345,18 +6345,21 @@ class MultiAssetChunkedEnv(gym.Env):
                 self._buy_step_by_asset.pop(_closed_asset, None)
                 if "stop_loss" in _close_reason.lower():
                     # Trauma penalty: double WAIT after a stop-loss hit.
-                    # Overwrite with a step 2× wait_min steps in the past
-                    # so the effective cooldown is 2× the normal WAIT.
+                    # LOGIC: _steps_since_sell = current_step - _last_sell_step
+                    # BUY is blocked while _steps_since_sell < _wait_min.
+                    # To enforce 2× wait_min cooldown, we register:
+                    #   _last_sell_step = current_step + wait_base
+                    # So at step N+k: steps_since_sell = k - wait_base
+                    # BUY blocked until k >= 2×wait_base (i.e., 2× normal wait).
                     _wait_cfg = self.config.get("trading_rules", {}).get(
                         "cooldown", {}).get("wait_steps_post_sell", {})
                     _tf_now = getattr(self, "current_timeframe_for_trade", "5m")
                     _wait_base = int(_wait_cfg.get(
                         _tf_now, {"5m": 6, "1h": 10, "4h": 20}.get(_tf_now, 6)
                     ))
-                    # Shift the registered sell step back by wait_base so the
-                    # agent must wait 2× wait_base before re-entering.
+                    # Register sell step AHEAD by wait_base → effective 2× cooldown
                     self._last_sell_step_by_asset[_closed_asset] = (
-                        self.current_step - _wait_base
+                        self.current_step + _wait_base
                     )
                     self.logger.info(
                         f"[SL_TRAUMA_WAIT] {_closed_asset} | "
