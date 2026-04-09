@@ -112,7 +112,7 @@ class PortfolioManager:
         env_config = self.config.get("environment", {}) # Re-added this line
         self.initial_equity = self.config.get("initial_capital", 20.50)
         self.initial_capital = self.initial_equity
-        self.assets = self.config.get("assets", [])
+        self.assets = [a.upper() for a in self.config.get("assets", [])]
         # Commission (frais) par transaction
         tr_cfg = self.config.get("trading_rules", {})
         self.fee_pct = float(

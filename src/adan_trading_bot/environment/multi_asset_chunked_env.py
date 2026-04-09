@@ -6336,6 +6336,8 @@ class MultiAssetChunkedEnv(gym.Env):
         # SL closures get a 2× WAIT multiplier (trauma penalty) because they
         # indicate a momentum collapse — the worst time to re-enter.
         for _receipt in sl_tp_receipts:
+            if not isinstance(_receipt, dict):
+                continue  # close_position returned None (already closed) — skip
             _closed_asset = str(_receipt.get("asset", "")).upper()
             _close_reason = str(_receipt.get("reason", ""))
             if _closed_asset:
