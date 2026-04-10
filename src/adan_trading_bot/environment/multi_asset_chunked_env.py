@@ -2891,9 +2891,25 @@ class MultiAssetChunkedEnv(gym.Env):
                     current_lows = {asset: self._get_price_for_asset(asset, 'low') for asset in self.assets}
                     current_highs = {asset: self._get_price_for_asset(asset, 'high') for asset in self.assets}
                     
-                    self.portfolio_manager.update_market_price(
-                        current_prices, self.current_step, current_lows, current_highs
-                    )
+                    # CRITICAL: capture SL/TP receipts from this early price update.
+                    # The COOLDOWN PATCH in _execute_trades reads sl_tp_receipts from
+                    # the SECOND update_market_price call (line ~6321). But SL/TP
+                    # actually fire HERE (first call). By the time _execute_trades
+                    # calls update_market_price again, positions are already closed
+                    # → closed_receipts = [] → WAIT_BLOCK never fires.
+                    # Fix: store receipts here so _execute_trades can merge them.
+                    try:
+                        _pnl_pre, _rcpts_pre = self.portfolio_manager.update_market_price(
+                            current_prices, self.current_step, current_lows, current_highs
+                        )
+                        self._pre_execute_sl_tp_receipts = [
+                            r for r in _rcpts_pre if isinstance(r, dict)
+                        ]
+                        if _pnl_pre != 0.0:
+                            # Propagate PnL from early SL/TP to step
+                            pass  # handled in _execute_trades via _pre_execute_sl_tp_receipts
+                    except Exception:
+                        self._pre_execute_sl_tp_receipts = []
                     positions_after = {
                         k: v.is_open
                         for k, v in self.portfolio_manager.positions.items()
@@ -6321,6 +6337,15 @@ class MultiAssetChunkedEnv(gym.Env):
         pnl_from_update, sl_tp_receipts = self.portfolio_manager.update_market_price(
             current_prices, self.current_step, current_lows, current_highs
         )
+
+        # Merge receipts from the early price update in step() (line ~2894).
+        # SL/TP often fire there (first call) so sl_tp_receipts above is empty.
+        # _pre_execute_sl_tp_receipts captures those early closures.
+        _pre_receipts = getattr(self, '_pre_execute_sl_tp_receipts', [])
+        if _pre_receipts:
+            sl_tp_receipts = _pre_receipts + [r for r in sl_tp_receipts if isinstance(r, dict)]
+            self._pre_execute_sl_tp_receipts = []  # consume once
+
         if sl_tp_receipts:
             self._step_closed_receipts.extend(sl_tp_receipts)
         if pnl_from_update != 0.0:
