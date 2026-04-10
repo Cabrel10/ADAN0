@@ -1043,6 +1043,17 @@ def main(
         include_dashboard=False,
         ignore_reinit_error=True,
         _temp_dir=_ray_tmp,
+        runtime_env={
+            # Ensure workers load the local src/ tree, not a stale install.
+            # This is the canonical fix for "wrong module loaded by Ray workers".
+            "working_dir": os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "env_vars": {
+                "PYTHONPATH": os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "src"
+                )
+            },
+        },
         _system_config={
             "automatic_object_spilling_enabled": True,
             "object_spilling_config": json.dumps({
