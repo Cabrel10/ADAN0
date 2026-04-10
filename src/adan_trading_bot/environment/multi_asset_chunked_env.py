@@ -1385,6 +1385,12 @@ class MultiAssetChunkedEnv(gym.Env):
         # Create a mapped assets list for the data loader
         mapped_assets = [asset_mapping.get(asset, asset) for asset in self.assets]
 
+        # CRITICAL: inject the uppercase mapped assets into portfolio_config so
+        # PortfolioManager.reset() pre-creates positions for each asset.
+        # Without this, portfolio_config.get("assets") returns [] and every trade
+        # triggers "Actif non trouvé — Ajout dynamique" warnings.
+        portfolio_config["assets"] = [a.upper() for a in mapped_assets]
+
         # Initialize PerformanceMetrics first (to be shared with PortfolioManager)
         from ..performance.metrics import PerformanceMetrics
 
