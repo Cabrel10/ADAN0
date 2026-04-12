@@ -1,27 +1,39 @@
 #!/usr/bin/env python3
 """
-ADAN Paper Trading Monitor — Production Version (v2)
+ADAN Paper Trading Monitor — Production Version (v3)
 ======================================================
-Real-time execution for ADAN paper trading on Binance Testnet.
+100% Auditable Paper Trading Engine with isolated virtual wallet.
 
-Architecture alignment (v2):
+Architecture alignment (v3):
   - Uses ``StateBuilder.build_observation()`` for the 12-dim context_vector
     (6 market: Volatility, Trend, ADX, Regime, Drawdown, Candle_Progress
      + 6 Time2Vec: sin/cos of hour, weekday, day-of-month)
   - ``ContextualTemporalFusionExtractor`` with FiLM Meta-RL modulation
   - Action is a continuous Box(25,) "Target Weight" vector:
-      * action[0] < -0.1 while long → DYNAMIC EXIT (close at market)
-      * action[0] > +0.33 → BUY signal
-      * action[0] < -0.33 → SELL signal
+      * action[0] < -0.1 while long -> DYNAMIC EXIT (close at market)
+      * action[0] > +0.33 -> BUY signal
+      * action[0] < -0.33 -> SELL signal
   - Capital Tier supremacy (Micro/Small/Medium/High/Enterprise)
 
+Virtual Wallet:
+  - initial_balance = $20.50 (completely isolated from Binance Testnet)
+  - max_balance = $25.00 (Micro Capital tier ceiling)
+  - max_concurrent_positions = 1 (Micro Capital)
+  - NO real orders are ever placed; ALL trades are simulated locally
+  - The Binance Testnet is used ONLY for candle data (read-only)
+
+Logging:
+  - [INTENTION] Worker {profil} | Action raw: {action_raw} | Size raw: {size_raw}
+  - [EXECUTION] ... BUY {size} BTC @ {price}
+
 Data pipeline:
-  1. Fetch 5m OHLCV from Binance → resample to 1h, 4h
-  2. Master Clock alignment (ffill higher TFs onto 5m index)
+  1. Fetch 5m OHLCV from Binance Testnet (or offline parquet)
+  2. Resample to 1h, 4h with Master Clock alignment
   3. Build observation via MultiAssetChunkedEnv's internal StateBuilder
-  4. PPO model.predict() → interpret Target-Weight action
+  4. PPO model.predict() -> interpret Target-Weight action
 
 Usage:
+    python scripts/paper_trading_monitor.py --offline
     python scripts/paper_trading_monitor.py --api-key <KEY> --api-secret <SECRET>
     python scripts/paper_trading_monitor.py  # reads from .env
 """
@@ -42,8 +54,11 @@ import pandas as pd
 # Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+except ImportError:
+    pass
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
@@ -74,6 +89,266 @@ logging.basicConfig(
 logger = logging.getLogger("paper_trading_monitor")
 
 
+# ============================================================================
+# ISOLATED VIRTUAL PORTFOLIO MANAGER
+# ============================================================================
+# This is 100% local. No connection to any exchange for order execution.
+# The Binance Testnet API is used ONLY for reading candle data.
+# ============================================================================
+
+class VirtualPortfolioManager:
+    """Isolated virtual portfolio — NO real orders, NO exchange leaks.
+
+    Parameters:
+        initial_balance: Starting cash ($20.50 default)
+        max_balance: Maximum allowed balance ($25.00 Micro Capital ceiling)
+        max_concurrent_positions: Maximum simultaneous positions (1 for Micro)
+        fee_rate: Simulated trading fee (0.001 = 0.1%)
+
+    All PnL calculations are local. The exchange is never contacted for
+    order placement, only for market data.
+    """
+
+    def __init__(
+        self,
+        initial_balance: float = 20.50,
+        max_balance: float = 25.00,
+        max_concurrent_positions: int = 1,
+        fee_rate: float = 0.001,
+    ):
+        self.initial_balance = initial_balance
+        self.max_balance = max_balance
+        self.max_concurrent_positions = max_concurrent_positions
+        self.fee_rate = fee_rate
+
+        # Virtual cash — completely isolated
+        self.cash = initial_balance
+        self.positions = []  # List of open position dicts
+        self.closed_trades = []  # Historical trade log
+        self.total_fees_paid = 0.0
+
+        # Statistics
+        self.total_trades = 0
+        self.wins = 0
+        self.losses = 0
+        self.max_drawdown = 0.0
+        self.peak_balance = initial_balance
+
+        logger.info(
+            f"[VIRTUAL_WALLET] Initialized: "
+            f"cash=${initial_balance:.2f}, max=${max_balance:.2f}, "
+            f"max_positions={max_concurrent_positions}, fee={fee_rate*100:.2f}%"
+        )
+
+    @property
+    def equity(self) -> float:
+        """Total equity = cash + unrealized PnL of open positions."""
+        unrealized = sum(self._unrealized_pnl(p) for p in self.positions)
+        return self.cash + unrealized
+
+    def _unrealized_pnl(self, pos: dict) -> float:
+        """Calculate unrealized PnL for a position."""
+        if pos["side"] == "BUY":
+            return (pos["current_price"] - pos["entry_price"]) * pos["size"]
+        else:
+            return (pos["entry_price"] - pos["current_price"]) * pos["size"]
+
+    def can_open_position(self) -> bool:
+        """Check if we can open a new position."""
+        return len(self.positions) < self.max_concurrent_positions
+
+    def open_position(
+        self, side: str, price: float, size_usd: float,
+        stop_loss_pct: float = 0.02, take_profit_pct: float = 0.03,
+        asset: str = "BTCUSDT",
+    ) -> dict:
+        """Open a virtual position — NO exchange order placed.
+
+        Args:
+            side: "BUY" or "SELL"
+            price: Current market price
+            size_usd: Notional value in USD
+            stop_loss_pct: Stop loss percentage
+            take_profit_pct: Take profit percentage
+            asset: Trading pair
+
+        Returns:
+            Position dict if opened, None if rejected.
+        """
+        if not self.can_open_position():
+            logger.warning(
+                f"[VIRTUAL_WALLET] REJECTED: max positions "
+                f"({self.max_concurrent_positions}) reached"
+            )
+            return None
+
+        # Calculate fee
+        fee = size_usd * self.fee_rate
+        total_cost = size_usd + fee
+
+        if total_cost > self.cash:
+            logger.warning(
+                f"[VIRTUAL_WALLET] REJECTED: insufficient cash "
+                f"${self.cash:.2f} < ${total_cost:.2f}"
+            )
+            return None
+
+        # Size in asset units
+        size_asset = size_usd / price
+
+        # SL/TP prices
+        if side == "BUY":
+            sl_price = price * (1 - stop_loss_pct)
+            tp_price = price * (1 + take_profit_pct)
+        else:
+            sl_price = price * (1 + stop_loss_pct)
+            tp_price = price * (1 - take_profit_pct)
+
+        # Deduct from cash
+        self.cash -= total_cost
+        self.total_fees_paid += fee
+
+        position = {
+            "id": len(self.closed_trades) + len(self.positions) + 1,
+            "side": side,
+            "asset": asset,
+            "entry_price": price,
+            "current_price": price,
+            "size": size_asset,
+            "notional_usd": size_usd,
+            "stop_loss": sl_price,
+            "take_profit": tp_price,
+            "stop_loss_pct": stop_loss_pct,
+            "take_profit_pct": take_profit_pct,
+            "entry_fee": fee,
+            "opened_at": datetime.now().isoformat(),
+            "steps_held": 0,
+        }
+        self.positions.append(position)
+        self.total_trades += 1
+
+        logger.info(
+            f"[EXECUTION] VIRTUAL {side} {size_asset:.6f} {asset} @ ${price:.2f} "
+            f"| Notional=${size_usd:.2f} | Fee=${fee:.4f} "
+            f"| SL=${sl_price:.2f} TP=${tp_price:.2f} "
+            f"| Cash remaining=${self.cash:.2f}"
+        )
+
+        return position
+
+    def close_position(self, pos_idx: int, price: float, reason: str = "Manual") -> dict:
+        """Close a virtual position — NO exchange order placed.
+
+        Returns:
+            Trade receipt dict.
+        """
+        if pos_idx >= len(self.positions):
+            return None
+
+        pos = self.positions.pop(pos_idx)
+
+        # Calculate PnL
+        if pos["side"] == "BUY":
+            pnl_usd = (price - pos["entry_price"]) * pos["size"]
+        else:
+            pnl_usd = (pos["entry_price"] - price) * pos["size"]
+
+        # Exit fee
+        exit_notional = price * pos["size"]
+        exit_fee = exit_notional * self.fee_rate
+        net_pnl = pnl_usd - exit_fee
+        self.total_fees_paid += exit_fee
+
+        # Return proceeds to cash
+        self.cash += pos["notional_usd"] + net_pnl
+        pnl_pct = (net_pnl / pos["notional_usd"]) * 100 if pos["notional_usd"] > 0 else 0
+
+        # Track wins/losses
+        if net_pnl > 0:
+            self.wins += 1
+        else:
+            self.losses += 1
+
+        # Update peak and drawdown
+        current_equity = self.equity
+        if current_equity > self.peak_balance:
+            self.peak_balance = current_equity
+        dd = (self.peak_balance - current_equity) / self.peak_balance if self.peak_balance > 0 else 0
+        if dd > self.max_drawdown:
+            self.max_drawdown = dd
+
+        receipt = {
+            "id": pos["id"],
+            "side": pos["side"],
+            "asset": pos["asset"],
+            "entry_price": pos["entry_price"],
+            "exit_price": price,
+            "size": pos["size"],
+            "notional_usd": pos["notional_usd"],
+            "pnl_usd": net_pnl,
+            "pnl_pct": pnl_pct,
+            "fees": pos["entry_fee"] + exit_fee,
+            "reason": reason,
+            "opened_at": pos["opened_at"],
+            "closed_at": datetime.now().isoformat(),
+            "steps_held": pos["steps_held"],
+            "balance_after": self.cash,
+        }
+        self.closed_trades.append(receipt)
+
+        logger.info(
+            f"[EXECUTION] VIRTUAL CLOSE {pos['side']} ({reason}): "
+            f"PnL=${net_pnl:+.4f} ({pnl_pct:+.2f}%) | "
+            f"Fees=${pos['entry_fee'] + exit_fee:.4f} | "
+            f"Balance=${self.cash:.2f}"
+        )
+
+        return receipt
+
+    def update_prices(self, price: float, asset: str = "BTCUSDT"):
+        """Update current prices and check SL/TP for open positions."""
+        to_close = []
+        for i, pos in enumerate(self.positions):
+            if pos["asset"] != asset:
+                continue
+            pos["current_price"] = price
+            pos["steps_held"] += 1
+
+            # Check SL/TP
+            if pos["side"] == "BUY":
+                if price <= pos["stop_loss"]:
+                    to_close.append((i, "STOP_LOSS"))
+                elif price >= pos["take_profit"]:
+                    to_close.append((i, "TAKE_PROFIT"))
+            else:
+                if price >= pos["stop_loss"]:
+                    to_close.append((i, "STOP_LOSS"))
+                elif price <= pos["take_profit"]:
+                    to_close.append((i, "TAKE_PROFIT"))
+
+        # Close in reverse order to preserve indices
+        for idx, reason in reversed(to_close):
+            self.close_position(idx, price, reason=reason)
+
+    def get_summary(self) -> dict:
+        """Generate portfolio summary."""
+        total_return = (self.equity - self.initial_balance) / self.initial_balance * 100
+        win_rate = self.wins / max(1, self.wins + self.losses) * 100
+        return {
+            "initial_balance": self.initial_balance,
+            "current_cash": self.cash,
+            "current_equity": self.equity,
+            "total_return_pct": total_return,
+            "total_trades": self.total_trades,
+            "wins": self.wins,
+            "losses": self.losses,
+            "win_rate_pct": win_rate,
+            "max_drawdown_pct": self.max_drawdown * 100,
+            "total_fees_paid": self.total_fees_paid,
+            "open_positions": len(self.positions),
+        }
+
+
 # ── Capital Tier resolution ────────────────────────────────────────────────
 def get_capital_tier(balance: float, tiers: list) -> dict:
     """Return the matching capital tier dict for the given balance."""
@@ -82,7 +357,8 @@ def get_capital_tier(balance: float, tiers: list) -> dict:
         max_cap = tier.get("max_capital") or float("inf")
         if min_cap <= balance < max_cap:
             return tier
-    return {"name": "Micro Capital", "exposure_range": [70, 90], "risk_per_trade_pct": 4.0}
+    return {"name": "Micro Capital", "exposure_range": [70, 90],
+            "risk_per_trade_pct": 4.0, "max_concurrent_positions": 1}
 
 
 # ── Action interpreter ─────────────────────────────────────────────────────
@@ -90,14 +366,8 @@ def interpret_target_weight_action(action_raw, has_position: bool) -> dict:
     """Interpret the continuous Target-Weight action vector.
 
     Returns dict with keys: signal, size_raw, confidence.
-
-    ``action_raw`` may arrive as:
-      - shape (25,) -- single-env predict
-      - shape (1, 25) -- batched predict (VecEnv)
-    We flatten to 1-D before interpretation.
     """
-    import numpy as _np
-    arr = _np.asarray(action_raw).flatten()
+    arr = np.asarray(action_raw).flatten()
     if arr.size > 0:
         signal_raw = float(arr[0])
         size_raw = float(arr[1]) if arr.size > 1 else 0.0
@@ -107,51 +377,56 @@ def interpret_target_weight_action(action_raw, has_position: bool) -> dict:
 
     # Dynamic exit: agent signals negative while already long
     if has_position and signal_raw < -0.1:
-        return {"signal": "DYNAMIC_EXIT", "size_raw": size_raw, "confidence": abs(signal_raw)}
+        return {"signal": "DYNAMIC_EXIT", "size_raw": size_raw,
+                "confidence": abs(signal_raw)}
 
     if signal_raw > 0.33:
-        return {"signal": "BUY", "size_raw": size_raw, "confidence": min(signal_raw, 1.0)}
+        return {"signal": "BUY", "size_raw": size_raw,
+                "confidence": min(signal_raw, 1.0)}
     elif signal_raw < -0.33:
-        return {"signal": "SELL", "size_raw": size_raw, "confidence": min(abs(signal_raw), 1.0)}
+        return {"signal": "SELL", "size_raw": size_raw,
+                "confidence": min(abs(signal_raw), 1.0)}
 
-    return {"signal": "HOLD", "size_raw": size_raw, "confidence": 1.0 - abs(signal_raw) * 2}
+    return {"signal": "HOLD", "size_raw": size_raw,
+            "confidence": 1.0 - abs(signal_raw) * 2}
 
 
 class PaperTradingMonitor:
-    """Real-time paper trading monitor for ADAN on Binance Testnet.
+    """Real-time paper trading monitor for ADAN.
 
     Supports two modes:
-      - Live:    connects to Binance Testnet via ccxt, fetches real OHLCV.
-      - Offline:  uses locally generated parquet data (from generate_colab_dataset.py)
-                  and replays it step-by-step through the environment.
+      - Live:    connects to Binance Testnet via ccxt for CANDLE DATA ONLY
+      - Offline: uses locally generated parquet data and replays step-by-step
 
-    The offline mode lets you validate the full inference pipeline
-    (VecNormalize, StateBuilder, model.predict) without network access.
+    IMPORTANT: The virtual wallet ($20.50) is 100% isolated.
+    No real orders are ever placed. The Testnet connection is READ-ONLY.
     """
 
-    def __init__(self, config_path="config/config.yaml", api_key=None, api_secret=None,
-                 offline=False):
+    def __init__(self, config_path="config/config.yaml", api_key=None,
+                 api_secret=None, offline=False):
         self.config = ConfigLoader.load_config(config_path)
         self.api_key = api_key or os.getenv("BINANCE_API_KEY", "")
         self.api_secret = api_secret or os.getenv("BINANCE_SECRET_KEY", "")
         self.testnet = os.getenv("BINANCE_TESTNET", "true").lower() == "true"
         self.symbol = os.getenv("TRADING_PAIR", "BTC/USDT")
-        self.initial_balance = float(os.getenv("INITIAL_BALANCE", "25"))
         self.offline = offline
-
-        self.virtual_balance = self.initial_balance
-        self.active_position = None  # {side, entry_price, tp, sl, timestamp}
-        self.trades = []
-        self.timeframes = ["5m", "1h", "4h"]
-        self.analysis_interval = 5  # 5s in offline mode, 300s live
-        self.tp_sl_check_interval = 2  # seconds (2s offline, 30s live)
-
-        if not self.offline:
-            self.analysis_interval = 300
-            self.tp_sl_check_interval = 30
 
         # Capital tiers from config
         self.capital_tiers = self.config.get("capital_tiers", [])
+
+        # ── ISOLATED VIRTUAL WALLET ──
+        # This wallet has NO connection to Binance Testnet or any exchange.
+        # It is purely a local simulation.
+        self.portfolio = VirtualPortfolioManager(
+            initial_balance=20.50,
+            max_balance=25.00,
+            max_concurrent_positions=1,
+            fee_rate=0.001,
+        )
+
+        self.timeframes = ["5m", "1h", "4h"]
+        self.analysis_interval = 5 if offline else 300  # seconds
+        self.tp_sl_check_interval = 2 if offline else 30  # seconds
 
         # Model
         self.model = None
@@ -168,17 +443,19 @@ class PaperTradingMonitor:
         self._offline_obs = None
         self._offline_step = 0
 
-        mode_str = "OFFLINE (local data)" if self.offline else "LIVE (Binance Testnet)"
+        mode_str = "OFFLINE (local data)" if self.offline else "LIVE (Binance Testnet READ-ONLY)"
         logger.info(f"Paper Trading Monitor initialized -- {mode_str}")
         logger.info(f"  Symbol: {self.symbol}")
-        logger.info(f"  Balance: ${self.initial_balance}")
-        logger.info(f"  Testnet: {self.testnet}")
+        logger.info(f"  Virtual Balance: ${self.portfolio.cash:.2f} (ISOLATED)")
+        logger.info(f"  Max Balance: ${self.portfolio.max_balance:.2f}")
+        logger.info(f"  Testnet data: {self.testnet}")
+        logger.info(f"  WARNING: NO real orders -- virtual wallet only")
 
     def setup_exchange(self):
-        """Initialize ccxt exchange connection.
+        """Initialize ccxt exchange for READ-ONLY candle data.
 
-        In offline mode, skip connection entirely and load local data instead.
-        If the exchange is unreachable, automatically fall back to offline mode.
+        In offline mode, skip connection entirely.
+        IMPORTANT: This connection is NEVER used for placing orders.
         """
         if self.offline:
             logger.info("Offline mode: skipping exchange connection")
@@ -195,9 +472,9 @@ class PaperTradingMonitor:
             if self.testnet:
                 self.exchange.set_sandbox_mode(True)
 
-            # Test connection
+            # Test connection (read-only)
             self.exchange.fetch_time()
-            logger.info("Exchange connected (Binance Testnet)")
+            logger.info("Exchange connected (READ-ONLY for candle data)")
             return True
         except Exception as e:
             logger.warning(f"Exchange setup failed: {e}")
@@ -215,7 +492,7 @@ class PaperTradingMonitor:
             data = loader.load_chunk(0)
 
             if not data:
-                logger.error("No local data found. Run generate_colab_dataset.py first.")
+                logger.error("No local data. Run generate_colab_dataset.py first.")
                 return False
 
             raw_env = MultiAssetChunkedEnv(
@@ -224,7 +501,11 @@ class PaperTradingMonitor:
             )
             dummy = DummyVecEnv([lambda: raw_env])
 
-            vecnorm_path = PROJECT_ROOT / "models" / "rl_agents" / "vecnormalize.pkl"
+            # Try production model first, then simple model
+            vecnorm_path = PROJECT_ROOT / "models" / "rl_agents" / "production" / "vecnormalize.pkl"
+            if not vecnorm_path.exists():
+                vecnorm_path = PROJECT_ROOT / "models" / "rl_agents" / "vecnormalize.pkl"
+
             if vecnorm_path.exists():
                 self._offline_vec_env = VecNormalize.load(str(vecnorm_path), dummy)
                 self._offline_vec_env.training = False
@@ -241,9 +522,7 @@ class PaperTradingMonitor:
             self._offline_obs = self._offline_vec_env.reset()
             self._offline_step = 0
 
-            # Cache data for get_current_price
             self.latest_data = data
-
             asset = self.symbol.replace("/", "")
             rows = 0
             for tf, df in data.get(asset, {}).items():
@@ -258,8 +537,8 @@ class PaperTradingMonitor:
     def load_model(self, model_path=None):
         """Load the PPO model for inference."""
         if model_path is None:
-            # Try default paths
             candidates = [
+                PROJECT_ROOT / "models" / "rl_agents" / "production" / "model.zip",
                 PROJECT_ROOT / "models" / "rl_agents" / "ppo_adan_simple.zip",
                 PROJECT_ROOT / "models" / "w1" / "w1_model_final.zip",
                 PROJECT_ROOT / "models" / "w1" / "model.zip",
@@ -279,18 +558,14 @@ class PaperTradingMonitor:
         return True
 
     def fetch_live_data(self) -> dict:
-        """Fetch 5m OHLCV and resample to 1h, 4h with Master Clock alignment.
-
-        Returns dict: {symbol: {tf: DataFrame}} matching ChunkedDataLoader format.
-        """
+        """Fetch 5m OHLCV (READ-ONLY) and resample to 1h, 4h."""
         if not self.exchange:
             return None
 
         try:
-            # Fetch 2000 5m candles (multi-pass)
             all_candles = []
             since = None
-            for _ in range(2):  # 2 x 1000
+            for _ in range(2):
                 batch = self.exchange.fetch_ohlcv(
                     self.symbol, "5m", since=since, limit=1000
                 )
@@ -312,16 +587,14 @@ class PaperTradingMonitor:
             df_5m = df_5m.set_index("timestamp").sort_index()
             df_5m = df_5m[~df_5m.index.duplicated(keep="first")]
 
-            # Resample to higher timeframes
-            agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+            agg = {"open": "first", "high": "max", "low": "min",
+                   "close": "last", "volume": "sum"}
             df_1h = df_5m.resample("1h").agg(agg).dropna()
             df_4h = df_5m.resample("4h").agg(agg).dropna()
 
-            # Master Clock: reindex 1h/4h onto 5m
             df_1h = df_1h.reindex(df_5m.index, method="ffill").dropna(subset=["close"])
             df_4h = df_4h.reindex(df_5m.index, method="ffill").dropna(subset=["close"])
 
-            # Common index
             common = df_5m.index.intersection(df_1h.index).intersection(df_4h.index)
             asset_name = self.symbol.replace("/", "")
 
@@ -334,8 +607,8 @@ class PaperTradingMonitor:
             }
 
             logger.info(
-                f"Live data: {len(common)} aligned rows, "
-                f"5m price={df_5m['close'].iloc[-1]:.2f}"
+                f"Live data (READ-ONLY): {len(common)} aligned rows, "
+                f"5m price=${df_5m['close'].iloc[-1]:.2f}"
             )
             self.latest_data = data
             return data
@@ -354,109 +627,64 @@ class PaperTradingMonitor:
                     return float(df["close"].iloc[-1])
         return 0.0
 
-    def check_tp_sl(self):
-        """Check if TP or SL has been hit."""
-        if not self.active_position:
-            return
+    def execute_signal(self, action_info: dict, action_raw, price: float):
+        """Execute a trading signal via the VIRTUAL portfolio.
 
-        price = self.get_current_price()
-        if price <= 0:
-            return
-
-        pos = self.active_position
-        hit = None
-
-        if pos["side"] == "BUY":
-            if price >= pos["tp"]:
-                hit = "TP"
-            elif price <= pos["sl"]:
-                hit = "SL"
-        else:
-            if price <= pos["tp"]:
-                hit = "TP"
-            elif price >= pos["sl"]:
-                hit = "SL"
-
-        if hit:
-            self._close_position(price, reason=hit)
-
-    def _close_position(self, exit_price: float, reason: str = "Manual"):
-        """Close the active position and record the trade."""
-        if not self.active_position:
-            return
-
-        pos = self.active_position
-        entry = pos["entry_price"]
-        pnl_pct = ((exit_price - entry) / entry * 100) if pos["side"] == "BUY" else ((entry - exit_price) / entry * 100)
-        pnl_abs = pnl_pct / 100 * self.virtual_balance * 0.5  # ~50% exposure
-
-        self.virtual_balance += pnl_abs
-
-        trade = {
-            "side": pos["side"],
-            "entry": entry,
-            "exit": exit_price,
-            "pnl_pct": pnl_pct,
-            "pnl_abs": pnl_abs,
-            "reason": reason,
-            "timestamp": datetime.now().isoformat(),
-            "balance_after": self.virtual_balance,
-        }
-        self.trades.append(trade)
-        self.active_position = None
-
-        logger.info(
-            f"CLOSED {pos['side']} ({reason}): "
-            f"PnL={pnl_pct:+.2f}% (${pnl_abs:+.2f}), "
-            f"Balance=${self.virtual_balance:.2f}"
-        )
-
-    def execute_signal(self, action_info: dict, price: float):
-        """Execute a trading signal based on the interpreted action."""
+        Logs [INTENTION] before decision and [EXECUTION] after.
+        NO real exchange orders are placed.
+        """
         signal = action_info["signal"]
-        tier = get_capital_tier(self.virtual_balance, self.capital_tiers)
+        tier = get_capital_tier(self.portfolio.cash, self.capital_tiers)
         tier_name = tier.get("name", "Micro Capital")
 
+        # Extract raw values for logging
+        arr = np.asarray(action_raw).flatten()
+        raw0 = float(arr[0]) if arr.size > 0 else 0.0
+        raw1 = float(arr[1]) if arr.size > 1 else 0.0
+
+        # [INTENTION] log
+        logger.info(
+            f"[INTENTION] Worker {tier_name} | "
+            f"Action raw: {raw0:.4f} | Size raw: {raw1:.4f} | "
+            f"Signal: {signal} | Confidence: {action_info['confidence']:.3f} | "
+            f"Price: ${price:.2f} | Cash: ${self.portfolio.cash:.2f}"
+        )
+
         if signal == "DYNAMIC_EXIT":
-            if self.active_position:
-                self._close_position(price, reason="DYNAMIC_EXIT")
+            if self.portfolio.positions:
+                self.portfolio.close_position(0, price, reason="DYNAMIC_EXIT")
             return
 
-        if signal == "BUY" and not self.active_position:
-            # Apply tier risk limits
-            max_risk_pct = tier.get("risk_per_trade_pct", 4.0) / 100
-            exposure = tier.get("exposure_range", [70, 90])
-            tp_pct = 0.03  # 3% default
-            sl_pct = min(0.02, max_risk_pct)  # capped by tier
+        if signal == "BUY" and self.portfolio.can_open_position():
+            # Compute notional from tier exposure
+            exposure_range = tier.get("exposure_range", [70, 90])
+            exposure_pct = (exposure_range[0] + exposure_range[1]) / 2 / 100
+            risk_pct = tier.get("risk_per_trade_pct", 4.0) / 100
+            notional = min(
+                self.portfolio.cash * exposure_pct,
+                self.portfolio.cash * 0.95,  # Never use more than 95%
+            )
+            # Minimum order check
+            if notional < 11.0:
+                logger.info(
+                    f"[EXECUTION] REJECTED: notional ${notional:.2f} < $11.00 minimum"
+                )
+                return
 
-            self.active_position = {
-                "side": "BUY",
-                "entry_price": price,
-                "tp": price * (1 + tp_pct),
-                "sl": price * (1 - sl_pct),
-                "timestamp": datetime.now().isoformat(),
-                "tier": tier_name,
-            }
-            logger.info(
-                f"OPENED BUY @ {price:.2f} | "
-                f"TP={self.active_position['tp']:.2f} SL={self.active_position['sl']:.2f} | "
-                f"Tier={tier_name}"
+            self.portfolio.open_position(
+                side="BUY",
+                price=price,
+                size_usd=notional,
+                stop_loss_pct=min(0.02, risk_pct),
+                take_profit_pct=0.03,
+                asset=self.symbol.replace("/", ""),
             )
 
-        elif signal == "SELL" and self.active_position:
-            self._close_position(price, reason="SELL_SIGNAL")
+        elif signal == "SELL" and self.portfolio.positions:
+            self.portfolio.close_position(0, price, reason="SELL_SIGNAL")
 
     def run_analysis_cycle(self):
-        """One analysis cycle: fetch data -> build obs -> predict -> execute.
-
-        Inference pipeline:
-          1. Wrap data in MultiAssetChunkedEnv -> DummyVecEnv.
-          2. Load VecNormalize stats from training (training=False, norm_reward=False).
-          3. StateBuilder.build_observation() produces the 12-dim context_vector.
-          4. model.predict(obs, deterministic=True) -> interpret target-weight action.
-
-        In offline mode the environment is already built; we simply step through it.
-        """
+        """One analysis cycle: fetch data -> predict -> execute."""
         if self.offline:
             return self._run_offline_cycle()
 
@@ -469,7 +697,6 @@ class PaperTradingMonitor:
             return
 
         try:
-            # Build observation through the real env pipeline
             asset = self.symbol.replace("/", "")
             wc = copy.deepcopy(self.config.get("workers", {}).get("w1", {}))
             wc["worker_id"] = 0
@@ -480,39 +707,34 @@ class PaperTradingMonitor:
             )
             dummy_env = DummyVecEnv([lambda: raw_env])
 
-            # -- VecNormalize: load training stats for inference
-            vecnorm_path = PROJECT_ROOT / "models" / "rl_agents" / "vecnormalize.pkl"
+            vecnorm_path = PROJECT_ROOT / "models" / "rl_agents" / "production" / "vecnormalize.pkl"
+            if not vecnorm_path.exists():
+                vecnorm_path = PROJECT_ROOT / "models" / "rl_agents" / "vecnormalize.pkl"
+
             if vecnorm_path.exists():
                 vec_env = VecNormalize.load(str(vecnorm_path), dummy_env)
                 vec_env.training = False
                 vec_env.norm_reward = False
-                logger.info(f"VecNormalize loaded from {vecnorm_path} (inference mode)")
             else:
                 gamma = self.config.get("agent", {}).get("gamma", 0.99)
                 vec_env = VecNormalize(
                     dummy_env, norm_obs=True, norm_reward=False,
                     clip_obs=10.0, gamma=gamma, training=False,
                 )
-                logger.warning("VecNormalize stats not found -- identity normalisation")
 
             obs = vec_env.reset()
-            self._log_context_vector(obs)
-
             action, _ = self.model.predict(obs, deterministic=True)
             action_info = interpret_target_weight_action(
-                action, has_position=self.active_position is not None
+                action, has_position=len(self.portfolio.positions) > 0
             )
-            self._log_prediction(action, action_info)
 
             if action_info["signal"] != "HOLD":
-                self.execute_signal(action_info, price)
+                self.execute_signal(action_info, action, price)
 
             vec_env.close()
 
         except Exception as e:
             logger.error(f"Analysis cycle failed: {e}", exc_info=True)
-
-    # ---- Offline replay helpers ------------------------------------------
 
     def _run_offline_cycle(self):
         """Step through the pre-built offline env and predict."""
@@ -522,22 +744,21 @@ class PaperTradingMonitor:
 
         try:
             obs = self._offline_obs
-            self._log_context_vector(obs)
 
             action, _ = self.model.predict(obs, deterministic=True)
             action_info = interpret_target_weight_action(
-                action, has_position=self.active_position is not None
+                action, has_position=len(self.portfolio.positions) > 0
             )
 
-            # Derive simulated price from context or latest data
             price = self.get_current_price()
             if price <= 0:
-                price = 65000.0  # fallback
+                price = 65000.0
 
-            self._log_prediction(action, action_info)
+            # Update virtual positions with current price
+            self.portfolio.update_prices(price, self.symbol.replace("/", ""))
 
             if action_info["signal"] != "HOLD":
-                self.execute_signal(action_info, price)
+                self.execute_signal(action_info, action, price)
 
             # Step the environment forward
             obs_next, reward, done, info = self._offline_vec_env.step(action)
@@ -550,53 +771,28 @@ class PaperTradingMonitor:
 
             self._offline_obs = obs_next
 
-            logger.info(
-                f"[offline step {self._offline_step}] "
-                f"reward={reward[0]:.4f}, balance=${self.virtual_balance:.2f}"
-            )
+            if self._offline_step % 50 == 0:
+                logger.info(
+                    f"[OFFLINE] step={self._offline_step} "
+                    f"env_reward={reward[0]:.4f} "
+                    f"virtual_equity=${self.portfolio.equity:.2f} "
+                    f"positions={len(self.portfolio.positions)}"
+                )
 
         except Exception as e:
-            logger.error(f"Offline analysis cycle failed: {e}", exc_info=True)
-
-    # ---- Logging helpers -------------------------------------------------
-
-    def _log_context_vector(self, obs):
-        """Log the 12-D context vector from the observation."""
-        if isinstance(obs, dict):
-            cv = obs.get("context_vector")
-        else:
-            cv = None
-        if cv is not None:
-            cv_flat = cv[0] if cv.ndim > 1 else cv
-            logger.info(
-                f"Context vector (12D): "
-                f"vol={cv_flat[0]:.3f} trend={cv_flat[1]:.3f} adx={cv_flat[2]:.3f} "
-                f"regime={cv_flat[3]:.3f} dd={cv_flat[4]:.3f} candle={cv_flat[5]:.3f} "
-                f"sinH={cv_flat[6]:.3f} cosH={cv_flat[7]:.3f}"
-            )
-
-    def _log_prediction(self, action, action_info):
-        """Log model prediction details."""
-        raw0 = float(action[0][0]) if action.ndim > 1 else float(action[0])
-        logger.info(
-            f"PREDICTION: {action_info['signal']} "
-            f"(confidence={action_info['confidence']:.3f}, "
-            f"raw[0]={raw0:.4f})"
-        )
+            logger.error(f"Offline cycle failed: {e}", exc_info=True)
 
     def run(self, duration_minutes: int = 360):
-        """Main event loop.
-
-        In offline mode the loop sleep is shortened so the full duration
-        runs through many environment steps in wall-clock time.
-        """
+        """Main event loop."""
         logger.info("=" * 70)
-        logger.info("ADAN Paper Trading Monitor v2 (FiLM + context_vector)")
-        mode_str = "OFFLINE" if self.offline else "LIVE"
+        logger.info("ADAN Paper Trading Monitor v3 (Isolated Virtual Wallet)")
+        mode_str = "OFFLINE" if self.offline else "LIVE (READ-ONLY data)"
         logger.info(f"  Mode: {mode_str}")
         logger.info(f"  Duration: {duration_minutes} min")
         logger.info(f"  Analysis interval: {self.analysis_interval}s")
-        logger.info(f"  Balance: ${self.virtual_balance:.2f}")
+        logger.info(f"  Virtual Balance: ${self.portfolio.cash:.2f} (ISOLATED)")
+        logger.info(f"  Tier: Micro Capital (max_positions=1)")
+        logger.info(f"  NO REAL ORDERS will be placed")
         logger.info("=" * 70)
 
         if not self.setup_exchange():
@@ -613,7 +809,11 @@ class PaperTradingMonitor:
 
                 # TP/SL check
                 if now - self.last_tp_sl_check > self.tp_sl_check_interval:
-                    self.check_tp_sl()
+                    price = self.get_current_price()
+                    if price > 0:
+                        self.portfolio.update_prices(
+                            price, self.symbol.replace("/", "")
+                        )
                     self.last_tp_sl_check = now
 
                 # Analysis cycle
@@ -631,20 +831,25 @@ class PaperTradingMonitor:
                 time.sleep(5)
 
         # Final report
+        summary = self.portfolio.get_summary()
         logger.info("=" * 70)
-        logger.info("PAPER TRADING SESSION COMPLETE")
-        logger.info(f"  Trades: {len(self.trades)}")
-        logger.info(f"  Final balance: ${self.virtual_balance:.2f}")
-        logger.info(f"  Return: {((self.virtual_balance - self.initial_balance) / self.initial_balance * 100):+.2f}%")
+        logger.info("PAPER TRADING SESSION COMPLETE (VIRTUAL)")
+        logger.info(f"  Trades: {summary['total_trades']}")
+        logger.info(f"  Wins/Losses: {summary['wins']}/{summary['losses']}")
+        logger.info(f"  Win Rate: {summary['win_rate_pct']:.1f}%")
+        logger.info(f"  Final Equity: ${summary['current_equity']:.2f}")
+        logger.info(f"  Return: {summary['total_return_pct']:+.2f}%")
+        logger.info(f"  Max Drawdown: {summary['max_drawdown_pct']:.2f}%")
+        logger.info(f"  Total Fees: ${summary['total_fees_paid']:.4f}")
         logger.info("=" * 70)
 
         # Save results
         results = {
-            "initial_balance": self.initial_balance,
-            "final_balance": self.virtual_balance,
-            "return_pct": (self.virtual_balance - self.initial_balance) / self.initial_balance * 100,
-            "trades": self.trades,
+            **summary,
+            "trades": self.portfolio.closed_trades,
             "timestamp": datetime.now().isoformat(),
+            "mode": "offline" if self.offline else "live",
+            "wallet_type": "VIRTUAL_ISOLATED",
         }
         results_path = PROJECT_ROOT / "results" / "paper_trading_report.json"
         results_path.parent.mkdir(parents=True, exist_ok=True)
@@ -654,15 +859,18 @@ class PaperTradingMonitor:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ADAN Paper Trading Monitor v2")
+    parser = argparse.ArgumentParser(
+        description="ADAN Paper Trading Monitor v3 (Isolated Virtual Wallet)"
+    )
     parser.add_argument("--config", default="config/config.yaml")
     parser.add_argument("--model", default=None, help="Model .zip path")
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--api-secret", default=None)
-    parser.add_argument("--duration", type=int, default=360, help="Duration in minutes")
+    parser.add_argument("--duration", type=int, default=360,
+                        help="Duration in minutes")
     parser.add_argument(
         "--offline", action="store_true",
-        help="Run in offline mode using local parquet data (no exchange needed)",
+        help="Run offline using local parquet data (no exchange needed)",
     )
     args = parser.parse_args()
 

@@ -947,14 +947,31 @@ def run_pbt(
             tuner = None
 
     if tuner is None:
+        # Colab T4 GPU: share 1 GPU across 4 workers (0.25 GPU each)
+        _is_colab = False
+        try:
+            import google.colab  # noqa: F401
+            _is_colab = True
+        except ImportError:
+            pass
+
+        tune_config_kwargs = dict(
+            scheduler=pbt_scheduler,
+            num_samples=num_samples,
+            max_concurrent_trials=num_samples,
+            reuse_actors=False,
+        )
+        if _is_colab:
+            import torch as _torch
+            if _torch.cuda.is_available():
+                tune_config_kwargs["trial_resources"] = {
+                    "cpu": 0.5,
+                    "gpu": 0.25,
+                }
+
         tuner = tune.Tuner(
             ADAN_PBT_Worker,
-            tune_config=tune.TuneConfig(
-                scheduler=pbt_scheduler,
-                num_samples=num_samples,
-                max_concurrent_trials=num_samples,
-                reuse_actors=False,
-            ),
+            tune_config=tune.TuneConfig(**tune_config_kwargs),
             run_config=tune.RunConfig(
                 name="adan_pbt_training",
                 storage_path=str(storage_path),
@@ -1033,12 +1050,38 @@ def main(
     # Storage path
     storage_path = checkpoint_dir or str(TRAIN_OUTPUT_DIR / "ray_results")
 
-    # Init Ray — redirect temp dir to external mount to avoid filling /tmp
-    # OOM PROTECTION: Enable object spilling to disk when RAM is exhausted
-    # instead of crashing the GCS and killing the entire training session.
-    _ray_tmp = "/mnt/new_data/t10_training/ray_tmp"
+    # ── Google Colab Detection & Auto-Configuration ───────────────────────
+    # When running on Colab (free/Pro), resources are limited:
+    #   - T4 GPU: 16 GB VRAM, shared across 4 workers
+    #   - CPU: 2 cores
+    #   - RAM: 12-25 GB depending on tier
+    # We auto-detect Colab and adjust resources accordingly.
+    IS_COLAB = False
+    try:
+        import google.colab  # noqa: F401
+        IS_COLAB = True
+        logger.info("[COLAB] Google Colab detected — applying T4 GPU optimizations")
+        # Override resources for Colab T4
+        num_cpus = 2
+        envs_per_worker = 1  # Minimize RAM per worker
+        use_subproc = False  # DummyVecEnv to avoid fork issues
+        logger.info(
+            f"[COLAB] Resources: num_cpus={num_cpus}, device=cuda, "
+            f"envs_per_worker={envs_per_worker}, "
+            f"resources_per_trial={{cpu: 0.5, gpu: 0.25}} (4 workers share T4)"
+        )
+    except ImportError:
+        IS_COLAB = False
+
+    # Init Ray — redirect temp dir to avoid filling /tmp
+    # OOM PROTECTION: Enable object spilling to disk when RAM is exhausted.
+    if IS_COLAB:
+        _ray_tmp = "/tmp/ray_adan"
+    else:
+        _ray_tmp = "/mnt/new_data/t10_training/ray_tmp"
     os.makedirs(_ray_tmp, exist_ok=True)
-    ray.init(
+
+    ray_init_kwargs = dict(
         num_cpus=num_cpus,
         include_dashboard=False,
         ignore_reinit_error=True,
@@ -1062,6 +1105,9 @@ def main(
             }),
         },
     )
+    if IS_COLAB and torch.cuda.is_available():
+        ray_init_kwargs["num_gpus"] = 1  # Expose the T4 to Ray
+    ray.init(**ray_init_kwargs)
 
     logger.info("=" * 80)
     logger.info("🔥 ADAN PBT AutoRL Training")
