@@ -1051,62 +1051,59 @@ def main(
     storage_path = checkpoint_dir or str(TRAIN_OUTPUT_DIR / "ray_results")
 
     # ── Google Colab Detection & Auto-Configuration ───────────────────────
-    # When running on Colab (free/Pro), resources are limited:
-    #   - T4 GPU: 16 GB VRAM, shared across 4 workers
-    #   - CPU: 2 cores
-    #   - RAM: 12-25 GB depending on tier
-    # We auto-detect Colab and adjust resources accordingly.
     IS_COLAB = False
     try:
         import google.colab  # noqa: F401
         IS_COLAB = True
         logger.info("[COLAB] Google Colab detected — applying T4 GPU optimizations")
-        # Override resources for Colab T4
         num_cpus = 2
-        envs_per_worker = 1  # Minimize RAM per worker
-        use_subproc = False  # DummyVecEnv to avoid fork issues
-        logger.info(
-            f"[COLAB] Resources: num_cpus={num_cpus}, device=cuda, "
-            f"envs_per_worker={envs_per_worker}, "
-            f"resources_per_trial={{cpu: 0.5, gpu: 0.25}} (4 workers share T4)"
-        )
+        envs_per_worker = 1
+        use_subproc = False
     except ImportError:
         IS_COLAB = False
 
-    # Init Ray — redirect temp dir to avoid filling /tmp
-    # OOM PROTECTION: Enable object spilling to disk when RAM is exhausted.
+    # Init Ray
     if IS_COLAB:
         _ray_tmp = "/tmp/ray_adan"
     else:
         _ray_tmp = "/mnt/new_data/t10_training/ray_tmp"
     os.makedirs(_ray_tmp, exist_ok=True)
 
-    ray_init_kwargs = dict(
-        num_cpus=num_cpus,
-        include_dashboard=False,
-        ignore_reinit_error=True,
-        _temp_dir=_ray_tmp,
-        runtime_env={
-            # Ensure workers load the local src/ tree, not a stale install.
-            # This is the canonical fix for "wrong module loaded by Ray workers".
-            "working_dir": os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "env_vars": {
-                "PYTHONPATH": os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                    "src"
-                )
-            },
-        },
-        _system_config={
+    # Build PYTHONPATH so Ray workers find adan_trading_bot without pip install
+    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _src_dir = os.path.join(_project_root, "src")
+    _pythonpath = _src_dir + ":" + os.environ.get("PYTHONPATH", "")
+
+    if IS_COLAB:
+        # On Colab: runtime_env with working_dir zips the whole repo — too slow.
+        # Use env_vars only: workers inherit PYTHONPATH set before ray.init().
+        os.environ["PYTHONPATH"] = _pythonpath
+        _runtime_env = {"env_vars": {"PYTHONPATH": _pythonpath}}
+        _system_config = {}  # Avoid _system_config issues on Colab Ray 2.54+
+    else:
+        _runtime_env = {
+            "working_dir": _project_root,
+            "env_vars": {"PYTHONPATH": _src_dir},
+        }
+        _system_config = {
             "automatic_object_spilling_enabled": True,
             "object_spilling_config": json.dumps({
                 "type": "filesystem",
                 "params": {"directory_path": _ray_tmp},
             }),
-        },
+        }
+
+    ray_init_kwargs = dict(
+        num_cpus=num_cpus,
+        include_dashboard=False,
+        ignore_reinit_error=True,
+        _temp_dir=_ray_tmp,
+        runtime_env=_runtime_env,
     )
+    if _system_config:
+        ray_init_kwargs["_system_config"] = _system_config
     if IS_COLAB and torch.cuda.is_available():
-        ray_init_kwargs["num_gpus"] = 1  # Expose the T4 to Ray
+        ray_init_kwargs["num_gpus"] = 1
     ray.init(**ray_init_kwargs)
 
     logger.info("=" * 80)
