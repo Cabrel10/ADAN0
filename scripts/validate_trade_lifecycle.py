@@ -191,10 +191,15 @@ def validate_log(log_lines: list, verbose: bool = False) -> dict:
 
     # ════════════════════════════════════════════════════════════
     # CHECK G: WAIT_BLOCK enforcement
+    # CRITICAL: WAIT_BLOCK must fire after SL/TP to prevent death spiral.
+    # If SL/TP occurred, WAIT_BLOCK should be > 0 (cooldown active).
+    # Only pass if WAIT_BLOCK > 0 OR no SL/TP occurred (no cooldown needed).
     # ════════════════════════════════════════════════════════════
+    sl_tp_count = counts["STOP_LOSS"] + counts["TAKE_PROFIT"]
+    wait_block_ok = counts["WAIT_BLOCK"] > 0 or sl_tp_count == 0
     results["G_WAIT_BLOCK"] = (
-        True,  # WAIT_BLOCK is a gate; it's OK if it never fires (agent waited enough)
-        f"Found {counts['WAIT_BLOCK']} WAIT_BLOCK events"
+        wait_block_ok,
+        f"Found {counts['WAIT_BLOCK']} WAIT_BLOCK events (SL/TP={sl_tp_count})"
     )
 
     # ════════════════════════════════════════════════════════════
