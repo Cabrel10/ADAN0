@@ -1,0 +1,182 @@
+# .github/workflows/oracle_training.yml
+# Dedicated CI workflow to train the ExogenousRegimeOracle on real data and
+# PERSIST the trained artifact to git + GitHub Release so the user can download it.
+#
+# Trigger:
+#   - workflow_dispatch (manual) — choose whether to commit & release
+#   - schedule cron weekly (Sunday 03:00 UTC) — keeps oracle fresh on real markets
+#
+# Inputs:
+#   - commit_to_repo: when "true", git-adds models/exog_oracle.pkl (force) and pushes
+#   - create_release: when "true", uploads oracle.pkl + metadata.json to a tagged Release
+#
+# Outputs (always):
+#   - artifact "oracle-trained": exog_oracle.pkl + metadata + raw CSV inputs
+#   - artifact "oracle-trained-latest": same content under stable name (overwrite=true)
+
+name: ADAN0 Oracle Training
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_to_repo:
+        description: "Commit oracle.pkl to genspark_ai_developer branch (force-add)?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      create_release:
+        description: "Publish a GitHub Release with the trained oracle?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+  schedule:
+    - cron: "0 3 * * 0"  # Sunday 03:00 UTC
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: ${{ github.workspace }}/src
+
+jobs:
+  train_oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write   # needed for git push + release creation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: genspark_ai_developer
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          python -c "import ccxt, pandas, numpy, sklearn; print('deps OK')"
+
+      - name: Download macro data (Yahoo Finance)
+        run: |
+          mkdir -p data/raw/macro
+          python scripts/download_macro_data.py
+          echo "macro rows: $(wc -l < data/raw/macro/macro_features.csv)"
+
+      - name: Download BTC daily (Bitget CCXT, ~2 years)
+        run: |
+          mkdir -p data/raw/btc_daily
+          python scripts/download_btc_daily.py
+          echo "btc daily rows: $(wc -l < data/raw/btc_daily/btc_daily.csv)"
+
+      - name: Train ExogenousRegimeOracle
+        run: |
+          python scripts/train_oracle.py
+          echo "=== Oracle metadata ==="
+          cat models/exog_oracle_metadata.json
+
+      - name: Validate oracle diversity (gate)
+        run: |
+          python - << 'PYEOF'
+          import json, sys
+          m = json.load(open("models/exog_oracle_metadata.json"))
+          v = m["validation"]
+          assert v["diverse"], f"Oracle DEGENERATE: only {v['unique_predictions']}/100 unique"
+          assert m["btc_days"] >= 200, f"BTC data too thin: {m['btc_days']} days (need 200+)"
+          print(f"PASS: btc_days={m['btc_days']}, unique={v['unique_predictions']}/100, features={v['feature_count']}")
+          PYEOF
+
+      - name: Compute oracle hash + size
+        id: hash
+        run: |
+          SHA=$(sha256sum models/exog_oracle.pkl | cut -d' ' -f1)
+          SIZE=$(stat -c%s models/exog_oracle.pkl)
+          DATE=$(date -u +%Y-%m-%d)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "size=$SIZE" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+          echo "Oracle: $SIZE bytes, sha256=${SHA:0:12}…"
+
+      - name: Upload artifact (persistent name)
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-trained-latest
+          path: |
+            models/exog_oracle.pkl
+            models/exog_oracle_metadata.json
+            data/raw/macro/macro_features.csv
+            data/raw/btc_daily/btc_daily.csv
+          retention-days: 90
+          overwrite: true
+
+      - name: Upload artifact (versioned by run number)
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-trained-run-${{ github.run_number }}
+          path: |
+            models/exog_oracle.pkl
+            models/exog_oracle_metadata.json
+          retention-days: 365
+
+      - name: Commit oracle to repo
+        if: ${{ github.event_name == 'schedule' || inputs.commit_to_repo == 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Force-add since models/ is gitignored
+          git add -f models/exog_oracle.pkl models/exog_oracle_metadata.json
+          if git diff --staged --quiet; then
+            echo "No changes — oracle identical to repo version"
+          else
+            git commit -m "chore(oracle): auto-train ($(date -u +%Y-%m-%d), ${{ steps.hash.outputs.size }} bytes, sha=${{ steps.hash.outputs.sha }})"
+            git push origin genspark_ai_developer
+            echo "Pushed updated oracle to genspark_ai_developer"
+          fi
+
+      - name: Create GitHub Release
+        if: ${{ github.event_name == 'schedule' || inputs.create_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: oracle-${{ steps.hash.outputs.date }}-run${{ github.run_number }}
+          name: "Oracle ${{ steps.hash.outputs.date }} (run #${{ github.run_number }})"
+          body: |
+            **Automated ExogenousRegimeOracle training**
+
+            - Date: ${{ steps.hash.outputs.date }}
+            - Run: #${{ github.run_number }}
+            - Size: ${{ steps.hash.outputs.size }} bytes
+            - SHA256: `${{ steps.hash.outputs.sha }}`
+
+            Inputs:
+            - BTC daily: Bitget CCXT, ~2 years
+            - Macro: Yahoo Finance (SPY, DXY, Gold, VIX)
+
+            Download `exog_oracle.pkl` below and drop into `models/` of your local clone.
+          files: |
+            models/exog_oracle.pkl
+            models/exog_oracle_metadata.json
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+
+      - name: Summary
+        run: |
+          echo "================================================"
+          echo "  ADAN0 Oracle Training — run #${{ github.run_number }}"
+          echo "================================================"
+          cat models/exog_oracle_metadata.json
+          echo ""
+          echo "Hash: ${{ steps.hash.outputs.sha }}"
+          echo "Size: ${{ steps.hash.outputs.size }} bytes"
+          echo "Date: ${{ steps.hash.outputs.date }}"

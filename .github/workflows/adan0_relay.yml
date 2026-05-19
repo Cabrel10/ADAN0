@@ -1,0 +1,206 @@
+# .github/workflows/adan0_relay.yml
+# Session 10 — CI training relay with REAL data refresh.
+# Each segment:
+#   1. Pull previous checkpoint from the 'adan0-checkpoint' artifact.
+#   2. Refresh macro (Yahoo) + BTC daily (Bitget) data.
+#   3. Retrain the ExogenousRegimeOracle on the latest data.
+#   4. Run +N steps of PPO sandbox training with --resume-from.
+#   5. Run a deterministic backtest on val split.
+#   6. Upload new checkpoint AND oracle .pkl as 'adan0-checkpoint' artifact.
+#   7. Append metrics to logs/validation/relay_history.jsonl.
+#
+# Trigger: Actions → ADAN0 Relay → Run workflow → steps + resume.
+
+name: ADAN0 Relay
+
+on:
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: "Steps for this relay segment"
+        required: true
+        default: "5000"
+        type: string
+      resume:
+        description: "Resume from previous checkpoint?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+env:
+  PYTHONUNBUFFERED: "1"
+  CUDA_VISIBLE_DEVICES: ""
+  PYTHONPATH: ${{ github.workspace }}/src
+  ADAN_TRAINING_SILENT: "1"
+  ADAN_RICH_STEP_EVERY: "999999"
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          # download_btc_daily uses ccxt; already in requirements
+          python -c "import ccxt, pandas, numpy, sklearn; print('deps OK')"
+
+      - name: Download previous checkpoint (if resume)
+        if: ${{ inputs.resume == 'true' }}
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: adan0-checkpoint
+          workflow: adan0_relay.yml
+          path: ./
+          if_no_artifact_found: warn
+
+      - name: Inspect downloaded state
+        id: prev
+        run: |
+          mkdir -p checkpoints models logs/validation
+          echo "=== checkpoints/ ==="
+          ls -la checkpoints/ 2>/dev/null || echo "(empty)"
+          echo "=== models/ ==="
+          ls -la models/ 2>/dev/null || echo "(empty)"
+          CKPT=$(ls -t checkpoints/ppo_adan0_sandbox_*.zip 2>/dev/null | head -n1 || true)
+          if [ -n "$CKPT" ] && [ -f "$CKPT" ]; then
+            echo "Found prior checkpoint: $CKPT"
+            echo "ckpt=$CKPT" >> $GITHUB_OUTPUT
+          else
+            echo "No prior checkpoint — starting fresh"
+            echo "ckpt=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Refresh macro data (Yahoo Finance)
+        run: |
+          mkdir -p data/raw/macro
+          python scripts/download_macro_data.py
+          echo "macro rows: $(wc -l < data/raw/macro/macro_features.csv)"
+
+      - name: Refresh BTC daily (Bitget CCXT)
+        run: |
+          mkdir -p data/raw/btc_daily
+          python scripts/download_btc_daily.py
+          echo "btc daily rows: $(wc -l < data/raw/btc_daily/btc_daily.csv)"
+
+      - name: Retrain ExogenousRegimeOracle
+        run: |
+          python scripts/train_oracle.py
+          python -c "import json; m=json.load(open('models/exog_oracle_metadata.json')); print('ORACLE:', m['btc_days'], 'BTC days,', m['validation']['unique_predictions'], '/100 unique')"
+
+      - name: Verify BTC OHLCV (training data) is present
+        run: |
+          if [ ! -f data/processed/indicators/train/BTCUSDT/5m.parquet ]; then
+            echo "WARNING: pre-processed indicators missing — attempting to regenerate"
+            if [ -f data/raw/BTCUSDT/5m/BTCUSDT_5m_raw.parquet ]; then
+              python scripts/compute_features_real.py || echo "feature engineering failed"
+            else
+              echo "RAW BTC data also missing — training will fail. Commit data/processed/ first."
+              exit 1
+            fi
+          fi
+          ls -la data/processed/indicators/train/BTCUSDT/
+
+      - name: Train PPO segment (relay)
+        id: train
+        run: |
+          set -o pipefail
+          ARGS="--mode sandbox --steps ${{ inputs.steps }}"
+          if [ -n "${{ steps.prev.outputs.ckpt }}" ]; then
+            ARGS="$ARGS --resume-from ${{ steps.prev.outputs.ckpt }}"
+            echo "Resuming from ${{ steps.prev.outputs.ckpt }}"
+          else
+            echo "Fresh start"
+          fi
+          echo "Running: python scripts/train_parallel_agents.py $ARGS"
+          python scripts/train_parallel_agents.py $ARGS 2>&1 | \
+            grep -E "SANDBOX|REWARD_ANTIHACK|TRADE_OPEN|ORACLE_UPDATE|total_timesteps|explained_var|entropy_loss|value_loss|clip_frac|FAIL|^Error|Traceback" | \
+            tee training_relay.log
+          NEW_CKPT=$(ls -t checkpoints/ppo_adan0_sandbox_*.zip | head -n1)
+          echo "New checkpoint: $NEW_CKPT"
+          echo "new_ckpt=$NEW_CKPT" >> $GITHUB_OUTPUT
+          ls -la checkpoints/
+
+      - name: Deterministic backtest (val split, 1000 steps)
+        id: bt
+        continue-on-error: true
+        run: |
+          python scripts/deterministic_backtest.py --steps 1000 --split val \
+            --ckpt "${{ steps.train.outputs.new_ckpt }}" \
+            --out logs/validation/relay_backtest.json
+          echo "=== BACKTEST RESULT ==="
+          cat logs/validation/relay_backtest.json
+          # Append to history (one line per run)
+          mkdir -p logs/validation
+          python -c "
+          import json, os, datetime
+          d = json.load(open('logs/validation/relay_backtest.json'))
+          d['github_run_id'] = '${{ github.run_id }}'
+          d['github_run_number'] = '${{ github.run_number }}'
+          d['github_sha'] = '${{ github.sha }}'
+          d['ts'] = datetime.datetime.utcnow().isoformat()
+          with open('logs/validation/relay_history.jsonl', 'a') as f:
+              f.write(json.dumps(d) + '\n')
+          print('Appended to relay_history.jsonl')
+          "
+
+      - name: Upload checkpoint + oracle artifact
+        if: always() && steps.train.outputs.new_ckpt != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: adan0-checkpoint
+          path: |
+            ${{ steps.train.outputs.new_ckpt }}
+            checkpoints/vecnormalize_sandbox.pkl
+            checkpoints/*_vecnorm.pkl
+            models/exog_oracle.pkl
+            models/exog_oracle_metadata.json
+            data/raw/macro/macro_features.csv
+            data/raw/btc_daily/btc_daily.csv
+          retention-days: 30
+          overwrite: true
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adan0-relay-log-${{ github.run_number }}
+          path: |
+            training_relay.log
+            logs/validation/
+          retention-days: 14
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "=============================================="
+          echo "  ADAN0 Relay — run ${{ github.run_number }}"
+          echo "=============================================="
+          echo "  Resume from:    ${{ steps.prev.outputs.ckpt }}"
+          echo "  +Steps:         ${{ inputs.steps }}"
+          echo "  New checkpoint: ${{ steps.train.outputs.new_ckpt }}"
+          if [ -f models/exog_oracle_metadata.json ]; then
+            echo "  Oracle:"
+            cat models/exog_oracle_metadata.json
+          fi
+          if [ -f logs/validation/relay_backtest.json ]; then
+            echo "  Backtest:"
+            cat logs/validation/relay_backtest.json
+          fi
