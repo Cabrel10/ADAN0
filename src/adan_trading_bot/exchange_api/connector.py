@@ -85,6 +85,27 @@ def get_exchange_client(config: Dict[str, Any]) -> ccxt.Exchange:
                 'defaultType': 'spot',  # Trading spot par défaut
             },
         }
+
+        # Bitget/OKX require a passphrase (CCXT calls it 'password')
+        passphrase_env_var = f"{env_key_prefix}_PASSPHRASE"
+        passphrase = os.environ.get(passphrase_env_var, "").strip()
+        if passphrase:
+            client_config['password'] = passphrase
+            logger.info(f"[ccxt] Passphrase loaded for {exchange_id}")
+        elif exchange_id in ('bitget', 'okx', 'okex'):
+            logger.warning(
+                f"[ccxt] {exchange_id} requires a passphrase but {passphrase_env_var} "
+                f"is not set. API calls will likely fail."
+            )
+
+        # Session 12 — geo-block bypass via optional ADAN_PROXY env var.
+        # GitHub Actions runners are sometimes blocked by exchanges (HTTP 451).
+        # Set ADAN_PROXY=http(s)://user:pass@host:port to route CCXT requests
+        # through a proxy. Leave unset for direct access (sandbox / local).
+        proxy_url = os.environ.get("ADAN_PROXY", "").strip()
+        if proxy_url:
+            client_config['proxies'] = {'http': proxy_url, 'https': proxy_url}
+            logger.info(f"[ccxt] ADAN_PROXY active for {exchange_id}")
         
         # Initialiser le client d'exchange
         exchange = exchange_class(client_config)

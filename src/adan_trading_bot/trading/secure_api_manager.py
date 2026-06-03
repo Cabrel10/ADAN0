@@ -47,20 +47,35 @@ class ConnectionStatus(Enum):
 
 @dataclass
 class APICredentials:
-    """Informations d'identification API"""
+    """API Credentials with Zero-Trust separation (NIVEAU 2).
+    
+    Supports two credential types:
+    - READ_ONLY: Fetch prices, portfolio balance (no trading)
+    - TRADE_ONLY: Place/cancel orders (no withdrawal)
+    """
+    
+    class CredentialType:
+        READ_ONLY = "read_only"
+        TRADE_ONLY = "trade_only"
+        FULL = "full"  # Legacy: both read and trade
+    
     exchange: ExchangeType
     api_key: str
     api_secret: str
-    passphrase: Optional[str] = None  # Pour OKEx
+    passphrase: Optional[str] = None  # Pour OKEx/Bitget
     sandbox: bool = True
     name: str = "Default"
+    credential_type: str = "full"  # read_only, trade_only, or full
+    ip_whitelist: Optional[list] = None  # IP addresses allowed to use this key
 
     def to_dict(self, include_secrets: bool = False) -> Dict[str, Any]:
         """Convertit en dictionnaire"""
         data = {
             'exchange': self.exchange.value,
             'name': self.name,
-            'sandbox': self.sandbox
+            'sandbox': self.sandbox,
+            'credential_type': self.credential_type,
+            'ip_whitelist': self.ip_whitelist
         }
 
         if include_secrets:
@@ -78,6 +93,14 @@ class APICredentials:
             })
 
         return data
+    
+    def can_read(self) -> bool:
+        """Check if this credential can read (fetch prices, balance)."""
+        return self.credential_type in [self.CredentialType.READ_ONLY, self.CredentialType.FULL]
+    
+    def can_trade(self) -> bool:
+        """Check if this credential can trade (place/cancel orders)."""
+        return self.credential_type in [self.CredentialType.TRADE_ONLY, self.CredentialType.FULL]
 
 
 @dataclass
@@ -139,7 +162,21 @@ class SecureAPIManager:
         logger.info("SecureAPIManager initialized")
 
     def get_exchange_info(self, exchange: ExchangeType, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
-        """Récupère les informations de l'échange (avec cache)"""
+        """Récupère les informations de l'échange (avec cache) (NIVEAU 2: Zero-Trust validation)."""
+        # ── NIVEAU 2: Validate credential type ──
+        creds = self.get_credentials(exchange)
+        if not creds:
+            logger.error(f"[ZERO-TRUST] No credentials for {exchange.value}")
+            return None
+        
+        if not creds.can_read():
+            logger.error(
+                f"[ZERO-TRUST] Credential '{creds.name}' is {creds.credential_type}, "
+                f"cannot read. Use READ_ONLY or FULL credential."
+            )
+            return None
+        
+        # ── Proceed with fetch ──
         with self._cache_lock:
             cache_duration = timedelta(hours=1)
             last_updated = self._exchange_info_last_updated.get(exchange)
@@ -450,7 +487,21 @@ class SecureAPIManager:
             return True
 
     def send_order(self, exchange: ExchangeType, order_params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Passe un ordre sur l'exchange"""
+        """Passe un ordre sur l'exchange (NIVEAU 2: Zero-Trust validation)."""
+        # ── NIVEAU 2: Validate credential type ──
+        creds = self.get_credentials(exchange)
+        if not creds:
+            logger.error(f"[ZERO-TRUST] No credentials for {exchange.value}")
+            return None
+        
+        if not creds.can_trade():
+            logger.error(
+                f"[ZERO-TRUST] Credential '{creds.name}' is {creds.credential_type}, "
+                f"cannot trade. Use TRADE_ONLY or FULL credential."
+            )
+            return None
+        
+        # ── Proceed with order ──
         if exchange == ExchangeType.BINANCE:
             return self._send_signed_request(exchange, 'POST', '/api/v3/order', order_params)
         return None
@@ -669,8 +720,14 @@ class SecureAPIManager:
         logger.info("Security validation passed - no hardcoded API keys detected")
 
     def _load_credentials_from_env(self) -> None:
-        """Charge les credentials depuis les variables d'environnement (priorité sur les fichiers chiffrés)"""
-        logger.info("Loading credentials from environment variables...")
+        """Charge les credentials depuis les variables d'environnement (NIVEAU 2: Zero-Trust separation).
+        
+        Supports both legacy (single key) and Zero-Trust (separate read/trade keys):
+        - Legacy: BITGET_API_KEY, BITGET_API_SECRET
+        - Zero-Trust: BITGET_API_KEY_READ, BITGET_API_SECRET_READ (read-only)
+                      BITGET_API_KEY_TRADE, BITGET_API_SECRET_TRADE (trade-only)
+        """
+        logger.info("Loading credentials from environment variables (NIVEAU 2: Zero-Trust)...")
 
         # Mapping des exchanges vers leurs variables d'environnement
         env_mappings = {
@@ -711,33 +768,81 @@ class SecureAPIManager:
         loaded_count = 0
 
         for exchange, env_vars in env_mappings.items():
-            api_key = os.getenv(env_vars['api_key'])
-            api_secret = os.getenv(env_vars['api_secret'])
-
-            if api_key and api_secret:
-                # Récupérer les paramètres optionnels
-                passphrase = os.getenv(env_vars.get('passphrase'))
+            # ── NIVEAU 2: Try to load READ_ONLY credentials first ──
+            api_key_read = os.getenv(f"{env_vars['api_key']}_READ")
+            api_secret_read = os.getenv(f"{env_vars['api_secret']}_READ")
+            
+            if api_key_read and api_secret_read:
+                passphrase_read = os.getenv(f"{env_vars.get('passphrase', '')}_READ")
                 sandbox = os.getenv(env_vars.get('sandbox', 'true')).lower() in ('true', '1', 'yes')
-
-                # Créer les credentials
-                credentials = APICredentials(
+                
+                credentials_read = APICredentials(
                     exchange=exchange,
-                    api_key=api_key,
-                    api_secret=api_secret,
-                    passphrase=passphrase,
+                    api_key=api_key_read,
+                    api_secret=api_secret_read,
+                    passphrase=passphrase_read,
                     sandbox=sandbox,
-                    name="Environment"
+                    name="ReadOnly",
+                    credential_type=APICredentials.CredentialType.READ_ONLY
                 )
-
-                # Ajouter aux credentials (sans chiffrement car déjà en env)
-                cred_id = f"{exchange.value}_Environment"
-                self.credentials[cred_id] = credentials
+                
+                cred_id = f"{exchange.value}_ReadOnly"
+                self.credentials[cred_id] = credentials_read
                 loaded_count += 1
+                logger.info(f"[ZERO-TRUST] Loaded READ_ONLY credentials for {exchange.value}")
+            
+            # ── NIVEAU 2: Try to load TRADE_ONLY credentials ──
+            api_key_trade = os.getenv(f"{env_vars['api_key']}_TRADE")
+            api_secret_trade = os.getenv(f"{env_vars['api_secret']}_TRADE")
+            
+            if api_key_trade and api_secret_trade:
+                passphrase_trade = os.getenv(f"{env_vars.get('passphrase', '')}_TRADE")
+                sandbox = os.getenv(env_vars.get('sandbox', 'true')).lower() in ('true', '1', 'yes')
+                
+                credentials_trade = APICredentials(
+                    exchange=exchange,
+                    api_key=api_key_trade,
+                    api_secret=api_secret_trade,
+                    passphrase=passphrase_trade,
+                    sandbox=sandbox,
+                    name="TradeOnly",
+                    credential_type=APICredentials.CredentialType.TRADE_ONLY
+                )
+                
+                cred_id = f"{exchange.value}_TradeOnly"
+                self.credentials[cred_id] = credentials_trade
+                loaded_count += 1
+                logger.info(f"[ZERO-TRUST] Loaded TRADE_ONLY credentials for {exchange.value}")
+            
+            # ── Fallback: Load legacy FULL credentials if no Zero-Trust keys ──
+            if not (api_key_read or api_key_trade):
+                api_key = os.getenv(env_vars['api_key'])
+                api_secret = os.getenv(env_vars['api_secret'])
 
-                logger.info(f"Loaded credentials for {exchange.value} from environment variables")
+                if api_key and api_secret:
+                    passphrase = os.getenv(env_vars.get('passphrase'))
+                    sandbox = os.getenv(env_vars.get('sandbox', 'true')).lower() in ('true', '1', 'yes')
+
+                    credentials = APICredentials(
+                        exchange=exchange,
+                        api_key=api_key,
+                        api_secret=api_secret,
+                        passphrase=passphrase,
+                        sandbox=sandbox,
+                        name="Environment",
+                        credential_type=APICredentials.CredentialType.FULL
+                    )
+
+                    cred_id = f"{exchange.value}_Environment"
+                    self.credentials[cred_id] = credentials
+                    loaded_count += 1
+                    logger.warning(
+                        f"[ZERO-TRUST] Loaded FULL credentials for {exchange.value} "
+                        f"(legacy mode). Consider using separate READ_ONLY and TRADE_ONLY keys."
+                    )
 
         if loaded_count > 0:
-            logger.info(f"Successfully loaded {loaded_count} credentials from environment variables")
+            logger.info(f"[ZERO-TRUST] Successfully loaded {loaded_count} credential sets")
         else:
             logger.info("No credentials found in environment variables")
 

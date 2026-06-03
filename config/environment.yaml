@@ -11,7 +11,7 @@ environment:
   base_currency: USDT
   initial_balance: 20.0
   max_chunks_per_episode: 10
-  max_steps: 500
+  max_steps: 5000  # INCREASED: 500 → 5000 to reduce reset frequency and worker desynchronization
   memory:
     aggressive_cleanup: true
     batch_size: 32
@@ -28,11 +28,11 @@ environment:
     shuffle: true
   mode: backtest
   observation:
-    shape: [3, 20, 13] # Mise à jour de la forme pour refléter le nouveau nombre de fonctionnalités
+    shape: [3, 20, 13] # RESTORED: Full temporal depth for pattern recognition
     window_sizes:
-      5m: 20
-      1h: 20
-      4h: 20
+      5m: 20     # RESTORED: 100 minutes of 5m vision
+      1h: 20     # RESTORED: 20 hours of 1h vision
+      4h: 20     # RESTORED: ~3.3 days of 4h vision
     features_per_timeframe:
       5m: 13 # OPEN, HIGH, LOW, CLOSE, VOLUME, RSI_14, ATR_14, ADX_14, EMA_5, EMA_20, EMA_50, MACD_HIST, SUPERTREND_14_2.0
       1h: 13 # OPEN, HIGH, LOW, CLOSE, VOLUME, RSI_14, ATR_14, ADX_14, EMA_12, EMA_50, EMA_200, MACD_HIST, SUPERTREND_14_2.0

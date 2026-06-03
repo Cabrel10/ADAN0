@@ -1,4 +1,4 @@
-import gym  # noqa: F401
+import gymnasium as gym  # noqa: F401
 
 
 class SB3GymCompatibilityWrapper(gym.Wrapper):

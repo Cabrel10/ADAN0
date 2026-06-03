@@ -671,7 +671,7 @@ class TemporalFusionExtractor(BaseFeaturesExtractor):
     dynamically modulate the CNN features before fusion with the portfolio state.
     """
     CONTEXT_KEY = "context_vector"
-    DEFAULT_CONTEXT_DIM = 14
+    DEFAULT_CONTEXT_DIM = 17
 
     def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 128):
         super().__init__(observation_space, features_dim)
@@ -842,6 +842,7 @@ class HierarchicalCrossAttention(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
+        # C9: LayerNorm on Q and K before dot product to prevent softmax saturation
         self.norm_q = nn.LayerNorm(embed_dim)
         self.norm_kv = nn.LayerNorm(embed_dim)
         self.norm_out = nn.LayerNorm(embed_dim)
@@ -895,7 +896,7 @@ class ContextualTemporalFusionExtractor(BaseFeaturesExtractor):
 
     # Class-level defaults for the observation contract.
     STRICT_TIMEFRAME_KEYS = ("5m", "1h", "4h")
-    DEFAULT_CONTEXT_DIM = 14
+    DEFAULT_CONTEXT_DIM = 17
 
     def __init__(
         self,
@@ -987,10 +988,15 @@ class ContextualTemporalFusionExtractor(BaseFeaturesExtractor):
         )
 
         # ---------------------------------------------------------------
-        # SOTA 2025: Auxiliary World-Model head (DreamerV3-inspired)
-        # Predicts the next-candle 5m log-return from the fused features.
-        # This forces the CNN backbone to learn *predictive* features,
-        # not merely descriptive ones.
+        # Auxiliary forward-prediction head (NOT a world model — see below).
+        # Audit anomaly #6 — there is NO mini-DreamerV3 / RSSM in this repo.
+        # Despite the marketing label "World-Model head", what's actually
+        # implemented is a small MSE next-step predictor used as an auxiliary
+        # loss to regularize the backbone. It is fully connected to the loss
+        # via _last_aux_prediction → compute_aux_loss() → PPO total loss.
+        # No imagination rollouts, no latent dynamics, no separate world-model
+        # update — that "Mini DreamerV3" claim was bogus and the code below
+        # is the honest scope: a 2-layer MLP predicting next-candle log-return.
         # ---------------------------------------------------------------
         self.forward_predictor = nn.Sequential(
             nn.Linear(features_dim, 128),
@@ -1078,13 +1084,13 @@ class ContextualTemporalFusionExtractor(BaseFeaturesExtractor):
         fused = th.cat([modulated, portfolio_emb, context_emb], dim=1)
         features = self.fusion(fused)
 
-        # 8. SOTA 2025: Auxiliary world-model prediction
+        # 8. Auxiliary next-return prediction head (MSE regularizer, NOT a world model).
         self._last_aux_prediction = self.forward_predictor(features)
 
         return features
 
     # ------------------------------------------------------------------
-    # SOTA 2025: Auxiliary world-model loss computation
+    # Auxiliary next-return MSE loss (regularizer, NOT a world model).
     # ------------------------------------------------------------------
     def compute_auxiliary_loss(
         self, target_log_returns: th.Tensor
@@ -1119,7 +1125,8 @@ try:
 
     class WorldModelPPO(_BasePPO):
         """PPO subclass that backpropagates an auxiliary forward-prediction
-        MSE loss (DreamerV3-style) alongside the standard PPO losses.
+        MSE loss alongside the standard PPO losses. (Auxiliary head only —
+        NOT a world model, no imagination rollouts, no latent dynamics.)
 
         After each PPO train() epoch, an extra gradient step is performed:
           1. Sample a mini-batch from the rollout buffer.
@@ -1138,7 +1145,7 @@ try:
             self._aux_loss_history: list = []
 
         def train(self) -> None:
-            """Standard PPO training + auxiliary world-model gradient step."""
+            """Standard PPO training + auxiliary next-return MSE gradient step."""
             # 1. Run the standard PPO training loop (policy + value loss)
             super().train()
 

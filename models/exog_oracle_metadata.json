@@ -1,0 +1,18 @@
+{
+  "btc_days": 728,
+  "btc_date_min": "2024-06-01",
+  "btc_date_max": "2026-05-31",
+  "macro_days": 3759,
+  "macro_cols": [
+    "spy",
+    "dxy",
+    "gold",
+    "vix"
+  ],
+  "validation": {
+    "n_samples_tested": 100,
+    "unique_predictions": 100,
+    "diverse": true,
+    "feature_count": 13
+  }
+}

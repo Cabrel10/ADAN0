@@ -617,4 +617,4 @@ class PPOAgent:
 # Exemple d'utilisation
 if __name__ == "__main__":
     """Exemple d'utilisation de l'agent PPO avec callback hiérarchique."""
-    import gym
+    import gymnasium as gym

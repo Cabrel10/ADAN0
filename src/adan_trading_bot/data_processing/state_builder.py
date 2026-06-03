@@ -200,30 +200,40 @@ class StateBuilder:
         # CONFIGURATION CORRIGÉE: Alignée avec les données d'entraînement
         # Parité stricte avec les fichiers .parquet d'entraînement
         if features_config is None:
+            # C14-v3: 17 stationary indicators (NO absolute prices) = 17 features per TF
+            # Removed: open, high, low, close (absolute prices cause distribution shift)
+            # Added: log_return (stationary), close_ema20_ratio (normalized)
+            # Must stay in sync with TRAIN_COLUMNS in feature_engineer.py
             features_config = {
                 "5m": [
-                    "open", "high", "low", "close", "volume",
-                    "rsi_14", "macd_12_26_9", "bb_percent_b_20_2",
-                    "atr_14", "atr_20", "atr_50",
-                    "volume_ratio_20", "ema_20_ratio", "stoch_k_14_3_3", "price_action",
-                    "spread_bps", "liquidity_score",
-                    "log_return", "close_ema20_ratio"
+                    "volume",
+                    "ema_20_ratio", "macdh_12_26_9", "rsi_14",
+                    "adx_14", "di_delta", "atr_pct",
+                    "bb_percent_b_20_2", "obv_slope",
+                    "volume_ratio_20", "volatility_ratio_14_50",
+                    "fib_ratio", "price_action", "vwap_ratio",
+                    "market_structure", "bb_width_20_2", "log_return",
+                    "close_ema20_ratio",
                 ],
                 "1h": [
-                    "open", "high", "low", "close", "volume",
-                    "rsi_21", "macd_21_42_9", "bb_width_20_2", "adx_14",
-                    "atr_20", "atr_50", "obv_ratio_20", "ema_50_ratio",
-                    "ichimoku_base", "fib_ratio", "price_ema_ratio_50",
-                    "spread_bps", "liquidity_score",
-                    "log_return", "close_ema20_ratio"
+                    "volume",
+                    "ema_50_ratio", "macdh_21_42_9", "rsi_21",
+                    "adx_14", "di_delta", "atr_pct",
+                    "bb_percent_b_20_2", "obv_slope",
+                    "volume_ratio_20", "volatility_ratio_14_50",
+                    "fib_ratio", "price_action", "vwap_ratio",
+                    "market_structure", "bb_width_20_2", "log_return",
+                    "close_ema20_ratio",
                 ],
                 "4h": [
-                    "open", "high", "low", "close", "volume",
-                    "rsi_28", "macd_26_52_18", "supertrend_10_3",
-                    "atr_20", "atr_50", "volume_sma_20_ratio", "ema_100_ratio",
-                    "pivot_level", "donchian_width_20", "market_structure", "volatility_ratio_14_50",
-                    "spread_bps", "liquidity_score",
-                    "log_return", "close_ema20_ratio"
+                    "volume",
+                    "ema_100_ratio", "macdh_26_52_18", "rsi_28",
+                    "adx_14", "di_delta", "atr_pct",
+                    "bb_percent_b_20_2", "obv_slope",
+                    "volume_ratio_20", "volatility_ratio_14_50",
+                    "fib_ratio", "price_action", "vwap_ratio",
+                    "market_structure", "bb_width_20_2", "log_return",
+                    "close_ema20_ratio",
                 ],
             }
         self.features_config = features_config
@@ -832,8 +842,11 @@ class StateBuilder:
     #   [11] cos_dow          -- cos(2*pi*dayofweek/7)
     #   [12] sin_dom          -- sin(2*pi*dayofmonth/31)
     #   [13] cos_dom          -- cos(2*pi*dayofmonth/31)
+    #   [14] oracle_bear      -- P(bear|macro)   from ExogenousRegimeOracle
+    #   [15] oracle_sideways   -- P(sideways|macro)
+    #   [16] oracle_bull      -- P(bull|macro)
     # ------------------------------------------------------------------
-    CONTEXT_DIM = 14
+    CONTEXT_DIM = 17
 
     def build_context_vector(
         self,
@@ -841,8 +854,9 @@ class StateBuilder:
         current_idx: int = 0,
         portfolio_manager: Any = None,
         hmm_probs: Optional[np.ndarray] = None,
+        oracle_probs: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        """Build a 14-dim market context vector for FiLM Meta-RL modulation.
+        """Build a 17-dim market context vector for FiLM Meta-RL modulation.
 
         The 3 HMM posterior probabilities replace the old scalar regime_score,
         giving the FiLM layer a richer conditioning signal.
@@ -855,7 +869,7 @@ class StateBuilder:
                        If None, uniform [0.33, 0.33, 0.34] is used.
 
         Returns:
-            np.ndarray of shape (14,) with dtype float32.
+            np.ndarray of shape (17,) with dtype float32.
         """
         context = np.zeros(self.CONTEXT_DIM, dtype=np.float32)
 
@@ -864,6 +878,14 @@ class StateBuilder:
             context[3] = 0.33
             context[4] = 0.33
             context[5] = 0.34
+            # Uniform oracle prior
+            if oracle_probs is not None and len(oracle_probs) >= 3:
+                for i in range(3):
+                    context[14 + i] = float(np.clip(oracle_probs[i], 0.0, 1.0))
+            else:
+                context[14] = 1.0 / 3.0
+                context[15] = 1.0 / 3.0
+                context[16] = 1.0 / 3.0
             return context
 
         try:
@@ -959,6 +981,16 @@ class StateBuilder:
         # SOTA 2026 -- Cyclical Time Encoding (Time2Vec-inspired)
         # Preserves temporal continuity: 23h59 is near 00h01.
         # -----------------------------------------------------------
+        # [14,15,16] Exogenous oracle probabilities (bear, sideways, bull)
+        if oracle_probs is not None and len(oracle_probs) >= 3:
+            for i in range(3):
+                context[14 + i] = float(np.clip(oracle_probs[i], 0.0, 1.0))
+        else:
+            # Uniform prior when oracle is unavailable
+            context[14] = 1.0 / 3.0
+            context[15] = 1.0 / 3.0
+            context[16] = 1.0 / 3.0
+
         try:
             timestamp = None
             if data is not None:
@@ -1059,6 +1091,7 @@ class StateBuilder:
         self, current_idx: int, data: Dict[str, Dict[str, pd.DataFrame]],
         portfolio_manager: Any = None,
         hmm_probs: Optional[np.ndarray] = None,
+        oracle_probs: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
         """
         Build observations for each timeframe and return a dictionary of arrays.
@@ -1175,7 +1208,8 @@ class StateBuilder:
 
                 # Convert to numpy array — clean inf/nan BEFORE casting to float32
                 obs_f64 = window_data.values.astype(np.float64)
-                obs_f64 = np.nan_to_num(obs_f64, nan=0.0, posinf=1e6, neginf=-1e6)
+                # C12: posinf=0.0 (was 1e6) — inf means missing data, not large value
+                obs_f64 = np.nan_to_num(obs_f64, nan=0.0, posinf=0.0, neginf=0.0)
                 obs = obs_f64.astype(np.float32)
 
                 # Ensure consistent shape
@@ -1185,10 +1219,9 @@ class StateBuilder:
                 if self.normalize and tf in self.scalers and self.scalers[tf] is not None:
                     obs = self.scalers[tf].transform(obs)
                 
-                # 🔧 CRITICAL FIX: Clip observations to prevent NaN/Inf propagation
-                # This ensures that even if scaler produces extreme values, they are bounded
-                obs = np.clip(obs, -1e6, 1e6)  # Clip to reasonable bounds
-                obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)  # Replace any remaining NaN/Inf
+                # C12: Clip to ±10 (was ±1e6) — prevents gradient explosion in PPO
+                obs = np.clip(obs, -10.0, 10.0)
+                obs = np.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
 
                 observations[tf] = obs
 
@@ -1224,6 +1257,7 @@ class StateBuilder:
                 current_idx=current_idx,
                 portfolio_manager=portfolio_manager,
                 hmm_probs=hmm_probs,
+                oracle_probs=oracle_probs,
             )
         except Exception as e:
             logger.warning(f"Error building context_vector in build_observation: {e}")

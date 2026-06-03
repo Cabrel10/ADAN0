@@ -8,7 +8,7 @@ Usage:
     python scripts/analyze_training_results.py
 
     # Or specify a custom path:
-    python scripts/analyze_training_results.py --path /mnt/new_data/t10_training
+    python scripts/analyze_training_results.py --path ./logs/training
 """
 
 import argparse
@@ -24,7 +24,7 @@ from pathlib import Path
 # ──────────────────────────────────────────────────────────────────────
 # Defaults
 # ──────────────────────────────────────────────────────────────────────
-DEFAULT_TRAIN_DIR = "/mnt/new_data/t10_training"
+DEFAULT_TRAIN_DIR = os.environ.get("ADAN_TRAIN_DIR", "./logs")
 
 
 def find_progress_csvs(base_dir: str) -> list:

@@ -299,6 +299,11 @@ class PortfolioManager:
         self.peak_equity = self.initial_equity
         self.portfolio_value = self.initial_equity
         self.current_value = self.initial_equity # AJOUT POUR LA SÉCURITÉ
+
+        # C8: Realized-only equity tracking (excludes unrealized P&L)
+        self.total_realized_pnl = 0.0
+        self.realized_equity = self.initial_equity  # cash + total_realized_pnl basis
+        self.peak_realized_equity = self.initial_equity
         # Paramètres de risque courants (par défaut)
         self.sl_pct = kwargs.get("stop_loss_pct", 0.02)
         self.tp_pct = kwargs.get("take_profit_pct", 0.05)
@@ -708,16 +713,17 @@ class PortfolioManager:
                 except Exception:
                     pass
                 return None
-        # Limiter la taille notionnelle par rapport au capital INITIAL (disjoncteur robuste)
+        # Limiter la taille notionnelle par rapport au CASH DISPONIBLE (disjoncteur robuste)
+        # 🔧 FIX: Use cash only, not equity (which includes unrealized gains)
         try:
-            initial_cap = float(getattr(self, "initial_equity", 0.0) or 0.0)
+            available_cash = float(self.get_cash())
         except Exception:
-            initial_cap = 0.0
-        if initial_cap > 0:
-            max_position_value = initial_cap * 5.0  # 5x le capital initial
+            available_cash = 0.0
+        if available_cash > 0:
+            max_position_value = available_cash * 5.0  # 5x le cash disponible (DYNAMIQUE, CASH ONLY)
             if cost > max_position_value:
                 logger.error(
-                    f"🚨 POSITION TROP GRANDE: {cost:.2f}$ > max {max_position_value:.2f}$. Rejet de l'ouverture pour {asset}."
+                    f"🚨 POSITION TROP GRANDE: {cost:.2f}$ > max {max_position_value:.2f}$ (cash={available_cash:.2f}$). Rejet de l'ouverture pour {asset}."
                 )
                 try:
                     if hasattr(self, "metrics") and self.metrics:
@@ -973,7 +979,14 @@ class PortfolioManager:
 
         self._update_equity(current_prices)
 
+        # C8: Update realized-only equity tracking
+        self.total_realized_pnl += pnl
+        self.realized_equity = self.initial_equity + self.total_realized_pnl
+        if self.realized_equity > self.peak_realized_equity:
+            self.peak_realized_equity = self.realized_equity
+
         log_entry["equity"] = self.equity
+        log_entry["realized_equity"] = self.realized_equity
 
         self.trade_log.append(log_entry)
         self.metrics.update_trade(log_entry)
@@ -1022,40 +1035,47 @@ class PortfolioManager:
             except Exception:
                 sl_price = None
 
-            if sl_price is None:
-                self.log_info(f"[update_market_price] sl_price is None for asset={asset} — skipping SL check")
-            elif low_price <= sl_price:
-                self.log_info(
-                    f"STOP LOSS atteint pour {asset} @ {low_price:.2f} (low) <= SL: {sl_price:.2f}"
-                )
-                receipt = self.close_position(
-                    asset,
-                    sl_price,
-                    timestamp=self._last_market_timestamp,
-                    current_prices=current_prices,
-                    reason="stop_loss",
-                    risk_horizon=position.risk_horizon,
-                )
-                if isinstance(receipt, dict):
-                    closed_receipts.append(receipt)
-                    val = receipt.get("pnl")
-                    if isinstance(val, (int, float)):
-                        realized_pnl += float(val)
-                continue
-
             # Vérification Take Profit - check against HIGH of candle
+            tp_price = None
+            tp_triggered = False
             if position.take_profit_pct > 0:
                 tp_price = position.entry_price * (1 + position.take_profit_pct)
-                if high_price >= tp_price:
+                tp_triggered = high_price >= tp_price
+
+            # Vérification Stop Loss
+            sl_triggered = False
+            if sl_price is not None and low_price <= sl_price:
+                sl_triggered = True
+
+            # INTRA-CANDLE EXECUTION ORDER FIX
+            # If both SL and TP are triggered in the same candle, determine which hit first
+            # based on distance from entry price (probabilistic approach)
+            if sl_triggered and tp_triggered:
+                # Distance to SL vs Distance to TP
+                dist_to_sl = abs(position.entry_price - sl_price)
+                dist_to_tp = abs(tp_price - position.entry_price)
+                
+                # Heuristic: whichever is closer to entry price likely hit first
+                # (assumes price moved monotonically toward the closer target)
+                if dist_to_sl <= dist_to_tp:
+                    tp_triggered = False  # SL hit first
+                else:
+                    sl_triggered = False  # TP hit first
+
+            # Execute SL if triggered
+            if sl_triggered:
+                if sl_price is None:
+                    self.log_info(f"[update_market_price] sl_price is None for asset={asset} — skipping SL check")
+                else:
                     self.log_info(
-                        f"TAKE PROFIT atteint pour {asset} @ {high_price:.2f} (high) >= TP: {tp_price:.2f}"
+                        f"STOP LOSS atteint pour {asset} @ {low_price:.2f} (low) <= SL: {sl_price:.2f}"
                     )
                     receipt = self.close_position(
                         asset,
-                        tp_price,
+                        sl_price,
                         timestamp=self._last_market_timestamp,
                         current_prices=current_prices,
-                        reason="take_profit",
+                        reason="stop_loss",
                         risk_horizon=position.risk_horizon,
                     )
                     if isinstance(receipt, dict):
@@ -1064,6 +1084,26 @@ class PortfolioManager:
                         if isinstance(val, (int, float)):
                             realized_pnl += float(val)
                     continue
+
+            # Execute TP if triggered (and SL wasn't)
+            if tp_triggered:
+                self.log_info(
+                    f"TAKE PROFIT atteint pour {asset} @ {high_price:.2f} (high) >= TP: {tp_price:.2f}"
+                )
+                receipt = self.close_position(
+                    asset,
+                    tp_price,
+                    timestamp=self._last_market_timestamp,
+                    current_prices=current_prices,
+                    reason="take_profit",
+                    risk_horizon=position.risk_horizon,
+                )
+                if isinstance(receipt, dict):
+                    closed_receipts.append(receipt)
+                    val = receipt.get("pnl")
+                    if isinstance(val, (int, float)):
+                        realized_pnl += float(val)
+                continue
 
             # Vérification de la durée maximale de la position
             duration_config = self.config.get("trading_rules", {}).get(
@@ -1321,6 +1361,8 @@ class PortfolioManager:
             {
                 "total_value": float(self.portfolio_value),
                 "cash": float(self.cash),
+                "realized_equity": float(self.realized_equity),
+                "total_realized_pnl": float(self.total_realized_pnl),
                 "unrealized_pnl_total": unrealized_pnl_total,
                 "realized_pnl_total": realized_pnl_total,
                 "drawdown": self.calculate_drawdown() * 100,
@@ -1338,6 +1380,15 @@ class PortfolioManager:
         )
 
         return enriched_metrics
+
+    def get_realized_equity(self) -> float:
+        """Return realized-only equity: initial_capital + total_realized_pnl.
+
+        This excludes unrealized PnL from open positions and represents
+        the actual cash-equivalent value the agent has locked in.
+        Use this for honest performance reporting.
+        """
+        return float(self.realized_equity)
 
     def get_equity(self) -> float:
         """Retourne l'equity courante du portefeuille."""
@@ -1363,11 +1414,12 @@ class PortfolioManager:
             return tiers
 
         # 2) Sélection basée sur capital_tiers (liste de paliers par capital)
-        # CASH TRUTH: Use cash only (no unrealized) for tier determination.
-        # This prevents phantom tier upgrades from unrealized gains in bull markets.
+        # EQUITY TRUTH: Use total equity (cash + unrealized) for tier determination.
+        # This allows workers to progress to higher tiers as they accumulate profits,
+        # even if cash is temporarily low due to open positions.
         capital_tiers = self.config.get("capital_tiers")
         if isinstance(capital_tiers, list):
-            current_capital = float(self.cash)
+            current_capital = float(self.get_portfolio_value())  # Use equity, not cash
             for tier in capital_tiers:
                 try:
                     min_cap = tier.get("min_capital", float("-inf"))
