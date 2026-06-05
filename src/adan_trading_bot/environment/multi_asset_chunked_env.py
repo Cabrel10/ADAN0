@@ -1140,10 +1140,16 @@ class MultiAssetChunkedEnv(gym.Env):
             profile = _profile_map.get(profile, profile)
 
             _PROFILE_BOUNDS = {
-                "scalper":  {"sl": (0.003, 0.008), "tp": (0.006, 0.015)},
-                "intraday": {"sl": (0.008, 0.020), "tp": (0.016, 0.040)},
-                "swing":    {"sl": (0.015, 0.035), "tp": (0.030, 0.070)},
-                "position": {"sl": (0.020, 0.050), "tp": (0.040, 0.100)},
+                # OPTIMIZATION FOR 0.80% FEES (4× real 0.10% Binance fee)
+                # With 0.80% A/R fees, tighter SL are not viable
+                # Scalper: 2-3% SL (viable ONLY with AGENT_CLOSE at ~-0.8%)
+                # Intraday: 4-6% SL (R:R net 1.5:1, BE 40%)
+                # Swing: 7-10% SL (R:R net 1.69:1, BE 37%)
+                # Position: 15-20% SL (R:R net 1.85:1, BE 35%)
+                "scalper":  {"sl": (0.020, 0.030), "tp": (0.040, 0.060)},
+                "intraday": {"sl": (0.040, 0.060), "tp": (0.080, 0.120)},
+                "swing":    {"sl": (0.070, 0.100), "tp": (0.140, 0.200)},
+                "position": {"sl": (0.150, 0.200), "tp": (0.300, 0.400)},
             }
             bounds = _PROFILE_BOUNDS.get(profile, _PROFILE_BOUNDS["intraday"])
             sl_min, sl_max = bounds["sl"]
@@ -6049,32 +6055,53 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
 
         # ──────────────────────────────────────────────────────────────────
-        # STEP 5: DRAWDOWN PENALTY (tier-scaled)
+        # STEP 5: DRAWDOWN PENALTY (tier-scaled, quadratic)
         # ──────────────────────────────────────────────────────────────────
+        # PROP FIRM RULE: Lose >5% capital → severe penalty escalates quadratically
+        # -5% drawdown: -50 × 0.05² = -0.125
+        # -10% drawdown: -50 × 0.10² = -0.5
+        # -20% drawdown: -50 × 0.20² = -2.0 (catastrophic)
+        # This enforces: "Survival is the primary goal, profit is secondary"
         drawdown_penalty = 0.0
         try:
             metrics = self.portfolio_manager.get_metrics()
             dd_pct = float(metrics.get("drawdown", 0.0) or 0.0)  # Negative number
-            if dd_pct < -0.1:  # Only penalize if > 10% drawdown
+            if dd_pct < -0.01:  # Penalize ANY drawdown > 1% (earlier detection)
                 dd_factor = float(current_tier_info.get("drawdown_penalty_factor", 1.0))
-                # Harsher penalty for small tiers, gentler for large tiers
-                drawdown_penalty = -0.5 * math.tanh(abs(dd_pct) * 5 * dd_factor)
+                # Quadratic penalty scaled by tier factor (smaller tiers suffer more)
+                abs_dd = abs(dd_pct)
+                drawdown_penalty = -50.0 * (abs_dd ** 2) * dd_factor
+                if self.current_step % 100 == 0 and abs_dd > 0.05:
+                    self.logger.warning(
+                        f"[DRAWDOWN_PENALTY] DD={dd_pct:.2%} | penalty={drawdown_penalty:.4f} | "
+                        f"factor={dd_factor:.1f} (tier={current_tier})"
+                    )
         except Exception:
             pass
 
         # ──────────────────────────────────────────────────────────────────
-        # STEP 6: INACTION PENALTY (no-trade penalty)
+        # STEP 6: PATIENCE BONUS (reward waiting, not forced trading)
         # ──────────────────────────────────────────────────────────────────
-        inaction_penalty = 0.0
-        if pnl_net == 0.0:
-            # Small penalty for doing nothing
-            inaction_penalty = float(self.config.get("reward_shaping", {}).get("time_decay", -0.01))
+        # With 0.80% fees (4× real Binance), forced trading = slow death
+        # Instead: reward the agent for being selective, waiting for high-conviction setups
+        # Philosophy: "Not forced to trade every day" → bonus for patience
+        patience_bonus_val = 0.0
+        steps_since_last_trade = self.current_step - getattr(self, 'last_trade_step', -10000)
+        if steps_since_last_trade > 100:  # Beyond 100 steps without trade
+            # Logarithmic bonus: grows but saturates (doesn't encourage infinite holding)
+            patience_bonus_val = 0.005 * math.log1p(steps_since_last_trade - 100)
+            if self.current_step % 500 == 0:
+                self.logger.info(
+                    f"[PATIENCE_BONUS] Worker {self.worker_id} waiting {steps_since_last_trade} steps | "
+                    f"Bonus: +{patience_bonus_val:.4f}"
+                )
 
         # ──────────────────────────────────────────────────────────────────
         # STEP 7: COMPOSE FINAL REWARD
         # ──────────────────────────────────────────────────────────────────
+        # With 0.80% fees, patience > forced trading
         # PnL signal: 5× stronger (was 0.1, now 0.5) so wins matter
-        # Survival bonus: +0.001/step (counterbalance inaction penalty, prevents suicide)
+        # Survival bonus: +0.001/step (counterbalance, prevents suicide)
         pnl_base_reward = pnl_pct * 0.5  # Was 0.1, now 5× stronger
         survival_bonus = 0.001  # Small positive to prevent "impossible game" feeling
         
@@ -6083,8 +6110,8 @@ class MultiAssetChunkedEnv(gym.Env):
             + promotion_bonus  # Tier promotion (big incentive)
             + demotion_penalty  # Tier demotion (big penalty)
             + stagnation_penalty  # Stagnation timeout (now 4x softer)
-            + drawdown_penalty  # Risk management
-            + inaction_penalty  # Prevent paralysis
+            + drawdown_penalty  # Risk management (quadratic, harsh)
+            + patience_bonus_val  # Reward waiting (not forced trading) — CHANGED
             + survival_bonus  # +0.001/step just for existing
         )
 
@@ -6105,7 +6132,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"Demote={demotion_penalty:+.2f} | "
                 f"Stagnation={stagnation_penalty:+.4f} | "
                 f"Drawdown={drawdown_penalty:+.4f} | "
-                f"Survival={survival_bonus:+.4f} | "
+                f"Patience={patience_bonus_val:+.4f} | "
                 f"Final={final_reward:+.4f}"
             )
 
@@ -6119,7 +6146,7 @@ class MultiAssetChunkedEnv(gym.Env):
             "demotion_penalty": demotion_penalty,
             "stagnation":       stagnation_penalty,
             "drawdown":         drawdown_penalty,
-            "inaction":         inaction_penalty,
+            "patience_bonus":   patience_bonus_val,  # Changed
             "survival_bonus":   survival_bonus,
             "raw":              raw_reward,
             "final_reward":     final_reward,
@@ -6964,14 +6991,17 @@ class MultiAssetChunkedEnv(gym.Env):
                      "balanced": "intraday", "aggressive": "swing", "adaptive": "position"}
             _prof = _pmap.get(_prof, _prof)
             # ── ATR-AWARE SL/TP BOUNDS ──────────────────────────────
-            # Scalper SL widened: 0.5%-1.2% to survive BTC 5m noise
-            # (ATR on 5m BTC ≈ 0.2-0.5%, so SL must be > 2×ATR)
-            # TP bounds also widened to maintain R/R ≥ 1.5
+            # OPTIMIZATION FOR 0.80% FEES (4× Binance real fee 0.10%)
+            # With high fees, tight SL become non-viable mathematically
+            # Scalper: 2-3% SL only viable via AGENT_CLOSE compression (-0.8% effective)
+            # Intraday: 4-6% SL (R:R net 1.5:1, BE winrate 40%)
+            # Swing: 7-10% SL (R:R net 1.69:1, BE winrate 37%)
+            # Position: 15-20% SL (R:R net 1.85:1, BE winrate 35%, most robust)
             _BOUNDS = {
-                "scalper":  {"sl": (0.005, 0.012), "tp": (0.010, 0.025)},
-                "intraday": {"sl": (0.010, 0.025), "tp": (0.020, 0.050)},
-                "swing":    {"sl": (0.015, 0.040), "tp": (0.030, 0.080)},
-                "position": {"sl": (0.020, 0.060), "tp": (0.040, 0.120)},
+                "scalper":  {"sl": (0.020, 0.030), "tp": (0.040, 0.060)},
+                "intraday": {"sl": (0.040, 0.060), "tp": (0.080, 0.120)},
+                "swing":    {"sl": (0.070, 0.100), "tp": (0.140, 0.200)},
+                "position": {"sl": (0.150, 0.200), "tp": (0.300, 0.400)},
             }
             _b = _BOUNDS.get(_prof, _BOUNDS["intraday"])
             sl_lo, sl_hi = _b["sl"]
