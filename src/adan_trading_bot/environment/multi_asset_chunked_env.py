@@ -2186,6 +2186,14 @@ class MultiAssetChunkedEnv(gym.Env):
         self.last_trade_steps_by_tf = {}
         self.last_trade_timestamps = {}
         self.current_timeframe_for_trade = "5m"
+        self._last_trade_step = 0  # S15+: For polar reward time decay
+        
+        # ── TIER-BASED CAPITAL PROGRESSION TRACKING ──
+        self._current_tier = "Micro"  # Start at smallest tier
+        self._previous_tier = "Micro"
+        self._steps_in_current_tier = 0  # Steps since entering current tier
+        self._max_capital_reached = float(self.portfolio_manager.initial_capital or 20.5)
+        self._tier_entry_capital = float(self.portfolio_manager.initial_capital or 20.5)
 
         # OMEGA-3/4: Reset episode receipts and per-asset cooldown
         self._all_episode_receipts = deque(maxlen=50)  # REDUCED: Cap memory: keep last 50 receipts (was 500)
@@ -4464,6 +4472,23 @@ class MultiAssetChunkedEnv(gym.Env):
                 }
                 self.episode_reward = 0.0
 
+            # ── S15+ FIX: Calculate capacity_pct for capacity_reward ───────────────
+            # Capacity = total notional value in open positions / portfolio value
+            try:
+                total_notional = sum(
+                    abs(pos.get('quantity', 0)) * pos.get('entry_price', 0)
+                    for pos in getattr(self, 'open_positions', {}).values()
+                    if isinstance(pos, dict)
+                )
+                portfolio_val = self.portfolio_manager.get_portfolio_value()
+                self._current_capacity_pct = float(total_notional / portfolio_val) if portfolio_val > 0 else 0.0
+            except Exception:
+                self._current_capacity_pct = 0.0
+
+            # ── S15+ FIX: Track trades_executed_this_step for frequency_reward ────
+            # Count number of actual trade executions (not rejections)
+            self._trades_executed_this_step = int(len(self._step_closed_receipts) if hasattr(self, '_step_closed_receipts') else 0)
+
             # Nettoyage explicite des observations precedentes
             if hasattr(self, 'last_observation') and self.last_observation is not None:
                 del self.last_observation
@@ -5403,6 +5428,7 @@ class MultiAssetChunkedEnv(gym.Env):
         result = {
             "close": 0.0, "prev_close": 0.0, "volatility": 0.0,
             "log_return": 0.0, "atr_pct": 0.0, "rsi_norm": 0.5, "volume_ratio_20": 1.0,
+            "adx": 20.0,  # S15+: ADX for trend detection in reward
         }
         try:
             idx = int(getattr(self, "step_in_chunk", 0))
@@ -5471,6 +5497,14 @@ class MultiAssetChunkedEnv(gym.Env):
                     val = df["log_return"].iloc[safe_idx]
                     if np.isfinite(val):
                         result["log_return"] = float(val)
+                
+                # S15+: Extract ADX for trend-aware rewards
+                for adx_col in ["adx", "ADX", "adx_14", "ADX_14"]:
+                    if adx_col in df.columns:
+                        val = df[adx_col].iloc[safe_idx]
+                        if np.isfinite(val):
+                            result["adx"] = float(np.clip(val, 0.0, 100.0))
+                        break
                 break
         except Exception:
             pass
@@ -5909,216 +5943,186 @@ class MultiAssetChunkedEnv(gym.Env):
         return getattr(self, "current_timeframe_for_trade", "5m")
 
     def _calculate_reward(self, action: np.ndarray, realized_pnl: float) -> float:
-        """TRUE QUANT REWARD — Alpha-Omega formula (REWARD_ANTIHACK).
+        """TIER-BASED CAPITAL PROGRESSION REWARD (Prop Firm Model).
 
-        Computes the step reward using a symlog-compressed PnL signal with
-        drawdown penalty and inaction signal. This is the ONLY reward path;
-        all legacy bonus/penalty systems have been removed.
-
-        Formula:
-            raw = PnL_net - trade_cost - drawdown_penalty + inaction + survival + inv_penalty
-            reward = symlog(raw)   where symlog(x) = sign(x) * ln(|x| + 1)
+        Implements hierarchical tier progression: agent earns bonuses for promotion,
+        faces penalties for stagnation, and pure PnL as base signal.
 
         Components:
-            1. PnL_net: realized_pnl - commission * 1.5 (fee overweight discourages churn)
-            2. trade_cost: slippage proxy (notional * 0.15%) on actual trades only
-            3. drawdown_penalty: quadratic penalty when drawdown > 2%
-               penalty = (|dd| - 0.02)^2 * 50.0
-            4. inaction: -0.0001 when no trade (tiny tie-breaker)
-            5. survival_bonus: small positive when cash > initial_capital
-            6. inv_penalty: accumulated invalid trade penalties from _execute_trades gates
-
-        Anti-hack properties:
-            - Symlog compression prevents reward explosion on large trades
-            - Losing trades always produce negative reward (commission overweight + loss)
-            - No-trade steps produce near-zero reward (inaction = -0.0001)
-            - Drawdown penalty grows quadratically, punishing sustained losses
-
-        Logged as [REWARD_ANTIHACK] with full component breakdown every 50 steps
-        and on every trade for audit trail compliance.
-
-        Args:
-            action: np.ndarray — the raw action vector (for context logging).
-            realized_pnl: float — total realized PnL from this step's trades
-                          (includes SL/TP closures + agent closes + invalid penalties).
+            1. Base PnL reward (percentage return on tier capital)
+            2. Promotion bonus (+0.5, +1.0, +2.0, +4.0 per tier, doubling)
+            3. Demotion penalty (-0.5, -1.0, -2.0, -4.0 per tier, matching promotion)
+            4. Stagnation penalty (increases if steps_in_tier > max_steps)
+            5. Drawdown penalty (tier-scaled, harsher for smaller tiers)
+            6. Inaction penalty (-0.01 per step with no trade)
 
         Returns:
-            float: symlog-compressed reward value.
+            float: reward value (-2.0 to +5.0 typical range)
         """
         import numpy as _np
+        import math
 
-        def _symlog(x: float) -> float:
-            return float(_np.sign(x) * _np.log1p(_np.abs(x)))
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 1: DETERMINE CURRENT AND PREVIOUS TIER
+        # ──────────────────────────────────────────────────────────────────
+        def _get_tier_from_capital(capital: float) -> str:
+            """Map capital to tier name."""
+            tier_config = self.config.get("reward_shaping", {}).get("capital_tier_rewards", {})
+            tiers_sorted = sorted(tier_config.items(), key=lambda x: x[1].get("min_capital", 0))
+            
+            for tier_name, tier_info in tiers_sorted:
+                min_cap = float(tier_info.get("min_capital", 0))
+                max_cap = float(tier_info.get("max_capital", 999999))
+                if min_cap <= capital <= max_cap:
+                    return tier_name
+            return "Enterprise"
 
-        # ── 1. Net PnL after commission ───────────────────────────────────
-        # 🔧 FIX: realized_pnl already has fees deducted in close_position()
-        # Do NOT subtract commission again (double fee deduction bug)
-        # commission = float(self.portfolio_manager.get_metrics().get(
-        #     "total_commission", 0.0
-        # ) if hasattr(self, "portfolio_manager") else 0.0)
-        # pnl_net = float(realized_pnl) - commission * 1.5
-        pnl_net = float(realized_pnl)  # Fees already deducted in PortfolioManager
+        # Get current capital from portfolio manager
+        try:
+            current_capital = float(self.portfolio_manager.total_equity or 20.5)
+        except Exception:
+            current_capital = 20.5
 
-        # ── 1b. A8 FIX: Normalize PnL by initial capital (percentage-based) ──
-        # On $20.50 capital, a $0.05 profit is 0.24% — meaningful!
-        # But symlog($0.05) = 0.049 — too small for PPO gradient.
-        # Dividing by initial_capital turns it into a fraction: 0.05/20.5 = 0.00244
-        # Then multiplying by 100 gives: 0.244 (percentage points).
-        # symlog(0.244) = 0.219 — 4.5x stronger signal than symlog(0.05) = 0.049
+        current_tier = _get_tier_from_capital(current_capital)
+        previous_tier = getattr(self, '_current_tier', current_tier)
+        
+        # Check for tier change
+        tier_changed = (current_tier != previous_tier)
+        if tier_changed:
+            self._previous_tier = previous_tier
+            self._current_tier = current_tier
+            self._steps_in_current_tier = 0
+            self._tier_entry_capital = float(self.portfolio_manager.get_metrics().get("peak_equity", current_capital) or current_capital)
+        else:
+            self._steps_in_current_tier = int(getattr(self, '_steps_in_current_tier', 0)) + 1
+
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 2: COMPUTE BASE PnL SIGNAL
+        # ──────────────────────────────────────────────────────────────────
+        pnl_net = float(realized_pnl)
         _ic = float(self.portfolio_manager.initial_capital or 20.5)
-        _reward_scale = 100.0 / max(_ic, 1.0)  # Convert to percentage basis
-        pnl_net_scaled = pnl_net * _reward_scale
-        commission_scaled = 0.0  # No longer double-deducting commission
+        pnl_pct = (pnl_net * 100.0) / max(_ic, 1.0)  # Percentage basis
 
-        # ── 2. Trade cost penalty (slippage proxy, only on actual trades) ─
-        trade_cost = 0.0
-        if realized_pnl != 0.0:
-            # Estimate notional from last trade
-            last_notional = getattr(self, "_last_trade_notional", 0.0)
-            trade_cost = float(last_notional) * 0.0015 * _reward_scale if last_notional > 0 else 0.001
-
-        # ── 3. Drawdown penalty (quadratic above 2%) ──────────────────────
-        drawdown_penalty = 0.0
-        if hasattr(self, "portfolio_manager"):
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 3: COMPUTE TIER-BASED REWARDS/PENALTIES
+        # ──────────────────────────────────────────────────────────────────
+        tier_config = self.config.get("reward_shaping", {}).get("capital_tier_rewards", {})
+        current_tier_info = tier_config.get(current_tier, {})
+        previous_tier_info = tier_config.get(previous_tier, {})
+        
+        promotion_bonus = 0.0
+        demotion_penalty = 0.0
+        
+        # Tier progression bonus/penalty
+        if tier_changed:
+            tier_order = list(tier_config.keys())
             try:
-                metrics = self.portfolio_manager.get_metrics()
-                dd = float(metrics.get("drawdown", 0.0) or 0.0)
-                if dd < -0.02:
-                    drawdown_penalty = (abs(dd) - 0.02) ** 2 * 80.0  # Adjusted: 50→80 (balanced)
-            except Exception:
+                curr_idx = tier_order.index(current_tier)
+                prev_idx = tier_order.index(previous_tier)
+                
+                if curr_idx > prev_idx:
+                    # PROMOTION: get bonus from config (doubling per tier)
+                    promotion_bonus = float(current_tier_info.get("promotion_bonus", 0.5))
+                    self.logger.info(f"[TIER PROMOTION] {previous_tier} → {current_tier} | Bonus +{promotion_bonus}")
+                elif curr_idx < prev_idx:
+                    # DEMOTION: matching penalty
+                    demotion_penalty = -float(previous_tier_info.get("promotion_bonus", 0.5))
+                    self.logger.warning(f"[TIER DEMOTION] {previous_tier} → {current_tier} | Penalty {demotion_penalty}")
+            except (ValueError, KeyError):
                 pass
+        
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 4: STAGNATION PENALTY (if too long in current tier)
+        # ──────────────────────────────────────────────────────────────────
+        stagnation_penalty = 0.0
+        max_steps_in_tier = int(current_tier_info.get("max_steps_in_tier", 5000))
+        stagnation_rate = float(current_tier_info.get("stagnation_penalty_per_step", -0.0005))
+        
+        if self._steps_in_current_tier > max_steps_in_tier:
+            excess_steps = self._steps_in_current_tier - max_steps_in_tier
+            # Logarithmic penalty: grows but never explodes
+            stagnation_penalty = stagnation_rate * math.log1p(excess_steps)
+            if self._steps_in_current_tier % 500 == 0:
+                self.logger.warning(
+                    f"[STAGNATION] Worker {self.worker_id} in {current_tier} for {self._steps_in_current_tier} steps | "
+                    f"Penalty: {stagnation_penalty:.4f}"
+                )
 
-        # ── 4. Opportunity cost of inaction (DENSE BASELINE for CRITIC) ──
-        # Session 8: removed drift hack. Session 9: -1e-4 baseline added.
-        # Session 10 FIX: env-var override + config-driven, NOT hardcoded.
-        # The previous hardcoded -0.0001 made the config 'time_decay' a no-op
-        # and produced explained_variance = -2.36 (worse than -1.09).
-        # New: pull from reward_shaping.time_decay (default -1e-3) so the
-        # critic gets a learnable V(s) signal over a 500-step episode (-0.5).
-        # Override at runtime via ADAN_TIME_DECAY env var.
-        inaction = 0.0
-        if realized_pnl == 0.0:
-            _env_td = os.environ.get("ADAN_TIME_DECAY")
-            if _env_td is not None:
-                try:
-                    inaction = float(_env_td)
-                except (TypeError, ValueError):
-                    inaction = float(self.config.get("reward_shaping", {}).get("time_decay", -1e-3))
-            else:
-                inaction = float(self.config.get("reward_shaping", {}).get("time_decay", -1e-3))
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 5: DRAWDOWN PENALTY (tier-scaled)
+        # ──────────────────────────────────────────────────────────────────
+        drawdown_penalty = 0.0
+        try:
+            metrics = self.portfolio_manager.get_metrics()
+            dd_pct = float(metrics.get("drawdown", 0.0) or 0.0)  # Negative number
+            if dd_pct < -0.1:  # Only penalize if > 10% drawdown
+                dd_factor = float(current_tier_info.get("drawdown_penalty_factor", 1.0))
+                # Harsher penalty for small tiers, gentler for large tiers
+                drawdown_penalty = -0.5 * math.tanh(abs(dd_pct) * 5 * dd_factor)
+        except Exception:
+            pass
 
-        # ── 5. Survival signal : DESACTIVE ──────────────────────────────
-        # Le survival_bonus (sous toutes ses formes : unconditional, position-based,
-        # unrealized-PnL-delta) cree un signal deconnecte de la performance.
-        # Preuves CI : ev -5.11 -> -9.29 apres introduction du bonus (empire).
-        # La seule recompense positive valide est realized_pnl des trades fermes.
-        # Le Critic apprendra quand il aura 50k+ steps sur donnees diversifiees,
-        # pas grace a un signal artificiel.
-        survival = 0.0
-        _unrealized_shaping = 0.0
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 6: INACTION PENALTY (no-trade penalty)
+        # ──────────────────────────────────────────────────────────────────
+        inaction_penalty = 0.0
+        if pnl_net == 0.0:
+            # Small penalty for doing nothing
+            inaction_penalty = float(self.config.get("reward_shaping", {}).get("time_decay", -0.01))
 
-        # ── 5b. Invalid trade penalty (accumulated from _execute_trades) ──
-        inv_penalty = float(getattr(self, '_step_invalid_penalty', 0.0))
-
-        # ── 5c. Capacity reward — DISABLED (S15 Hard Reset) ─────────────
-        # capacity_reward gave +2.0 just for being invested (60-90% usage),
-        # regardless of trade outcomes. This is reward shaping that biases
-        # toward holding positions — NOT a valid financial signal.
-        capacity_reward = 0.0
-
-        # ── 5d. Frequency reward — DISABLED (S15 Hard Reset) ─────────────
-        # frequency_reward gave bonuses for trading within range bounds.
-        # This shapes behavior without financial basis — the ONLY valid
-        # positive reward is realized_pnl from closed trades.
-        frequency_reward = 0.0
-
-        # ── 6. Compose and apply symlog ───────────────────────────────────
-        # S15 HARD RESET: reward = symlog(realized_pnl_scaled - costs
-        #   - drawdown + time_decay + inv_penalty)
-        # ZERO shaping. ZERO bonuses. Pure financial signal.
-        raw = (pnl_net_scaled 
-               - trade_cost 
-               - drawdown_penalty 
-               + inaction 
-               + survival 
-               + inv_penalty
-               + capacity_reward
-               + frequency_reward)
-        final_reward = _symlog(raw)
-
-        # ── 7. Log components for monitoring ─────────────────────────────
-        _action_names_r = {0: "HOLD", 1: "BUY", 2: "SELL"}
-        _da_exe = getattr(self, '_last_discrete_action', 0)
-        _da_req = getattr(self, '_last_discrete_action_requested', _da_exe)
-        # A7 FIX: Use .6f precision to reveal small trade costs on $20 capital
-        self.logger.info(
-            f"[REWARD Worker {self.worker_id}] "
-            f"Base: {pnl_net:.6f}, "
-            f"Base_scaled: {pnl_net_scaled:.6f}, "
-            f"InvalidTrade: {inv_penalty:.6f}, "
-            f"TradeCost: -{trade_cost:.6f}, "
-            f"Total: {final_reward:.6f}, "
-            f"Counts: {self.positions_count}"
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 7: COMPOSE FINAL REWARD
+        # ──────────────────────────────────────────────────────────────────
+        # PnL signal: 5× stronger (was 0.1, now 0.5) so wins matter
+        # Survival bonus: +0.001/step (counterbalance inaction penalty, prevents suicide)
+        pnl_base_reward = pnl_pct * 0.5  # Was 0.1, now 5× stronger
+        survival_bonus = 0.001  # Small positive to prevent "impossible game" feeling
+        
+        raw_reward = (
+            pnl_base_reward  # PnL signal: 5x stronger
+            + promotion_bonus  # Tier promotion (big incentive)
+            + demotion_penalty  # Tier demotion (big penalty)
+            + stagnation_penalty  # Stagnation timeout (now 4x softer)
+            + drawdown_penalty  # Risk management
+            + inaction_penalty  # Prevent paralysis
+            + survival_bonus  # +0.001/step just for existing
         )
-        # REWARD_ANTIHACK: log requested vs executed actions + penalty
-        if realized_pnl != 0.0 or self.current_step % 50 == 0:
+
+        # Use symlog to compress large rewards while preserving small signal
+        final_reward = float(_np.sign(raw_reward) * _np.log1p(_np.abs(raw_reward)))
+
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 8: LOGGING
+        # ──────────────────────────────────────────────────────────────────
+        if self.current_step % 50 == 0 or tier_changed:
             self.logger.info(
-                f"[REWARD_ANTIHACK] Step {self.current_step} | "
-                f"pnl_net={pnl_net:+.6f} inv_pen={inv_penalty:.6f} "
-                f"action_req={_action_names_r.get(_da_req, '?')} "
-                f"action_exe={_action_names_r.get(_da_exe, '?')} "
-                f"raw={raw:.6f} final={final_reward:+.6f}"
+                f"[TIER_REWARD Worker {self.worker_id}] "
+                f"Tier={current_tier} | "
+                f"Capital=${current_capital:.2f} | "
+                f"Steps_in_tier={self._steps_in_current_tier} | "
+                f"PnL={pnl_pct:+.2f}% | "
+                f"Promo={promotion_bonus:+.2f} | "
+                f"Demote={demotion_penalty:+.2f} | "
+                f"Stagnation={stagnation_penalty:+.4f} | "
+                f"Drawdown={drawdown_penalty:+.4f} | "
+                f"Survival={survival_bonus:+.4f} | "
+                f"Final={final_reward:+.4f}"
             )
 
+        # Store for inspection
         self._last_reward_components = {
-            # ── Core PnL ──────────────────────────────────────────────────
             "pnl":              float(realized_pnl),
-            "pnl_net":          pnl_net,
-            "pnl_net_scaled":   pnl_net_scaled,
-            "commission":       0.0,  # Already deducted in PortfolioManager.close_position()
-            "trade_cost":       -trade_cost,
-            # ── Risk penalties ────────────────────────────────────────────
-            "drawdown_penalty": -drawdown_penalty,
-            "drawdown_pct":     float(self.portfolio_manager.get_metrics().get("drawdown", 0.0) or 0.0)
-                                if hasattr(self, "portfolio_manager") else 0.0,
-            # ── Inaction / survival / invalid penalty ──────────────────────
-            "inaction":         inaction,
-            "survival_bonus":   survival,
-            "invalid_penalty":  inv_penalty,
-            # ── Composition ───────────────────────────────────────────────
-            "raw":              raw,
+            "pnl_pct":          pnl_pct,
+            "pnl_reward":       pnl_base_reward,
+            "tier":             current_tier,
+            "promotion_bonus":  promotion_bonus,
+            "demotion_penalty": demotion_penalty,
+            "stagnation":       stagnation_penalty,
+            "drawdown":         drawdown_penalty,
+            "inaction":         inaction_penalty,
+            "survival_bonus":   survival_bonus,
+            "raw":              raw_reward,
             "final_reward":     final_reward,
-            # ── Trade context (filled by _execute_trades caller) ──────────
-            "outcome_tp":       0.0,
-            "outcome_sl":       0.0,
-            "outcome_passivity":0.0,
-            "frequency_5m":     0.0,
-            "frequency_1h":     0.0,
-            "frequency_4h":     0.0,
-            "frequency_daily":  0.0,
-            "pos_limit_penalty":0.0,
-            "duration_penalty": 0.0,
-            "capacity_reward":  0.0,
-            "excellence_sharpe":0.0,
-            "excellence_streak":0.0,
-            "excellence_confluence": 0.0,
-            "excellence_chunk": 0.0,
-            "promotion_bonus":  0.0,
-            "demotion_penalty": 0.0,
-            "inaction_penalty": 0.0,
-            # ── State context ─────────────────────────────────────────────
-            "regime":           str(getattr(self, "_last_regime", "unknown")),
-            "open_positions":   len([p for p in self.portfolio_manager.positions.values()
-                                     if getattr(p, "is_open", False)])
-                                if hasattr(self, "portfolio_manager") else 0,
-            "steps_since_trade":self.current_step - max(
-                                    getattr(self, "last_trade_steps_by_tf", {}).values(),
-                                    default=[self.current_step]
-                                ) if getattr(self, "last_trade_steps_by_tf", {}) else 0,
-            "daily_trades":     self.positions_count.get("daily_total", 0)
-                                if hasattr(self, "positions_count") else 0,
-            "invalid_attempts": int(getattr(self, "invalid_trade_attempts", 0)),
-            "trade_attempts":   int(getattr(self, "trade_attempts", 0)),
         }
 
         return float(final_reward)

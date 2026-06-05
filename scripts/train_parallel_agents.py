@@ -1089,17 +1089,33 @@ def run_pbt(
     param_space["_max_iterations"] = max_iterations
 
     tuner = None
-    if resume and Path(storage_path).exists():
-        try:
-            tuner = tune.Tuner.restore(
-                str(Path(storage_path) / "adan_pbt_training"),
-                trainable=ADAN_PBT_Worker,
-                resume_errored=True,
-                restart_errored=False,
-            )
-            logger.info(f"Resuming training from {storage_path}")
-        except Exception as e:
-            logger.warning(f"Could not resume: {e}. Starting fresh.")
+    if resume:
+        # Try to restore from exact storage_path first (it should contain experiment_state.json)
+        restore_path = Path(storage_path)
+        if not restore_path.exists():
+            restore_path = Path(storage_path).parent / "adan_pbt_training"
+        
+        # FIX: Find the most recent experiment_state-*.json instead of hardcoded path
+        import glob as _glob
+        exp_states = sorted(_glob.glob(str(restore_path / "experiment_state-*.json")))
+        
+        if restore_path.exists() and exp_states:
+            exp_state_file = exp_states[-1]  # Use the most recent one
+            try:
+                logger.info(f"Attempting restore from: {restore_path}")
+                logger.info(f"Using experiment state: {Path(exp_state_file).name}")
+                tuner = tune.Tuner.restore(
+                    str(restore_path),
+                    trainable=ADAN_PBT_Worker,
+                    resume_errored=True,
+                    restart_errored=False,
+                )
+                logger.info(f"✅ Successfully resumed training from {restore_path}")
+            except Exception as e:
+                logger.warning(f"Could not resume from {restore_path}: {e}. Starting fresh.")
+                tuner = None
+        else:
+            logger.warning(f"No valid experiment state found at {restore_path}. Starting fresh.")
             tuner = None
 
     if tuner is None:
@@ -1117,6 +1133,8 @@ def run_pbt(
             max_concurrent_trials=num_samples,  # Allow all trials to run in parallel
             reuse_actors=True,  # EXPERT FIX: Must be True for PBT to prevent GCS crashes
         )
+        # FIX: Increase timeouts to prevent GCS disconnects during long training
+        tune_config_kwargs["max_concurrent_trials"] = min(num_samples, 2)  # Reduce workers for stability
         if _is_colab:
             import torch as _torch
             if _torch.cuda.is_available():
@@ -1305,8 +1323,16 @@ def main(
         _system_config=enhanced_system_config,
     )
     
-    # Set environment variable for additional timeout protection
-    os.environ["RAY_gcs_rpc_server_reconnect_timeout_s"] = "180"
+    # Set environment variables for timeout protection
+    # GCS heartbeat: increase from 180s to 1200s (20 minutes) to prevent premature disconnects
+    os.environ["RAY_gcs_rpc_server_reconnect_timeout_s"] = "1200"
+    # Also increase GCS server heartbeat interval
+    os.environ["RAY_health_check_failure_threshold"] = "10"
+    os.environ["RAY_health_check_initial_delay_ms"] = "1000"
+    # Additional stability settings
+    os.environ["RAY_task_retry_delay_ms"] = "5000"  # Retry delayed tasks after 5s
+    os.environ["RAY_memory"] = str(500_000_000)  # 500MB per worker
+    
     if IS_COLAB and torch.cuda.is_available():
         ray_init_kwargs["num_gpus"] = 1
     ray.init(**ray_init_kwargs)

@@ -1241,6 +1241,16 @@ reward_shaping:
   # Previous value was too weak - agent preferred inaction over trading.
   # New value makes HOLD cost 5 steps worth of reward, forcing agent to trade.
   time_decay: -0.01
+  # S15+ FIX: Reactivated capacity_weight with light value (+0.1)
+  # S15 disabled capacity_reward entirely (was +2.0), killing exploration.
+  # S15+ uses +0.1 to encourage being invested (60-90% portfolio in positions)
+  # while still letting realized_pnl be the primary signal.
+  capacity_weight: 0.1
+  # S15+ FIX: Reactivated frequency_weight with light value (+0.05 per trade)
+  # S15 disabled frequency_reward entirely, removing explore incentive.
+  # S15+ uses +0.05 per executed trade to encourage trying actions
+  # while pure PnL remains the main reward signal.
+  frequency_weight: 0.05
   duration_penalty_weight: 0.01
   early_close_bonus: 0.3
   early_exit_bonus: 0.5
@@ -1258,6 +1268,49 @@ reward_shaping:
   # SELL avant hold_min_steps → pénalité. BUY avant wait_steps_post_sell → pénalité.
   # Penalty per cooldown-violation step or per gate rejection.
   # Applied additively before symlog: -weight per step of violation.
+  
+  # ── TIER-BASED CAPITAL PROGRESSION ──
+  # Prop Firm model: agent gets progressively more time to reach next tier.
+  # Promotion bonus 10× increases at each tier (was 0.5, now 5.0 for Micro).
+  # Stagnation penalty 4× reduced to avoid "impossible game" feeling.
+  # Goal: encourage upward capital growth, penalize stagnation in small tiers.
+  # ADJUSTED (Session 11b): 10× promotions, 4× softer stagnation
+  capital_tier_rewards:
+    Micro:
+      min_capital: 11.0
+      max_capital: 30.0
+      max_steps_in_tier: 500
+      stagnation_penalty_per_step: -0.0005  # was -0.002 (÷4)
+      drawdown_penalty_factor: 2.0
+      promotion_bonus: 5.0  # was 0.5 (×10)
+    Small:
+      min_capital: 30.0
+      max_capital: 100.0
+      max_steps_in_tier: 1000
+      stagnation_penalty_per_step: -0.00025  # was -0.001 (÷4)
+      drawdown_penalty_factor: 1.5
+      promotion_bonus: 10.0  # was 1.0 (×10)
+    Medium:
+      min_capital: 100.0
+      max_capital: 300.0
+      max_steps_in_tier: 2000
+      stagnation_penalty_per_step: -0.000125  # was -0.0005 (÷4)
+      drawdown_penalty_factor: 1.0
+      promotion_bonus: 20.0  # was 2.0 (×10)
+    High:
+      min_capital: 300.0
+      max_capital: 1000.0
+      max_steps_in_tier: 3000
+      stagnation_penalty_per_step: -0.00005  # was -0.0002 (÷4)
+      drawdown_penalty_factor: 0.5
+      promotion_bonus: 40.0  # was 4.0 (×10)
+    Enterprise:
+      min_capital: 1000.0
+      max_capital: 999999.0
+      max_steps_in_tier: 50000
+      stagnation_penalty_per_step: 0.0  # No penalty for staying profitable
+      drawdown_penalty_factor: 0.1
+      promotion_bonus: 0.0  # No higher tier
   # At 0.005, a 5-step HOLD_MIN violation costs -0.025 reward.
   invalid_trade_penalty_weight: 0.005
   logging:
