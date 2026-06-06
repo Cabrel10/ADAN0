@@ -846,17 +846,17 @@ environment:
       action_threshold: 0.02   # Session 9: was 0.08 — see action_thresholds note
       description: Medium-term trading optimized
       force_trade_steps: 120
-      min_magnitude: 0.05
+      min_magnitude: 0.08  # SESSION 15: Increased from 0.05 to filter weak signals
     4h:
       action_threshold: 0.03   # Session 9: was 0.10
       description: Long-term trading enabled
       force_trade_steps: 240
-      min_magnitude: 0.08
+      min_magnitude: 0.12  # SESSION 15: Increased from 0.08 to require stronger setups
     5m:
       action_threshold: 0.01   # Session 9: was 0.05
       description: High-frequency trading enabled
       force_trade_steps: 72
-      min_magnitude: 0.03
+      min_magnitude: 0.06  # SESSION 15: Increased from 0.03 to avoid micro-trades
   trading_mode: backtest
   volatility_handling:
     cache_calculations: true
@@ -1272,36 +1272,36 @@ reward_shaping:
   # ── TIER-BASED CAPITAL PROGRESSION ──
   # Prop Firm model: agent gets progressively more time to reach next tier.
   # Promotion bonus 10× increases at each tier (was 0.5, now 5.0 for Micro).
-  # Stagnation penalty 4× reduced to avoid "impossible game" feeling.
-  # Goal: encourage upward capital growth, penalize stagnation in small tiers.
-  # ADJUSTED (Session 11b): 10× promotions, 4× softer stagnation
+  # Stagnation penalty further reduced to prevent panic-trading.
+  # Goal: Allow agent to WAIT for quality setups instead of forced micro-trades.
+  # ADJUSTED (Session 15): Additional 50% reduction + higher min_magnitude threshold
   capital_tier_rewards:
     Micro:
       min_capital: 11.0
       max_capital: 30.0
       max_steps_in_tier: 500
-      stagnation_penalty_per_step: -0.0005  # was -0.002 (÷4)
+      stagnation_penalty_per_step: -0.00025  # was -0.0005 (÷2 further) — SESSION 15
       drawdown_penalty_factor: 2.0
       promotion_bonus: 5.0  # was 0.5 (×10)
     Small:
       min_capital: 30.0
       max_capital: 100.0
       max_steps_in_tier: 1000
-      stagnation_penalty_per_step: -0.00025  # was -0.001 (÷4)
+      stagnation_penalty_per_step: -0.000125  # was -0.00025 (÷2 further) — SESSION 15
       drawdown_penalty_factor: 1.5
       promotion_bonus: 10.0  # was 1.0 (×10)
     Medium:
       min_capital: 100.0
       max_capital: 300.0
       max_steps_in_tier: 2000
-      stagnation_penalty_per_step: -0.000125  # was -0.0005 (÷4)
+      stagnation_penalty_per_step: -0.0000625  # was -0.000125 (÷2 further) — SESSION 15
       drawdown_penalty_factor: 1.0
       promotion_bonus: 20.0  # was 2.0 (×10)
     High:
       min_capital: 300.0
       max_capital: 1000.0
       max_steps_in_tier: 3000
-      stagnation_penalty_per_step: -0.00005  # was -0.0002 (÷4)
+      stagnation_penalty_per_step: -0.000025  # was -0.00005 (÷2 further) — SESSION 15
       drawdown_penalty_factor: 0.5
       promotion_bonus: 40.0  # was 4.0 (×10)
     Enterprise:

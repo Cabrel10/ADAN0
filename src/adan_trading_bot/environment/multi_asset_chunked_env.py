@@ -6136,7 +6136,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"Final={final_reward:+.4f}"
             )
 
-        # Store for inspection
+        # Store for inspection (logger looks for these keys)
         self._last_reward_components = {
             "pnl":              float(realized_pnl),
             "pnl_pct":          pnl_pct,
@@ -6146,7 +6146,10 @@ class MultiAssetChunkedEnv(gym.Env):
             "demotion_penalty": demotion_penalty,
             "stagnation":       stagnation_penalty,
             "drawdown":         drawdown_penalty,
-            "patience_bonus":   patience_bonus_val,  # Changed
+            "drawdown_penalty": drawdown_penalty,  # Logger key
+            "patience_bonus":   patience_bonus_val,
+            "inaction":         patience_bonus_val,  # Logger fallback key (was inaction_penalty)
+            "inaction_penalty": patience_bonus_val,  # Logger compatibility key
             "survival_bonus":   survival_bonus,
             "raw":              raw_reward,
             "final_reward":     final_reward,
@@ -6705,16 +6708,15 @@ class MultiAssetChunkedEnv(gym.Env):
                     realized_pnl += receipt_pnl
                     if receipt_pnl != 0.0:
                         trade_executed_this_step = True
-            # Also add the PnL returned by update_market_price
-            if _pre_pnl != 0.0:
-                realized_pnl += _pre_pnl
-                trade_executed_this_step = True
+            # 🔧 FIX: Do NOT add _pre_pnl here — it is already the sum of
+            # receipt["pnl"] values computed inside update_market_price().
+            # Adding it again was DOUBLING the realized PnL.
             self._pre_execute_sl_tp_receipts = []  # consume once
             self._pre_execute_pnl = 0.0
             logger.info(
                 f"[EXECUTE_TRADES] Step {self.current_step} | "
                 f"Using pre-captured SL/TP: {len(_pre_receipts)} receipts, "
-                f"PnL=${_pre_pnl:.2f}, total_realized_pnl=${realized_pnl:.2f}"
+                f"PnL=${realized_pnl:.2f}, total_realized_pnl=${realized_pnl:.2f}"
             )
         elif _pre_pnl != 0.0:
             # PnL without receipts (edge case)
@@ -7130,32 +7132,49 @@ class MultiAssetChunkedEnv(gym.Env):
                         discrete_action = 0
                         self.rejection_reasons["hysteresis"] += 1
                     else:
-                        self.trade_attempts += 1
-                        sell_price = price * (1.0 - SLIPPAGE_BPS / 10000.0) if price else price
-                        receipt = self.portfolio_manager.close_position(
-                            asset=asset.upper(), price=sell_price, timestamp=current_timestamp,
-                            current_prices=current_prices, reason="AGENT_CLOSE",
-                            risk_horizon=getattr(position, 'risk_horizon', 0.0),
-                        )
-                        if receipt and isinstance(receipt, dict):
-                            self._step_closed_receipts.append(receipt)
-                            self._all_episode_receipts.append(receipt)
-                            val = receipt.get("pnl", 0.0)
-                            fees = receipt.get("fees", 0.0)
-                            realized_pnl += float(val)
-                            self._apply_trade_results_safely(
-                                pnl_value=float(val), fees=float(fees))
-                            trade_executed_this_step = True
-                            # Déclenche WAIT post-SELL pour cet asset
-                            self._last_sell_step_by_asset[asset] = self.current_step
-                            _wait_map = {"5m": 6, "1h": 10, "4h": 20}
-                            self.logger.info(
-                                f"[AGENT_CLOSE] {asset} | TF={_tf} | SELL step={self.current_step} "
-                                f"pnl={val:.4f} | WAIT until step {self.current_step + _wait_map.get(_tf, 6)}"
+                        # SESSION 15 FIX: Check break-even threshold before allowing AGENT_CLOSE
+                        # Calculate unrealized PnL percentage to prevent closing below break-even
+                        entry_price = position.entry_price
+                        current_price = price
+                        unrealized_pnl_pct = (current_price - entry_price) / entry_price if entry_price != 0 else 0.0
+                        
+                        # Only close via AGENT_CLOSE if profit > 0.15% (above typical break-even with fees)
+                        # This prevents the "paper cut" loss pattern where fees exceed profits
+                        if unrealized_pnl_pct < 0.0015:  # 0.15% threshold
+                            # Reject AGENT_CLOSE - profit too small to cover fees
+                            discrete_action = 0
+                            self.rejection_reasons["hysteresis"] += 1
+                            self.logger.debug(
+                                f"[AGENT_CLOSE BLOCKED] {asset}: unrealized PnL {unrealized_pnl_pct:.4%} < 0.15% threshold. "
+                                f"Entry={entry_price:.2f}, Current={current_price:.2f}"
                             )
                         else:
-                            self.invalid_trade_attempts += 1
-                            self.rejection_reasons["pm_rejected"] += 1
+                            self.trade_attempts += 1
+                            sell_price = price * (1.0 - SLIPPAGE_BPS / 10000.0) if price else price
+                            receipt = self.portfolio_manager.close_position(
+                                asset=asset.upper(), price=sell_price, timestamp=current_timestamp,
+                                current_prices=current_prices, reason="AGENT_CLOSE",
+                                risk_horizon=getattr(position, 'risk_horizon', 0.0),
+                            )
+                            if receipt and isinstance(receipt, dict):
+                                self._step_closed_receipts.append(receipt)
+                                self._all_episode_receipts.append(receipt)
+                                val = receipt.get("pnl", 0.0)
+                                fees = receipt.get("fees", 0.0)
+                                realized_pnl += float(val)
+                                self._apply_trade_results_safely(
+                                    pnl_value=float(val), fees=float(fees))
+                                trade_executed_this_step = True
+                                # Déclenche WAIT post-SELL pour cet asset
+                                self._last_sell_step_by_asset[asset] = self.current_step
+                                _wait_map = {"5m": 6, "1h": 10, "4h": 20}
+                                self.logger.info(
+                                    f"[AGENT_CLOSE] {asset} | TF={_tf} | SELL step={self.current_step} "
+                                    f"pnl={val:.4f} | WAIT until step {self.current_step + _wait_map.get(_tf, 6)}"
+                                )
+                            else:
+                                self.invalid_trade_attempts += 1
+                                self.rejection_reasons["pm_rejected"] += 1
 
             # ================================================================
             # B. BUY — ouvre une position (USDT → crypto)
@@ -7530,7 +7549,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     f"[METRICS_FLOW] Worker {self.worker_id} | Source: PortfolioManager.metrics | "
                     f"Trades={metrics_summary.get('total_trades', 0)}, "
                     f"Sharpe={metrics_summary.get('sharpe_ratio', 0.0):.4f}, "
-                    f"MaxDD={metrics_summary.get('max_drawdown', 0.0):.2%}"
+                    f"MaxDD={metrics_summary.get('max_drawdown', 0.0):.2f}%"
                 )
                 
                 self.risk_metrics.update(
@@ -7590,6 +7609,50 @@ class MultiAssetChunkedEnv(gym.Env):
             self.positions_count[tf] = 0
             
         self.smart_logger.info("[DAILY RESET] All daily trade counts reset to 0", rotate=True)
+    def get_portfolio_metrics_dict(self) -> List[Dict[str, Any]]:
+        """
+        Returns pickle-safe portfolio metrics for Ray's env_method call.
+
+        Called by train_parallel_agents._collect_worker_metrics() which uses
+        env_method("get_portfolio_metrics_dict") instead of get_attr() to avoid
+        pickling the entire portfolio_manager object (which has module references).
+
+        Returns a list with one dict per environment in the vector env.
+        For DummyVecEnv (single env), returns [metrics_dict].
+        For SubprocVecEnv (multi-env), returns [metrics_dict_0, metrics_dict_1, ...].
+
+        Returns:
+            List[Dict]: Each dict contains only serializable scalars (float, int, str)
+        """
+        try:
+            if not hasattr(self, 'portfolio_manager') or self.portfolio_manager is None:
+                return [{"total_value": 0.0, "initial_capital": 0.0, "total_realized_pnl": 0.0}]
+
+            # Get full metrics from portfolio_manager
+            full_metrics = self.portfolio_manager.get_metrics()
+
+            # Extract only pickle-safe scalar values
+            safe_metrics = {
+                "total_value": float(full_metrics.get("total_value", 0.0)),
+                "initial_capital": float(self.portfolio_manager.initial_capital or 20.5),
+                "total_realized_pnl": float(full_metrics.get("total_realized_pnl", 0.0)),
+                "cash": float(full_metrics.get("cash", 0.0)),
+                "realized_equity": float(full_metrics.get("realized_equity", 0.0)),
+                "unrealized_pnl_total": float(full_metrics.get("unrealized_pnl_total", 0.0)),
+                "sharpe_ratio": float(full_metrics.get("sharpe_ratio", 0.0)),
+                "max_drawdown": float(full_metrics.get("max_drawdown", 0.0)),
+                "win_rate": float(full_metrics.get("win_rate", 0.0)),
+                "total_trades": int(full_metrics.get("total_trades", 0)),
+                "open_positions_count": int(full_metrics.get("open_positions_count", 0)),
+            }
+
+            # Return as list (for VecEnv compatibility)
+            return [safe_metrics]
+
+        except Exception as e:
+            logger.warning(f"Error getting portfolio metrics: {e}")
+            return [{"total_value": 0.0, "initial_capital": 20.5, "total_realized_pnl": 0.0}]
+
 
     def can_open_trade(self, tf: str) -> bool:
         """
@@ -7859,7 +7922,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"PnL=${pnl:.2f} ({pnl_pct:+.2f}%) | "
                 f"Trades={trades} | Steps={steps} | "
                 f"Trade/Step={trade_step_ratio:.4f} | "
-                f"MaxDD={info.get('max_dd', 0.0):.2%} | "
+                f"MaxDD={info.get('max_dd', 0.0):.2f}% | "
                 f"Sharpe={info.get('sharpe', 0.0):.4f} | "
                 f"WinRate={info.get('win_rate', 0.0):.1f}%"
             )
@@ -8178,17 +8241,25 @@ class MultiAssetChunkedEnv(gym.Env):
         return 0.0
 
     def calculate_inaction_penalty(self):
-        """Calculate penalty for inaction."""
-        penalty = 0.0
-        current_tf = self.get_current_timeframe()
-        steps_since_trade = self.current_step - getattr(
-            self, "last_trade_steps_by_tf", {}
-        ).get(current_tf, 0)
-
-        if steps_since_trade > 20:  # Penalty after 20 steps of inaction
-            penalty = -0.01 * (steps_since_trade - 20)
-
-        return penalty
+        """RENAMED: Calculate patience bonus for selectivity (not inaction penalty).
+        
+        With 0.80% fees, forced trading = slow death.
+        Philosophy: Reward waiting for high-conviction setups, not constant action.
+        
+        Returns:
+            float: Positive bonus if steps_since_trade > 100 (patience), else 0.0
+        """
+        import math
+        
+        steps_since_trade = self.current_step - getattr(self, 'last_trade_step', -10000)
+        
+        if steps_since_trade > 100:
+            # Logarithmic bonus: grows but saturates (doesn't encourage infinite holding)
+            bonus = 0.005 * math.log1p(steps_since_trade - 100)
+            return float(bonus)
+        else:
+            # No penalty, no bonus — neutral zone (first 100 steps after trade)
+            return 0.0
 
     def close(self) -> None:
         """Nettoie les ressources de l'environnement."""

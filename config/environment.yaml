@@ -72,6 +72,7 @@ environment:
         trailing_deviation_pct: 1.0
         trailing_enabled: true
   trading_fees: 0.01
+  commission: 0.001  # Actual trading commission (0.1% per side = 0.2% round-trip)
 data:
   # Jeu de données à utiliser pour les runs courts de validation/monitoring
   data_split: val

@@ -298,22 +298,27 @@ class MetricsMonitor(BaseCallback):
 
     def _collect_worker_metrics(self):
         try:
-            portfolio_managers = self.training_env.get_attr("portfolio_manager")
-            for worker_id, pm in enumerate(portfolio_managers):
-                if pm is None:
-                    continue
-                metrics = pm.metrics.get_metrics_summary()
+            # FIX: Use env_method to call get_metrics() instead of get_attr("portfolio_manager")
+            # get_attr tries to pickle the entire portfolio_manager object (which has module references)
+            # env_method just calls a method and returns the result (much safer for pickle)
+            metrics_list = self.training_env.env_method("get_portfolio_metrics_dict")
+            
+            for worker_id, pm_metrics in enumerate(metrics_list):
+                if pm_metrics is None:
+                    pm_metrics = {}
+                
+                # SESSION 15: Type check — pm_metrics can be list or dict
+                if isinstance(pm_metrics, list):
+                    pm_metrics = pm_metrics[0] if pm_metrics else {}
+                
+                # Ensure pm_metrics is always a dict at this point
+                if not isinstance(pm_metrics, dict):
+                    pm_metrics = {}
+                
                 try:
-                    # ============================================================
-                    # METRICS FIX: Use realized_equity and total_value
-                    # Raw 'cash' drops to near zero when fully invested, which
-                    # visually looks like a massive loss.
-                    # ============================================================
-                    pm_metrics = pm.get_metrics()
                     total_value = float(pm_metrics.get("total_value", 0.0))
                     realized_pnl = float(pm_metrics.get("total_realized_pnl", 0.0))
-                    initial = float(getattr(pm, "initial_capital", None) or
-                                    self.config.get("portfolio", {}).get("initial_balance", 20.5))
+                    initial = float(pm_metrics.get("initial_capital", 20.5))
                     
                     # current_balance = total equity (Cash + Unrealized positions)
                     current_balance = total_value
@@ -339,10 +344,13 @@ class MetricsMonitor(BaseCallback):
                 self.worker_metrics[worker_id]["total_steps"] = self.step_count
                 self.worker_metrics[worker_id]["portfolio_values"].append(current_balance)
                 self.worker_metrics[worker_id]["realized_pnls"].append(realized_pnl)
-                self.worker_metrics[worker_id]["sharpe_ratios"].append(metrics.get("sharpe_ratio", 0.0))
-                self.worker_metrics[worker_id]["drawdowns"].append(metrics.get("max_drawdown", 0.0))
-                self.worker_metrics[worker_id]["trade_counts"].append(metrics.get("total_trades", 0))
-                self.worker_metrics[worker_id]["win_rates"].append(metrics.get("win_rate", 0.0))
+                # Defensive: ensure pm_metrics is still a dict before calling .get()
+                if not isinstance(pm_metrics, dict):
+                    pm_metrics = {}
+                self.worker_metrics[worker_id]["sharpe_ratios"].append(pm_metrics.get("sharpe_ratio", 0.0))
+                self.worker_metrics[worker_id]["drawdowns"].append(pm_metrics.get("max_drawdown", 0.0))
+                self.worker_metrics[worker_id]["trade_counts"].append(pm_metrics.get("total_trades", 0))
+                self.worker_metrics[worker_id]["win_rates"].append(pm_metrics.get("win_rate", 0.0))
 
                 if worker_id == 0 or self.step_count % (self.log_interval * 5) == 0:
                     self.logger.record(f"worker_{worker_id}/cash_balance", current_balance)
@@ -350,7 +358,11 @@ class MetricsMonitor(BaseCallback):
                     self.logger.record(f"worker_{worker_id}/unrealized_info", unrealized)
                     self.logger.record(f"worker_{worker_id}/open_positions", open_count)
                     self.logger.record(f"worker_{worker_id}/tier", self.tier_trackers[worker_id].current_tier)
-                    self.logger.record(f"worker_{worker_id}/sharpe", metrics.get("sharpe_ratio", 0.0))
+                    # Final defensive check before logging
+                    if isinstance(pm_metrics, dict):
+                        self.logger.record(f"worker_{worker_id}/sharpe", pm_metrics.get("sharpe_ratio", 0.0))
+                    else:
+                        self.logger.record(f"worker_{worker_id}/sharpe", 0.0)
 
                     # ── REWARD COMPONENTS COLLECTOR ──────────────────────────
                     # Read _last_reward_components from the env (not pm)
@@ -634,6 +646,10 @@ class ADAN_PBT_Worker(_TrainableBase):
         self.learning_rate = _prof.get("learning_rate", config.get("learning_rate", 3e-4))
         self.ent_coef = _prof.get("ent_coef", config.get("ent_coef", 0.01))
         self.gamma = _prof.get("gamma", config.get("gamma", 0.99))
+        
+        # Trading hyperparams (Ray PBT auto-evolves these)
+        self.sl_pct = config.get("sl_pct", 0.02)  # Stop-Loss percentage
+        self.tp_pct = config.get("tp_pct", 0.04)  # Take-Profit percentage
 
         # 1. Restore worker identity
         worker_key = f"w{self.worker_idx + 1}"
@@ -645,6 +661,18 @@ class ADAN_PBT_Worker(_TrainableBase):
             f"Worker {self.worker_idx} ({worker_key}): "
             f"assets={worker_config.get('assets', '?')}, "
             f"data_split={worker_config.get('data_split', '?')}"
+        )
+        
+        # **NEW**: Inject PBT-evolved SL/TP into trading_parameters
+        # This allows Ray to optimize these critical trading parameters
+        if "trading_parameters" not in worker_config:
+            worker_config["trading_parameters"] = {}
+        
+        worker_config["trading_parameters"]["stop_loss_pct"] = self.sl_pct
+        worker_config["trading_parameters"]["take_profit_pct"] = self.tp_pct
+        
+        logger.info(
+            f"Worker {self.worker_idx}: PBT trading params: SL={self.sl_pct:.2%}, TP={self.tp_pct:.2%}"
         )
 
         # 2. Pre-load parquet data
@@ -875,6 +903,8 @@ class ADAN_PBT_Worker(_TrainableBase):
             "learning_rate": self.learning_rate,
             "ent_coef": self.ent_coef,
             "gamma": self.gamma,
+            "sl_pct": self.sl_pct,              # Stop-Loss % (PBT optimizes)
+            "tp_pct": self.tp_pct,              # Take-Profit % (PBT optimizes)
             "timesteps_total": self._total_timesteps,
             "done": done,
         }
@@ -1033,9 +1063,13 @@ def run_pbt(
         metric="mean_reward",
         mode="max",
         hyperparam_mutations={
+            # PPO hyperparams
             "learning_rate": tune.loguniform(1e-6, 1e-3),
             "ent_coef": tune.uniform(0.0, 0.1),
             "gamma": tune.uniform(0.9, 0.999),
+            # Trading hyperparams (Ray PBT will auto-evolve these)
+            "sl_pct": tune.uniform(0.01, 0.08),   # Stop-Loss: 1% to 8%
+            "tp_pct": tune.uniform(0.02, 0.15),   # Take-Profit: 2% to 15%
         },
     )
 
@@ -1058,9 +1092,13 @@ def run_pbt(
             "envs_per_worker": envs_per_worker,
             "use_subproc": use_subproc,
             "interval_timesteps": interval_timesteps,
+            # PPO hyperparams
             "learning_rate": tune.loguniform(1e-5, 1e-3),
             "ent_coef": tune.uniform(0.0, 0.05),
             "gamma": tune.uniform(0.95, 0.999),
+            # Trading hyperparams (PBT auto-evolves these)
+            "sl_pct": tune.uniform(0.01, 0.08),
+            "tp_pct": tune.uniform(0.02, 0.15),
         }
         # CRITICAL: grid_search already defines len(worker_configs) trials
         # Set num_samples=1 to avoid len×num_samples trial explosion
@@ -1072,9 +1110,13 @@ def run_pbt(
             "envs_per_worker": envs_per_worker,
             "use_subproc": use_subproc,
             "interval_timesteps": interval_timesteps,
+            # PPO hyperparams
             "learning_rate": tune.loguniform(1e-5, 1e-3),
             "ent_coef": tune.uniform(0.0, 0.05),
             "gamma": tune.uniform(0.95, 0.999),
+            # Trading hyperparams (PBT auto-evolves these)
+            "sl_pct": tune.uniform(0.01, 0.08),
+            "tp_pct": tune.uniform(0.02, 0.15),
         }
         # Same fix: grid_search defines the trial count
         _actual_num_samples = 1
@@ -1261,81 +1303,84 @@ def main(
     except ImportError:
         IS_COLAB = False
 
-    # Init Ray
-    if IS_COLAB:
-        _ray_tmp = "/tmp/ray_adan"
-    else:
-        # Use configurable dir, fallback to /tmp
-        _ray_tmp = os.environ.get("ADAN_RAY_TMP", "/tmp/ray_adan")
+    # ============================================================================
+    # 🔧 SESSION 15: ULTIMATE RAY CONFIG - HARDENED FOR 16GB RAM + SSD SPILLING
+    # ============================================================================
+    # Hardware Profile: Intel 8-core + 16GB RAM + 16GB Swap + 11GB SSD free
+    # Strategy: Bridge RAM with fast M.2 NVMe spilling to prevent GCS asphyxiation
+    # ============================================================================
+
+    # 1. Paths
+    _ray_spill_dir = "/mnt/new_data/ray_spill"      # M.2 NVMe partition (11GB free)
+    _ray_tmp = os.environ.get("RAY_TMPDIR", "/mnt/new_data/ray_tmp")
+    os.makedirs(_ray_spill_dir, exist_ok=True)
     os.makedirs(_ray_tmp, exist_ok=True)
 
     # Build PYTHONPATH so Ray workers find adan_trading_bot without pip install
     _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     _src_dir = os.path.join(_project_root, "src")
     _pythonpath = _src_dir + ":" + os.environ.get("PYTHONPATH", "")
+    os.environ["PYTHONPATH"] = _pythonpath
+    _runtime_env = {"env_vars": {"PYTHONPATH": _pythonpath}}
 
-    if IS_COLAB:
-        # On Colab: runtime_env with working_dir zips the whole repo — too slow.
-        # Use env_vars only: workers inherit PYTHONPATH set before ray.init().
-        os.environ["PYTHONPATH"] = _pythonpath
-        _runtime_env = {"env_vars": {"PYTHONPATH": _pythonpath}}
-        _system_config = {}  # Avoid _system_config issues on Colab Ray 2.54+
-    else:
-        # Avoid working_dir zip (too slow), use env_vars like Colab
-        os.environ["PYTHONPATH"] = _pythonpath
-        _runtime_env = {"env_vars": {"PYTHONPATH": _pythonpath}}
-        # Enable spilling to disk to prevent OOM crashes
-        _system_config = {
-            "automatic_object_spilling_enabled": True,
-            "object_spilling_config": json.dumps({
-                "type": "filesystem",
-                "params": {"directory_path": _ray_tmp},
-            }),
+    # 2. Object Store: Bridged Config (2GB in RAM, spill to NVMe)
+    # RATIONALE: 2GB + object store overhead ≤ 4GB. Leaves 12GB for workers + system.
+    OBJECT_STORE_GB = 2 * 1024**3  # 2 GB
+
+    # 3. Spilling Config: Aggressive SSD spilling to prevent OOM
+    # The SSD acts as "extended RAM" — writes at 3000+ MB/s so negligible latency
+    spilling_config = {
+        "type": "filesystem",
+        "params": {
+            "directory_path": _ray_spill_dir,
         }
-
-    # Calculate available memory for Ray object store
-    # Use 30% of total RAM (reduced from 40% to be more conservative)
-    total_memory = int(os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES'))
-    object_store_mem = max(500_000_000, int(total_memory * 0.3))  # Min 500MB, max 30% of RAM
-    
-    # Enhanced system config for OOM prevention
-    enhanced_system_config = {
-        "automatic_object_spilling_enabled": True,
-        "object_spilling_config": json.dumps({
-            "type": "filesystem",
-            "params": {
-                "directory_path": _ray_tmp,
-                "buffer_size": 50_000_000,  # 50MB buffer for spilling (reduced from 100MB)
-            },
-        }),
-        "max_io_workers": 4,  # Reduced from 8 to avoid I/O contention
     }
-    if _system_config:
-        enhanced_system_config.update(_system_config)
-    
+
+    # 4. System Config: Minimal but stable GCS settings
+    system_config = {
+        # Spilling
+        "object_spilling_config": json.dumps(spilling_config),
+        "automatic_object_spilling_enabled": True,
+
+        # Memory Safety
+        "memory_usage_threshold": 0.88,  # Kill workers at 88% RAM (safety margin)
+    }
+
+    # 5. Ray Init: Production-Grade
     ray_init_kwargs = dict(
         num_cpus=num_cpus,
+        object_store_memory=OBJECT_STORE_GB,
         include_dashboard=False,
         ignore_reinit_error=True,
         _temp_dir=_ray_tmp,
         runtime_env=_runtime_env,
-        object_store_memory=object_store_mem,
-        _system_config=enhanced_system_config,
+        _system_config=system_config,
     )
-    
-    # Set environment variables for timeout protection
-    # GCS heartbeat: increase from 180s to 1200s (20 minutes) to prevent premature disconnects
-    os.environ["RAY_gcs_rpc_server_reconnect_timeout_s"] = "1200"
-    # Also increase GCS server heartbeat interval
-    os.environ["RAY_health_check_failure_threshold"] = "10"
-    os.environ["RAY_health_check_initial_delay_ms"] = "1000"
-    # Additional stability settings
-    os.environ["RAY_task_retry_delay_ms"] = "5000"  # Retry delayed tasks after 5s
-    os.environ["RAY_memory"] = str(500_000_000)  # 500MB per worker
-    
+
+    # 6. Environment Variables: Additional Safety Layer
+    os.environ.update({
+        "RAY_memory_monitor_refresh_ms": "0",  # Disable aggressive killer
+        "RAY_memory_usage_threshold": "0.88",
+        "RAY_gcs_rpc_server_reconnect_timeout_s": "600",
+        "RAY_health_check_failure_threshold": "10",
+        "RAY_health_check_initial_delay_ms": "1000",
+        "RAY_TMPDIR": _ray_tmp,
+    })
+
     if IS_COLAB and torch.cuda.is_available():
         ray_init_kwargs["num_gpus"] = 1
+
     ray.init(**ray_init_kwargs)
+
+    # 7. Validation Log
+    logger.info("=" * 90)
+    logger.info("🔥 ADAN PBT ULTIMATE CONFIG (SESSION 15)")
+    logger.info(f"   💾 Object Store: {OBJECT_STORE_GB // (1024**3)}GB (RAM) + SSD Spilling")
+    logger.info(f"   📁 Spill Dir: {_ray_spill_dir} (11GB free on M.2 NVMe)")
+    logger.info(f"   🛡️  Memory Threshold: 88% (Kill workers before GCS asphyxiation)")
+    logger.info(f"   ⏱️  GCS Reconnect: 600s (10 min patience for network hiccups)")
+    logger.info(f"   📊 CPUs: {num_cpus}, Samples: {num_samples}, Envs/worker: {envs_per_worker}")
+    logger.info("=" * 90)
 
     logger.info("=" * 80)
     logger.info("🔥 ADAN PBT AutoRL Training")
