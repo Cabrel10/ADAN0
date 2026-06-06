@@ -218,13 +218,12 @@ class FeatureEngineer:
                     std = params.get('std', 2.0)
                     bb = df.ta.bbands(length=length, std=std)
                     if bb is not None:
-                        # Pandas TA columns: BBL_20_2.0, BBM_20_2.0, BBU_20_2.0, BBB_20_2.0 (bandwidth), BBP_20_2.0 (percent)
-                        # BBB is bandwidth
-                        width_col = f"BBB_{length}_{std}"
-                        if width_col in bb.columns:
-                             df[f"bb_width_{length}_{int(std)}"] = bb[width_col]
+                        # pandas_ta may produce BBB_20_2.0 or BBB_20_2.0_2.0
+                        bbb_candidates = [c for c in bb.columns if c.startswith('BBB_')]
+                        if bbb_candidates:
+                            df[f"bb_width_{length}_{int(std)}"] = bb[bbb_candidates[0]]
                         else:
-                            # Fallback if column name differs
+                            # Fallback: manual calculation
                             upper = bb.iloc[:, 2]
                             lower = bb.iloc[:, 0]
                             mid = bb.iloc[:, 1]
@@ -236,10 +235,15 @@ class FeatureEngineer:
                     std = params.get('std', 2.0)
                     bb = df.ta.bbands(length=length, std=std)
                     if bb is not None:
-                        # BBP is percent b
-                        pct_col = f"BBP_{length}_{std}"
-                        if pct_col in bb.columns:
-                             df[f"bb_percent_b_{length}_{int(std)}"] = bb[pct_col]
+                        # pandas_ta may produce BBP_20_2.0 or BBP_20_2.0_2.0
+                        bbp_candidates = [c for c in bb.columns if c.startswith('BBP_')]
+                        if bbp_candidates:
+                            df[f"bb_percent_b_{length}_{int(std)}"] = bb[bbp_candidates[0]]
+                        else:
+                            # Fallback: manual %B calculation
+                            upper = bb.iloc[:, 2]
+                            lower = bb.iloc[:, 0]
+                            df[f"bb_percent_b_{length}_{int(std)}"] = (df['close'] - lower) / (upper - lower).replace(0, 1e-9)
                     continue
 
                 elif kind == 'obv_ratio':
@@ -375,8 +379,9 @@ class FeatureEngineer:
                 low_min = df['low'].rolling(window=period).min()
                 high_max = df['high'].rolling(window=period).max()
                 range_val = high_max - low_min
-                # Avoid division by zero
-                range_val = range_val.replace(0, 1e-9) 
+                # C10: L2 regularization — np.sqrt(x² + ε) instead of replace(0, ε)
+                # Provides smooth gradient near zero instead of hard clamp
+                range_val = np.sqrt(range_val**2 + 1e-9)
                 df['fib_ratio'] = (df['close'] - low_min) / range_val
             except Exception as e:
                 logger.warning(f"Failed to calculate fib_ratio: {e}")
@@ -450,6 +455,25 @@ class FeatureEngineer:
                 df['price_action'] = 0.0  # Neutral (no movement)
                 logger.warning("Using neutral price_action=0.0 as fallback")
 
+        # 12. Log Return — the fundamental signal for any quant system
+        if 'log_return' not in df.columns:
+            try:
+                df['log_return'] = np.log(df['close'] / df['close'].shift(1)).fillna(0.0)
+            except Exception as e:
+                logger.warning(f"log_return calculation failed: {e}")
+                df['log_return'] = 0.0
+
+        # 13. Market Structure (Close > SMA20 = +1, < = -1, = 0)
+        if 'market_structure' not in df.columns:
+            try:
+                sma20 = df['close'].rolling(window=20).mean()
+                df['market_structure'] = 0.0
+                df.loc[df['close'] > sma20, 'market_structure'] = 1.0
+                df.loc[df['close'] < sma20, 'market_structure'] = -1.0
+            except Exception as e:
+                logger.warning(f"market_structure calculation failed: {e}")
+                df['market_structure'] = 0.0
+
 
         # Normalize column names to match StateBuilder expectations
         # 1. Lowercase everything
@@ -475,6 +499,33 @@ class FeatureEngineer:
 
         if rename_map:
             df.rename(columns=rename_map, inplace=True)
+
+        # C13: Derived orthogonal features
+        # di_delta = DI+ - DI- (directional trend strength, orthogonal to ADX magnitude)
+        if 'dmp_14' in df.columns and 'dmn_14' in df.columns:
+            df['di_delta'] = df['dmp_14'] - df['dmn_14']
+        else:
+            df['di_delta'] = 0.0
+            logger.warning("di_delta: DMP_14/DMN_14 not found, using 0.0")
+
+        # atr_pct = ATR / close (normalized volatility, scale-invariant)
+        if 'atr_14' in df.columns:
+            df['atr_pct'] = df['atr_14'] / df['close'].replace(0, 1e-9)
+        else:
+            df['atr_pct'] = 0.02  # typical 2% volatility
+            logger.warning("atr_pct: atr_14 not found, using 0.02")
+
+        # obv_slope = diff(OBV) / volume_sma — OBV momentum (orthogonal to obv_ratio level)
+        try:
+            _obv = df.ta.obv()
+            if _obv is not None:
+                _vol_sma = df['volume'].rolling(window=20).mean().replace(0, 1e-9)
+                df['obv_slope'] = _obv.diff() / _vol_sma
+            else:
+                df['obv_slope'] = 0.0
+        except Exception as _e:
+            df['obv_slope'] = 0.0
+            logger.warning(f"obv_slope calculation failed: {_e}")
 
         # 🔧 FIX CRITIQUE: Gestion ROBUSTE des NaN AVANT tout traitement
         original_nan_count = df.isna().sum().sum()
@@ -504,6 +555,9 @@ class FeatureEngineer:
                 'stoch': 50.0,            # Stochastique neutre
                 'volume_ratio': 1.0,      # Volume = moyenne
                 'obv_ratio': 0.0,
+                'obv_slope': 0.0,
+                'di_delta': 0.0,
+                'atr_pct': 0.02,
                 'adx': 25.0,              # ADX neutre (tendance modérée)
                 'pivot': 0.0,
                 'donchian': 0.0,
@@ -512,7 +566,8 @@ class FeatureEngineer:
                 'fib_ratio': 0.0,
                 'ichimoku': 0.0,
                 'market_structure': 0.0,
-                'price_action': 0.0
+                'price_action': 0.0,
+                'log_return': 0.0,
             }
             
             # 4. Appliquer les valeurs par défaut colonne par colonne
@@ -549,21 +604,61 @@ class FeatureEngineer:
         df = df.loc[:, ~df.columns.duplicated()]
         
 
-        # 🔧 FIX: Filtrer pour garder UNIQUEMENT les colonnes du training
+        # C13-v2: 16 orthogonal indicators per TF (+ 5 OHLCV = 21 total)
+        # Axes: trend(4) + momentum(3) + volatility(4) + volume(2) + structure(3)
+        # All features are scale-invariant ratios or bounded oscillators
         TRAIN_COLUMNS = {
-            '5m': ['open', 'high', 'low', 'close', 'volume', 'rsi_14', 
-                   'macd_12_26_9',
-                   'bb_percent_b_20_2', 'atr_14', 'atr_20', 'atr_50', 'volume_ratio_20', 
-                   'ema_20_ratio', 'stoch_k_14_3_3', 'vwap_ratio', 'price_action'],
-            '1h': ['open', 'high', 'low', 'close', 'volume', 'rsi_21',
-                   'macd_21_42_9',
-                   'bb_width_20_2', 'adx_14', 'atr_20', 'atr_50', 'obv_ratio_20', 'ema_50_ratio',
-                   'ichimoku_base', 'fib_ratio', 'price_ema_ratio_50'],
-            '4h': ['open', 'high', 'low', 'close', 'volume', 'rsi_28',
-                   'macd_26_52_18',
-                   'supertrend_10_3', 'atr_20', 'atr_50', 'volume_sma_20_ratio', 'ema_100_ratio',
-                   'pivot_level', 'donchian_width_20', 'market_structure',
-                   'volatility_ratio_14_50']
+            '5m': ['open', 'high', 'low', 'close', 'volume',
+                   'ema_20_ratio',           # trend: price/EMA20
+                   'macdh_12_26_9',          # trend: MACD histogram
+                   'rsi_14',                 # momentum: RSI(14)
+                   'adx_14',                 # trend strength: ADX(14)
+                   'di_delta',               # trend direction: DI+ - DI-
+                   'atr_pct',                # volatility: ATR/close
+                   'bb_percent_b_20_2',      # volatility: position in BB
+                   'obv_slope',              # volume: OBV momentum
+                   'volume_ratio_20',        # volume: V/SMA(V,20)
+                   'volatility_ratio_14_50', # volatility: ATR14/ATR50
+                   'fib_ratio',              # structure: range position
+                   'price_action',           # microstructure: (C-O)/O
+                   'vwap_ratio',             # price-volume: C/VWAP
+                   'market_structure',        # regime: trend filter
+                   'bb_width_20_2',          # volatility: BB width
+                   'log_return'],             # returns: log(C/C[-1])
+            '1h': ['open', 'high', 'low', 'close', 'volume',
+                   'ema_50_ratio',
+                   'macdh_21_42_9',
+                   'rsi_21',
+                   'adx_14',
+                   'di_delta',
+                   'atr_pct',
+                   'bb_percent_b_20_2',
+                   'obv_slope',
+                   'volume_ratio_20',
+                   'volatility_ratio_14_50',
+                   'fib_ratio',
+                   'price_action',
+                   'vwap_ratio',
+                   'market_structure',
+                   'bb_width_20_2',
+                   'log_return'],
+            '4h': ['open', 'high', 'low', 'close', 'volume',
+                   'ema_100_ratio',
+                   'macdh_26_52_18',
+                   'rsi_28',
+                   'adx_14',
+                   'di_delta',
+                   'atr_pct',
+                   'bb_percent_b_20_2',
+                   'obv_slope',
+                   'volume_ratio_20',
+                   'volatility_ratio_14_50',
+                   'fib_ratio',
+                   'price_action',
+                   'vwap_ratio',
+                   'market_structure',
+                   'bb_width_20_2',
+                   'log_return']
         }
         
         if timeframe in TRAIN_COLUMNS:

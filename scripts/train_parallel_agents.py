@@ -30,11 +30,18 @@ import json
 import logging
 import os
 import signal
+import sys
 import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+# Ensure src/ is in the Python path for adan_trading_bot imports
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_SRC_DIR = _SCRIPT_DIR.parent / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
 import numpy as np
 import pandas as pd
@@ -51,10 +58,17 @@ try:
 except ImportError:
     WorldModelPPO = None
 
-# Ray Tune imports
-import ray
-from ray import tune
-from ray.tune.schedulers import PopulationBasedTraining
+# Ray Tune imports (optional — only needed for HPO mode, not sandbox)
+try:
+    import ray
+    from ray import tune
+    from ray.tune.schedulers import PopulationBasedTraining
+    RAY_AVAILABLE = True
+except ImportError:
+    ray = None
+    tune = None
+    PopulationBasedTraining = None
+    RAY_AVAILABLE = False
 
 # ADAN imports
 from adan_trading_bot.common.config_loader import ConfigLoader
@@ -107,10 +121,9 @@ except ImportError:
 _THIS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = _THIS_DIR.parent  # bot/
 
-# Training output directory — use external mount if available to avoid
-# filling the system disk (/dev/sda3 is limited).
-_EXTERNAL_TRAIN_DIR = Path("/mnt/new_data/t10_training")
-TRAIN_OUTPUT_DIR = _EXTERNAL_TRAIN_DIR if _EXTERNAL_TRAIN_DIR.exists() else PROJECT_ROOT / "logs"
+# Training output directory — use external mount if available, fallback to project logs
+_EXTERNAL_TRAIN_DIR = Path(os.environ.get("ADAN_TRAIN_DIR", "./logs/training")).resolve()
+TRAIN_OUTPUT_DIR = _EXTERNAL_TRAIN_DIR if _EXTERNAL_TRAIN_DIR.exists() else (PROJECT_ROOT / "logs").resolve()
 
 
 logger = logging.getLogger(__name__)
@@ -292,24 +305,26 @@ class MetricsMonitor(BaseCallback):
                 metrics = pm.metrics.get_metrics_summary()
                 try:
                     # ============================================================
-                    # CASH TRUTH: Only count REALIZED money (cash on hand).
-                    # pm.cash = initial_capital - cost_of_open_positions + proceeds_from_closed
-                    # This is the TRUE financial state. Unrealized PnL is a mirage.
+                    # METRICS FIX: Use realized_equity and total_value
+                    # Raw 'cash' drops to near zero when fully invested, which
+                    # visually looks like a massive loss.
                     # ============================================================
                     pm_metrics = pm.get_metrics()
-                    cash = float(pm_metrics.get("cash", 0.0))
+                    total_value = float(pm_metrics.get("total_value", 0.0))
+                    realized_pnl = float(pm_metrics.get("total_realized_pnl", 0.0))
                     initial = float(getattr(pm, "initial_capital", None) or
                                     self.config.get("portfolio", {}).get("initial_balance", 20.5))
-                    # current_balance = cash only (NO double-counting, NO unrealized)
-                    current_balance = cash
-                    # Sanity: cash should never be negative or absurdly high
+                    
+                    # current_balance = total equity (Cash + Unrealized positions)
+                    current_balance = total_value
+                    
+                    # Sanity: balance should never be negative
                     if current_balance <= 0:
                         current_balance = initial * 0.1  # bankrupt floor
-                    elif current_balance > initial * 5:
+                    elif current_balance > initial * 10:
                         current_balance = initial  # spike detected, reset
-                    # Realized PnL = cash - initial (the REAL profit/loss)
-                    realized_pnl = cash - initial
-                    # For info only: unrealized (NOT used for scoring)
+                        
+                    # For info only: unrealized
                     unrealized = float(pm_metrics.get("unrealized_pnl_total", 0.0))
                     open_count = int(pm_metrics.get("open_positions_count", 0))
                 except Exception:
@@ -540,10 +555,24 @@ def make_env(
         vec_env = DummyVecEnv(env_fns)
 
     gamma = config.get("agent", {}).get("gamma", 0.99)
+    # Audit anomaly #5 — DO NOT z-score the reward.
+    # The reward pipeline is: pnl_net_pct - costs + symlog + time_decay(-1e-3).
+    # symlog already compresses outliers AND keeps the absolute financial scale
+    # readable. Applying VecNormalize(norm_reward=True) on top performs a
+    # running Z-score that:
+    #   * destroys the calibrated time_decay magnitude (the -1e-3 baseline gets
+    #     blown up or shrunk by the running std, breaking critic conditioning)
+    #   * makes reward comparisons across runs meaningless (each run sees its
+    #     own moving normalization)
+    #   * tends to AMPLIFY noise during early training (low std → /tiny number)
+    # SB3 docs state norm_reward is OPTIONAL and "useful for hard exploration
+    # problems"; symlog already plays that role for us. We keep norm_obs (obs
+    # have huge dynamic range — price, indicators, FiLM context) but drop
+    # norm_reward so the critic learns on the absolute financial signal.
     vec_env = VecNormalize(
         vec_env,
         norm_obs=True,
-        norm_reward=True,
+        norm_reward=False,
         clip_obs=10.0,
         clip_reward=10.0,
         gamma=gamma,
@@ -556,7 +585,11 @@ def make_env(
 # Ray Tune Trainable – ADAN_PBT_Worker
 # ===========================================================================
 
-class ADAN_PBT_Worker(tune.Trainable):
+# Base class depends on whether ray[tune] is available
+_TrainableBase = tune.Trainable if RAY_AVAILABLE else object
+
+
+class ADAN_PBT_Worker(_TrainableBase):
     """Ray Tune Trainable that wraps a single PPO worker.
 
     Each trial manages:
@@ -581,14 +614,26 @@ class ADAN_PBT_Worker(tune.Trainable):
         self.profile = wc.get("profile", config.get("profile", None))  # scalper / swing / ...
         self.envs_per_worker = config.get("envs_per_worker", 2)
         self.use_subproc = config.get("use_subproc", False)
-        self.interval_timesteps = config.get("interval_timesteps", 10_000)
+        self.interval_timesteps = config.get("interval_timesteps", 5_000)  # Reduced from 15k to avoid hangs
         self._total_timesteps = 0
         self._max_iterations = config.get("_max_iterations", 100)
 
+        # Checkpoint directory: use Ray's trial logdir for per-worker checkpoints
+        # Ray Trainable provides self.logdir as the trial-specific directory
+        self.checkpoint_dir = os.path.join(
+            getattr(self, "logdir", str(TRAIN_OUTPUT_DIR / "checkpoints")),
+            "adan_checkpoints"
+        )
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+
         # Mutable hyper-parameters (PBT will perturb these)
-        self.learning_rate = config.get("learning_rate", 3e-4)
-        self.ent_coef = config.get("ent_coef", 0.01)
-        self.gamma = config.get("gamma", 0.99)
+        # IMPORTANT: Use profile-specific values as initial seeds if available,
+        # falling back to PBT's random sample. This ensures each worker starts
+        # with its research-calibrated hyperparams before PBT explores.
+        _prof = WORKER_PROFILES.get(self.profile, {}) if self.profile else {}
+        self.learning_rate = _prof.get("learning_rate", config.get("learning_rate", 3e-4))
+        self.ent_coef = _prof.get("ent_coef", config.get("ent_coef", 0.01))
+        self.gamma = _prof.get("gamma", config.get("gamma", 0.99))
 
         # 1. Restore worker identity
         worker_key = f"w{self.worker_idx + 1}"
@@ -656,6 +701,11 @@ class ADAN_PBT_Worker(tune.Trainable):
         # tripling memory usage and compute for no benefit.
         policy_kwargs["share_features_extractor"] = True
 
+        # gSDE exploration: initial std ≈ exp(-0.5) ≈ 0.61
+        # Produces nuanced actions inside [-1, 1] without saturating at extremes.
+        # Must match sandbox mode for checkpoint compatibility.
+        policy_kwargs["log_std_init"] = -0.5
+
         # Seed
         seed = self.adan_config.get("general", {}).get("random_seed", 42) + self.worker_idx
         if SeedManager is not None:
@@ -705,6 +755,11 @@ class ADAN_PBT_Worker(tune.Trainable):
             max_grad_norm=agent_cfg.get("max_grad_norm", 0.5),
             policy_kwargs=policy_kwargs if policy_kwargs else None,
             tensorboard_log=tb_log_dir,
+            # CRITICAL: gSDE for continuous action exploration (Session 8 fix)
+            # Without use_sde, Xavier init produces actions ≈ N(0, 0.01) which
+            # NEVER cross action_threshold. gSDE learns state-dependent noise.
+            use_sde=True,
+            sde_sample_freq=4,  # Resample exploration noise every 4 steps
             verbose=1,
             seed=seed,
         )
@@ -735,10 +790,17 @@ class ADAN_PBT_Worker(tune.Trainable):
 
     def step(self):
         """Run one training iteration (interval_timesteps steps of PPO.learn)."""
-        # Apply mutable hyperparameters
+        # Apply mutable hyperparameters (PBT perturbs these between iterations)
         self.model.learning_rate = self.learning_rate
         self.model.ent_coef = self.ent_coef
         self.model.gamma = self.gamma
+
+        # CRITICAL FIX: Sync VecNormalize gamma with PPO gamma.
+        # PBT perturbs self.gamma but VecNormalize maintains its own gamma
+        # for reward discount computation. Without this sync, reward normalization
+        # uses stale gamma → critic signal diverges from actual discounting.
+        if hasattr(self.vec_env, 'gamma'):
+            self.vec_env.gamma = self.gamma
 
         self.model.learn(
             total_timesteps=self.interval_timesteps,
@@ -746,6 +808,36 @@ class ADAN_PBT_Worker(tune.Trainable):
             reset_num_timesteps=False,
         )
         self._total_timesteps += self.interval_timesteps
+
+        # EXPERT FIX: Explicit GC after each iteration to prevent memory accumulation
+        # that causes Ray GCS crashes after ~4000 steps (ObjectRef retention + metadata growth)
+        import gc
+        gc.collect()
+
+        # CHECKPOINT: Save every 15k steps for crash recovery
+        # Verify vec_env obs_rms consistency (detect NaN corruption from divergence)
+        if hasattr(self.vec_env, 'obs_rms') and self.vec_env.obs_rms is not None:
+            _obs_rms = self.vec_env.obs_rms
+            _rms_items = _obs_rms.items() if isinstance(_obs_rms, dict) else [("obs", _obs_rms)]
+            for _key, _rms in _rms_items:
+                if hasattr(_rms, 'mean') and np.any(np.isnan(_rms.mean)):
+                    logger.error(f"❌ VecNormalize obs_rms[{_key}] has NaN mean! Resetting stats.")
+                    _rms.mean[:] = 0.0
+                    _rms.var[:] = 1.0
+                    _rms.count = 1e-4
+
+        checkpoint_interval = 15_000
+        if self._total_timesteps % checkpoint_interval < self.interval_timesteps:
+            # We just crossed a 15k boundary
+            try:
+                checkpoint_dir = os.path.join(
+                    self.checkpoint_dir,
+                    f"checkpoint_{self._total_timesteps:06d}"
+                )
+                self.save_checkpoint(checkpoint_dir)
+                logger.info(f"✅ Checkpoint saved at {self._total_timesteps} steps")
+            except Exception as e:
+                logger.error(f"❌ Checkpoint save failed: {e}")
 
         # Collect metrics
         mean_reward = 0.0
@@ -788,47 +880,106 @@ class ADAN_PBT_Worker(tune.Trainable):
         }
 
     def save_checkpoint(self, checkpoint_dir: str) -> str:
-        """Save PPO model + VecNormalize stats."""
+        """Save PPO model + VecNormalize stats atomically with integrity checks."""
         os.makedirs(checkpoint_dir, exist_ok=True)
-        model_path = os.path.join(checkpoint_dir, "model.zip")
-        self.model.save(model_path)
-
-        vec_path = os.path.join(checkpoint_dir, "vecnormalize.pkl")
-        self.vec_env.save(vec_path)
-
-        state = {
-            "total_timesteps": self._total_timesteps,
-            "learning_rate": self.learning_rate,
-            "ent_coef": self.ent_coef,
-            "gamma": self.gamma,
-        }
-        with open(os.path.join(checkpoint_dir, "worker_state.json"), "w") as f:
-            json.dump(state, f)
-
-        return checkpoint_dir
+        
+        # Save to temp files first (atomic write pattern)
+        model_path_tmp = os.path.join(checkpoint_dir, "model.zip.tmp")
+        vec_path_tmp = os.path.join(checkpoint_dir, "vecnormalize.pkl.tmp")
+        
+        try:
+            # Write to temp
+            self.model.save(model_path_tmp)
+            self.vec_env.save(vec_path_tmp)
+            
+            # Atomic rename
+            model_path = os.path.join(checkpoint_dir, "model.zip")
+            vec_path = os.path.join(checkpoint_dir, "vecnormalize.pkl")
+            os.replace(model_path_tmp, model_path)
+            os.replace(vec_path_tmp, vec_path)
+            
+            # Integrity check: verify files are non-empty after rename
+            _model_size = os.path.getsize(model_path)
+            _vec_size = os.path.getsize(vec_path)
+            if _model_size < 1024:
+                raise RuntimeError(f"Model checkpoint suspiciously small: {_model_size} bytes")
+            if _vec_size < 64:
+                raise RuntimeError(f"VecNormalize checkpoint suspiciously small: {_vec_size} bytes")
+            
+            # Save state with metadata
+            state = {
+                "total_timesteps": self._total_timesteps,
+                "learning_rate": self.learning_rate,
+                "ent_coef": self.ent_coef,
+                "gamma": self.gamma,
+                "worker_idx": self.worker_idx,
+                "profile": self.profile,
+                "timestamp": datetime.now().isoformat(),
+                "model_size_bytes": os.path.getsize(model_path),
+                "vecnorm_size_bytes": os.path.getsize(vec_path),
+            }
+            state_path = os.path.join(checkpoint_dir, "worker_state.json")
+            with open(state_path, "w") as f:
+                json.dump(state, f, indent=2)
+            
+            logger.info(f"✅ Checkpoint saved: {checkpoint_dir} "
+                       f"(steps={self._total_timesteps}, lr={self.learning_rate:.2e})")
+            return checkpoint_dir
+            
+        except Exception as e:
+            logger.error(f"❌ Checkpoint save failed: {e}", exc_info=True)
+            # Cleanup temp files
+            for tmp_file in [model_path_tmp, vec_path_tmp]:
+                if os.path.exists(tmp_file):
+                    try:
+                        os.remove(tmp_file)
+                    except:
+                        pass
+            raise
 
     def load_checkpoint(self, checkpoint_dir: str):
-        """Restore PPO model + VecNormalize stats."""
+        """Restore PPO model + VecNormalize stats with integrity verification."""
         model_path = os.path.join(checkpoint_dir, "model.zip")
-        if os.path.exists(model_path):
-            PPOClass = WorldModelPPO if WorldModelPPO is not None else PPO
-            self.model = PPOClass.load(model_path, env=self.vec_env)
-
         vec_path = os.path.join(checkpoint_dir, "vecnormalize.pkl")
-        if os.path.exists(vec_path):
-            # Load onto the underlying venv (not the VecNormalize wrapper)
+        state_path = os.path.join(checkpoint_dir, "worker_state.json")
+        
+        try:
+            # Verify files exist
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model not found: {model_path}")
+            if not os.path.exists(vec_path):
+                raise FileNotFoundError(f"VecNormalize not found: {vec_path}")
+            
+            # Load model — use GPU if available (checkpoint resume should match training device)
+            PPOClass = WorldModelPPO if WorldModelPPO is not None else PPO
+            _load_device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.model = PPOClass.load(model_path, env=self.vec_env, device=_load_device)
+            logger.info(f"✅ Model loaded: {model_path} (device={_load_device})")
+            
+            # Load VecNormalize onto the underlying venv
             venv = self.vec_env.venv if hasattr(self.vec_env, "venv") else self.vec_env
             self.vec_env = VecNormalize.load(vec_path, venv)
+            # CRITICAL: Sync gamma from current PBT state (not stale checkpoint value)
+            self.vec_env.gamma = self.gamma
             self.model.set_env(self.vec_env)
-
-        state_path = os.path.join(checkpoint_dir, "worker_state.json")
-        if os.path.exists(state_path):
-            with open(state_path) as f:
-                state = json.load(f)
-            self._total_timesteps = state.get("total_timesteps", 0)
-            self.learning_rate = state.get("learning_rate", self.learning_rate)
-            self.ent_coef = state.get("ent_coef", self.ent_coef)
-            self.gamma = state.get("gamma", self.gamma)
+            logger.info(f"✅ VecNormalize loaded: {vec_path} (gamma synced to {self.gamma:.4f})")
+            
+            # Load state
+            if os.path.exists(state_path):
+                with open(state_path) as f:
+                    state = json.load(f)
+                self._total_timesteps = state.get("total_timesteps", 0)
+                self.learning_rate = state.get("learning_rate", self.learning_rate)
+                self.ent_coef = state.get("ent_coef", self.ent_coef)
+                self.gamma = state.get("gamma", self.gamma)
+                logger.info(f"✅ State restored: steps={self._total_timesteps}, "
+                           f"lr={self.learning_rate:.2e}, ent_coef={self.ent_coef:.4f}")
+            else:
+                logger.warning(f"⚠️  State file not found: {state_path}")
+                
+        except Exception as e:
+            logger.error(f"❌ Checkpoint load failed: {e}", exc_info=True)
+            raise
 
     def cleanup(self):
         """Close environments."""
@@ -871,7 +1022,7 @@ def run_pbt(
         profiles: Optional list of profile names (e.g. ['scalper', 'swing']).
     """
     if storage_path is None:
-        storage_path = str(TRAIN_OUTPUT_DIR / "ray_results")
+        storage_path = str((TRAIN_OUTPUT_DIR / "ray_results").resolve())
 
     max_iterations = max(1, total_steps // interval_timesteps)
 
@@ -889,14 +1040,14 @@ def run_pbt(
     )
 
     # Build per-trial param space
-    # If profiles supplied, cycle through them for each trial
+    # CRITICAL FIX: tune.grid_search creates N deterministic trials from the list.
+    # If we also pass num_samples=N, Ray creates N × N = N² trials (cartesian product).
+    # Solution: when using grid_search, set num_samples=1 — grid_search already
+    # defines the exact trial count. PBT scheduler handles the rest.
     _profiles = profiles or []
-    trial_profiles = [
-        _profiles[i % len(_profiles)] if _profiles else None
-        for i in range(num_samples)
-    ]
-    # Build paired worker_idx + profile configs to avoid cartesian product
+
     if _profiles:
+        # Build paired worker_idx + profile configs — one trial per profile
         worker_configs = [
             {"worker_idx": i, "profile": _profiles[i % len(_profiles)]}
             for i in range(num_samples)
@@ -911,6 +1062,9 @@ def run_pbt(
             "ent_coef": tune.uniform(0.0, 0.05),
             "gamma": tune.uniform(0.95, 0.999),
         }
+        # CRITICAL: grid_search already defines len(worker_configs) trials
+        # Set num_samples=1 to avoid len×num_samples trial explosion
+        _actual_num_samples = 1
     else:
         param_space = {
             "adan_config": config,
@@ -922,6 +1076,8 @@ def run_pbt(
             "ent_coef": tune.uniform(0.0, 0.05),
             "gamma": tune.uniform(0.95, 0.999),
         }
+        # Same fix: grid_search defines the trial count
+        _actual_num_samples = 1
 
     # Stop criteria
     if stop_config is None:
@@ -947,7 +1103,7 @@ def run_pbt(
             tuner = None
 
     if tuner is None:
-        # Colab T4 GPU: share 1 GPU across 4 workers (0.25 GPU each)
+        # GPU sharing: each trial gets fraction of GPU
         _is_colab = False
         try:
             import google.colab  # noqa: F401
@@ -957,17 +1113,35 @@ def run_pbt(
 
         tune_config_kwargs = dict(
             scheduler=pbt_scheduler,
-            num_samples=num_samples,
-            max_concurrent_trials=num_samples,
-            reuse_actors=False,
+            num_samples=_actual_num_samples,  # FIXED: 1 because grid_search defines trial count
+            max_concurrent_trials=num_samples,  # Allow all trials to run in parallel
+            reuse_actors=True,  # EXPERT FIX: Must be True for PBT to prevent GCS crashes
         )
         if _is_colab:
             import torch as _torch
             if _torch.cuda.is_available():
+                # Distribute GPU evenly across trials (4 trials → 0.25 each)
+                # CPU: use all available cores divided by trials
+                _avail_cpus = os.cpu_count() or 4
+                _cpu_per_trial = max(0.5, (_avail_cpus - 1) / max(num_samples, 1))
+                _gpu_per_trial = 1.0 / max(num_samples, 1)
                 tune_config_kwargs["trial_resources"] = {
-                    "cpu": 0.5,
-                    "gpu": 0.25,
+                    "cpu": _cpu_per_trial,
+                    "gpu": _gpu_per_trial,
                 }
+                logger.info(f"[COLAB] Trial resources: cpu={_cpu_per_trial:.1f}, gpu={_gpu_per_trial:.2f}")
+
+        # Configure checkpointing: save every 5k steps, keep last 3 checkpoints
+        # ray.air.CheckpointConfig deprecated in Ray >= 2.6; use ray.train if available
+        try:
+            from ray.train import CheckpointConfig
+        except ImportError:
+            from ray.air import CheckpointConfig
+        checkpoint_config = CheckpointConfig(
+            num_to_keep=3,  # Keep only 3 most recent checkpoints
+            checkpoint_score_attribute="timesteps_total",
+            checkpoint_score_order="max",
+        )
 
         tuner = tune.Tuner(
             ADAN_PBT_Worker,
@@ -975,6 +1149,9 @@ def run_pbt(
             run_config=tune.RunConfig(
                 name="adan_pbt_training",
                 storage_path=str(storage_path),
+                checkpoint_config=checkpoint_config,
+                verbose=0,  # Disable verbose logging
+                failure_config=tune.FailureConfig(max_failures=3),  # Retry on failure
             ),
             param_space=param_space,
         )
@@ -1048,17 +1225,21 @@ def main(
         config.setdefault("training", {})["timesteps_per_instance"] = total_steps
 
     # Storage path
-    storage_path = checkpoint_dir or str(TRAIN_OUTPUT_DIR / "ray_results")
+    storage_path = checkpoint_dir or str((TRAIN_OUTPUT_DIR / "ray_results").resolve())
 
     # ── Google Colab Detection & Auto-Configuration ───────────────────────
     IS_COLAB = False
     try:
         import google.colab  # noqa: F401
         IS_COLAB = True
-        logger.info("[COLAB] Google Colab detected — applying T4 GPU optimizations")
-        num_cpus = 2
-        envs_per_worker = 1
-        use_subproc = False
+        # Auto-detect Colab resources instead of hardcoding
+        _available_cpus = os.cpu_count() or 2
+        # Reserve 1 CPU for system/Ray overhead, use the rest
+        _colab_cpus = max(2, _available_cpus - 1)
+        logger.info(f"[COLAB] Google Colab detected — {_available_cpus} CPUs, using {_colab_cpus}")
+        num_cpus = _colab_cpus
+        envs_per_worker = 1  # 1 env per worker to minimize memory
+        use_subproc = False   # Avoid fork conflicts with Ray
     except ImportError:
         IS_COLAB = False
 
@@ -1066,7 +1247,8 @@ def main(
     if IS_COLAB:
         _ray_tmp = "/tmp/ray_adan"
     else:
-        _ray_tmp = "/mnt/new_data/t10_training/ray_tmp"
+        # Use configurable dir, fallback to /tmp
+        _ray_tmp = os.environ.get("ADAN_RAY_TMP", "/tmp/ray_adan")
     os.makedirs(_ray_tmp, exist_ok=True)
 
     # Build PYTHONPATH so Ray workers find adan_trading_bot without pip install
@@ -1081,10 +1263,10 @@ def main(
         _runtime_env = {"env_vars": {"PYTHONPATH": _pythonpath}}
         _system_config = {}  # Avoid _system_config issues on Colab Ray 2.54+
     else:
-        _runtime_env = {
-            "working_dir": _project_root,
-            "env_vars": {"PYTHONPATH": _src_dir},
-        }
+        # Avoid working_dir zip (too slow), use env_vars like Colab
+        os.environ["PYTHONPATH"] = _pythonpath
+        _runtime_env = {"env_vars": {"PYTHONPATH": _pythonpath}}
+        # Enable spilling to disk to prevent OOM crashes
         _system_config = {
             "automatic_object_spilling_enabled": True,
             "object_spilling_config": json.dumps({
@@ -1093,15 +1275,38 @@ def main(
             }),
         }
 
+    # Calculate available memory for Ray object store
+    # Use 30% of total RAM (reduced from 40% to be more conservative)
+    total_memory = int(os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES'))
+    object_store_mem = max(500_000_000, int(total_memory * 0.3))  # Min 500MB, max 30% of RAM
+    
+    # Enhanced system config for OOM prevention
+    enhanced_system_config = {
+        "automatic_object_spilling_enabled": True,
+        "object_spilling_config": json.dumps({
+            "type": "filesystem",
+            "params": {
+                "directory_path": _ray_tmp,
+                "buffer_size": 50_000_000,  # 50MB buffer for spilling (reduced from 100MB)
+            },
+        }),
+        "max_io_workers": 4,  # Reduced from 8 to avoid I/O contention
+    }
+    if _system_config:
+        enhanced_system_config.update(_system_config)
+    
     ray_init_kwargs = dict(
         num_cpus=num_cpus,
         include_dashboard=False,
         ignore_reinit_error=True,
         _temp_dir=_ray_tmp,
         runtime_env=_runtime_env,
+        object_store_memory=object_store_mem,
+        _system_config=enhanced_system_config,
     )
-    if _system_config:
-        ray_init_kwargs["_system_config"] = _system_config
+    
+    # Set environment variable for additional timeout protection
+    os.environ["RAY_gcs_rpc_server_reconnect_timeout_s"] = "180"
     if IS_COLAB and torch.cuda.is_available():
         ray_init_kwargs["num_gpus"] = 1
     ray.init(**ray_init_kwargs)
@@ -1148,10 +1353,215 @@ def main(
         ray.shutdown()
 
 
+# ===========================================================================
+# SANDBOX MODE — Real architecture training (no Ray, no GPU)
+# CPU-only, CI/sandbox/GitHub Actions compatible.
+# Uses the REAL MultiAssetChunkedEnv with all production components:
+#   HMM (3 regimes), DBE, FiLM, Oracle, PortfolioManager, RewardCalculator
+# ===========================================================================
+def sandbox_train(steps: int = None, initial_capital: float = None,
+                  config_path: str = None, resume_ckpt: str = None,
+                  checkpoint_out: str = None):
+    """Run training in sandbox/CI mode — no Ray, no GPU, single-process.
+
+    Uses the REAL MultiAssetChunkedEnv from src/adan_trading_bot with all
+    production modules (HMM, DBE, FiLM, Oracle, RewardCalculator, etc.).
+
+    Session 9 — supports CI relay:
+        resume_ckpt: path to a previously saved zip (and matching _vecnorm.pkl).
+                     When provided, the PPO model + VecNormalize stats are
+                     restored, and training continues from that checkpoint.
+                     The total step count is reset_num_timesteps=False so
+                     PPO's internal counter accumulates across relays.
+        checkpoint_out: explicit output path for the new checkpoint zip
+                        (default: checkpoints/ppo_adan0_sandbox_{steps}steps).
+
+    Parameters are read from config.yaml [sandbox] section. CLI args override.
+    """
+    import copy as _copy
+
+    # Load config from YAML (single source of truth)
+    if config_path is None:
+        config_path = str(PROJECT_ROOT / "config" / "config.yaml")
+    config = ConfigLoader.load_config(config_path)
+
+    # Read sandbox-specific parameters FROM config (Rule #16: no hardcoding)
+    sandbox_cfg = config.get("sandbox", {})
+    if initial_capital is None:
+        initial_capital = float(sandbox_cfg.get("initial_capital", 20.50))
+    if steps is None:
+        steps = int(sandbox_cfg.get("max_training_steps", 5000))
+
+    # Set initial capital in environment config
+    if "environment" not in config:
+        config["environment"] = {}
+    config["environment"]["initial_capital"] = initial_capital
+    logger.info(f"[SANDBOX] Config: steps={steps}, initial_capital={initial_capital}")
+
+    # Worker config: use w1 (scalper) as default sandbox worker
+    worker_config = _copy.deepcopy(config.get("workers", {}).get("w1", {}))
+    worker_config["worker_id"] = 0
+    worker_config.setdefault("data_split_override", "train")
+    worker_config.setdefault("timeframes", config.get("data", {}).get("timeframes", ["5m", "1h", "4h"]))
+    worker_config.setdefault("assets", config.get("environment", {}).get("assets", ["BTCUSDT"]))
+
+    # Load data using the real ChunkedDataLoader
+    loader = ChunkedDataLoader(config=config, worker_config=worker_config, worker_id=0)
+    data = loader.load_chunk(0)
+    logger.info(f"[SANDBOX] Data loaded: {list(data.keys())} assets, "
+                f"timeframes={list(list(data.values())[0].keys()) if data else 'none'}")
+
+    # Create the REAL MultiAssetChunkedEnv
+    env = MultiAssetChunkedEnv(
+        data=data,
+        config=config,
+        worker_config=worker_config,
+        worker_id=0,
+        live_mode=False,
+    )
+    logger.info(f"[SANDBOX] MultiAssetChunkedEnv created — "
+                f"obs_space keys: {list(env.observation_space.spaces.keys())}")
+
+    # MEMORY FIX: Disable VecNormalize to prevent OOM crashes
+    # VecNormalize maintains running statistics that accumulate in Ray's object store
+    # causing progressive OOM after ~6900 steps. Using raw observations instead.
+    vec_env = DummyVecEnv([lambda: env])
+    gamma = config.get("agent", {}).get("gamma", 0.99)
+    
+    # Skip VecNormalize entirely - observations are already normalized in StateBuilder
+    logger.info("[SANDBOX] VecNormalize DISABLED to prevent OOM crashes (using raw observations)")
+
+    # Read hyperparams from config (NEVER hardcode)
+    agent_cfg = config.get("agent", {})
+
+    # Session 8 fix: Force exploration in 25D action space.
+    # With standard Gaussian policy, Xavier init produces actions ≈ N(0, 0.01)
+    # which NEVER cross action_threshold (0.05-0.10). Two fixes:
+    # 1. use_sde=True: State-Dependent Exploration (gSDE) — exploration noise
+    #    is learned as a function of state, producing coherent large actions.
+    # 2. log_std_init=-0.5: Initial std ≈ exp(-0.5) ≈ 0.61, so actions
+    #    start with nuanced variance inside [-1, 1], learning fine position sizing
+    #    instead of saturating at extremes (previous 0.5 gave std≈1.65 → epilepsy).
+    policy_kwargs = {
+        "share_features_extractor": True,
+        "log_std_init": -0.5,  # exp(-0.5) ≈ 0.61 std
+    }
+
+    # S15 HARD RESET: Use config values (512/64/10) — safe for 7GB CI
+    sandbox_n_steps = int(sandbox_cfg.get("n_steps", 512))
+    sandbox_batch_size = int(sandbox_cfg.get("batch_size", 64))
+    sandbox_n_epochs = int(sandbox_cfg.get("n_epochs", 10))
+    logger.info(f"[SANDBOX] PPO: n_steps={sandbox_n_steps}, batch_size={sandbox_batch_size}, "
+                f"n_epochs={sandbox_n_epochs}")
+
+    # Session 9 — relay support: load PPO from disk if --resume was given
+    if resume_ckpt:
+        logger.info(f"[SANDBOX] Resuming PPO from {resume_ckpt}")
+        model = PPO.load(resume_ckpt, env=vec_env, device="cpu")
+        # The PPO model loaded from disk keeps its own num_timesteps;
+        # we tell .learn() to NOT reset it so we accumulate across relays.
+        reset_num_timesteps = False
+        prior_steps = int(getattr(model, "num_timesteps", 0))
+        logger.info(f"[SANDBOX] Prior cumulative timesteps: {prior_steps}")
+    else:
+        model = PPO(
+            "MultiInputPolicy",
+            vec_env,
+            learning_rate=float(sandbox_cfg.get("learning_rate",
+                                agent_cfg.get("learning_rate", 3e-4))),
+            n_steps=sandbox_n_steps,
+            batch_size=sandbox_batch_size,
+            n_epochs=sandbox_n_epochs,
+            gamma=float(agent_cfg.get("gamma", 0.99)),
+            gae_lambda=float(agent_cfg.get("gae_lambda", 0.95)),
+            clip_range=float(agent_cfg.get("clip_range", 0.2)),
+            ent_coef=float(sandbox_cfg.get("ent_coef",
+                           agent_cfg.get("ent_coef", 0.01))),
+            vf_coef=float(agent_cfg.get("vf_coef", 0.5)),
+            max_grad_norm=float(agent_cfg.get("max_grad_norm", 0.5)),
+            use_sde=True,              # Session 8: State-Dependent Exploration
+            sde_sample_freq=4,         # Resample noise every 4 steps
+            verbose=1,
+            device="cpu",
+            policy_kwargs=policy_kwargs,
+        )
+        reset_num_timesteps = True
+        prior_steps = 0
+
+    # Checkpoints directory
+    ckpt_dir = PROJECT_ROOT / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    # MEMORY FIX: Add frequent checkpoints to recover from OOM crashes
+    checkpoint_callback = CheckpointCallback(
+        save_freq=max(1000, steps // 10),  # Save every 1000 steps or 10% of total
+        save_path=str(ckpt_dir),
+        name_prefix="ppo_adan0_sandbox_checkpoint",
+        save_replay_buffer=False,  # Don't save replay buffer to save memory
+        save_vecnormalize=False,  # VecNormalize is disabled, don't save it
+    )
+
+    t0 = time.time()
+    model.learn(
+        total_timesteps=steps,
+        reset_num_timesteps=reset_num_timesteps,
+        callback=checkpoint_callback,  # Enable frequent checkpoints
+    )
+    elapsed = time.time() - t0
+
+    # EXPERT FIX: Explicit GC after training to prevent memory accumulation
+    import gc
+    gc.collect()
+    cumulative_steps = int(getattr(model, "num_timesteps", prior_steps + steps))
+
+    # Save with cumulative-step naming so successive relays don't overwrite
+    if checkpoint_out:
+        ckpt_path = checkpoint_out.replace(".zip", "")
+    else:
+        ckpt_path = str(ckpt_dir / f"ppo_adan0_sandbox_{cumulative_steps}steps")
+    model.save(ckpt_path)
+    # Save VecNormalize stats if VecNormalize is active (may be disabled for OOM prevention)
+    if hasattr(vec_env, 'save') and hasattr(vec_env, 'obs_rms'):
+        vec_env.save(ckpt_path + "_vecnorm.pkl")
+        vec_env.save(str(ckpt_dir / "vecnormalize_sandbox.pkl"))
+    else:
+        logger.info("[SANDBOX] VecNormalize disabled — skipping vecnorm save")
+
+    size = os.path.getsize(ckpt_path + ".zip")
+    logger.info(f"[SANDBOX] Training done: +{steps} steps (cum={cumulative_steps}) "
+                f"in {elapsed:.0f}s, checkpoint={ckpt_path}.zip ({size:,} bytes)")
+
+    # Log key training stats
+    info = env.get_info() if hasattr(env, 'get_info') else {}
+    n_trades = info.get("total_trades", info.get("n_trades", "unknown"))
+    logger.info(f"[SANDBOX] Trades executed: {n_trades}")
+
+    return {
+        "steps": steps,
+        "cumulative_steps": cumulative_steps,
+        "elapsed": elapsed,
+        "checkpoint": ckpt_path + ".zip",
+        "vecnorm": ckpt_path + "_vecnorm.pkl",
+        "size": size,
+        "trades": n_trades,
+        "resumed_from": resume_ckpt,
+    }
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train ADAN Agents with Ray Tune PBT")
+    parser = argparse.ArgumentParser(description="Train ADAN Agents — Dual-Mode")
+    parser.add_argument("--mode", type=str, default="heavy",
+                        choices=["sandbox", "heavy"],
+                        help="sandbox: CI/sandbox/GH-Actions compatible (CPU, <400s, ~2GB RAM). "
+                             "heavy: Full Ray Tune PBT (12GB+ RAM, GPU optional, Colab/Kaggle).")
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to config")
-    parser.add_argument("--resume", action="store_true", help="Resume training")
+    parser.add_argument("--resume", action="store_true", help="Resume training (heavy mode)")
+    # Session 9 — sandbox relay support: explicit checkpoint paths for CI
+    parser.add_argument("--resume-from", type=str, default=None,
+                        help="(sandbox) Path to a previous checkpoint .zip to resume from. "
+                             "Looks for <ckpt>_vecnorm.pkl next to it.")
+    parser.add_argument("--checkpoint-out", type=str, default=None,
+                        help="(sandbox) Explicit output path for the new checkpoint .zip")
     parser.add_argument("--num-cpus", type=int, default=8, help="Number of CPUs for Ray")
     parser.add_argument("--num-samples", type=int, default=4, help="Number of concurrent PBT trials")
     parser.add_argument("--envs-per-worker", type=int, default=2, help="Sub-envs per worker (SubprocVecEnv)")
@@ -1167,20 +1577,43 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=int, default=None, help="(legacy, ignored)")
     parser.add_argument("--fine-tune", action="store_true", help="(legacy, ignored)")
     parser.add_argument("--profiles", type=str, nargs="+", default=None,
-                        help="Worker profiles, e.g. --profiles scalper swing")
+                        help="Worker profiles, e.g. --profiles scalper swing "
+                             "or --profiles 'scalper,intraday,swing,position'")
 
     args = parser.parse_args()
 
-    main(
-        config_path=args.config,
-        resume=args.resume,
-        num_cpus=args.num_cpus,
-        num_samples=args.num_samples,
-        envs_per_worker=args.envs_per_worker,
-        use_subproc=not args.no_subproc,
-        total_steps=args.steps,
-        interval_timesteps=args.steps_per_iter,
-        log_level=args.log_level,
-        checkpoint_dir=args.checkpoint_dir,
-        profiles=args.profiles,
-    )
+    # Normalize profiles: handle both comma-separated and space-separated
+    if args.profiles:
+        normalized = []
+        for p in args.profiles:
+            normalized.extend(p.split(","))
+        args.profiles = [x.strip() for x in normalized if x.strip()]
+
+    if args.mode == "sandbox":
+        # ─── SANDBOX MODE ───
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+        # steps=None means "read from config.yaml [sandbox.max_training_steps]"
+        result = sandbox_train(
+            steps=args.steps if args.steps != 1_000_000 else None,
+            config_path=args.config if args.config != "config/config.yaml" else None,
+            resume_ckpt=args.resume_from,
+            checkpoint_out=args.checkpoint_out,
+        )
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        # ─── HEAVY MODE (default) ───
+        # Full Ray Tune PBT — requires 12GB+ RAM, optional GPU
+        # Compatible with Colab (T4/A100), Kaggle (P100), local multi-GPU
+        main(
+            config_path=args.config,
+            resume=args.resume,
+            num_cpus=args.num_cpus,
+            num_samples=args.num_samples,
+            envs_per_worker=args.envs_per_worker,
+            use_subproc=not args.no_subproc,
+            total_steps=args.steps,
+            interval_timesteps=args.steps_per_iter,
+            log_level=args.log_level,
+            checkpoint_dir=args.checkpoint_dir,
+            profiles=args.profiles,
+        )

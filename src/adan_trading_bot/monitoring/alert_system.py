@@ -9,10 +9,10 @@ les problèmes potentiels et les opportunités dans le système de trading.
 import logging
 import time
 import json
-from typing import Dict, List, Optional, Callable, Any, Union
-from dataclasses import dataclass, field, asdict
+from typing import Dict, List, Optional, Callable, Any
+from dataclasses import dataclass, field
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -33,6 +33,8 @@ class AlertChannel(Enum):
     EMAIL = "email"
     SLACK = "slack"
     WEBHOOK = "webhook"
+    TELEGRAM = "telegram"
+    DISCORD = "discord"
     LOG = "log"
 
 @dataclass
@@ -111,6 +113,8 @@ class NotificationHandler:
         self.email_config = config.get('email', {})
         self.slack_config = config.get('slack', {})
         self.webhook_config = config.get('webhook', {})
+        self.telegram_config = config.get('telegram', {})
+        self.discord_config = config.get('discord', {})
 
     def send_notification(self, alert: Alert, channels: List[AlertChannel]) -> bool:
         """Envoie une notification via les canaux spécifiés."""
@@ -124,6 +128,10 @@ class NotificationHandler:
                     self._send_slack(alert)
                 elif channel == AlertChannel.WEBHOOK:
                     self._send_webhook(alert)
+                elif channel == AlertChannel.TELEGRAM:
+                    self._send_telegram(alert)
+                elif channel == AlertChannel.DISCORD:
+                    self._send_discord(alert)
                 elif channel == AlertChannel.LOG:
                     self._log_alert(alert)
             except Exception as e:
@@ -269,6 +277,110 @@ class NotificationHandler:
             raise
 
         print("=== Fin de _send_webhook ===\n")
+
+    def _send_telegram(self, alert: Alert) -> None:
+        """Envoie une alerte sur Telegram."""
+        if not self.telegram_config.get('enabled', False):
+            return
+
+        bot_token = self.telegram_config.get('bot_token')
+        chat_id = self.telegram_config.get('chat_id')
+
+        if not bot_token or not chat_id:
+            logger.warning("Configuration Telegram incomplète (bot_token ou chat_id manquant)")
+            return
+
+        # Formater le message pour Telegram
+        emoji_map = {
+            AlertLevel.INFO: "ℹ️",
+            AlertLevel.WARNING: "⚠️",
+            AlertLevel.CRITICAL: "🚨"
+        }
+        emoji = emoji_map.get(alert.level, "📢")
+
+        message = f"{emoji} *{alert.title}*\n"
+        message += f"Niveau: `{alert.level.upper()}`\n"
+        message += f"Heure: `{datetime.fromtimestamp(alert.timestamp).isoformat()}`\n\n"
+        message += f"{alert.message}"
+
+        if alert.metadata:
+            message += "\n\n*Détails:*\n"
+            for key, value in alert.metadata.items():
+                if key != 'context':  # Éviter de spammer avec le contexte complet
+                    message += f"• `{key}`: {value}\n"
+
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'Markdown'
+        }
+
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Alerte Telegram envoyée: {alert.title}")
+
+    def _send_discord(self, alert: Alert) -> None:
+        """Envoie une alerte sur Discord."""
+        if not self.discord_config.get('enabled', False):
+            return
+
+        webhook_url = self.discord_config.get('webhook_url')
+        if not webhook_url:
+            logger.warning("Configuration Discord incomplète (webhook_url manquant)")
+            return
+
+        # Déterminer la couleur en fonction du niveau d'alerte
+        color_map = {
+            AlertLevel.INFO: 0x36a64f,      # Vert
+            AlertLevel.WARNING: 0xf2c744,   # Jaune
+            AlertLevel.CRITICAL: 0xe01e5a   # Rouge
+        }
+        color = color_map.get(alert.level, 0x757575)  # Gris par défaut
+
+        # Formater le message pour Discord
+        embed = {
+            "title": alert.title,
+            "description": alert.message,
+            "color": color,
+            "fields": [
+                {
+                    "name": "Niveau",
+                    "value": alert.level.upper(),
+                    "inline": True
+                },
+                {
+                    "name": "Date/Heure",
+                    "value": datetime.fromtimestamp(alert.timestamp).isoformat(),
+                    "inline": True
+                }
+            ],
+            "footer": {
+                "text": "ADAN Trading Bot"
+            },
+            "timestamp": datetime.fromtimestamp(alert.timestamp).isoformat()
+        }
+
+        # Ajouter les métadonnées si présentes
+        if alert.metadata:
+            metadata_text = "\n".join(
+                f"**{k}**: {v}" for k, v in alert.metadata.items()
+                if k != 'context'  # Éviter de spammer avec le contexte complet
+            )
+            if metadata_text:
+                embed["fields"].append({
+                    "name": "Détails",
+                    "value": metadata_text,
+                    "inline": False
+                })
+
+        payload = {
+            "embeds": [embed]
+        }
+
+        response = requests.post(webhook_url, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Alerte Discord envoyée: {alert.title}")
 
     def _log_alert(self, alert: Alert) -> None:
         """Journalise l'alerte."""

@@ -15,7 +15,10 @@ import numpy as np
 class RewardCollector:
     """Collecte detaillee des rewards et penalites par worker par step."""
     
-    def __init__(self, log_dir: str = "/mnt/new_data/t10_training/reward_logs"):
+    def __init__(self, log_dir: str = None):
+        # Configurable log directory with safe fallback (no hardcoded /mnt/new_data)
+        if log_dir is None:
+            log_dir = os.environ.get("ADAN_REWARD_LOG_DIR", "./logs/rewards")
         self.log_dir = log_dir
         os.makedirs(log_dir, exist_ok=True)
         self.step_data = defaultdict(list)
@@ -403,7 +406,7 @@ def get_reward_collector(log_dir: Optional[str] = None) -> RewardCollector:
     """Get or create global reward collector instance."""
     global _reward_collector
     if _reward_collector is None:
-        effective_dir = log_dir or "/mnt/new_data/t10_training/reward_logs"
+        effective_dir = log_dir or os.environ.get("ADAN_REWARD_LOG_DIR", "./logs/rewards")
         _reward_collector = RewardCollector(log_dir=effective_dir)
     return _reward_collector
 

@@ -96,7 +96,8 @@ class ChunkedDataLoader:
         # Configuration de la taille des chunks par timeframe
         # Priorité: worker_config.chunk_sizes > config.data.chunk_sizes > défauts optimisés
         # Default: ~25k candles 5m par chunk (environ 3 mois de données)
-        default_chunk_sizes = {"5m": 25000, "1h": 2083, "4h": 521}
+        # FIXED: Augmenté de 25k → 50k pour éviter le problème "1 chunk" sur 34k rows
+        default_chunk_sizes = {"5m": 50000, "1h": 2083, "4h": 521}
         cfg_chunk_sizes = (
             self.worker_config.get("chunk_sizes") or {}
         ) or self.config.get("data", {}).get("chunk_sizes", {})
@@ -681,6 +682,21 @@ class ChunkedDataLoader:
                     tf_df = tf_df.copy()
                     tf_df.index = tf_idx.tz_localize(None)
 
+                # C5: Shift higher timeframes by 1 candle BEFORE reindex/ffill
+                # to eliminate lookahead bias. At t=10h05 on 5m, the agent
+                # will see the 1h close from 09h00 (not 10h00).
+                # This guarantees observation ∈ F_t (causal filtration).
+                tf_df = tf_df.shift(1)
+                # C5-A: Drop leading NaN rows created by shift
+                _rows_before_drop = len(tf_df)
+                tf_df = tf_df.dropna(how='all')
+                _rows_dropped = _rows_before_drop - len(tf_df)
+                if _rows_dropped > 0:
+                    logger.info(
+                        f"[CAUSAL_SHIFT] {asset}/{tf_name}: shift(1) applied, "
+                        f"{_rows_dropped} leading NaN rows dropped."
+                    )
+
                 # If the index sizes already match and are identical, skip
                 if len(tf_df) == len(master_idx_naive) and (
                     tf_df.index.equals(master_idx_naive)
@@ -741,15 +757,19 @@ class ChunkedDataLoader:
 
         Le calcul est basé sur la taille des données disponibles et la taille des chunks
         configurée pour chaque timeframe. Le nombre de chunks est déterminé par le timeframe
-        ayant le moins de données par rapport à la taille de ses chunks.
+        ayant le PLUS de données par rapport à la taille de ses chunks (pour maximiser
+        la diversité des données vues par l'agent).
+
+        FIXED: Changé de MIN → MAX pour éviter le problème "1 chunk" quand 5m a peu de données.
 
         Returns:
             int: Nombre total de chunks disponibles
         """
         # Calculer d'abord le nombre de chunks en fonction des données disponibles
-        min_chunks = float("inf")
+        max_chunks_found = 0
+        chunks_per_tf = {}
 
-        # Parcourir tous les actifs et timeframes pour trouver le plus petit nombre de chunks
+        # Parcourir tous les actifs et timeframes pour trouver le PLUS grand nombre de chunks
         for asset in self.assets_list:
             for tf in self.timeframes:
                 try:
@@ -759,10 +779,13 @@ class ChunkedDataLoader:
 
                     # Calculer le nombre de chunks pour ce timeframe
                     num_chunks = max(1, len(df) // chunk_size)
-
-                    # Prendre le plus petit nombre de chunks parmi tous les timeframes
-                    if num_chunks < min_chunks:
-                        min_chunks = num_chunks
+                    
+                    if tf not in chunks_per_tf:
+                        chunks_per_tf[tf] = num_chunks
+                    
+                    # Prendre le PLUS grand nombre de chunks parmi tous les timeframes
+                    if num_chunks > max_chunks_found:
+                        max_chunks_found = num_chunks
 
                 except Exception as e:
                     logger.warning(
@@ -771,14 +794,14 @@ class ChunkedDataLoader:
                     continue
 
         # Si on n'a pas pu déterminer le nombre de chunks, on retourne 1 par défaut
-        if min_chunks == float("inf"):
+        if max_chunks_found == 0:
             logger.warning(
                 "Impossible de déterminer le nombre de chunks, utilisation de la valeur par défaut (1)"
             )
             calculated_chunks = 1
         else:
-            calculated_chunks = min_chunks
-            logger.info(f"Nombre total de chunks calculé : {calculated_chunks}")
+            calculated_chunks = max_chunks_found
+            logger.info(f"Nombre total de chunks calculé : {calculated_chunks} (par timeframe: {chunks_per_tf})")
 
         # Prendre le minimum entre la config et les données disponibles
         max_chunks = self.config.get("environment", {}).get("max_chunks_per_episode")
