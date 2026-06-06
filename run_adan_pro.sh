@@ -127,6 +127,7 @@ python scripts/train_parallel_agents.py \
     --num-cpus 8 \
     --num-samples 2 \
     --no-subproc \
+    --resume \
     --checkpoint-dir /mnt/new_data/adan_logs/checkpoints \
     2>&1 | tee /mnt/new_data/adan_logs/training/production_run.log
 

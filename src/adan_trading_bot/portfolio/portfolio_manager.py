@@ -752,7 +752,7 @@ class PortfolioManager:
                                 "asset": asset,
                                 "requested_notional": float(cost),
                                 "max_allowed": float(max_position_value),
-                                "initial_equity": float(initial_cap),
+                                "initial_equity": float(self.initial_capital),
                             },
                         )
                 except Exception:
@@ -1011,7 +1011,7 @@ class PortfolioManager:
         self.metrics.update_trade(log_entry)
 
         self.log_info(
-            f"[POSITION FERMÉE] {asset}: {size:.6f} @ {entry_price:.2f} -> {price:.2f} | PnL: ${pnl:+.2f} (brut ${pnl_gross:+.2f}, frais ${total_fees:.4f})"
+            f"[POSITION FERMÉE] {asset}: {size:.6f} @ {entry_price:.2f} -> {price:.2f} | PnL: ${pnl:+.2f} (brut ${pnl_gross:+.2f}, frais ${total_fees:.4f}) | Raison: {reason}"
         )
         return log_entry
 
