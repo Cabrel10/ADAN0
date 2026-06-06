@@ -1093,7 +1093,7 @@ def run_pbt(
             "use_subproc": use_subproc,
             "interval_timesteps": interval_timesteps,
             # PPO hyperparams
-            "learning_rate": tune.loguniform(1e-5, 1e-3),
+            "learning_rate": tune.loguniform(1e-4, 1e-3),
             "ent_coef": tune.uniform(0.0, 0.05),
             "gamma": tune.uniform(0.95, 0.999),
             # Trading hyperparams (PBT auto-evolves these)
@@ -1111,7 +1111,7 @@ def run_pbt(
             "use_subproc": use_subproc,
             "interval_timesteps": interval_timesteps,
             # PPO hyperparams
-            "learning_rate": tune.loguniform(1e-5, 1e-3),
+            "learning_rate": tune.loguniform(1e-4, 1e-3),
             "ent_coef": tune.uniform(0.0, 0.05),
             "gamma": tune.uniform(0.95, 0.999),
             # Trading hyperparams (PBT auto-evolves these)

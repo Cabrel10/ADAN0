@@ -142,7 +142,7 @@ agent:
       ent_coef: 0.01
       gae_lambda: 0.95
       max_grad_norm: 0.5
-      n_epochs: 10
+      n_epochs: 20
       n_steps: 2048
       normalize_advantage: true
       sde_sample_freq: -1
@@ -153,14 +153,14 @@ agent:
   gamma: 0.9523222699352663
   learning_rate: 0.0003
   learning_rate_schedule:
-    end: 1.0e-05
+    end: 1.0e-04
     start: 0.0003
     type: linear
   log_level: INFO
   logging_level: INFO
   max_grad_norm: 0.5
   n_envs: 4
-  n_epochs: 10
+  n_epochs: 20
   n_steps: 2048
   numpy_log_level: ERROR
   policy: MultiInputPolicy
@@ -360,7 +360,7 @@ data_augmentation:
     exclude_columns: []
     std: 0.01
   partial_shuffle:
-    enabled: false
+    enabled: true
     exclude_columns: []
     segment_size: 10
   random_impulses:
@@ -1181,7 +1181,7 @@ production:
     gae_lambda: 0.95
     gamma: 0.99
     learning_rate: 0.0003
-    n_epochs: 10
+    n_epochs: 20
     n_steps: 1024
     steps: 500000
   sota_architecture:
@@ -1501,7 +1501,7 @@ trading_rules:
     wait_steps_post_sell:
       5m: 2    # 10 min wait after SELL (~2 x 5min candles) - REDUCED from 6
       1h: 3    # 3h wait after SELL - REDUCED from 10
-      4h: 5    # ~20h wait after SELL - REDUCED from 20
+      4h: 4    # ~16h wait after SELL - REDUCED from 20
     # Anti-spam cooldown between consecutive BUY signals per worker profile.
     omega4e_cooldown_by_profile:
       scalper: 2    # 2 steps between BUY attempts
@@ -1657,7 +1657,7 @@ sandbox:
   # 10000 steps / 512 = ~19 PPO updates × 10 epochs = 190 gradient passes.
   n_steps: 512                # Safe for 7GB CI (512 × obs ≈ 2.5 MB)
   batch_size: 64              # 512/64 = 8 minibatches per epoch
-  n_epochs: 10                # Standard PPO
+  n_epochs: 20                # Standard PPO
   max_training_steps: 10000   # CI: ~4 min on 2-CPU runner
   ci_training_steps: 10000    # Relay segment size
   learning_rate: 0.0003       # Standard

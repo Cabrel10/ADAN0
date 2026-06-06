@@ -6038,21 +6038,22 @@ class MultiAssetChunkedEnv(gym.Env):
                 pass
         
         # ──────────────────────────────────────────────────────────────────
-        # STEP 4: STAGNATION PENALTY (if too long in current tier)
+        # STEP 4: ACTIVE CLOSURE BONUS / PENALTY
         # ──────────────────────────────────────────────────────────────────
-        stagnation_penalty = 0.0
-        max_steps_in_tier = int(current_tier_info.get("max_steps_in_tier", 5000))
-        stagnation_rate = float(current_tier_info.get("stagnation_penalty_per_step", -0.0005))
-        
-        if self._steps_in_current_tier > max_steps_in_tier:
-            excess_steps = self._steps_in_current_tier - max_steps_in_tier
-            # Logarithmic penalty: grows but never explodes
-            stagnation_penalty = stagnation_rate * math.log1p(excess_steps)
-            if self._steps_in_current_tier % 500 == 0:
-                self.logger.warning(
-                    f"[STAGNATION] Worker {self.worker_id} in {current_tier} for {self._steps_in_current_tier} steps | "
-                    f"Penalty: {stagnation_penalty:.4f}"
-                )
+        closure_bonus = 0.0
+        if hasattr(self, "_step_closed_receipts"):
+            for receipt in self._step_closed_receipts:
+                if not isinstance(receipt, dict): continue
+                reason = receipt.get("reason", "").lower()
+                pnl = receipt.get("pnl", 0.0)
+                
+                # Bonus for profitable AGENT_CLOSE
+                if "agent" in reason:
+                    if pnl > 0:
+                        closure_bonus += 0.5
+                # Light penalty for MaxDuration
+                elif "maxduration" in reason or "duration" in reason:
+                    closure_bonus -= 0.2
 
         # ──────────────────────────────────────────────────────────────────
         # STEP 5: DRAWDOWN PENALTY (tier-scaled, quadratic)
@@ -6109,9 +6110,9 @@ class MultiAssetChunkedEnv(gym.Env):
             pnl_base_reward  # PnL signal: 5x stronger
             + promotion_bonus  # Tier promotion (big incentive)
             + demotion_penalty  # Tier demotion (big penalty)
-            + stagnation_penalty  # Stagnation timeout (now 4x softer)
+            + closure_bonus  # Active closure bonuses / MaxDuration penalties
             + drawdown_penalty  # Risk management (quadratic, harsh)
-            + patience_bonus_val  # Reward waiting (not forced trading) — CHANGED
+            + patience_bonus_val  # Reward waiting (not forced trading)
             + survival_bonus  # +0.001/step just for existing
         )
 
@@ -6130,7 +6131,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"PnL={pnl_pct:+.2f}% | "
                 f"Promo={promotion_bonus:+.2f} | "
                 f"Demote={demotion_penalty:+.2f} | "
-                f"Stagnation={stagnation_penalty:+.4f} | "
+                f"ClosureBonus={closure_bonus:+.4f} | "
                 f"Drawdown={drawdown_penalty:+.4f} | "
                 f"Patience={patience_bonus_val:+.4f} | "
                 f"Final={final_reward:+.4f}"
@@ -6144,7 +6145,7 @@ class MultiAssetChunkedEnv(gym.Env):
             "tier":             current_tier,
             "promotion_bonus":  promotion_bonus,
             "demotion_penalty": demotion_penalty,
-            "stagnation":       stagnation_penalty,
+            "closure_bonus":    closure_bonus,
             "drawdown":         drawdown_penalty,
             "drawdown_penalty": drawdown_penalty,  # Logger key
             "patience_bonus":   patience_bonus_val,

@@ -309,6 +309,20 @@ class PortfolioManager:
         self.tp_pct = kwargs.get("take_profit_pct", 0.05)
         self.pos_size_pct = kwargs.get("position_size_pct", 0.1)
 
+        # Force close all open positions to avoid orphan positions missing from logs
+        if getattr(self, "positions", None):
+            for asset in list(self.positions.keys()):
+                if self.positions[asset].is_open:
+                    # Emulate a market close at current price before reset
+                    try:
+                        self.close_position(
+                            asset,
+                            self.positions[asset].current_price,
+                            reason="EpisodeReset"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Error forcefully closing {asset} on reset: {e}")
+
         self.positions: Dict[str, Position] = {
             asset.upper(): Position() for asset in self.assets
         }
@@ -317,6 +331,11 @@ class PortfolioManager:
         self._last_market_timestamp = None
         self._last_positions_snapshot = {}
         self.last_close_reason = None
+        
+        # Tier hysteresis logic
+        self.steps_in_tier = 0
+        self._current_tier_index = -1
+        self._locked_tier_cache = None
 
         if hasattr(self, "metrics") and self.metrics:
             self.metrics.returns.clear()
@@ -1002,6 +1021,8 @@ class PortfolioManager:
         current_highs: Optional[Dict[str, float]] = None
     ) -> tuple[float, list[dict[str, Any]]]:
         """Met à jour la valeur des positions, vérifie les SL/TP, et retourne le PnL et les reçus."""
+        
+        self.steps_in_tier = getattr(self, "steps_in_tier", 0) + 1
 
         realized_pnl = 0.0
         closed_receipts = []
@@ -1420,24 +1441,50 @@ class PortfolioManager:
         capital_tiers = self.config.get("capital_tiers")
         if isinstance(capital_tiers, list):
             current_capital = float(self.get_portfolio_value())  # Use equity, not cash
-            for tier in capital_tiers:
+            target_tier_index = -1
+            target_tier = None
+            
+            for i, tier in enumerate(capital_tiers):
                 try:
                     min_cap = tier.get("min_capital", float("-inf"))
+                    if min_cap is None: min_cap = float("-inf")
                     max_cap = tier.get("max_capital", float("inf"))
-                    if min_cap is None:
-                        min_cap = float("-inf")
-                    if max_cap is None:
-                        max_cap = float("inf")
+                    if max_cap is None: max_cap = float("inf")
+                    
                     if min_cap <= current_capital < max_cap:
-                        return tier
+                        target_tier_index = i
+                        target_tier = tier
+                        break
                 except Exception:
                     continue
-            # Si aucun palier ne correspond, retourner le plus proche (fallback: premier)
-            if capital_tiers:
-                return capital_tiers[0]
+                    
+            if target_tier is None and capital_tiers:
+                target_tier_index = 0
+                target_tier = capital_tiers[0]
+                
+            curr_index = getattr(self, "_current_tier_index", -1)
+            
+            if curr_index == -1:
+                # Initialization
+                self._current_tier_index = target_tier_index
+                self._locked_tier_cache = target_tier
+                self.steps_in_tier = 0
+                return target_tier or {}
+                
+            if target_tier_index != curr_index:
+                # Hysteresis: wait 500 steps before switching tiers
+                if getattr(self, "steps_in_tier", 0) > 500:
+                    self._current_tier_index = target_tier_index
+                    self._locked_tier_cache = target_tier
+                    self.steps_in_tier = 0
+                    return target_tier or {}
+                else:
+                    return getattr(self, "_locked_tier_cache", None) or target_tier or {}
+            
+            return target_tier or {}
 
         # 3) Fallback: dict vide
-        return {}
+        return getattr(self, "_locked_tier_cache", None) or {}
 
     def log_info(self, message: str):
         """Log un message avec le préfixe du worker."""
