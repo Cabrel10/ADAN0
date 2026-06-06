@@ -52,45 +52,40 @@ Exploration: gSDE, log_std_init=-0.5
 
 ---
 
-## Démarrage Rapide
+## 🚀 Démarrage Rapide
 
-### GPU (Colab/Kaggle)
+### **Option 1: GPU (Colab - Recommandé)**
 
 Ouvrir `notebooks/ADAN_Full_Training_H100.ipynb` dans Colab avec H100/A100.
 
-Le notebook gère tout:
-1. Clone + installation
-2. Téléchargement données BTC (6 ans via CCXT)
-3. 21 indicateurs techniques par timeframe
-4. Splits train/test/val (70/20/10)
-5. Entraînement 4 workers + Ray Tune PBT (500K+ steps)
-6. Backtest OOS déterministe
-7. Export pour paper trading
+→ **Guide complet**: `docs/GUIDE_UTILISATEUR.md`
 
-### Local (Test rapide)
+### **Option 2: Test rapide (5 min)**
 
 ```bash
 # Installation
 pip install -e .
 
-# Test 5000 steps (CPU, ~5 min)
-PYTHONPATH=src python scripts/train_parallel_agents.py --mode sandbox --steps 5000
-
-# Backtest OOS
-PYTHONPATH=src python scripts/deterministic_backtest.py --steps 500 --split test
+# Test complet
+python scripts/smoke_test.py
 ```
 
-### Entraînement lourd (GPU local)
+### **Option 3: Entraînement local (GPU)**
 
 ```bash
 PYTHONPATH=src python scripts/train_parallel_agents.py \
-  --mode heavy \
-  --steps 500000 \
-  --num-cpus 8 \
-  --num-samples 4 \
-  --profiles scalper,intraday,swing,position \
-  --checkpoint-dir checkpoints/heavy
+  --mode heavy --steps 500000 --num-cpus 8 --num-samples 4
 ```
+
+### 📖 **Documentation Complète**
+
+Pour la suite des étapes (données, entraînement, backtest, paper trading, live trading):
+
+→ **[📖 Lire GUIDE_UTILISATEUR.md](docs/GUIDE_UTILISATEUR.md)** (30 min de lecture)
+
+Pour les détails de chaque script:
+
+→ **[📜 Lire SCRIPTS_REFERENCE.md](docs/SCRIPTS_REFERENCE.md)** (reference rapide)
 
 ---
 
