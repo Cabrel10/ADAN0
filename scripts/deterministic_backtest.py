@@ -36,7 +36,27 @@ os.environ.setdefault("ADAN_RICH_STEP_EVERY", "999999")
 logging.disable(logging.WARNING)
 
 
-def find_latest_checkpoint() -> str | None:
+def find_latest_checkpoint(ckpt_dir: str | None = None, worker_idx: int | None = None) -> str | None:
+    """Find latest checkpoint. Support both sandbox and PBT structures.
+    
+    Args:
+        ckpt_dir: Optional directory to search in (PBT ray results structure)
+        worker_idx: Optional worker index to filter by (for PBT training)
+    
+    Returns:
+        Path to the latest checkpoint, or None if not found
+    """
+    if ckpt_dir:
+        # PBT structure: /path/to/adan_pbt_training/ADAN_PBT_Worker_b7791_00001_1_ent_coef=...
+        if worker_idx is not None:
+            pattern = f"{ckpt_dir}/ADAN_PBT_Worker_*_worker_idx={worker_idx}_*/checkpoint_*/model.zip"
+        else:
+            pattern = f"{ckpt_dir}/ADAN_PBT_Worker_*/checkpoint_*/model.zip"
+        ckpts = sorted(glob.glob(pattern), key=os.path.getmtime)
+        if ckpts:
+            return ckpts[-1]
+    
+    # Fallback to sandbox structure
     ckpts = sorted(
         glob.glob(str(REPO_ROOT / "checkpoints" / "ppo_adan0_sandbox_*.zip")),
         key=os.path.getmtime,
@@ -309,14 +329,30 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--split", type=str, default="val", choices=["val", "test", "train"])
-    parser.add_argument("--ckpt", type=str, default=None)
+    parser.add_argument("--ckpt", type=str, default=None, help="Path to specific checkpoint")
+    parser.add_argument("--ckpt-dir", type=str, default=None, help="PBT checkpoint directory (e.g., /path/to/adan_pbt_training)")
+    parser.add_argument("--worker", type=int, default=None, help="Worker index for PBT checkpoints")
     parser.add_argument("--out", type=str, default=None)
     args = parser.parse_args()
 
-    ckpt = args.ckpt or find_latest_checkpoint()
+    # Determine checkpoint to use
+    if args.ckpt:
+        # User specified exact path
+        ckpt = args.ckpt
+    elif args.ckpt_dir or args.worker is not None:
+        # Search PBT directory for worker checkpoint
+        ckpt = find_latest_checkpoint(ckpt_dir=args.ckpt_dir, worker_idx=args.worker)
+    else:
+        # Try to find any latest checkpoint (sandbox or PBT)
+        ckpt = find_latest_checkpoint()
+    
     if not ckpt:
-        print(json.dumps({"error": "no checkpoint found"}, indent=2))
+        error_msg = {"error": "no checkpoint found"}
+        if args.ckpt_dir or args.worker is not None:
+            error_msg["details"] = f"No PBT checkpoint found in {args.ckpt_dir} for worker {args.worker}"
+        print(json.dumps(error_msg, indent=2))
         return 0
+    
     print(f"[backtest] checkpoint: {ckpt}", file=sys.stderr)
 
     result = run_backtest(ckpt, steps=args.steps, split=args.split)
@@ -331,7 +367,9 @@ def main() -> int:
         m = os.path.basename(ckpt).replace(".zip", "")
         if "_" in m:
             cum = m.split("_")[-1].replace("steps", "")
-        out_path = out_dir / f"backtest_{cum or 'latest'}.json"
+        # Add worker suffix if applicable
+        worker_suffix = f"_w{args.worker}" if args.worker is not None else ""
+        out_path = out_dir / f"backtest_{cum or 'latest'}{worker_suffix}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, indent=2))
     print(f"[backtest] saved: {out_path}", file=sys.stderr)

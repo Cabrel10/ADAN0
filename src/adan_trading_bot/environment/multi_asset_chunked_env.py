@@ -1140,10 +1140,16 @@ class MultiAssetChunkedEnv(gym.Env):
             profile = _profile_map.get(profile, profile)
 
             _PROFILE_BOUNDS = {
-                "scalper":  {"sl": (0.003, 0.008), "tp": (0.006, 0.015)},
-                "intraday": {"sl": (0.008, 0.020), "tp": (0.016, 0.040)},
-                "swing":    {"sl": (0.015, 0.035), "tp": (0.030, 0.070)},
-                "position": {"sl": (0.020, 0.050), "tp": (0.040, 0.100)},
+                # OPTIMIZATION FOR 0.80% FEES (4× real 0.10% Binance fee)
+                # With 0.80% A/R fees, tighter SL are not viable
+                # Scalper: 2-3% SL (viable ONLY with AGENT_CLOSE at ~-0.8%)
+                # Intraday: 4-6% SL (R:R net 1.5:1, BE 40%)
+                # Swing: 7-10% SL (R:R net 1.69:1, BE 37%)
+                # Position: 15-20% SL (R:R net 1.85:1, BE 35%)
+                "scalper":  {"sl": (0.020, 0.030), "tp": (0.040, 0.060)},
+                "intraday": {"sl": (0.040, 0.060), "tp": (0.080, 0.120)},
+                "swing":    {"sl": (0.070, 0.100), "tp": (0.140, 0.200)},
+                "position": {"sl": (0.150, 0.200), "tp": (0.300, 0.400)},
             }
             bounds = _PROFILE_BOUNDS.get(profile, _PROFILE_BOUNDS["intraday"])
             sl_min, sl_max = bounds["sl"]
@@ -2186,6 +2192,14 @@ class MultiAssetChunkedEnv(gym.Env):
         self.last_trade_steps_by_tf = {}
         self.last_trade_timestamps = {}
         self.current_timeframe_for_trade = "5m"
+        self._last_trade_step = 0  # S15+: For polar reward time decay
+        
+        # ── TIER-BASED CAPITAL PROGRESSION TRACKING ──
+        self._current_tier = "Micro"  # Start at smallest tier
+        self._previous_tier = "Micro"
+        self._steps_in_current_tier = 0  # Steps since entering current tier
+        self._max_capital_reached = float(self.portfolio_manager.initial_capital or 20.5)
+        self._tier_entry_capital = float(self.portfolio_manager.initial_capital or 20.5)
 
         # OMEGA-3/4: Reset episode receipts and per-asset cooldown
         self._all_episode_receipts = deque(maxlen=50)  # REDUCED: Cap memory: keep last 50 receipts (was 500)
@@ -4464,6 +4478,23 @@ class MultiAssetChunkedEnv(gym.Env):
                 }
                 self.episode_reward = 0.0
 
+            # ── S15+ FIX: Calculate capacity_pct for capacity_reward ───────────────
+            # Capacity = total notional value in open positions / portfolio value
+            try:
+                total_notional = sum(
+                    abs(pos.get('quantity', 0)) * pos.get('entry_price', 0)
+                    for pos in getattr(self, 'open_positions', {}).values()
+                    if isinstance(pos, dict)
+                )
+                portfolio_val = self.portfolio_manager.get_portfolio_value()
+                self._current_capacity_pct = float(total_notional / portfolio_val) if portfolio_val > 0 else 0.0
+            except Exception:
+                self._current_capacity_pct = 0.0
+
+            # ── S15+ FIX: Track trades_executed_this_step for frequency_reward ────
+            # Count number of actual trade executions (not rejections)
+            self._trades_executed_this_step = int(len(self._step_closed_receipts) if hasattr(self, '_step_closed_receipts') else 0)
+
             # Nettoyage explicite des observations precedentes
             if hasattr(self, 'last_observation') and self.last_observation is not None:
                 del self.last_observation
@@ -5403,6 +5434,7 @@ class MultiAssetChunkedEnv(gym.Env):
         result = {
             "close": 0.0, "prev_close": 0.0, "volatility": 0.0,
             "log_return": 0.0, "atr_pct": 0.0, "rsi_norm": 0.5, "volume_ratio_20": 1.0,
+            "adx": 20.0,  # S15+: ADX for trend detection in reward
         }
         try:
             idx = int(getattr(self, "step_in_chunk", 0))
@@ -5471,6 +5503,14 @@ class MultiAssetChunkedEnv(gym.Env):
                     val = df["log_return"].iloc[safe_idx]
                     if np.isfinite(val):
                         result["log_return"] = float(val)
+                
+                # S15+: Extract ADX for trend-aware rewards
+                for adx_col in ["adx", "ADX", "adx_14", "ADX_14"]:
+                    if adx_col in df.columns:
+                        val = df[adx_col].iloc[safe_idx]
+                        if np.isfinite(val):
+                            result["adx"] = float(np.clip(val, 0.0, 100.0))
+                        break
                 break
         except Exception:
             pass
@@ -5909,216 +5949,211 @@ class MultiAssetChunkedEnv(gym.Env):
         return getattr(self, "current_timeframe_for_trade", "5m")
 
     def _calculate_reward(self, action: np.ndarray, realized_pnl: float) -> float:
-        """TRUE QUANT REWARD — Alpha-Omega formula (REWARD_ANTIHACK).
+        """TIER-BASED CAPITAL PROGRESSION REWARD (Prop Firm Model).
 
-        Computes the step reward using a symlog-compressed PnL signal with
-        drawdown penalty and inaction signal. This is the ONLY reward path;
-        all legacy bonus/penalty systems have been removed.
-
-        Formula:
-            raw = PnL_net - trade_cost - drawdown_penalty + inaction + survival + inv_penalty
-            reward = symlog(raw)   where symlog(x) = sign(x) * ln(|x| + 1)
+        Implements hierarchical tier progression: agent earns bonuses for promotion,
+        faces penalties for stagnation, and pure PnL as base signal.
 
         Components:
-            1. PnL_net: realized_pnl - commission * 1.5 (fee overweight discourages churn)
-            2. trade_cost: slippage proxy (notional * 0.15%) on actual trades only
-            3. drawdown_penalty: quadratic penalty when drawdown > 2%
-               penalty = (|dd| - 0.02)^2 * 50.0
-            4. inaction: -0.0001 when no trade (tiny tie-breaker)
-            5. survival_bonus: small positive when cash > initial_capital
-            6. inv_penalty: accumulated invalid trade penalties from _execute_trades gates
-
-        Anti-hack properties:
-            - Symlog compression prevents reward explosion on large trades
-            - Losing trades always produce negative reward (commission overweight + loss)
-            - No-trade steps produce near-zero reward (inaction = -0.0001)
-            - Drawdown penalty grows quadratically, punishing sustained losses
-
-        Logged as [REWARD_ANTIHACK] with full component breakdown every 50 steps
-        and on every trade for audit trail compliance.
-
-        Args:
-            action: np.ndarray — the raw action vector (for context logging).
-            realized_pnl: float — total realized PnL from this step's trades
-                          (includes SL/TP closures + agent closes + invalid penalties).
+            1. Base PnL reward (percentage return on tier capital)
+            2. Promotion bonus (+0.5, +1.0, +2.0, +4.0 per tier, doubling)
+            3. Demotion penalty (-0.5, -1.0, -2.0, -4.0 per tier, matching promotion)
+            4. Stagnation penalty (increases if steps_in_tier > max_steps)
+            5. Drawdown penalty (tier-scaled, harsher for smaller tiers)
+            6. Inaction penalty (-0.01 per step with no trade)
 
         Returns:
-            float: symlog-compressed reward value.
+            float: reward value (-2.0 to +5.0 typical range)
         """
         import numpy as _np
+        import math
 
-        def _symlog(x: float) -> float:
-            return float(_np.sign(x) * _np.log1p(_np.abs(x)))
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 1: DETERMINE CURRENT AND PREVIOUS TIER
+        # ──────────────────────────────────────────────────────────────────
+        def _get_tier_from_capital(capital: float) -> str:
+            """Map capital to tier name."""
+            tier_config = self.config.get("reward_shaping", {}).get("capital_tier_rewards", {})
+            tiers_sorted = sorted(tier_config.items(), key=lambda x: x[1].get("min_capital", 0))
+            
+            for tier_name, tier_info in tiers_sorted:
+                min_cap = float(tier_info.get("min_capital", 0))
+                max_cap = float(tier_info.get("max_capital", 999999))
+                if min_cap <= capital <= max_cap:
+                    return tier_name
+            return "Enterprise"
 
-        # ── 1. Net PnL after commission ───────────────────────────────────
-        # 🔧 FIX: realized_pnl already has fees deducted in close_position()
-        # Do NOT subtract commission again (double fee deduction bug)
-        # commission = float(self.portfolio_manager.get_metrics().get(
-        #     "total_commission", 0.0
-        # ) if hasattr(self, "portfolio_manager") else 0.0)
-        # pnl_net = float(realized_pnl) - commission * 1.5
-        pnl_net = float(realized_pnl)  # Fees already deducted in PortfolioManager
+        # Get current capital from portfolio manager
+        try:
+            current_capital = float(self.portfolio_manager.total_equity or 20.5)
+        except Exception:
+            current_capital = 20.5
 
-        # ── 1b. A8 FIX: Normalize PnL by initial capital (percentage-based) ──
-        # On $20.50 capital, a $0.05 profit is 0.24% — meaningful!
-        # But symlog($0.05) = 0.049 — too small for PPO gradient.
-        # Dividing by initial_capital turns it into a fraction: 0.05/20.5 = 0.00244
-        # Then multiplying by 100 gives: 0.244 (percentage points).
-        # symlog(0.244) = 0.219 — 4.5x stronger signal than symlog(0.05) = 0.049
+        current_tier = _get_tier_from_capital(current_capital)
+        previous_tier = getattr(self, '_current_tier', current_tier)
+        
+        # Check for tier change
+        tier_changed = (current_tier != previous_tier)
+        if tier_changed:
+            self._previous_tier = previous_tier
+            self._current_tier = current_tier
+            self._steps_in_current_tier = 0
+            self._tier_entry_capital = float(self.portfolio_manager.get_metrics().get("peak_equity", current_capital) or current_capital)
+        else:
+            self._steps_in_current_tier = int(getattr(self, '_steps_in_current_tier', 0)) + 1
+
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 2: COMPUTE BASE PnL SIGNAL
+        # ──────────────────────────────────────────────────────────────────
+        pnl_net = float(realized_pnl)
         _ic = float(self.portfolio_manager.initial_capital or 20.5)
-        _reward_scale = 100.0 / max(_ic, 1.0)  # Convert to percentage basis
-        pnl_net_scaled = pnl_net * _reward_scale
-        commission_scaled = 0.0  # No longer double-deducting commission
+        pnl_pct = (pnl_net * 100.0) / max(_ic, 1.0)  # Percentage basis
 
-        # ── 2. Trade cost penalty (slippage proxy, only on actual trades) ─
-        trade_cost = 0.0
-        if realized_pnl != 0.0:
-            # Estimate notional from last trade
-            last_notional = getattr(self, "_last_trade_notional", 0.0)
-            trade_cost = float(last_notional) * 0.0015 * _reward_scale if last_notional > 0 else 0.001
-
-        # ── 3. Drawdown penalty (quadratic above 2%) ──────────────────────
-        drawdown_penalty = 0.0
-        if hasattr(self, "portfolio_manager"):
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 3: COMPUTE TIER-BASED REWARDS/PENALTIES
+        # ──────────────────────────────────────────────────────────────────
+        tier_config = self.config.get("reward_shaping", {}).get("capital_tier_rewards", {})
+        current_tier_info = tier_config.get(current_tier, {})
+        previous_tier_info = tier_config.get(previous_tier, {})
+        
+        promotion_bonus = 0.0
+        demotion_penalty = 0.0
+        
+        # Tier progression bonus/penalty
+        if tier_changed:
+            tier_order = list(tier_config.keys())
             try:
-                metrics = self.portfolio_manager.get_metrics()
-                dd = float(metrics.get("drawdown", 0.0) or 0.0)
-                if dd < -0.02:
-                    drawdown_penalty = (abs(dd) - 0.02) ** 2 * 80.0  # Adjusted: 50→80 (balanced)
-            except Exception:
+                curr_idx = tier_order.index(current_tier)
+                prev_idx = tier_order.index(previous_tier)
+                
+                if curr_idx > prev_idx:
+                    # PROMOTION: get bonus from config (doubling per tier)
+                    promotion_bonus = float(current_tier_info.get("promotion_bonus", 0.5))
+                    self.logger.info(f"[TIER PROMOTION] {previous_tier} → {current_tier} | Bonus +{promotion_bonus}")
+                elif curr_idx < prev_idx:
+                    # DEMOTION: matching penalty
+                    demotion_penalty = -float(previous_tier_info.get("promotion_bonus", 0.5))
+                    self.logger.warning(f"[TIER DEMOTION] {previous_tier} → {current_tier} | Penalty {demotion_penalty}")
+            except (ValueError, KeyError):
                 pass
+        
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 4: ACTIVE CLOSURE BONUS / PENALTY
+        # ──────────────────────────────────────────────────────────────────
+        closure_bonus = 0.0
+        if hasattr(self, "_step_closed_receipts"):
+            for receipt in self._step_closed_receipts:
+                if not isinstance(receipt, dict): continue
+                reason = receipt.get("reason", "").lower()
+                pnl = receipt.get("pnl", 0.0)
+                
+                # Bonus for profitable AGENT_CLOSE
+                if "agent" in reason:
+                    if pnl > 0:
+                        closure_bonus += 0.5
+                # Light penalty for MaxDuration
+                elif "maxduration" in reason or "duration" in reason:
+                    closure_bonus -= 0.2
 
-        # ── 4. Opportunity cost of inaction (DENSE BASELINE for CRITIC) ──
-        # Session 8: removed drift hack. Session 9: -1e-4 baseline added.
-        # Session 10 FIX: env-var override + config-driven, NOT hardcoded.
-        # The previous hardcoded -0.0001 made the config 'time_decay' a no-op
-        # and produced explained_variance = -2.36 (worse than -1.09).
-        # New: pull from reward_shaping.time_decay (default -1e-3) so the
-        # critic gets a learnable V(s) signal over a 500-step episode (-0.5).
-        # Override at runtime via ADAN_TIME_DECAY env var.
-        inaction = 0.0
-        if realized_pnl == 0.0:
-            _env_td = os.environ.get("ADAN_TIME_DECAY")
-            if _env_td is not None:
-                try:
-                    inaction = float(_env_td)
-                except (TypeError, ValueError):
-                    inaction = float(self.config.get("reward_shaping", {}).get("time_decay", -1e-3))
-            else:
-                inaction = float(self.config.get("reward_shaping", {}).get("time_decay", -1e-3))
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 5: DRAWDOWN PENALTY (tier-scaled, quadratic)
+        # ──────────────────────────────────────────────────────────────────
+        # PROP FIRM RULE: Lose >5% capital → severe penalty escalates quadratically
+        # -5% drawdown: -50 × 0.05² = -0.125
+        # -10% drawdown: -50 × 0.10² = -0.5
+        # -20% drawdown: -50 × 0.20² = -2.0 (catastrophic)
+        # This enforces: "Survival is the primary goal, profit is secondary"
+        drawdown_penalty = 0.0
+        try:
+            metrics = self.portfolio_manager.get_metrics()
+            dd_pct = float(metrics.get("drawdown", 0.0) or 0.0)  # Negative number
+            if dd_pct < -0.01:  # Penalize ANY drawdown > 1% (earlier detection)
+                dd_factor = float(current_tier_info.get("drawdown_penalty_factor", 1.0))
+                # Quadratic penalty scaled by tier factor (smaller tiers suffer more)
+                abs_dd = abs(dd_pct)
+                drawdown_penalty = -50.0 * (abs_dd ** 2) * dd_factor
+                if self.current_step % 100 == 0 and abs_dd > 0.05:
+                    self.logger.warning(
+                        f"[DRAWDOWN_PENALTY] DD={dd_pct:.2%} | penalty={drawdown_penalty:.4f} | "
+                        f"factor={dd_factor:.1f} (tier={current_tier})"
+                    )
+        except Exception:
+            pass
 
-        # ── 5. Survival signal : DESACTIVE ──────────────────────────────
-        # Le survival_bonus (sous toutes ses formes : unconditional, position-based,
-        # unrealized-PnL-delta) cree un signal deconnecte de la performance.
-        # Preuves CI : ev -5.11 -> -9.29 apres introduction du bonus (empire).
-        # La seule recompense positive valide est realized_pnl des trades fermes.
-        # Le Critic apprendra quand il aura 50k+ steps sur donnees diversifiees,
-        # pas grace a un signal artificiel.
-        survival = 0.0
-        _unrealized_shaping = 0.0
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 6: PATIENCE BONUS (reward waiting, not forced trading)
+        # ──────────────────────────────────────────────────────────────────
+        # With 0.80% fees (4× real Binance), forced trading = slow death
+        # Instead: reward the agent for being selective, waiting for high-conviction setups
+        # Philosophy: "Not forced to trade every day" → bonus for patience
+        patience_bonus_val = 0.0
+        steps_since_last_trade = self.current_step - getattr(self, 'last_trade_step', -10000)
+        if steps_since_last_trade > 100:  # Beyond 100 steps without trade
+            # Logarithmic bonus: grows but saturates (doesn't encourage infinite holding)
+            patience_bonus_val = 0.005 * math.log1p(steps_since_last_trade - 100)
+            if self.current_step % 500 == 0:
+                self.logger.info(
+                    f"[PATIENCE_BONUS] Worker {self.worker_id} waiting {steps_since_last_trade} steps | "
+                    f"Bonus: +{patience_bonus_val:.4f}"
+                )
 
-        # ── 5b. Invalid trade penalty (accumulated from _execute_trades) ──
-        inv_penalty = float(getattr(self, '_step_invalid_penalty', 0.0))
-
-        # ── 5c. Capacity reward — DISABLED (S15 Hard Reset) ─────────────
-        # capacity_reward gave +2.0 just for being invested (60-90% usage),
-        # regardless of trade outcomes. This is reward shaping that biases
-        # toward holding positions — NOT a valid financial signal.
-        capacity_reward = 0.0
-
-        # ── 5d. Frequency reward — DISABLED (S15 Hard Reset) ─────────────
-        # frequency_reward gave bonuses for trading within range bounds.
-        # This shapes behavior without financial basis — the ONLY valid
-        # positive reward is realized_pnl from closed trades.
-        frequency_reward = 0.0
-
-        # ── 6. Compose and apply symlog ───────────────────────────────────
-        # S15 HARD RESET: reward = symlog(realized_pnl_scaled - costs
-        #   - drawdown + time_decay + inv_penalty)
-        # ZERO shaping. ZERO bonuses. Pure financial signal.
-        raw = (pnl_net_scaled 
-               - trade_cost 
-               - drawdown_penalty 
-               + inaction 
-               + survival 
-               + inv_penalty
-               + capacity_reward
-               + frequency_reward)
-        final_reward = _symlog(raw)
-
-        # ── 7. Log components for monitoring ─────────────────────────────
-        _action_names_r = {0: "HOLD", 1: "BUY", 2: "SELL"}
-        _da_exe = getattr(self, '_last_discrete_action', 0)
-        _da_req = getattr(self, '_last_discrete_action_requested', _da_exe)
-        # A7 FIX: Use .6f precision to reveal small trade costs on $20 capital
-        self.logger.info(
-            f"[REWARD Worker {self.worker_id}] "
-            f"Base: {pnl_net:.6f}, "
-            f"Base_scaled: {pnl_net_scaled:.6f}, "
-            f"InvalidTrade: {inv_penalty:.6f}, "
-            f"TradeCost: -{trade_cost:.6f}, "
-            f"Total: {final_reward:.6f}, "
-            f"Counts: {self.positions_count}"
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 7: COMPOSE FINAL REWARD
+        # ──────────────────────────────────────────────────────────────────
+        # With 0.80% fees, patience > forced trading
+        # PnL signal: 5× stronger (was 0.1, now 0.5) so wins matter
+        # Survival bonus: +0.001/step (counterbalance, prevents suicide)
+        pnl_base_reward = pnl_pct * 0.5  # Was 0.1, now 5× stronger
+        survival_bonus = 0.001  # Small positive to prevent "impossible game" feeling
+        
+        raw_reward = (
+            pnl_base_reward  # PnL signal: 5x stronger
+            + promotion_bonus  # Tier promotion (big incentive)
+            + demotion_penalty  # Tier demotion (big penalty)
+            + closure_bonus  # Active closure bonuses / MaxDuration penalties
+            + drawdown_penalty  # Risk management (quadratic, harsh)
+            + patience_bonus_val  # Reward waiting (not forced trading)
+            + survival_bonus  # +0.001/step just for existing
         )
-        # REWARD_ANTIHACK: log requested vs executed actions + penalty
-        if realized_pnl != 0.0 or self.current_step % 50 == 0:
+
+        # Use symlog to compress large rewards while preserving small signal
+        final_reward = float(_np.sign(raw_reward) * _np.log1p(_np.abs(raw_reward)))
+
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 8: LOGGING
+        # ──────────────────────────────────────────────────────────────────
+        if self.current_step % 50 == 0 or tier_changed:
             self.logger.info(
-                f"[REWARD_ANTIHACK] Step {self.current_step} | "
-                f"pnl_net={pnl_net:+.6f} inv_pen={inv_penalty:.6f} "
-                f"action_req={_action_names_r.get(_da_req, '?')} "
-                f"action_exe={_action_names_r.get(_da_exe, '?')} "
-                f"raw={raw:.6f} final={final_reward:+.6f}"
+                f"[TIER_REWARD Worker {self.worker_id}] "
+                f"Tier={current_tier} | "
+                f"Capital=${current_capital:.2f} | "
+                f"Steps_in_tier={self._steps_in_current_tier} | "
+                f"PnL={pnl_pct:+.2f}% | "
+                f"Promo={promotion_bonus:+.2f} | "
+                f"Demote={demotion_penalty:+.2f} | "
+                f"ClosureBonus={closure_bonus:+.4f} | "
+                f"Drawdown={drawdown_penalty:+.4f} | "
+                f"Patience={patience_bonus_val:+.4f} | "
+                f"Final={final_reward:+.4f}"
             )
 
+        # Store for inspection (logger looks for these keys)
         self._last_reward_components = {
-            # ── Core PnL ──────────────────────────────────────────────────
             "pnl":              float(realized_pnl),
-            "pnl_net":          pnl_net,
-            "pnl_net_scaled":   pnl_net_scaled,
-            "commission":       0.0,  # Already deducted in PortfolioManager.close_position()
-            "trade_cost":       -trade_cost,
-            # ── Risk penalties ────────────────────────────────────────────
-            "drawdown_penalty": -drawdown_penalty,
-            "drawdown_pct":     float(self.portfolio_manager.get_metrics().get("drawdown", 0.0) or 0.0)
-                                if hasattr(self, "portfolio_manager") else 0.0,
-            # ── Inaction / survival / invalid penalty ──────────────────────
-            "inaction":         inaction,
-            "survival_bonus":   survival,
-            "invalid_penalty":  inv_penalty,
-            # ── Composition ───────────────────────────────────────────────
-            "raw":              raw,
+            "pnl_pct":          pnl_pct,
+            "pnl_reward":       pnl_base_reward,
+            "tier":             current_tier,
+            "promotion_bonus":  promotion_bonus,
+            "demotion_penalty": demotion_penalty,
+            "closure_bonus":    closure_bonus,
+            "drawdown":         drawdown_penalty,
+            "drawdown_penalty": drawdown_penalty,  # Logger key
+            "patience_bonus":   patience_bonus_val,
+            "inaction":         patience_bonus_val,  # Logger fallback key (was inaction_penalty)
+            "inaction_penalty": patience_bonus_val,  # Logger compatibility key
+            "survival_bonus":   survival_bonus,
+            "raw":              raw_reward,
             "final_reward":     final_reward,
-            # ── Trade context (filled by _execute_trades caller) ──────────
-            "outcome_tp":       0.0,
-            "outcome_sl":       0.0,
-            "outcome_passivity":0.0,
-            "frequency_5m":     0.0,
-            "frequency_1h":     0.0,
-            "frequency_4h":     0.0,
-            "frequency_daily":  0.0,
-            "pos_limit_penalty":0.0,
-            "duration_penalty": 0.0,
-            "capacity_reward":  0.0,
-            "excellence_sharpe":0.0,
-            "excellence_streak":0.0,
-            "excellence_confluence": 0.0,
-            "excellence_chunk": 0.0,
-            "promotion_bonus":  0.0,
-            "demotion_penalty": 0.0,
-            "inaction_penalty": 0.0,
-            # ── State context ─────────────────────────────────────────────
-            "regime":           str(getattr(self, "_last_regime", "unknown")),
-            "open_positions":   len([p for p in self.portfolio_manager.positions.values()
-                                     if getattr(p, "is_open", False)])
-                                if hasattr(self, "portfolio_manager") else 0,
-            "steps_since_trade":self.current_step - max(
-                                    getattr(self, "last_trade_steps_by_tf", {}).values(),
-                                    default=[self.current_step]
-                                ) if getattr(self, "last_trade_steps_by_tf", {}) else 0,
-            "daily_trades":     self.positions_count.get("daily_total", 0)
-                                if hasattr(self, "positions_count") else 0,
-            "invalid_attempts": int(getattr(self, "invalid_trade_attempts", 0)),
-            "trade_attempts":   int(getattr(self, "trade_attempts", 0)),
         }
 
         return float(final_reward)
@@ -6674,16 +6709,15 @@ class MultiAssetChunkedEnv(gym.Env):
                     realized_pnl += receipt_pnl
                     if receipt_pnl != 0.0:
                         trade_executed_this_step = True
-            # Also add the PnL returned by update_market_price
-            if _pre_pnl != 0.0:
-                realized_pnl += _pre_pnl
-                trade_executed_this_step = True
+            # 🔧 FIX: Do NOT add _pre_pnl here — it is already the sum of
+            # receipt["pnl"] values computed inside update_market_price().
+            # Adding it again was DOUBLING the realized PnL.
             self._pre_execute_sl_tp_receipts = []  # consume once
             self._pre_execute_pnl = 0.0
             logger.info(
                 f"[EXECUTE_TRADES] Step {self.current_step} | "
                 f"Using pre-captured SL/TP: {len(_pre_receipts)} receipts, "
-                f"PnL=${_pre_pnl:.2f}, total_realized_pnl=${realized_pnl:.2f}"
+                f"PnL=${realized_pnl:.2f}, total_realized_pnl=${realized_pnl:.2f}"
             )
         elif _pre_pnl != 0.0:
             # PnL without receipts (edge case)
@@ -6960,14 +6994,17 @@ class MultiAssetChunkedEnv(gym.Env):
                      "balanced": "intraday", "aggressive": "swing", "adaptive": "position"}
             _prof = _pmap.get(_prof, _prof)
             # ── ATR-AWARE SL/TP BOUNDS ──────────────────────────────
-            # Scalper SL widened: 0.5%-1.2% to survive BTC 5m noise
-            # (ATR on 5m BTC ≈ 0.2-0.5%, so SL must be > 2×ATR)
-            # TP bounds also widened to maintain R/R ≥ 1.5
+            # OPTIMIZATION FOR 0.80% FEES (4× Binance real fee 0.10%)
+            # With high fees, tight SL become non-viable mathematically
+            # Scalper: 2-3% SL only viable via AGENT_CLOSE compression (-0.8% effective)
+            # Intraday: 4-6% SL (R:R net 1.5:1, BE winrate 40%)
+            # Swing: 7-10% SL (R:R net 1.69:1, BE winrate 37%)
+            # Position: 15-20% SL (R:R net 1.85:1, BE winrate 35%, most robust)
             _BOUNDS = {
-                "scalper":  {"sl": (0.005, 0.012), "tp": (0.010, 0.025)},
-                "intraday": {"sl": (0.010, 0.025), "tp": (0.020, 0.050)},
-                "swing":    {"sl": (0.015, 0.040), "tp": (0.030, 0.080)},
-                "position": {"sl": (0.020, 0.060), "tp": (0.040, 0.120)},
+                "scalper":  {"sl": (0.020, 0.030), "tp": (0.040, 0.060)},
+                "intraday": {"sl": (0.040, 0.060), "tp": (0.080, 0.120)},
+                "swing":    {"sl": (0.070, 0.100), "tp": (0.140, 0.200)},
+                "position": {"sl": (0.150, 0.200), "tp": (0.300, 0.400)},
             }
             _b = _BOUNDS.get(_prof, _BOUNDS["intraday"])
             sl_lo, sl_hi = _b["sl"]
@@ -7096,32 +7133,49 @@ class MultiAssetChunkedEnv(gym.Env):
                         discrete_action = 0
                         self.rejection_reasons["hysteresis"] += 1
                     else:
-                        self.trade_attempts += 1
-                        sell_price = price * (1.0 - SLIPPAGE_BPS / 10000.0) if price else price
-                        receipt = self.portfolio_manager.close_position(
-                            asset=asset.upper(), price=sell_price, timestamp=current_timestamp,
-                            current_prices=current_prices, reason="AGENT_CLOSE",
-                            risk_horizon=getattr(position, 'risk_horizon', 0.0),
-                        )
-                        if receipt and isinstance(receipt, dict):
-                            self._step_closed_receipts.append(receipt)
-                            self._all_episode_receipts.append(receipt)
-                            val = receipt.get("pnl", 0.0)
-                            fees = receipt.get("fees", 0.0)
-                            realized_pnl += float(val)
-                            self._apply_trade_results_safely(
-                                pnl_value=float(val), fees=float(fees))
-                            trade_executed_this_step = True
-                            # Déclenche WAIT post-SELL pour cet asset
-                            self._last_sell_step_by_asset[asset] = self.current_step
-                            _wait_map = {"5m": 6, "1h": 10, "4h": 20}
-                            self.logger.info(
-                                f"[AGENT_CLOSE] {asset} | TF={_tf} | SELL step={self.current_step} "
-                                f"pnl={val:.4f} | WAIT until step {self.current_step + _wait_map.get(_tf, 6)}"
+                        # SESSION 15 FIX: Check break-even threshold before allowing AGENT_CLOSE
+                        # Calculate unrealized PnL percentage to prevent closing below break-even
+                        entry_price = position.entry_price
+                        current_price = price
+                        unrealized_pnl_pct = (current_price - entry_price) / entry_price if entry_price != 0 else 0.0
+                        
+                        # Only close via AGENT_CLOSE if profit > 0.15% (above typical break-even with fees)
+                        # This prevents the "paper cut" loss pattern where fees exceed profits
+                        if unrealized_pnl_pct < 0.0015:  # 0.15% threshold
+                            # Reject AGENT_CLOSE - profit too small to cover fees
+                            discrete_action = 0
+                            self.rejection_reasons["hysteresis"] += 1
+                            self.logger.debug(
+                                f"[AGENT_CLOSE BLOCKED] {asset}: unrealized PnL {unrealized_pnl_pct:.4%} < 0.15% threshold. "
+                                f"Entry={entry_price:.2f}, Current={current_price:.2f}"
                             )
                         else:
-                            self.invalid_trade_attempts += 1
-                            self.rejection_reasons["pm_rejected"] += 1
+                            self.trade_attempts += 1
+                            sell_price = price * (1.0 - SLIPPAGE_BPS / 10000.0) if price else price
+                            receipt = self.portfolio_manager.close_position(
+                                asset=asset.upper(), price=sell_price, timestamp=current_timestamp,
+                                current_prices=current_prices, reason="AGENT_CLOSE",
+                                risk_horizon=getattr(position, 'risk_horizon', 0.0),
+                            )
+                            if receipt and isinstance(receipt, dict):
+                                self._step_closed_receipts.append(receipt)
+                                self._all_episode_receipts.append(receipt)
+                                val = receipt.get("pnl", 0.0)
+                                fees = receipt.get("fees", 0.0)
+                                realized_pnl += float(val)
+                                self._apply_trade_results_safely(
+                                    pnl_value=float(val), fees=float(fees))
+                                trade_executed_this_step = True
+                                # Déclenche WAIT post-SELL pour cet asset
+                                self._last_sell_step_by_asset[asset] = self.current_step
+                                _wait_map = {"5m": 6, "1h": 10, "4h": 20}
+                                self.logger.info(
+                                    f"[AGENT_CLOSE] {asset} | TF={_tf} | SELL step={self.current_step} "
+                                    f"pnl={val:.4f} | WAIT until step {self.current_step + _wait_map.get(_tf, 6)}"
+                                )
+                            else:
+                                self.invalid_trade_attempts += 1
+                                self.rejection_reasons["pm_rejected"] += 1
 
             # ================================================================
             # B. BUY — ouvre une position (USDT → crypto)
@@ -7496,7 +7550,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     f"[METRICS_FLOW] Worker {self.worker_id} | Source: PortfolioManager.metrics | "
                     f"Trades={metrics_summary.get('total_trades', 0)}, "
                     f"Sharpe={metrics_summary.get('sharpe_ratio', 0.0):.4f}, "
-                    f"MaxDD={metrics_summary.get('max_drawdown', 0.0):.2%}"
+                    f"MaxDD={metrics_summary.get('max_drawdown', 0.0):.2f}%"
                 )
                 
                 self.risk_metrics.update(
@@ -7556,6 +7610,50 @@ class MultiAssetChunkedEnv(gym.Env):
             self.positions_count[tf] = 0
             
         self.smart_logger.info("[DAILY RESET] All daily trade counts reset to 0", rotate=True)
+    def get_portfolio_metrics_dict(self) -> List[Dict[str, Any]]:
+        """
+        Returns pickle-safe portfolio metrics for Ray's env_method call.
+
+        Called by train_parallel_agents._collect_worker_metrics() which uses
+        env_method("get_portfolio_metrics_dict") instead of get_attr() to avoid
+        pickling the entire portfolio_manager object (which has module references).
+
+        Returns a list with one dict per environment in the vector env.
+        For DummyVecEnv (single env), returns [metrics_dict].
+        For SubprocVecEnv (multi-env), returns [metrics_dict_0, metrics_dict_1, ...].
+
+        Returns:
+            List[Dict]: Each dict contains only serializable scalars (float, int, str)
+        """
+        try:
+            if not hasattr(self, 'portfolio_manager') or self.portfolio_manager is None:
+                return [{"total_value": 0.0, "initial_capital": 0.0, "total_realized_pnl": 0.0}]
+
+            # Get full metrics from portfolio_manager
+            full_metrics = self.portfolio_manager.get_metrics()
+
+            # Extract only pickle-safe scalar values
+            safe_metrics = {
+                "total_value": float(full_metrics.get("total_value", 0.0)),
+                "initial_capital": float(self.portfolio_manager.initial_capital or 20.5),
+                "total_realized_pnl": float(full_metrics.get("total_realized_pnl", 0.0)),
+                "cash": float(full_metrics.get("cash", 0.0)),
+                "realized_equity": float(full_metrics.get("realized_equity", 0.0)),
+                "unrealized_pnl_total": float(full_metrics.get("unrealized_pnl_total", 0.0)),
+                "sharpe_ratio": float(full_metrics.get("sharpe_ratio", 0.0)),
+                "max_drawdown": float(full_metrics.get("max_drawdown", 0.0)),
+                "win_rate": float(full_metrics.get("win_rate", 0.0)),
+                "total_trades": int(full_metrics.get("total_trades", 0)),
+                "open_positions_count": int(full_metrics.get("open_positions_count", 0)),
+            }
+
+            # Return as list (for VecEnv compatibility)
+            return [safe_metrics]
+
+        except Exception as e:
+            logger.warning(f"Error getting portfolio metrics: {e}")
+            return [{"total_value": 0.0, "initial_capital": 20.5, "total_realized_pnl": 0.0}]
+
 
     def can_open_trade(self, tf: str) -> bool:
         """
@@ -7825,7 +7923,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"PnL=${pnl:.2f} ({pnl_pct:+.2f}%) | "
                 f"Trades={trades} | Steps={steps} | "
                 f"Trade/Step={trade_step_ratio:.4f} | "
-                f"MaxDD={info.get('max_dd', 0.0):.2%} | "
+                f"MaxDD={info.get('max_dd', 0.0):.2f}% | "
                 f"Sharpe={info.get('sharpe', 0.0):.4f} | "
                 f"WinRate={info.get('win_rate', 0.0):.1f}%"
             )
@@ -8144,17 +8242,25 @@ class MultiAssetChunkedEnv(gym.Env):
         return 0.0
 
     def calculate_inaction_penalty(self):
-        """Calculate penalty for inaction."""
-        penalty = 0.0
-        current_tf = self.get_current_timeframe()
-        steps_since_trade = self.current_step - getattr(
-            self, "last_trade_steps_by_tf", {}
-        ).get(current_tf, 0)
-
-        if steps_since_trade > 20:  # Penalty after 20 steps of inaction
-            penalty = -0.01 * (steps_since_trade - 20)
-
-        return penalty
+        """RENAMED: Calculate patience bonus for selectivity (not inaction penalty).
+        
+        With 0.80% fees, forced trading = slow death.
+        Philosophy: Reward waiting for high-conviction setups, not constant action.
+        
+        Returns:
+            float: Positive bonus if steps_since_trade > 100 (patience), else 0.0
+        """
+        import math
+        
+        steps_since_trade = self.current_step - getattr(self, 'last_trade_step', -10000)
+        
+        if steps_since_trade > 100:
+            # Logarithmic bonus: grows but saturates (doesn't encourage infinite holding)
+            bonus = 0.005 * math.log1p(steps_since_trade - 100)
+            return float(bonus)
+        else:
+            # No penalty, no bonus — neutral zone (first 100 steps after trade)
+            return 0.0
 
     def close(self) -> None:
         """Nettoie les ressources de l'environnement."""
