@@ -28,6 +28,20 @@ data:
   test_dir: data/processed/indicators/test
   train_dir: data/processed/indicators/train
   val_dir: data/processed/indicators/val
+  features_config:
+    timeframes:
+      5m:
+        price: [OPEN, HIGH, LOW, CLOSE]
+        volume: [VOLUME]
+        indicators: [RSI_14, STOCHk_14_3_3, STOCHd_14_3_3, MACD_HIST, ATR_14, EMA_5, EMA_12, BB_UPPER, BB_MIDDLE, BB_LOWER]
+      1h:
+        price: [OPEN, HIGH, LOW, CLOSE]
+        volume: [VOLUME]
+        indicators: [RSI_14, MACD_HIST, ADX_14, STOCHk_14_3_3, STOCHd_14_3_3, EMA_26, EMA_50, BB_UPPER, BB_MIDDLE, BB_LOWER]
+      4h:
+        price: [OPEN, HIGH, LOW, CLOSE]
+        volume: [VOLUME]
+        indicators: [RSI_14, MACD_HIST, ADX_14, ATR_14, OBV, EMA_50, EMA_200, STOCHk_14_3_3, STOCHd_14_3_3, SMA_200]
 data_augmentation:
   apply_order:
   - time_warping

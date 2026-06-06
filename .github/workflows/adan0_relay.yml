@@ -5,7 +5,7 @@
 #   2. Refresh macro (Yahoo) + BTC daily (Bitget) data.
 #   3. Retrain the ExogenousRegimeOracle on the latest data.
 #   4. Run +N steps of PPO sandbox training with --resume-from.
-#   5. Run a deterministic backtest on val split.
+#   5. Run a deterministic backtest on TEST split (OOS).
 #   6. Upload new checkpoint AND oracle .pkl as 'adan0-checkpoint' artifact.
 #   7. Append metrics to logs/validation/relay_history.jsonl.
 #
@@ -121,7 +121,10 @@ jobs:
       - name: Train PPO segment (relay)
         id: train
         run: |
-          set -o pipefail
+          # Audit fix: capture ALL output in raw log, then show filtered for readability.
+          # The previous version used `grep -E ... | tee` with `set -o pipefail` which
+          # SWALLOWED multi-line Tracebacks (only lines matching the regex were saved,
+          # and pipefail made the step exit before any error context could be inspected).
           ARGS="--mode sandbox --steps ${{ inputs.steps }}"
           if [ -n "${{ steps.prev.outputs.ckpt }}" ]; then
             ARGS="$ARGS --resume-from ${{ steps.prev.outputs.ckpt }}"
@@ -130,19 +133,34 @@ jobs:
             echo "Fresh start"
           fi
           echo "Running: python scripts/train_parallel_agents.py $ARGS"
-          python scripts/train_parallel_agents.py $ARGS 2>&1 | \
-            grep -E "SANDBOX|REWARD_ANTIHACK|TRADE_OPEN|ORACLE_UPDATE|total_timesteps|explained_var|entropy_loss|value_loss|clip_frac|FAIL|^Error|Traceback" | \
-            tee training_relay.log
-          NEW_CKPT=$(ls -t checkpoints/ppo_adan0_sandbox_*.zip | head -n1)
+          # Capture EVERYTHING to raw log (unconditional, no grep filter)
+          set +e
+          python scripts/train_parallel_agents.py $ARGS > training_relay_full.log 2>&1
+          TRAIN_RC=$?
+          set -e
+          echo "=== Training exit code: $TRAIN_RC ==="
+          echo "=== Last 80 lines of full log (includes Traceback if any) ==="
+          tail -n 80 training_relay_full.log
+          # Save filtered view for quick scan (informational only)
+          grep -E "SANDBOX|REWARD_ANTIHACK|TRADE_OPEN|ORACLE_UPDATE|total_timesteps|explained_var|entropy_loss|value_loss|clip_frac|FAIL|Error|Traceback|HMM_FIT|action_space|Pre-seeded" training_relay_full.log > training_relay.log || true
+          if [ "$TRAIN_RC" != "0" ]; then
+            echo "::error::Training step failed with exit code $TRAIN_RC — see training_relay_full.log artifact"
+            exit $TRAIN_RC
+          fi
+          NEW_CKPT=$(ls -t checkpoints/ppo_adan0_sandbox_*.zip 2>/dev/null | head -n1)
+          if [ -z "$NEW_CKPT" ]; then
+            echo "::error::No checkpoint produced — training did not save"
+            exit 1
+          fi
           echo "New checkpoint: $NEW_CKPT"
           echo "new_ckpt=$NEW_CKPT" >> $GITHUB_OUTPUT
           ls -la checkpoints/
 
-      - name: Deterministic backtest (val split, 1000 steps)
+      - name: Deterministic backtest (test split OOS, 1000 steps)
         id: bt
         continue-on-error: true
         run: |
-          python scripts/deterministic_backtest.py --steps 1000 --split val \
+          python scripts/deterministic_backtest.py --steps 1000 --split test \
             --ckpt "${{ steps.train.outputs.new_ckpt }}" \
             --out logs/validation/relay_backtest.json
           echo "=== BACKTEST RESULT ==="
@@ -184,6 +202,7 @@ jobs:
           name: adan0-relay-log-${{ github.run_number }}
           path: |
             training_relay.log
+            training_relay_full.log
             logs/validation/
           retention-days: 14
 

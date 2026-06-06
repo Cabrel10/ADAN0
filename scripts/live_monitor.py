@@ -9,8 +9,9 @@ from collections import defaultdict
 from datetime import datetime
 
 # ── Config ────────────────────────────────────────────────────────────────────
-LOG_FILE    = Path("/mnt/new_data/t10_training/logs/training.log")
-RAY_RESULTS = Path("/mnt/new_data/t10_training/ray_results/adan_pbt_training")
+_train_dir  = os.environ.get("ADAN_TRAIN_DIR", "./logs")
+LOG_FILE    = Path(_train_dir) / "logs" / "training.log"
+RAY_RESULTS = Path(_train_dir) / "ray_results" / "adan_pbt_training"
 REFRESH_SEC = 5
 INITIAL_BAL = 20.50
 READ_TAIL   = 20000  # lignes lues depuis la fin du log

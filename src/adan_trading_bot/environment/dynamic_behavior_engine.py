@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -20,12 +21,20 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Session 9 fix — fast-path logging gate (same as env). DBE_V2_FINAL fires
+# every step and pre-emits ~3-5 INFO lines per step → big slowdown.
+_TRAINING_SILENT = os.environ.get("ADAN_TRAINING_SILENT", "0") == "1"
+if _TRAINING_SILENT:
+    logger.setLevel(logging.WARNING)
+
 # Number of hidden states for the Markov regime model
 N_HMM_STATES = 3
 # Minimum observations required to fit the HMM
-HMM_MIN_OBS = 30
+# 60 samples (~5h of 5m data) is sufficient with 6D features + LedoitWolf
+# Session 7 fix (A5): 300 created a 25h cold start — too long for training
+HMM_MIN_OBS = 60
 # Rolling window size for HMM input
-HMM_WINDOW = 120
+HMM_WINDOW = 500
 
 
 @dataclass
@@ -49,8 +58,14 @@ class DBESnapshot:
             self.metrics = {}
 
 class DynamicBehaviorEngine:
+    """Endogenous BTC-momentum engine (TrendMomentumOracle) with optional macro overlay.
+
+    In the current pipeline this class feeds a 13-D vector to ExogenousRegimeOracle,
+    but when macro data (SPY/DXY/GOLD/VIX) is absent the last 8 dimensions are
+    zero-padded. The effective inference signal is therefore BTC-momentum-only.
+    """
     def __init__(self, config: Dict[str, Any] = None, worker_id: int = 0, **kwargs):
-        """Initialise le DynamicBehaviorEngine."""
+        """Initialise le DynamicBehaviorEngine / TrendMomentumOracle."""
         self.config = config or {}
         self.worker_id = worker_id
         self.env = None
@@ -62,6 +77,23 @@ class DynamicBehaviorEngine:
         self._active_hunts = {}
         self.decision_history = []
         self.trade_history = []
+
+        # --- Exogenous Regime Oracle (ORC) ---
+        self._oracle = None
+        self._oracle_probs_cache = np.array([1/3, 1/3, 1/3], dtype=np.float32)
+        self._oracle_last_update = 0  # epoch seconds (legacy, kept for compat)
+        self._oracle_last_update_buflen = -100  # buffer-based refresh (Session 7 A2 fix)
+        # Session 9 fix — REAL macro source (no more HMM-buffer hack):
+        # We read data/raw/macro/macro_features.csv ONCE at load time and
+        # build the SAME 13 features the oracle was trained on (5 BTC + 8 macro).
+        # The "current date" comes from the env's most recent timestamp,
+        # injected via set_current_timestamp() each step.
+        self._macro_df: Optional[Any] = None  # pd.DataFrame, daily, tz-naive
+        self._oracle_btc_history: list = []   # rolling daily BTC closes (anti-lookahead)
+        self._current_timestamp: Optional[Any] = None  # pd.Timestamp, set by env
+        self._load_oracle()
+        self._load_macro_data()
+        self._load_btc_daily_history()  # Audit anomaly #1: oracle online from step 1
 
     def log_info(self, message, step=None):
         """Log un message avec le système intelligent SmartLogger."""
@@ -285,31 +317,46 @@ class DynamicBehaviorEngine:
     # SOTA 2025: HMM-based probabilistic regime detection
     # ------------------------------------------------------------------
     def _init_hmm(self) -> None:
-        """Lazy-initialise the Gaussian HMM model and observation buffer."""
+        """Lazy-initialise the Gaussian HMM model and observation buffer.
+
+        HMM uses 4 normalised features:
+          [log_return, atr_pct, rsi/100, volume_ratio_20]
+        """
         if not hasattr(self, '_hmm_model'):
             self._hmm_fitted = False
-            self._hmm_obs_buffer: list = []  # list of [log_return, volatility]
+            self._hmm_obs_buffer: list = []  # list of [log_return, atr_pct, rsi_norm, vol_ratio]
             if HMM_AVAILABLE:
+                # Use auto-init (k-means) for means/covars — avoids PD matrix issues
+                # Multiple random restarts are done in _update_hmm by creating fresh models
                 self._hmm_model = GaussianHMM(
                     n_components=N_HMM_STATES,
-                    covariance_type="diag",  # diag is more numerically stable than full
-                    n_iter=50,
+                    covariance_type="full",   # full captures cross-feature correlations
+                    n_iter=500,               # sufficient iterations for convergence
+                    tol=1e-3,                 # tight convergence criterion
                     random_state=42,
-                    tol=0.01,
                 )
+                # Number of random restarts for multi-init fitting
+                self._hmm_n_init = 10
             else:
                 self._hmm_model = None
             # Last probability vector (uniform prior)
             self._hmm_probs = np.ones(N_HMM_STATES, dtype=np.float32) / N_HMM_STATES
 
-    def _update_hmm(self, log_return: float, volatility: float) -> np.ndarray:
-        """Feed a new observation and return the state-probability vector.
+    def _update_hmm(self, log_return: float, atr_pct: float,
+                    rsi_norm: float, volume_ratio: float) -> np.ndarray:
+        """Feed a new 4D observation and return the state-probability vector.
+
+        Features: [log_return, atr_pct, rsi/100, volume_ratio_20]
+
+        Multi-init fitting with covariance_type='full' (captures cross-feature
+        correlations).  Falls back to 'diag' if all 'full' inits fail (e.g.
+        near-constant data on very short windows).
 
         Returns:
             np.ndarray of shape (3,) summing to 1.0.
         """
         self._init_hmm()
-        self._hmm_obs_buffer.append([log_return, volatility])
+        self._hmm_obs_buffer.append([log_return, atr_pct, rsi_norm, volume_ratio])
 
         # Keep a rolling window
         if len(self._hmm_obs_buffer) > HMM_WINDOW:
@@ -319,16 +366,201 @@ class DynamicBehaviorEngine:
             return self._hmm_probs.copy()
 
         try:
-            X = np.array(self._hmm_obs_buffer, dtype=np.float64)
-            # Fit only once when we first reach minimum observations
-            # After that, only predict (no re-fitting = stable + fast)
-            if not self._hmm_fitted:
-                self._hmm_model.fit(X)
-                self._hmm_fitted = True
+            X_raw = np.array(self._hmm_obs_buffer, dtype=np.float64)
+
+            # RobustScaler: normalise so all 4 features have comparable scale
+            from sklearn.preprocessing import RobustScaler
+            X = RobustScaler().fit_transform(X_raw)
+
+            # Session 7 fix (A3): Compute cumulative return features and
+            # scale them to match RobustScaled feature magnitudes (~1.0).
+            # Previous code used *1000 amplification which made cumret
+            # features dominate (std~26 vs ~1 for RobustScaled features),
+            # causing HMM posterior to assign most obs to the middle state.
+            # Fix: divide by std but KEEP the mean (directional signal).
+            # This preserves trend direction while matching scale.
+            log_rets_raw = X_raw[:, 0]
+            n = len(log_rets_raw)
+            # Rolling 60-bar cumulative return (~5h trend)
+            cum_ret_60 = np.convolve(log_rets_raw, np.ones(min(60, n)), mode='same')
+            # Rolling 20-bar cumulative return (shorter-term)
+            cum_ret_20 = np.convolve(log_rets_raw, np.ones(min(20, n)), mode='same')
+            # Scale to unit variance (keep mean for directional info)
+            _std60 = np.std(cum_ret_60)
+            _std20 = np.std(cum_ret_20)
+            if _std60 > 1e-12:
+                cum_ret_60 = cum_ret_60 / _std60
+            if _std20 > 1e-12:
+                cum_ret_20 = cum_ret_20 / _std20
+            # Append as extra features: X is now 6D (all features ~unit variance)
+            X = np.column_stack([X, cum_ret_60, cum_ret_20])
+
+            # Pre-compute robust covariance using LedoitWolf shrinkage estimator.
+            # This provides a guaranteed PD matrix for HMM initialization,
+            # eliminating the 'covars must be symmetric, positive-definite' failures.
+            from sklearn.covariance import LedoitWolf
+            try:
+                lw = LedoitWolf().fit(X)
+                robust_cov = lw.covariance_
+                _use_ledoit_wolf = True
+            except Exception:
+                robust_cov = None
+                _use_ledoit_wolf = False
+
+            # Audit anomaly #4 — AGGRESSIVE jitter to keep covariance PD.
+            # Session 9 used 1e-3; logs still showed "All 'full' covariance inits
+            # failed. Falling back to covariance_type='diag'" because the 4 raw
+            # features (log_ret, atr_pct, rsi_norm, volume_ratio) over 500 bars
+            # are quasi-collinear (rsi ≈ 0.7·log_ret_ema, atr ≈ |log_ret|·k).
+            # Bumping jitter to 1e-2 (1% perturbation, well below feature scale
+            # after RobustScaler) reliably breaks colinearity. ALSO: regularize
+            # LedoitWolf cov with a 1e-4 ridge to bound the smallest eigenvalue
+            # away from zero.
+            rng_jitter = np.random.RandomState(42)
+            X = X + rng_jitter.randn(*X.shape) * 1e-2
+            if _use_ledoit_wolf and robust_cov is not None:
+                _ridge_eps = 1e-4 * np.trace(robust_cov) / robust_cov.shape[0]
+                robust_cov = robust_cov + _ridge_eps * np.eye(robust_cov.shape[0])
+
+            # C10: Sliding-window refit every HMM_REFIT_INTERVAL observations
+            _REFIT_INTERVAL = 120  # refit every ~10h of 5m data
+            if not self._hmm_fitted or len(self._hmm_obs_buffer) % _REFIT_INTERVAL == 0:
+                n_init = getattr(self, '_hmm_n_init', 10)
+                best_score = -np.inf
+                best_model_params = None
+
+                # ── Strategy 1: covariance_type='full' with LedoitWolf pre-init ──
+                # First half of inits use LedoitWolf covariance as starting point
+                # (guaranteed PD). Second half uses hmmlearn's auto k-means init.
+                for init_i in range(n_init):
+                    try:
+                        trial_hmm = GaussianHMM(
+                            n_components=N_HMM_STATES,
+                            covariance_type="full",
+                            n_iter=500,
+                            tol=1e-3,
+                            random_state=42 + init_i * 7,
+                            init_params="stmc",  # auto-init ALL params incl. covariance
+                        )
+                        # For first half of inits: seed with LedoitWolf covariance
+                        # This prevents PD failures during initialization
+                        if _use_ledoit_wolf and init_i < n_init // 2:
+                            trial_hmm.init_params = "stm"  # don't auto-init covariance
+                            # Set covars_ to LedoitWolf estimate (perturbed slightly)
+                            perturbation = 1.0 + 0.1 * (init_i - n_init // 4)
+                            trial_hmm.covars_ = np.array(
+                                [robust_cov * perturbation for _ in range(N_HMM_STATES)]
+                            )
+                        trial_hmm.fit(X)
+                        score = trial_hmm.score(X)
+                        if score > best_score:
+                            best_score = score
+                            best_model_params = {
+                                'means_': trial_hmm.means_.copy(),
+                                'covars_': trial_hmm.covars_.copy(),
+                                'transmat_': trial_hmm.transmat_.copy(),
+                                'startprob_': trial_hmm.startprob_.copy(),
+                            }
+                    except Exception as _hmm_err:
+                        if init_i == 0:
+                            logger.debug(f"[HMM_FIT] full init {init_i}: {_hmm_err}")
+                        continue
+
+                # ── Strategy 2: covariance_type='tied' (shared full cov) ──
+                # Audit anomaly #4 — before degrading to diag, try 'tied' which
+                # estimates ONE full PD matrix shared across all states. This is
+                # statistically much more efficient and almost always succeeds
+                # when individual 'full' fits failed due to per-cluster sample
+                # starvation (500 bars / 3 states ≈ 166 samples per state).
+                if best_model_params is None:
+                    logger.warning("[HMM_FIT] full init failed; trying 'tied' covariance")
+                    for init_i in range(n_init):
+                        try:
+                            trial_hmm = GaussianHMM(
+                                n_components=N_HMM_STATES,
+                                covariance_type="tied",
+                                n_iter=500,
+                                tol=1e-3,
+                                random_state=42 + init_i * 11,
+                            )
+                            trial_hmm.fit(X)
+                            score = trial_hmm.score(X)
+                            if score > best_score:
+                                best_score = score
+                                best_model_params = {
+                                    'means_': trial_hmm.means_.copy(),
+                                    'covars_': trial_hmm.covars_.copy(),
+                                    'transmat_': trial_hmm.transmat_.copy(),
+                                    'startprob_': trial_hmm.startprob_.copy(),
+                                    '_cov_type_used': 'tied',
+                                }
+                        except Exception:
+                            continue
+                # ── Strategy 3: fallback to 'diag' if 'full' AND 'tied' failed ──
+                if best_model_params is None:
+                    logger.warning(
+                        "[HMM_FIT] All 'full'+'tied' covariance inits failed. "
+                        "Falling back to covariance_type='diag'."
+                    )
+                    for init_i in range(n_init):
+                        try:
+                            trial_hmm = GaussianHMM(
+                                n_components=N_HMM_STATES,
+                                covariance_type="diag",
+                                n_iter=500,
+                                tol=1e-3,
+                                random_state=42 + init_i * 13,
+                            )
+                            trial_hmm.fit(X)
+                            score = trial_hmm.score(X)
+                            if score > best_score:
+                                best_score = score
+                                best_model_params = {
+                                    'means_': trial_hmm.means_.copy(),
+                                    'covars_': trial_hmm.covars_.copy(),
+                                    'transmat_': trial_hmm.transmat_.copy(),
+                                    'startprob_': trial_hmm.startprob_.copy(),
+                                }
+                                # Store the successful model for predict_proba
+                                self._hmm_model = trial_hmm
+                        except Exception:
+                            continue
+
+                # Restore best params
+                if best_model_params is not None:
+                    for k, v in best_model_params.items():
+                        setattr(self._hmm_model, k, v)
+                    self._hmm_fitted = True
+                    # Log regime separation quality
+                    try:
+                        n_feat = self._hmm_model.means_.shape[1]
+                        trend_col = 4 if n_feat >= 5 else 0
+                        means_trend = self._hmm_model.means_[:, trend_col]
+                        means_logret = self._hmm_model.means_[:, 0]
+                        order = np.argsort(means_trend)
+                        cov_type = self._hmm_model.covariance_type
+                        lw_tag = "+LedoitWolf" if _use_ledoit_wolf else ""
+                        logger.info(
+                            f"[HMM_FIT] Converged ({cov_type}{lw_tag}, {n_feat}D): "
+                            f"bear(trend={means_trend[order[0]]:.4f}), "
+                            f"side(trend={means_trend[order[1]]:.4f}), "
+                            f"bull(trend={means_trend[order[2]]:.4f}) "
+                            f"| logret: [{means_logret[order[0]]:.4f}, {means_logret[order[1]]:.4f}, {means_logret[order[2]]:.4f}] "
+                            f"| n_obs={len(X)} | score={best_score:.2f} "
+                            f"| n_init={n_init}"
+                        )
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(
+                        f"[HMM_FIT] ALL inits failed (full+diag). "
+                        f"Keeping uniform priors. n_obs={len(X)}"
+                    )
 
             # Posterior probability of last observation
-            posteriors = self._hmm_model.predict_proba(X)
-            self._hmm_probs = posteriors[-1].astype(np.float32)
+            if self._hmm_fitted:
+                posteriors = self._hmm_model.predict_proba(X)
+                self._hmm_probs = posteriors[-1].astype(np.float32)
         except Exception as e:
             logger.debug(f"HMM update fallback: {e}")
 
@@ -339,18 +571,247 @@ class DynamicBehaviorEngine:
 
         This vector is intended to be injected into the context_vector
         for the FiLM conditioning layer.
+
+        Expects market_data with 4 HMM features:
+          log_return, atr_pct, rsi_norm (rsi/100), volume_ratio_20
         """
         self._init_hmm()
-        close = market_data.get("close", 0.0)
-        prev_close = market_data.get("prev_close", close)
-        volatility = market_data.get("volatility", 0.0)
 
-        if prev_close > 0 and close > 0:
-            log_ret = float(np.log(close / prev_close))
-        else:
-            log_ret = 0.0
+        # Extract 4D feature vector
+        log_ret = market_data.get("log_return", 0.0)
+        atr_pct = market_data.get("atr_pct", 0.0)
+        rsi_norm = market_data.get("rsi_norm", 0.5)
+        volume_ratio = market_data.get("volume_ratio_20", 1.0)
 
-        return self._update_hmm(log_ret, volatility)
+        # Fallback: compute log_return from close/prev_close if not provided directly
+        if log_ret == 0.0:
+            close = market_data.get("close", 0.0)
+            prev_close = market_data.get("prev_close", close)
+            if prev_close > 0 and close > 0:
+                log_ret = float(np.log(close / prev_close))
+
+        return self._update_hmm(log_ret, atr_pct, rsi_norm, volume_ratio)
+
+    # ─── Exogenous Regime Oracle Integration ────────────────────────────
+    def _load_oracle(self):
+        """Load the pre-trained ExogenousRegimeOracle from disk (if it exists)."""
+        try:
+            from adan_trading_bot.environment.exogenous_regime_oracle import ExogenousRegimeOracle
+            oracle_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                "models", "exog_oracle.pkl"
+            )
+            if os.path.isfile(oracle_path):
+                self._oracle = ExogenousRegimeOracle()
+                self._oracle.load(oracle_path)
+                logger.info(f"[DBE] ExogenousRegimeOracle loaded from {oracle_path}")
+            else:
+                logger.info("[DBE] No oracle model found — using uniform priors")
+        except Exception as e:
+            logger.debug(f"[DBE] Oracle load failed (non-critical): {e}")
+
+    def _load_macro_data(self):
+        """Session 9 fix — load REAL macro data from disk.
+
+        Reads data/raw/macro/macro_features.csv (downloaded once by
+        scripts/download_macro_data.py from Yahoo Finance). When the file is
+        missing, the oracle falls back to uniform priors so we never poison
+        the FiLM layer with fake macro signal.
+        """
+        try:
+            import pandas as pd
+            macro_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                "data", "raw", "macro", "macro_features.csv",
+            )
+            if not os.path.isfile(macro_path):
+                logger.info(
+                    "[DBE] No macro_features.csv found — oracle will use uniform priors. "
+                    "Run scripts/download_macro_data.py to enable real exogenous regime."
+                )
+                return
+            df = pd.read_csv(macro_path, parse_dates=["date"], index_col="date")
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
+            self._macro_df = df.sort_index()
+            logger.info(
+                f"[DBE] Loaded real macro data: {len(self._macro_df)} daily rows, "
+                f"cols={list(self._macro_df.columns)}, "
+                f"range {self._macro_df.index.min().date()} → {self._macro_df.index.max().date()}"
+            )
+        except Exception as e:
+            logger.warning(f"[DBE] _load_macro_data failed (non-critical): {e}")
+            self._macro_df = None
+
+    def _load_btc_daily_history(self) -> None:
+        """Audit fix (anomaly #1) — pre-seed the BTC daily buffer from the real
+        Bitget historical CSV so the oracle works from step 1.
+
+        Without this, the oracle would silently fall back to uniform [1/3,1/3,1/3]
+        for 30 simulated trading days (~30×288 = 8640 env steps) — i.e. it would
+        never activate during typical CI runs of 5-50k steps. This pre-seed
+        guarantees the 13-D feature vector is computable from the first env step.
+
+        Buffer is now 60 days (was 30) so vol_20d and any longer-window
+        statistic stays well-conditioned.
+        """
+        try:
+            import pandas as pd
+            btc_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                "data", "raw", "btc_daily", "btc_daily.csv",
+            )
+            if not os.path.isfile(btc_path):
+                logger.info("[DBE] No btc_daily.csv found — oracle will warm up from env steps only")
+                return
+            df = pd.read_csv(btc_path, parse_dates=["date"], index_col="date").sort_index()
+            closes = df["close"].dropna().tolist()
+            # Keep last 60 daily closes for stable vol_20d (was 30 — too thin)
+            self._oracle_btc_history = list(closes[-60:])
+            logger.info(
+                f"[DBE] Pre-seeded BTC daily history: {len(self._oracle_btc_history)} closes "
+                f"(latest {df.index[-1].date()} = ${closes[-1]:.2f}). Oracle is online from step 1."
+            )
+        except Exception as e:
+            logger.warning(f"[DBE] _load_btc_daily_history failed (non-critical): {e}")
+
+    def set_current_timestamp(self, ts) -> None:
+        """Inject the current bar timestamp from the env (used by the oracle).
+
+        Call this every step from MultiAssetChunkedEnv.step(); enables the
+        oracle to look up the corresponding macro snapshot via pd.merge_asof.
+        Anti-lookahead is guaranteed because we always shift macro by 1 day
+        (only yesterday's close is observable at today's open).
+        """
+        try:
+            import pandas as pd
+            self._current_timestamp = pd.Timestamp(ts).tz_localize(None) if hasattr(ts, "tz_localize") or getattr(ts, "tzinfo", None) else pd.Timestamp(ts)
+        except Exception:
+            self._current_timestamp = None
+
+    def _build_oracle_features(self) -> Optional[np.ndarray]:
+        """Build the feature vector for the regime oracle.
+
+        HONESTY NOTE (Audit v2): When macro data (SPY/DXY/GOLD/VIX) is missing,
+        this degenerates to a 5-D endogenous BTC-momentum predictor. The
+        13-D layout is maintained for compatibility with the trained scaler,
+        but missing macro columns are zero-padded. In production the oracle is
+        effectively a TrendMomentumOracle unless real macro feeds are present.
+
+        Returns None when prerequisites are missing (no macro file, no current
+        timestamp, or fewer than 11 prior BTC closes in the rolling history).
+        Layout (must match ExogenousRegimeOracle.fit):
+            [0]  btc_ret_1d
+            [1]  btc_ret_5d
+            [2]  btc_ret_10d
+            [3]  btc_vol_5d
+            [4]  btc_vol_20d
+            [5..6]  spy_ret_1d,  spy_ret_5d  (0.0 if macro absent)
+            [7..8]  dxy_ret_1d,  dxy_ret_5d  (0.0 if macro absent)
+            [9..10] gold_ret_1d, gold_ret_5d (0.0 if macro absent)
+            [11..12] vix_ret_1d, vix_ret_5d  (0.0 if macro absent)
+        """
+        if self._macro_df is None or self._current_timestamp is None:
+            return None
+
+        import pandas as pd
+        hist = np.array(self._oracle_btc_history, dtype=np.float64)
+        # We need ≥11 closes to compute a 10-day log return + shift-1
+        if hist.size < 11:
+            return None
+
+        # BTC features (shift-1: drop the most recent close)
+        btc = hist[:-1]
+        n = btc.size
+        def lr(arr_now: np.ndarray, arr_prev: np.ndarray) -> float:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                return float(np.log(arr_now / arr_prev))
+        ret_1d = lr(btc[-1], btc[-2])
+        ret_5d = lr(btc[-1], btc[-6]) if n >= 6 else ret_1d
+        ret_10d = lr(btc[-1], btc[-11]) if n >= 11 else ret_5d
+        rets_daily = np.diff(np.log(btc[-min(n, 21):]))
+        vol_5d = float(np.std(rets_daily[-5:])) if rets_daily.size >= 5 else float(np.std(rets_daily) or 0.0)
+        vol_20d = float(np.std(rets_daily[-20:])) if rets_daily.size >= 5 else 0.0
+
+        # Macro features — anti-lookahead: use the row strictly BEFORE today
+        ts = self._current_timestamp.normalize() - pd.Timedelta(days=1)
+        macro = self._macro_df.loc[:ts]
+        if len(macro) < 6:
+            return None
+        feat_macro: List[float] = []
+        for col in ["spy", "dxy", "gold", "vix"]:
+            if col not in macro.columns:
+                feat_macro.extend([0.0, 0.0])
+                continue
+            s = macro[col].dropna()
+            if len(s) < 6:
+                feat_macro.extend([0.0, 0.0])
+                continue
+            r1 = lr(s.iloc[-1], s.iloc[-2])
+            r5 = lr(s.iloc[-1], s.iloc[-6])
+            feat_macro.extend([r1, r5])
+
+        feat = np.array([ret_1d, ret_5d, ret_10d, vol_5d, vol_20d] + feat_macro, dtype=np.float64)
+        feat = np.nan_to_num(feat, nan=0.0, posinf=0.0, neginf=0.0)
+        return feat
+
+    def update_btc_close(self, close: float) -> None:
+        """Append the latest daily BTC close to the rolling history.
+
+        MultiAssetChunkedEnv.step() calls this when the bar timestamp crosses
+        midnight. The history is capped at 30 days — only the last 11 are read,
+        but keeping a small buffer lets us re-derive vol_20d cleanly.
+        """
+        try:
+            v = float(close)
+            if not np.isfinite(v) or v <= 0:
+                return
+            self._oracle_btc_history.append(v)
+            # Audit fix anomaly #1 — keep 60 days (was 30) so vol_20d has slack.
+            if len(self._oracle_btc_history) > 60:
+                self._oracle_btc_history = self._oracle_btc_history[-60:]
+        except Exception:
+            return
+
+    def get_oracle_probs(self) -> np.ndarray:
+        """Return [P_bear, P_side, P_bull] from the trained oracle.
+
+        Session 9 fix — uses REAL macro data (SPY/DXY/Gold/VIX from
+        data/raw/macro/macro_features.csv) and a 30-day rolling BTC close
+        history maintained via update_btc_close(). No more HMM-buffer hack
+        that returned ret_5d==ret_10d (the buffer was capped at ≤500 bars).
+
+        Refreshes every ORACLE_REFRESH_STEPS env steps (=100 here, ~8h on 5m).
+        Falls back to uniform [1/3, 1/3, 1/3] until the oracle is loadable
+        AND we have ≥11 BTC daily closes AND the macro file is present.
+        """
+        ORACLE_REFRESH_STEPS = 100
+        buffer_len = len(self._hmm_obs_buffer) if hasattr(self, "_hmm_obs_buffer") and self._hmm_obs_buffer else 0
+        steps_since_update = buffer_len - getattr(self, "_oracle_last_update_buflen", -ORACLE_REFRESH_STEPS)
+
+        if steps_since_update < ORACLE_REFRESH_STEPS:
+            return self._oracle_probs_cache.copy()
+        if self._oracle is None or not self._oracle.is_fitted:
+            return self._oracle_probs_cache.copy()
+
+        try:
+            feat = self._build_oracle_features()
+            if feat is None:
+                # Honest fallback — no fake macro from BTC momentum, just uniform.
+                return self._oracle_probs_cache.copy()
+            old_probs = self._oracle_probs_cache.copy()
+            new_probs = self._oracle.predict_proba_safe(feat)
+            self._oracle_probs_cache = new_probs
+            self._oracle_last_update_buflen = buffer_len
+            if not np.allclose(old_probs, new_probs, atol=0.01):
+                logger.info(
+                    f"[ORACLE_UPDATE] buf_len={buffer_len} ts={self._current_timestamp}: "
+                    f"P(bear)={new_probs[0]:.3f}, P(side)={new_probs[1]:.3f}, P(bull)={new_probs[2]:.3f}"
+                )
+        except Exception as e:
+            logger.debug(f"[DBE] Oracle update fallback: {e}")
+
+        return self._oracle_probs_cache.copy()
 
     def detect_market_regime(self, market_data: Dict[str, Any]) -> Tuple[str, float]:
         """Detect market regime using the Gaussian HMM posterior.
@@ -370,10 +831,28 @@ class DynamicBehaviorEngine:
         # Derive human-readable label from HMM means if fitted
         if hasattr(self, '_hmm_model') and self._hmm_model is not None and self._hmm_fitted:
             try:
-                means = self._hmm_model.means_[:, 0]  # log-return means
+                # A3 FIX: Use cumulative return feature (col 4 = cum_ret_60) for
+                # regime labeling. This has O(1) values (amplified 1000x) and
+                # provides real separation between bull/bear/sideways states.
+                n_feat = self._hmm_model.means_.shape[1]
+                # Use the trend feature: col 4 (cum_ret_60) if 6D, else col 0
+                trend_col = 4 if n_feat >= 5 else 0
+                means = self._hmm_model.means_[:, trend_col]
                 order = np.argsort(means)  # ascending: bear, sideways, bull
-                labels = {int(order[0]): 'bear', int(order[1]): 'sideways', int(order[2]): 'bull'}
-                regime = labels.get(best_state, 'sideways')
+
+                mean_spread = means[order[2]] - means[order[0]]
+                # A3 FIX v3: Always use sorted labeling when spread is non-trivial.
+                # With 6D features (cumret × 1000), typical spreads are O(0.001-0.01).
+                # Any non-degenerate spread means HMM found different regimes.
+                if mean_spread > 1e-4:
+                    labels = {int(order[0]): 'bear', int(order[1]): 'sideways', int(order[2]): 'bull'}
+                    regime = labels.get(best_state, 'sideways')
+                else:
+                    regime = 'sideways'
+                    logger.debug(
+                        f"[HMM_REGIME] Degenerate spread ({mean_spread:.6f}), "
+                        f"defaulting to sideways"
+                    )
             except Exception:
                 regime = ['bear', 'sideways', 'bull'][best_state]
         else:
@@ -627,12 +1106,31 @@ class DynamicBehaviorEngine:
             )
             
             # ÉTAPE 3 : Clamp par hard_constraints (min/max absolus)
+            # Adapter les limites selon le palier pour permettre au modèle plus de flexibilité
+            # avec plus de capital
             hard_constraints = self.config.get("environment", {}).get("hard_constraints", {})
             
+            # Tier-based constraint multipliers
+            # Micro Capital: 1.0x (tight constraints)
+            # Small Capital: 1.2x (more flexibility)
+            # Medium Capital: 1.5x (even more)
+            # High Capital: 2.0x (loose constraints)
+            # Enterprise: 2.5x (very loose)
+            tier_constraint_multipliers = {
+                "Micro Capital": 1.0,
+                "Small Capital": 1.2,
+                "Medium Capital": 1.5,
+                "High Capital": 2.0,
+                "Enterprise": 2.5,
+            }
+            
+            tier_name = current_tier if isinstance(current_tier, str) else current_tier.get("name", "Micro Capital")
+            constraint_mult = tier_constraint_multipliers.get(tier_name, 1.0)
+            
             sl_min = float(hard_constraints.get("stop_loss_pct", {}).get("min", 0.005))
-            sl_max = float(hard_constraints.get("stop_loss_pct", {}).get("max", 0.20))
+            sl_max = float(hard_constraints.get("stop_loss_pct", {}).get("max", 0.20)) * constraint_mult
             tp_min = float(hard_constraints.get("take_profit_pct", {}).get("min", 0.01))
-            tp_max = float(hard_constraints.get("take_profit_pct", {}).get("max", 0.50))
+            tp_max = float(hard_constraints.get("take_profit_pct", {}).get("max", 0.50)) * constraint_mult
             
             adjusted_sl = max(min(adjusted_sl, sl_max), sl_min)
             adjusted_tp = max(min(adjusted_tp, tp_max), tp_min)

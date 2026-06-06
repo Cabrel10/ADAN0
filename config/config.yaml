@@ -12,7 +12,7 @@ action:
   min_action_threshold: 0.01
 agent:
   algorithm: PPO
-  batch_size: 64
+  batch_size: 128
   buffer_size: 100000
   checkpoint_freq: 1000
   clip_range: 0.2
@@ -28,10 +28,10 @@ agent:
     enabled: true
     min_delta: 0.001
     patience: 50000
-  ent_coef: 0.01
+  ent_coef: 0.05
   ent_coef_schedule:
-    end: 0.001
-    start: 0.01
+    end: 0.005
+    start: 0.05
     type: linear
   eval_episodes: 10
   eval_freq: 10000
@@ -48,44 +48,27 @@ agent:
       dropout: 0.1
       num_heads: 4
       use_relative_positions: true
+    # C13-v2: 16 orthogonal indicators + 5 OHLCV = 21 features per TF
     cnn_configs:
       1h:
         channel_groups: 3
         groups:
           indicators:
-            indices:
-            - 5
-            - 6
-            - 7
-            - 8
-            - 9
-            - 10
-            - 11
-            - 12
-            - 13
-            - 14
+            indices: [5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
             kernel_size: 3
             out_channels: 32
             padding: 1
           price:
-            indices:
-            - 0
-            - 1
-            - 2
-            - 3
+            indices: [0,1,2,3]
             kernel_size: 3
             out_channels: 16
             padding: 1
           volume:
-            indices:
-            - 4
+            indices: [4]
             kernel_size: 3
             out_channels: 8
             padding: 1
-        input_shape:
-        - 1
-        - 20
-        - 15
+        input_shape: [1, 20, 21]
       4h:
         activation: relu
         batch_norm: true
@@ -94,39 +77,21 @@ agent:
         final_dropout: 0.3
         groups:
           indicators:
-            indices:
-            - 5
-            - 6
-            - 7
-            - 8
-            - 9
-            - 10
-            - 11
-            - 12
-            - 13
-            - 14
+            indices: [5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
             kernel_size: 3
             out_channels: 32
             padding: 1
           price:
-            indices:
-            - 0
-            - 1
-            - 2
-            - 3
+            indices: [0,1,2,3]
             kernel_size: 3
             out_channels: 16
             padding: 1
           volume:
-            indices:
-            - 4
+            indices: [4]
             kernel_size: 3
             out_channels: 8
             padding: 1
-        input_shape:
-        - 1
-        - 20
-        - 15
+        input_shape: [1, 20, 21]
         temporal_attention_heads: 4
         use_channel_attention: true
         use_temporal_attention: true
@@ -134,39 +99,21 @@ agent:
         channel_groups: 3
         groups:
           indicators:
-            indices:
-            - 5
-            - 6
-            - 7
-            - 8
-            - 9
-            - 10
-            - 11
-            - 12
-            - 13
-            - 14
+            indices: [5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
             kernel_size: 3
             out_channels: 32
             padding: 1
           price:
-            indices:
-            - 0
-            - 1
-            - 2
-            - 3
+            indices: [0,1,2,3]
             kernel_size: 3
             out_channels: 16
             padding: 1
           volume:
-            indices:
-            - 4
+            indices: [4]
             kernel_size: 3
             out_channels: 8
             padding: 1
-        input_shape:
-        - 1
-        - 20
-        - 15
+        input_shape: [1, 20, 21]
     fc_layers:
     - 256
     - 128
@@ -309,19 +256,27 @@ data:
     test: data/processed/indicators/test
     train: data/processed/indicators/train
     val: data/processed/indicators/val
+  # C13-v2: 16 orthogonal indicators per TF — must match TRAIN_COLUMNS in feature_engineer.py
   features_config:
     timeframes:
       1h:
         indicators:
-        - rsi_21
-        - macd_21_42_9
-        - bb_width_20_2
-        - adx_14
-        - obv_ratio_20
         - ema_50_ratio
-        - ichimoku_base
+        - macdh_21_42_9
+        - rsi_21
+        - adx_14
+        - di_delta
+        - atr_pct
+        - bb_percent_b_20_2
+        - obv_slope
+        - volume_ratio_20
+        - volatility_ratio_14_50
         - fib_ratio
-        - price_ema_ratio_50
+        - price_action
+        - vwap_ratio
+        - market_structure
+        - bb_width_20_2
+        - log_return
         price:
         - open
         - high
@@ -331,15 +286,22 @@ data:
         - volume
       4h:
         indicators:
-        - rsi_28
-        - macd_26_52_18
-        - supertrend_10_3
-        - volume_sma_20_ratio
         - ema_100_ratio
-        - pivot_level
-        - donchian_width_20
-        - market_structure
+        - macdh_26_52_18
+        - rsi_28
+        - adx_14
+        - di_delta
+        - atr_pct
+        - bb_percent_b_20_2
+        - obv_slope
+        - volume_ratio_20
         - volatility_ratio_14_50
+        - fib_ratio
+        - price_action
+        - vwap_ratio
+        - market_structure
+        - bb_width_20_2
+        - log_return
         price:
         - open
         - high
@@ -349,15 +311,22 @@ data:
         - volume
       5m:
         indicators:
-        - rsi_14
-        - macd_12_26_9
-        - bb_percent_b_20_2
-        - atr_14
-        - atr_20
-        - atr_50
-        - volume_ratio_20
         - ema_20_ratio
-        - stoch_k_14_3_3
+        - macdh_12_26_9
+        - rsi_14
+        - adx_14
+        - di_delta
+        - atr_pct
+        - bb_percent_b_20_2
+        - obv_slope
+        - volume_ratio_20
+        - volatility_ratio_14_50
+        - fib_ratio
+        - price_action
+        - vwap_ratio
+        - market_structure
+        - bb_width_20_2
+        - log_return
         price:
         - open
         - high
@@ -668,11 +637,15 @@ diagnostics:
 environment:
   # Action thresholds: tanh output must exceed |threshold| for BUY/SELL.
   # Lower values = more trading activity; higher = more conservative.
-  # With PPO tanh output ~[-0.5, 0.5], threshold of 0.05 allows ~90% of signals.
+  # FIXED: Widened thresholds to give agent more room for HOLD
+  # Previous thresholds (0.01/0.02/0.03) were too tight, forcing agent
+  # to choose between BUY/SELL with no safe HOLD zone.
+  # Agent learned to output negative values (SELL) to avoid trading costs.
+  # New thresholds give 20% of action space to HOLD (safe zone).
   action_thresholds:
-    1h: 0.08
-    4h: 0.10
-    5m: 0.05
+    1h: 0.15
+    4h: 0.20
+    5m: 0.10
   assets:
   - btcusdt
   base_currency: USDT
@@ -744,7 +717,7 @@ environment:
       retry_with_lower_thresholds: true
       skip_validation_after_retries: 3
   hard_constraints:
-    max_drawdown_pct: 0.25
+    max_drawdown_pct: 40.0    # C3: aligned with Tier Micro (was 0.25)
     max_position_size_pct: 0.5
     max_risk_per_trade_pct: 0.02
     min_order_value_usdt: 11.0
@@ -833,7 +806,7 @@ environment:
       4h: 20
       5m: 20
   penalties:
-    base_inaction_penalty: -0.01
+    base_inaction_penalty: -0.001
     inaction_freq_threshold: 10
     inaction_pnl_threshold: -0.001
     invalid_action: -1.0
@@ -870,17 +843,17 @@ environment:
         trailing_enabled: false
   timeframe_trading_config:
     1h:
-      action_threshold: 0.08
+      action_threshold: 0.02   # Session 9: was 0.08 — see action_thresholds note
       description: Medium-term trading optimized
       force_trade_steps: 120
       min_magnitude: 0.05
     4h:
-      action_threshold: 0.1
+      action_threshold: 0.03   # Session 9: was 0.10
       description: Long-term trading enabled
       force_trade_steps: 240
       min_magnitude: 0.08
     5m:
-      action_threshold: 0.05
+      action_threshold: 0.01   # Session 9: was 0.05
       description: High-frequency trading enabled
       force_trade_steps: 72
       min_magnitude: 0.03
@@ -954,11 +927,15 @@ feature_engineering:
       supertrend:
         multiplier: 3
         window: 10
+    # C13-v2: 16 orthogonal indicators per TF (hedge-fund grade)
+    # Axes: trend(4), momentum(3), volatility(4), volume(2), structure(3)
     timeframes:
       1h:
         momentum:
         - rsi_21
         - fib_ratio
+        - stoch_k_14_3_3
+        - price_action
         trend:
         - macd_21_42_9
         - adx_14
@@ -967,42 +944,59 @@ feature_engineering:
         - price_ema_ratio_50
         volatility:
         - bb_width_20_2
+        - bb_percent_b_20_2
+        - atr_14
         - atr_20
         - atr_50
         volume:
         - obv_ratio_20
+        - volume_ratio_20
+        - vwap_ratio
       4h:
         momentum:
         - rsi_28
         - market_structure
+        - fib_ratio
+        - price_action
         trend:
         - macd_26_52_18
+        - adx_14
         - supertrend_10_3
         - ema_100_ratio
         - pivot_level
         volatility:
         - donchian_width_20
         - volatility_ratio_14_50
-        - atr_20
-        - atr_50
-        volume:
-        - volume_sma_20_ratio
-      5m:
-        momentum:
-        - rsi_14
-        - stoch_k_14_3_3
-        - price_action
-        trend:
-        - macd_12_26_9
-        - ema_20_ratio
-        - vwap_ratio
-        volatility:
+        - bb_width_20_2
         - bb_percent_b_20_2
         - atr_14
         - atr_20
         - atr_50
         volume:
+        - volume_sma_20_ratio
+        - obv_ratio_20
+        - vwap_ratio
+      5m:
+        momentum:
+        - rsi_14
+        - stoch_k_14_3_3
+        - price_action
+        - fib_ratio
+        trend:
+        - macd_12_26_9
+        - adx_14
+        - ema_20_ratio
+        - vwap_ratio
+        volatility:
+        - bb_percent_b_20_2
+        - bb_width_20_2
+        - atr_14
+        - atr_20
+        - atr_50
+        - volatility_ratio_14_50
+        volume:
         - volume_ratio_20
+        - obv_ratio_20
   performance:
     cache_indicators: true
     chunk_size: 1000
@@ -1113,7 +1107,7 @@ model_fusion:
     2: 0.3
     3: 0.18
 paper_trading:
-  exchange_id: binance
+  exchange_id: bitget
   use_testnet: true
 paths:
   base_dir: .
@@ -1121,12 +1115,16 @@ paths:
   figures_dir: ./reports/figures
   final_data_dir: ./data/final
   indicators_data_dir: data/processed/indicators
+  log_dir: ./logs
   logs_dir: logs
   metrics_dir: reports/metrics
   models_dir: models
+  oracle_model: models/exog_oracle.pkl
   processed_data_dir: data/processed
   raw_data_dir: data/raw
   reports_dir: reports
+  reward_log_dir: ./logs/rewards
+  checkpoint_dir: ./checkpoints
   trained_models_dir: models/rl_agents
 portfolio:
   default_position_pct: 0.7
@@ -1232,6 +1230,17 @@ reset_parameters:
   min_capital_before_reset: 11.0
   reset_mode: soft
 reward_shaping:
+  # Session 10 calibration — dense baseline signal for the PPO critic.
+  # Session 9 used -1e-4: empirically too weak (over a 500-step episode,
+  # cumulative drag ≈ -0.05, lost in symlog noise). explained_variance got
+  # WORSE (-2.36 vs -1.09 in session 8). Now -1e-3:
+  #   - 500-step episode → -0.5 baseline (clearly learnable V(s))
+  #   - still 5-50× smaller than a typical trade reward (~0.01-0.1)
+  # Override at runtime via env var ADAN_TIME_DECAY (read in reward_calculator).
+  # FIXED: Increased from -0.001 to -0.01 to force exploration
+  # Previous value was too weak - agent preferred inaction over trading.
+  # New value makes HOLD cost 5 steps worth of reward, forcing agent to trade.
+  time_decay: -0.01
   duration_penalty_weight: 0.01
   early_close_bonus: 0.3
   early_exit_bonus: 0.5
@@ -1242,8 +1251,8 @@ reward_shaping:
       4h: 10
       5m: 15
   frequency_weights:
-    in_range: 2.0
-    out_of_range: 0.2
+    in_range: 0.05
+    out_of_range: 0.02
   # Poids de la pénalité par step de violation de cooldown.
   # Formule : pénalité = -weight × steps_manquants
   # SELL avant hold_min_steps → pénalité. BUY avant wait_steps_post_sell → pénalité.
@@ -1293,8 +1302,8 @@ reward_shaping:
   missed_penalty: -0.5
   multi_traque_bonus: 1.5
   overstay_penalty: -1.0
-  pnl_normalization: 50.0
-  pnl_weight: 50.0
+  pnl_normalization: 1.0
+  pnl_weight: 1.0
   profiles:
     Adaptive:
       duration_penalty_weight: 0.01
@@ -1385,7 +1394,7 @@ risk_parameters:
   base_tp_pct: 0.15
   daily_loss_limit: 0.1
   drawdown_risk_multiplier: 1.5
-  max_drawdown_pct: 0.25
+  max_drawdown_pct: 40.0    # C3: aligned with Tier Micro (was 0.25)
   max_risk_level: 2.0
   max_sl_pct: 0.1
   max_tp_pct: 0.2
@@ -1437,9 +1446,9 @@ trading_rules:
     # WAIT post-SELL: minimum steps between SELL and next BUY.
     # SELL at step N -> BUY allowed from step N + wait_steps_post_sell.
     wait_steps_post_sell:
-      5m: 6    # 30 min wait after SELL (~6 x 5min candles)
-      1h: 10   # 10h wait after SELL
-      4h: 20   # ~3.3 days wait after SELL
+      5m: 2    # 10 min wait after SELL (~2 x 5min candles) - REDUCED from 6
+      1h: 3    # 3h wait after SELL - REDUCED from 10
+      4h: 5    # ~20h wait after SELL - REDUCED from 20
     # Anti-spam cooldown between consecutive BUY signals per worker profile.
     omega4e_cooldown_by_profile:
       scalper: 2    # 2 steps between BUY attempts
@@ -1521,14 +1530,20 @@ workers:
     specialization:
       timeframe: 5m
       tracking_periods:
-        5m: {grace_period: 2, max_tracking_steps: 42, min_tracking_steps: 1, optimal_duration: 12}
-        1h: {grace_period: 1, max_tracking_steps: 47, min_tracking_steps: 1, optimal_duration: 15}
-        4h: {grace_period: 1, max_tracking_steps: 70, min_tracking_steps: 1, optimal_duration: 40}
-    max_position_steps: 50
-    max_trades_per_episode: 20
+        5m: {grace_period: 1, max_tracking_steps: 20, min_tracking_steps: 1, optimal_duration: 8}
+        1h: {grace_period: 1, max_tracking_steps: 30, min_tracking_steps: 1, optimal_duration: 12}
+        4h: {grace_period: 1, max_tracking_steps: 50, min_tracking_steps: 1, optimal_duration: 25}
+    max_position_steps: 20
+    max_trades_per_episode: 50
     assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
+    # Scalper-specific overrides (1.5% SL, 3.0% TP for R/R = 2.0)
+    trading_config:
+      stop_loss_pct: 0.015
+      take_profit_pct: 0.030
+      trailing_stop: true
+      trailing_delta: 0.005
   w2:
     name: W2 Intraday
     specialization:
@@ -1568,3 +1583,39 @@ workers:
     assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
+
+# ============================================================================
+# SANDBOX / CI TRAINING PARAMETERS
+# ============================================================================
+# These parameters are used ONLY when running in --mode sandbox (CPU-only,
+# low-RAM environments like GitHub Actions runners or development sandboxes).
+# They are NOT used in heavy/production mode (GPU, Ray Tune, Colab).
+#
+# IMPORTANT: The sandbox exists solely to verify the pipeline works end-to-end.
+# Performance metrics from sandbox runs (1GB RAM, 2 CPUs, n_steps=128) are
+# NOT representative of production training (7GB+ RAM, GPU, n_steps=2048).
+# ============================================================================
+sandbox:
+  initial_capital: 20.50      # Same as production Micro Capital tier
+  # S15 HARD RESET: Realistic CI hyperparameters.
+  # n_steps=512, batch=64 — proven safe on 7GB CI runner.
+  # 512 steps × obs_dict ≈ 2.5 MB per rollout. With Adam buffers + gradients
+  # total memory ≈ 500 MB — leaves 6.5 GB headroom.
+  # 10000 steps / 512 = ~19 PPO updates × 10 epochs = 190 gradient passes.
+  n_steps: 512                # Safe for 7GB CI (512 × obs ≈ 2.5 MB)
+  batch_size: 64              # 512/64 = 8 minibatches per epoch
+  n_epochs: 10                # Standard PPO
+  max_training_steps: 10000   # CI: ~4 min on 2-CPU runner
+  ci_training_steps: 10000    # Relay segment size
+  learning_rate: 0.0003       # Standard
+  ent_coef: 0.01              # Standard PPO for continuous control
+  # Session 6 fixes:
+  # A8 FIX: Reward is now scaled by 100/initial_capital (percentage-based).
+  #   On $20.50 capital, a $0.05 PnL → 0.244% → symlog(0.244) = 0.219
+  #   Previously: symlog($0.05) = 0.049 — too weak for PPO gradient.
+  # A3 FIX: HMM log_return amplified 1000x before RobustScaler.
+  #   5m log_returns O(1e-4) → O(0.1) — real regime separation.
+  # A1 FIX: Logs now show both portfolio_value (incl unrealized) and realized_equity.
+  # A7 FIX: Reward log precision increased from .4f to .6f.
+  # NOTE: Sharpe/WinRate from sandbox runs with 5k steps are NOT meaningful
+  # performance indicators. They exist only to prove the pipeline executes.

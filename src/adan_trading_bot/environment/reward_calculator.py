@@ -9,6 +9,7 @@ reinforcement learning agent.
 
 # Standard library imports
 import logging
+import os
 import traceback
 from datetime import datetime
 from enum import Enum
@@ -19,13 +20,13 @@ import numpy as np
 
 
 # ------------------------------------------------------------------
-# SOTA 2025: Symlog transform (DreamerV3)
-# Symmetric logarithm that compresses extreme values while
-# preserving the sign.  Mathematically stable for any real input.
+# Symlog transform — symmetric logarithm that compresses extreme values
+# while preserving the sign. Mathematically stable for any real input.
 #   symlog(x) = sign(x) * ln(|x| + 1)
+# (popularized by Hafner et al. 2023; no world-model dependency here)
 # ------------------------------------------------------------------
 def symlog(x: float) -> float:
-    """DreamerV3-style symmetric logarithmic compression."""
+    """Symmetric logarithmic compression."""
     return float(np.sign(x) * np.log1p(np.abs(x)))
 
 # Local application imports
@@ -110,6 +111,9 @@ class RewardCalculator:
         self._equity_history: list = []
         self._max_equity: float = 0.0
 
+        # C2: Initial capital for drawdown penalty (set via reset())
+        self._initial_capital: float = 0.0
+
         # Cache for ratio calculations (used by statistics helpers)
         self._ratio_cache: dict = {}
         self._last_calculation_time = 0
@@ -128,6 +132,20 @@ class RewardCalculator:
             "RewardCalculator initialized -- True Quant Anti-Hack formula: "
             "symlog + alpha*loss_penalty + streak_penalty + failsafe"
         )
+
+    def reset_reward_state(self, initial_capital: float):
+        """Reset reward calculator state at the beginning of each episode.
+
+        Args:
+            initial_capital: Starting capital for this episode (used for drawdown calculation).
+        """
+        self._initial_capital = float(initial_capital)
+        self._max_equity = float(initial_capital)
+        self._equity_history = []
+        self._consecutive_losses = 0
+        self.current_episode_rewards = []
+        self._ratio_cache.clear()
+        logger.debug(f"RewardCalculator reset: initial_capital=${initial_capital:.2f}")
 
     # ------------------------------------------------------------------
     # NOTE: Old bonus methods (_calculate_tutor_bonus, _calculate_early_exit_bonus,
@@ -220,9 +238,16 @@ class RewardCalculator:
                     self._max_equity = current_equity
 
             dd_penalty = 0.0
-            if self._max_equity > 0 and current_equity > 0:
-                dd = (self._max_equity - current_equity) / self._max_equity
-                if dd > 0.005:
+            # C1+C2: Drawdown based on initial_capital (not peak_equity)
+            # Threshold 0.10 = d_kill/4 = 40%/4, absorbs normal BTC 5m volatility
+            if self._initial_capital > 0 and current_equity > 0:
+                dd = max(0.0, (self._initial_capital - current_equity) / self._initial_capital)
+                if dd > 0.10:   # C1: was 0.005 — 80x too strict
+                    dd_penalty = self.drawdown_penalty_weight * dd
+            elif self._max_equity > 0 and current_equity > 0:
+                # Fallback if _initial_capital not yet set
+                dd = max(0.0, (self._max_equity - current_equity) / self._max_equity)
+                if dd > 0.10:
                     dd_penalty = self.drawdown_penalty_weight * dd
 
             # ==========================================================
@@ -250,14 +275,50 @@ class RewardCalculator:
             # 4. Consecutive loss streak penalty
             r -= gamma_s * max(0.0, float(self._consecutive_losses - 2))
 
-            # 5. FAILSAFE BINARY ANTI-HACK
-            # It is MATHEMATICALLY IMPOSSIBLE to get positive reward
-            # from a negative PnL trade
+            # 5. FAILSAFE ANTI-HACK (C11+C11-A: smooth sigmoid transition)
+            # Replaces the hard flip (r *= -delta) with a continuous sigmoid
+            # to avoid gradient discontinuity at pnl_net=0 in PPO updates.
+            # severity is normalized by initial_capital so it reacts to % loss, not $ absolute.
             failsafe_triggered = False
             if pnl_net < 0 and r > 0:
-                r *= -delta
+                _cap = self._initial_capital if self._initial_capital > 0 else 1.0
+                relative_loss = abs(pnl_net) / (_cap + 1e-9)
+                # Sigmoid: transition around 1% loss, full correction at ~5%
+                severity = 1.0 / (1.0 + np.exp(-100.0 * (relative_loss - 0.01)))
+                r = r * (-delta) * severity
                 failsafe_triggered = True
-                logger.info(f"FAILSAFE_TRIGGERED | pnl_net={pnl_net:+.6f} | r_before={r/-delta:+.6f} | r_after={r:+.6f}")
+                logger.info(
+                    f"FAILSAFE_SIGMOID | pnl_net={pnl_net:+.6f} | "
+                    f"relative_loss={relative_loss:.4f} | severity={severity:.4f} | "
+                    f"r_after={r:+.6f}"
+                )
+
+            # ──────────────────────────────────────────────────────────
+            # SESSION 12 FIX — DENSE CRITIC SIGNAL (replaces S10 time_decay)
+            # ──────────────────────────────────────────────────────────
+            # WHY: A constant time_decay (-0.001) makes V(s) a simple linear
+            # countdown. The Critic cannot learn state-dependent value because
+            # the reward is identical in every non-trade step regardless of
+            # market state, position status, or unrealized PnL.
+            #
+            # ──────────────────────────────────────────────────────────
+            # Session Finale: REVERT des hacks reward S12
+            # Le position_bonus et unrealized PnL delta ont EMPIRE les resultats CI:
+            #   Run#8 (avec bonus): ev = -5.11
+            #   Run#9 (avec bonus): ev = -9.29 (REGRESSION)
+            # Seule recompense valide = realized_pnl des trades fermes.
+            # Le Critic convergera avec 50k+ steps sur donnees diversifiees.
+            # ──────────────────────────────────────────────────────────
+            # 1. Time decay (constant negative baseline)
+            _env_td = os.environ.get("ADAN_TIME_DECAY")
+            if _env_td is not None:
+                try:
+                    time_decay = float(_env_td)
+                except (TypeError, ValueError):
+                    time_decay = float(self.config.get("time_decay", -1e-3))
+            else:
+                time_decay = float(self.config.get("time_decay", -1e-3))
+            r += time_decay
 
             final_reward = float(r)
 

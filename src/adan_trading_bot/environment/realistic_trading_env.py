@@ -57,7 +57,7 @@ class RealisticTradingEnv(MultiAssetChunkedEnv):
         min_hold_steps: int = 6,  # 30 mins (6 * 5m)
         cooldown_steps: int = 3,  # 15 mins (3 * 5m)
         min_notional: float = 10.0,  # $10 USDT
-        circuit_breaker_pct: float = 0.15,  # 15% max drawdown
+        circuit_breaker_pct: float = 0.38,  # C7: was 0.15 — aligned to 95% × 40% Tier Micro
         daily_trade_limit: int = 10,
         use_stable_reward: bool = True,  # Toggle for new reward calculator
         enable_market_friction: bool = True,  # Toggle for friction models

@@ -101,7 +101,7 @@ class TrainingMetricsCallback(BaseCallback):
             except Exception:
                 pass
 
-            # Log auxiliary world-model prediction magnitude
+            # Log auxiliary next-return prediction magnitude
             try:
                 if hasattr(self.model, '_aux_loss_history') and self.model._aux_loss_history:
                     aux_mag = self.model._aux_loss_history[-1]

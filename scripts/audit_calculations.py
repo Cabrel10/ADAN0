@@ -19,7 +19,7 @@ def check(name, condition, detail=""):
 
 # ============================================================
 print("=" * 65)
-print("AUDIT 1: SYMLOG REWARD (DreamerV3)")
+print("AUDIT 1: SYMLOG REWARD COMPRESSION")
 print("=" * 65)
 from adan_trading_bot.environment.reward_calculator import symlog
 

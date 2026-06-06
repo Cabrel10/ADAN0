@@ -1,144 +1,229 @@
 #!/usr/bin/env python3
 """
-Download real OHLCV candles from public CCXT (Binance) for ADAN testing.
-Stores data in data/raw/ as parquet files ready for environment consumption.
+Download REAL OHLCV data via CCXT — no mocks, no fallbacks, no excuses.
+
+Sources: Bitget (primary), OKX (secondary) — Binance blocked from this sandbox.
+Volume validation: rejects data with unrealistic volume (< 50K USD median).
+Saves in format compatible with ChunkedDataLoader (lowercase columns, DatetimeIndex).
 """
 
 import os
 import sys
 import time
+import json
 import logging
-import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import ccxt
 import pandas as pd
 import numpy as np
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-ASSETS = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT"]
-TIMEFRAMES = ["5m", "1h", "4h"]
+# ─── Configuration ──────────────────────────────────────────────────────
+SYMBOL = "BTC/USDT"
+TIMEFRAMES = {
+    "5m":  {"limit": 25000, "minutes": 5},
+    "1h":  {"limit": 4500,  "minutes": 60},
+    "4h":  {"limit": 2200,  "minutes": 240},
+}
+OUTPUT_BASE = "data/raw/BTCUSDT"
+MIN_MEDIAN_VOLUME_USD = 50_000  # Reject data with lower median volume
+
+# Exchanges to try (in order)
+EXCHANGES = ["bitget", "okx", "kucoin"]
 
 
-def download_ohlcv(exchange, symbol: str, timeframe: str, limit: int = 5000) -> pd.DataFrame:
-    """Download OHLCV data from exchange using pagination."""
-    logger.info(f"Downloading {symbol} {timeframe} ({limit} candles)...")
+def connect_exchange():
+    """Connect to first working exchange."""
+    for name in EXCHANGES:
+        try:
+            ex_cls = getattr(ccxt, name)
+            ex = ex_cls({
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
+                "timeout": 30000,
+            })
+            ex.load_markets()
+            if SYMBOL not in ex.markets:
+                logger.warning(f"{name}: {SYMBOL} not found")
+                continue
+            # Test fetch
+            test = ex.fetch_ohlcv(SYMBOL, "5m", limit=2)
+            if test and len(test) >= 1:
+                logger.info(f"✓ Connected to {name.upper()}")
+                return ex, name
+        except Exception as e:
+            logger.warning(f"✗ {name}: {str(e)[:80]}")
+    return None, None
+
+
+def download_timeframe(exchange, tf_name, tf_config):
+    """Download full history for a timeframe with pagination."""
+    limit = tf_config["limit"]
+    minutes = tf_config["minutes"]
+    
+    logger.info(f"\n{'='*50}")
+    logger.info(f"Downloading {SYMBOL} {tf_name} — target: {limit} candles")
+    
+    # Calculate start time
+    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    start_ms = end_ms - (limit * minutes * 60 * 1000)
+    since = start_ms
     
     all_data = []
-    remaining = limit
-    since = None  # start from most recent
+    batch_count = 0
     
-    # For large downloads, work backwards from now
-    batch_size = min(1000, remaining)
-    
-    # Calculate start time based on limit and timeframe
-    tf_minutes = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
-    minutes = tf_minutes.get(timeframe, 5)
-    end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
-    start_time = end_time - (limit * minutes * 60 * 1000)
-    since = start_time
-    
-    while remaining > 0:
-        batch = min(1000, remaining)
+    while since < end_ms:
         try:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=batch)
+            ohlcv = exchange.fetch_ohlcv(SYMBOL, tf_name, since=since, limit=1000)
             if not ohlcv:
                 break
+            
             all_data.extend(ohlcv)
-            remaining -= len(ohlcv)
-            since = ohlcv[-1][0] + 1  # next millisecond after last candle
-            logger.info(f"  Got {len(ohlcv)} candles, total={len(all_data)}, remaining={remaining}")
-            time.sleep(0.2)  # Rate limit
-            if len(ohlcv) < batch:
-                break  # No more data
+            batch_count += 1
+            since = ohlcv[-1][0] + 1
+            
+            if batch_count % 5 == 0:
+                logger.info(f"  batch {batch_count}: {len(all_data)} candles so far")
+            
+            if len(ohlcv) < 100:
+                break
+            
+            time.sleep(0.3)  # Respect rate limits
+            
+        except ccxt.RateLimitExceeded:
+            logger.warning("  Rate limit — waiting 5s")
+            time.sleep(5)
         except Exception as e:
-            logger.error(f"  Error downloading {symbol} {timeframe}: {e}")
-            if "429" in str(e) or "rate" in str(e).lower():
-                time.sleep(5)
-                continue
+            logger.error(f"  Error: {e}")
+            time.sleep(2)
             break
     
     if not all_data:
-        logger.warning(f"  No data for {symbol} {timeframe}")
-        return pd.DataFrame()
+        logger.error(f"  FAILED: No data for {tf_name}")
+        return None
     
-    df = pd.DataFrame(all_data, columns=["TIMESTAMP", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"])
-    df["TIMESTAMP"] = df["TIMESTAMP"].astype(np.int64)
-    df = df.drop_duplicates(subset=["TIMESTAMP"]).sort_values("TIMESTAMP").reset_index(drop=True)
-    logger.info(f"  Final: {len(df)} candles for {symbol} {timeframe}")
+    # Build DataFrame
+    df = pd.DataFrame(all_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    df = df.set_index("timestamp")
+    
+    # Remove timezone info for compatibility
+    df.index = df.index.tz_localize(None)
+    
+    logger.info(f"  Downloaded: {len(df)} candles")
+    logger.info(f"  Range: {df.index[0]} → {df.index[-1]}")
+    
     return df
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Download CCXT OHLCV data")
-    parser.add_argument("--limit", type=int, default=5000, help="Number of candles per asset/timeframe")
-    parser.add_argument("--exchange", type=str, default="binance", help="Exchange name (binance or bitget)")
-    parser.add_argument("--output-dir", type=str, default="data/raw/ccxt", help="Output directory")
-    args = parser.parse_args()
-
-    # Try Binance first, fallback to Bitget
-    exchange = None
-    for exch_name in [args.exchange, "bitget", "binance"]:
-        try:
-            exch_class = getattr(ccxt, exch_name)
-            exchange = exch_class({
-                "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
-            })
-            exchange.load_markets()
-            logger.info(f"Connected to {exch_name.upper()}")
-            break
-        except Exception as e:
-            logger.warning(f"Cannot connect to {exch_name}: {e}")
+def validate_volume(df, tf_name):
+    """Validate volume is realistic — reject if not."""
+    vol_usd = df["volume"] * df["close"]
+    median_vol = vol_usd.median()
+    mean_vol = vol_usd.mean()
     
-    if not exchange:
-        logger.error("Failed to connect to any exchange!")
-        sys.exit(1)
+    logger.info(f"  Volume analysis ({tf_name}):")
+    logger.info(f"    Median volume (USD):  ${median_vol:,.0f}")
+    logger.info(f"    Mean volume (USD):    ${mean_vol:,.0f}")
+    logger.info(f"    Min volume (USD):     ${vol_usd.min():,.0f}")
+    logger.info(f"    Max volume (USD):     ${vol_usd.max():,.0f}")
+    logger.info(f"    Rows < 1000 USD:      {(vol_usd < 1000).sum()} / {len(df)}")
+    
+    if median_vol < MIN_MEDIAN_VOLUME_USD:
+        logger.error(f"  ✗ REJECTED: median volume ${median_vol:,.0f} < ${MIN_MEDIAN_VOLUME_USD:,.0f}")
+        return False
+    
+    logger.info(f"  ✓ Volume validated: median ${median_vol:,.0f}")
+    return True
 
-    os.makedirs(args.output_dir, exist_ok=True)
 
-    # Download data for each asset and timeframe
-    summary = {}
-    for symbol in ASSETS:
-        safe_symbol = symbol.replace("/", "")
-        for tf in TIMEFRAMES:
-            df = download_ohlcv(exchange, symbol, tf, args.limit)
-            if df.empty:
-                logger.warning(f"Skipping {symbol} {tf} - no data")
-                continue
-            
-            # Save as parquet
-            fname = f"{safe_symbol}_{tf}.parquet"
-            fpath = os.path.join(args.output_dir, fname)
-            df.to_parquet(fpath, index=False)
-            
-            # Also save as CSV for debugging
-            csv_fname = f"{safe_symbol}_{tf}.csv"
-            csv_path = os.path.join(args.output_dir, csv_fname)
-            df.to_csv(csv_path, index=False)
-            
-            summary[f"{symbol}_{tf}"] = len(df)
-            logger.info(f"Saved {fpath} ({len(df)} rows)")
-
-    # Print summary
+def main():
     logger.info("=" * 60)
+    logger.info("CCXT REAL DATA DOWNLOAD — NO MOCKS")
+    logger.info("=" * 60)
+    
+    exchange, exchange_name = connect_exchange()
+    if not exchange:
+        logger.error("FATAL: Cannot connect to any exchange")
+        sys.exit(1)
+    
+    results = {}
+    
+    for tf_name, tf_config in TIMEFRAMES.items():
+        df = download_timeframe(exchange, tf_name, tf_config)
+        if df is None:
+            results[tf_name] = {"status": "FAILED", "rows": 0}
+            continue
+        
+        # Validate volume
+        if not validate_volume(df, tf_name):
+            results[tf_name] = {"status": "VOLUME_REJECTED", "rows": len(df)}
+            continue
+        
+        # Save
+        safe_tf = tf_name.replace(" ", "_")
+        out_dir = os.path.join(OUTPUT_BASE, safe_tf)
+        os.makedirs(out_dir, exist_ok=True)
+        
+        out_path = os.path.join(out_dir, f"BTCUSDT_{safe_tf}_raw.parquet")
+        df.to_parquet(out_path)
+        
+        # Also save CSV for human inspection
+        csv_path = os.path.join(out_dir, f"BTCUSDT_{safe_tf}_raw.csv")
+        df.to_csv(csv_path)
+        
+        results[tf_name] = {
+            "status": "OK",
+            "rows": len(df),
+            "range": f"{df.index[0]} to {df.index[-1]}",
+            "median_volume_usd": float(round((df['volume'] * df['close']).median(), 0)),
+            "path": out_path,
+        }
+        
+        logger.info(f"  Saved: {out_path} ({len(df)} rows)")
+    
+    # Summary
+    logger.info("\n" + "=" * 60)
     logger.info("DOWNLOAD SUMMARY")
     logger.info("=" * 60)
-    for key, count in summary.items():
-        logger.info(f"  {key}: {count} candles")
-    logger.info(f"Total files: {len(summary)}")
-    logger.info(f"Output dir: {args.output_dir}")
+    logger.info(f"Exchange: {exchange_name.upper()}")
     
-    # Verify minimum data requirements
-    btc_5m = summary.get("BTC/USDT_5m", 0)
-    if btc_5m < 1000:
-        logger.error(f"INSUFFICIENT DATA: BTC/USDT 5m has only {btc_5m} candles (need >= 1000)")
+    all_ok = True
+    for tf, info in results.items():
+        status = info["status"]
+        rows = info["rows"]
+        if status == "OK":
+            logger.info(f"  ✓ {tf}: {rows} candles, median vol ${info['median_volume_usd']:,.0f}")
+        else:
+            logger.info(f"  ✗ {tf}: {status} ({rows} candles)")
+            all_ok = False
+    
+    # Save report
+    report = {
+        "timestamp": datetime.now().isoformat(),
+        "exchange": exchange_name,
+        "symbol": SYMBOL,
+        "results": results,
+        "all_ok": all_ok,
+    }
+    os.makedirs("data/validation", exist_ok=True)
+    with open("data/validation/download_report.json", "w") as f:
+        json.dump(report, f, indent=2, default=str)
+    
+    if not all_ok:
+        logger.error("SOME DOWNLOADS FAILED")
         sys.exit(1)
-    else:
-        logger.info(f"DATA OK: BTC/USDT 5m has {btc_5m} candles")
+    
+    logger.info("\nALL DOWNLOADS SUCCESSFUL ✓")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
