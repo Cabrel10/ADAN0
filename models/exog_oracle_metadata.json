@@ -1,7 +1,7 @@
 {
   "btc_days": 728,
-  "btc_date_min": "2024-06-01",
-  "btc_date_max": "2026-05-31",
+  "btc_date_min": "2024-06-08",
+  "btc_date_max": "2026-06-07",
   "macro_days": 3759,
   "macro_cols": [
     "spy",
