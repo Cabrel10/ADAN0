@@ -815,6 +815,9 @@ class ADAN_PBT_Worker(_TrainableBase):
             self._callbacks.append(ppo_safety)
 
         self._metrics_monitor = metrics_monitor
+        
+        # Initialize checkpoint tracking for robust 2500-step saves
+        self._last_checkpoint_step = 0
 
     def step(self):
         """Run one training iteration (interval_timesteps steps of PPO.learn)."""
@@ -854,18 +857,26 @@ class ADAN_PBT_Worker(_TrainableBase):
                     _rms.var[:] = 1.0
                     _rms.count = 1e-4
 
-        checkpoint_interval = 15_000
-        if self._total_timesteps % checkpoint_interval < self.interval_timesteps:
-            # We just crossed a 15k boundary
+        # ROBUST CHECKPOINT: Save every 2500 steps (not modulo to avoid missed crossings)
+        # Track last saved checkpoint to ensure we save AT LEAST every 2500 steps
+        checkpoint_interval = 2_500
+        if not hasattr(self, '_last_checkpoint_step'):
+            self._last_checkpoint_step = 0
+        
+        steps_since_last_checkpoint = self._total_timesteps - self._last_checkpoint_step
+        
+        # Save if we've accumulated >= checkpoint_interval steps since last save
+        if steps_since_last_checkpoint >= checkpoint_interval:
             try:
                 checkpoint_dir = os.path.join(
                     self.checkpoint_dir,
-                    f"checkpoint_{self._total_timesteps:06d}"
+                    f"checkpoint_{self._total_timesteps:08d}"
                 )
                 self.save_checkpoint(checkpoint_dir)
-                logger.info(f"✅ Checkpoint saved at {self._total_timesteps} steps")
+                self._last_checkpoint_step = self._total_timesteps
+                logger.info(f"✅ Checkpoint saved at {self._total_timesteps} steps (interval: {checkpoint_interval})")
             except Exception as e:
-                logger.error(f"❌ Checkpoint save failed: {e}")
+                logger.error(f"❌ Checkpoint save failed at {self._total_timesteps} steps: {e}")
 
         # Collect metrics
         mean_reward = 0.0
@@ -1191,14 +1202,15 @@ def run_pbt(
                 }
                 logger.info(f"[COLAB] Trial resources: cpu={_cpu_per_trial:.1f}, gpu={_gpu_per_trial:.2f}")
 
-        # Configure checkpointing: save every 5k steps, keep last 3 checkpoints
+        # Configure checkpointing: save every iteration monitored by our robust interval logic
+        # (see step() for 2500-step saves). Keep more checkpoints for recovery options.
         # ray.air.CheckpointConfig deprecated in Ray >= 2.6; use ray.train if available
         try:
             from ray.train import CheckpointConfig
         except ImportError:
             from ray.air import CheckpointConfig
         checkpoint_config = CheckpointConfig(
-            num_to_keep=3,  # Keep only 3 most recent checkpoints
+            num_to_keep=10,  # Keep 10 most recent checkpoints (covers ~25k steps at 2500-step interval)
             checkpoint_score_attribute="timesteps_total",
             checkpoint_score_order="max",
         )
@@ -1323,9 +1335,12 @@ def main(
     os.environ["PYTHONPATH"] = _pythonpath
     _runtime_env = {"env_vars": {"PYTHONPATH": _pythonpath}}
 
-    # 2. Object Store: Bridged Config (2GB in RAM, spill to NVMe)
-    # RATIONALE: 2GB + object store overhead ≤ 4GB. Leaves 12GB for workers + system.
-    OBJECT_STORE_GB = 2 * 1024**3  # 2 GB
+    # 2. Object Store: Dynamic Config Based on Available RAM
+    # RESTORED (29 mai 8153b72): Calculate based on system RAM for scalability
+    # Original 2GB was too small for 16GB machine (caused crashes at 200 steps)
+    # Use 25% of total RAM (conservative, scales across 4GB Colab to 16GB+ production)
+    total_memory = int(os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES'))
+    OBJECT_STORE_GB = max(1_000_000_000, int(total_memory * 0.25))  # Min 1GB, 25% of RAM
 
     # 3. Spilling Config: Aggressive SSD spilling to prevent OOM
     # The SSD acts as "extended RAM" — writes at 3000+ MB/s so negligible latency
@@ -1347,6 +1362,9 @@ def main(
     }
 
     # 5. Ray Init: Production-Grade
+    # CRITICAL FIX (Session 18): Use loopback IP (127.0.0.1) instead of auto-detected
+    # network IP to prevent crashes when Internet is disconnected.
+    # Ray uses this for internal cluster communication, not external network.
     ray_init_kwargs = dict(
         num_cpus=num_cpus,
         object_store_memory=OBJECT_STORE_GB,
@@ -1355,10 +1373,13 @@ def main(
         _temp_dir=_ray_tmp,
         runtime_env=_runtime_env,
         _system_config=system_config,
+        _node_ip_address="127.0.0.1",  # Loopback - immune to network disconnects
     )
 
     # 6. Environment Variables: Additional Safety Layer
+    # CRITICAL FIX (Session 18): Force loopback IP to prevent network dependency
     os.environ.update({
+        "RAY_NODE_IP_ADDRESS": "127.0.0.1",  # Loopback - immune to Wi-Fi disconnects
         "RAY_memory_monitor_refresh_ms": "0",  # Disable aggressive killer
         "RAY_memory_usage_threshold": "0.88",
         "RAY_gcs_rpc_server_reconnect_timeout_s": "600",
@@ -1374,8 +1395,8 @@ def main(
 
     # 7. Validation Log
     logger.info("=" * 90)
-    logger.info("🔥 ADAN PBT ULTIMATE CONFIG (SESSION 15)")
-    logger.info(f"   💾 Object Store: {OBJECT_STORE_GB // (1024**3)}GB (RAM) + SSD Spilling")
+    logger.info("🔥 ADAN PBT ULTIMATE CONFIG (SESSION 15 + FIX)")
+    logger.info(f"   💾 Object Store: {OBJECT_STORE_GB // (1024**3):.1f}GB (25% of {total_memory // (1024**3):.1f}GB RAM) + SSD Spilling")
     logger.info(f"   📁 Spill Dir: {_ray_spill_dir} (11GB free on M.2 NVMe)")
     logger.info(f"   🛡️  Memory Threshold: 88% (Kill workers before GCS asphyxiation)")
     logger.info(f"   ⏱️  GCS Reconnect: 600s (10 min patience for network hiccups)")

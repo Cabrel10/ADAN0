@@ -982,7 +982,9 @@ class PortfolioManager:
             "pnl": float(pnl),
             "pnl_gross": float(pnl_gross),
             "fees": float(total_fees),
+            "pnl_net": float(pnl),  # Net PnL = PnL after fees (already calculated as pnl = pnl_gross - fees)
             "pnl_pct": float(pnl_pct),
+            "close_reason": str(reason) if reason else "UNKNOWN",
             "timestamp": close_time.isoformat(),
             "opened_at": (open_time.isoformat() if open_time else None),
             "closed_at": close_time.isoformat(),
