@@ -1022,6 +1022,106 @@ class ADAN_PBT_Worker(_TrainableBase):
             logger.error(f"❌ Checkpoint load failed: {e}", exc_info=True)
             raise
 
+    def _save(self, checkpoint_dir: str) -> str:
+        """Ray Tune protocol: save ONLY serializable state.
+        
+        CRITICAL: Ray Tune WILL call this after each step().
+        We MUST NOT try to pickle the env or model directly.
+        
+        Strategy:
+          1. Store metadata (hyperparams) in JSON
+          2. Delegate model save to save_checkpoint() → creates model.zip
+          3. Ray tracks only the metadata; model lives in our checkpoint dir
+        """
+        try:
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            
+            # Save metadata (non-serializable env/model not included)
+            metadata = {
+                "total_timesteps": self._total_timesteps,
+                "learning_rate": self.learning_rate,
+                "ent_coef": self.ent_coef,
+                "gamma": self.gamma,
+                "worker_idx": self.worker_idx,
+                "profile": self.profile,
+                "sl_pct": self.sl_pct,
+                "tp_pct": self.tp_pct,
+                "timestamp": datetime.now().isoformat(),
+                "checkpoint_dir": self.checkpoint_dir,  # Reference for restore
+            }
+            
+            meta_path = os.path.join(checkpoint_dir, "ray_metadata.json")
+            with open(meta_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+            
+            # Actually save model to our custom checkpoint location
+            # (Ray doesn't know about it, but it persists on disk independently)
+            checkpoint_subdir = os.path.join(
+                self.checkpoint_dir,
+                f"checkpoint_{self._total_timesteps:08d}"
+            )
+            self.save_checkpoint(checkpoint_subdir)
+            
+            logger.info(f"✅ Ray Tune checkpoint saved (metadata+model): {checkpoint_dir}")
+            return checkpoint_dir
+            
+        except Exception as e:
+            logger.error(f"❌ Ray Tune _save() failed: {e}", exc_info=True)
+            raise
+
+    def _restore(self, checkpoint_path: str):
+        """Ray Tune protocol: restore from metadata + reload model from disk.
+        
+        Ray calls this to restore from a checkpoint_dir.
+        We load the metadata and then locate the actual model on disk.
+        """
+        try:
+            import json
+            
+            meta_path = os.path.join(checkpoint_path, "ray_metadata.json")
+            if not os.path.exists(meta_path):
+                logger.warning(f"⚠️  No Ray metadata found at {meta_path}; skipping restore")
+                return
+            
+            with open(meta_path) as f:
+                metadata = json.load(f)
+            
+            # Restore hyperparameters
+            self._total_timesteps = metadata.get("total_timesteps", 0)
+            self.learning_rate = metadata.get("learning_rate", self.learning_rate)
+            self.ent_coef = metadata.get("ent_coef", self.ent_coef)
+            self.gamma = metadata.get("gamma", self.gamma)
+            self.sl_pct = metadata.get("sl_pct", self.sl_pct)
+            self.tp_pct = metadata.get("tp_pct", self.tp_pct)
+            
+            # Find and load the latest model checkpoint
+            model_checkpoint_dir = metadata.get("checkpoint_dir", self.checkpoint_dir)
+            if os.path.exists(model_checkpoint_dir):
+                checkpoint_dirs = sorted([
+                    d for d in os.listdir(model_checkpoint_dir)
+                    if d.startswith("checkpoint_") and os.path.isdir(
+                        os.path.join(model_checkpoint_dir, d)
+                    )
+                ])
+                if checkpoint_dirs:
+                    latest_checkpoint = os.path.join(
+                        model_checkpoint_dir,
+                        checkpoint_dirs[-1]
+                    )
+                    self.load_checkpoint(latest_checkpoint)
+                    logger.info(f"✅ Ray Tune restore: loaded model from {latest_checkpoint}")
+                    logger.info(f"   Restored state: steps={self._total_timesteps}, "
+                               f"lr={self.learning_rate:.2e}, "
+                               f"SL%={self.sl_pct:.2%}, TP%={self.tp_pct:.2%}")
+                else:
+                    logger.warning(f"⚠️  No checkpoint_* dirs found in {model_checkpoint_dir}")
+            else:
+                logger.warning(f"⚠️  Checkpoint dir not found: {model_checkpoint_dir}")
+                
+        except Exception as e:
+            logger.error(f"❌ Ray Tune _restore() failed: {e}", exc_info=True)
+            raise
+
     def cleanup(self):
         """Close environments."""
         try:
