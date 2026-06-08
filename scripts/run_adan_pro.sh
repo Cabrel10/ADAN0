@@ -73,6 +73,11 @@ echo "   ✅ Directories verified"
 echo ""
 echo "📋 STEP 4: Environment Setup..."
 
+# CRITICAL FIX (Session 18): Force Ray to use loopback IP (127.0.0.1)
+# This prevents crashes when Internet is disconnected.
+# Ray uses this for internal cluster communication, not external network.
+export RAY_NODE_IP_ADDRESS="127.0.0.1"
+
 # Ray environment: Disable aggressive memory killer, use SSD spilling
 export RAY_memory_monitor_refresh_ms=0
 export RAY_memory_usage_threshold=0.88
@@ -85,16 +90,45 @@ export RAY_TMPDIR=/mnt/new_data/ray_tmp
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=4
 
+echo "   • RAY_NODE_IP_ADDRESS=$RAY_NODE_IP_ADDRESS (Loopback - immune to network)"
 echo "   • RAY_TMPDIR=$RAY_TMPDIR"
 echo "   • RAY_memory_usage_threshold=$RAY_memory_usage_threshold"
 echo "   • RAY_gcs_rpc_server_reconnect_timeout_s=$RAY_gcs_rpc_server_reconnect_timeout_s"
 echo "   ✅ Environment configured"
 
 # ============================================================================
-# STEP 5: Activate Conda & Launch Training
+# STEP 5: Auto-Detect Checkpoint (Automatic Resume Logic)
 # ============================================================================
 echo ""
-echo "📋 STEP 5: Launching Training..."
+echo "📋 STEP 5: Checkpoint Detection..."
+
+CHECKPOINT_DIR="/mnt/new_data/adan_logs/checkpoints/adan_pbt_training"
+RESUME_FLAG=""
+
+if [ -d "$CHECKPOINT_DIR" ] && [ "$(ls -A "$CHECKPOINT_DIR" 2>/dev/null)" ]; then
+    # Count valid checkpoints
+    CHECKPOINT_COUNT=$(find "$CHECKPOINT_DIR" -name "checkpoint_*" -type d 2>/dev/null | wc -l)
+    if [ "$CHECKPOINT_COUNT" -gt 0 ]; then
+        RESUME_FLAG="--resume"
+        LATEST_CHECKPOINT=$(ls -td "$CHECKPOINT_DIR"/checkpoint_* 2>/dev/null | head -1)
+        LATEST_STEPS=$(basename "$LATEST_CHECKPOINT" | sed 's/checkpoint_//')
+        echo "   ✅ Found $CHECKPOINT_COUNT checkpoint(s)"
+        echo "   📌 Latest: checkpoint_$LATEST_STEPS"
+        echo "   🔄 RESUME MODE enabled"
+    else
+        echo "   🆕 No valid checkpoints found"
+        echo "   🎯 FRESH START mode"
+    fi
+else
+    echo "   🆕 Checkpoint directory empty or missing"
+    echo "   🎯 FRESH START mode"
+fi
+
+# ============================================================================
+# STEP 6: Activate Conda & Launch Training
+# ============================================================================
+echo ""
+echo "📋 STEP 6: Launching Training..."
 echo ""
 
 # Activate conda environment
@@ -112,7 +146,7 @@ echo "   Output: Direct to terminal + saved to log"
 echo ""
 
 # ============================================================================
-# STEP 6: Launch Training (Foreground + Tee to Log)
+# STEP 7: Launch Training (Foreground + Tee to Log)
 # ============================================================================
 
 cd /home/morningstar/Documents/trading/ADAN0-main
@@ -121,13 +155,15 @@ echo "════════════════════════�
 echo "📊 TRAINING SESSION LOGS (Real-time display)"
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
+echo "📌 Resume Mode: $([[ -n "$RESUME_FLAG" ]] && echo "✅ YES (Resuming from checkpoint)" || echo "❌ NO (Fresh start)")"
+echo ""
 
 # Run in foreground - all output goes to terminal AND log file
 python scripts/train_parallel_agents.py \
     --num-cpus 8 \
     --num-samples 2 \
     --no-subproc \
-    --resume \
+    $RESUME_FLAG \
     --checkpoint-dir /mnt/new_data/adan_logs/checkpoints \
     2>&1 | tee /mnt/new_data/adan_logs/training/production_run.log
 
