@@ -103,14 +103,19 @@ def run_backtest(ckpt_path: str, steps: int = 1000, split: str = "val") -> dict:
     except Exception as e:
         return {"error": f"no {split} data: {e}"}
 
-    # Create 2 envs for backtest (Ray PBT training uses n_envs=2)
-    env1 = MultiAssetChunkedEnv(
-        data=data, config=cfg, worker_config=wc, worker_id=worker_idx, live_mode=False
-    )
-    env2 = MultiAssetChunkedEnv(
-        data=data, config=cfg, worker_config=wc, worker_id=worker_idx, live_mode=False
-    )
-    vec_env = DummyVecEnv([lambda: env1, lambda: env2])
+    # Auto-detect n_envs from model checkpoint (sandbox=1, Ray PBT=2)
+    _tmp_model = PPO.load(ckpt_path, device="cpu")
+    n_envs = getattr(_tmp_model, "n_envs", 1)
+    del _tmp_model
+    print(f"[DEBUG] Model n_envs={n_envs}", file=sys.stderr)
+    
+    envs = []
+    for i in range(n_envs):
+        env = MultiAssetChunkedEnv(
+            data=data, config=cfg, worker_config=wc, worker_id=worker_idx, live_mode=False
+        )
+        envs.append(env)
+    vec_env = DummyVecEnv([lambda e=e: e for e in envs])
     
     # FIX: Use VecNormalize from the same checkpoint directory (PBT), not sandbox
     vecnorm_path = None

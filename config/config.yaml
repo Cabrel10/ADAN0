@@ -28,7 +28,7 @@ agent:
     enabled: true
     min_delta: 0.001
     patience: 50000
-  ent_coef: 0.05
+  ent_coef: 0.10
   ent_coef_schedule:
     end: 0.005
     start: 0.05
