@@ -76,12 +76,18 @@ class Position:
 
 @dataclass
 class KillSwitch:
-    """Safety limits — breaching any of these shuts down the bot."""
-    max_drawdown_pct: float = 10.0
+    """Safety limits — breaching any of these shuts down the bot.
+    
+    Non-negotiable rule: equity < 50% of initial capital = immediate stop.
+    This is the absolute floor, regardless of what the model says.
+    """
+    max_drawdown_pct: float = 10.0           # relative to equity high-water mark
+    absolute_capital_floor_pct: float = 50.0  # equity < 50% of INITIAL capital = STOP
     max_trades_per_hour: int = 5
     max_loss_per_trade_pct: float = 3.0
     max_position_pct: float = 20.0  # max % of capital per trade
     min_trade_interval_sec: float = 30.0
+    api_retry_limit: int = 3                  # max consecutive API failures before stop
 
 
 class ExecutionEngine:
@@ -210,12 +216,31 @@ class ExecutionEngine:
     # ── Kill switch checks ─────────────────────────────────────────────
 
     def _check_kill_switch(self) -> bool:
-        """Return True if trading should stop."""
+        """Return True if trading should stop.
+        
+        Three independent kill conditions:
+        1. Absolute capital floor: equity < 50% of initial capital = STOP (non-negotiable)
+        2. Relative drawdown: equity dropped > max_drawdown_pct from high-water mark
+        3. Rate limiting: too many trades per hour or too fast
+        """
         if self._killed:
             return True
 
-        # Max drawdown
         equity = self.get_equity(self.get_current_price_cached())
+
+        # ABSOLUTE FLOOR: equity < 50% of initial capital = IMMEDIATE STOP
+        # This is non-negotiable — even in testnet, prevents runaway bug loops
+        capital_floor = self.initial_capital * (self.kill_switch.absolute_capital_floor_pct / 100.0)
+        if equity < capital_floor:
+            self._killed = True
+            self._kill_reason = (
+                f"ABSOLUTE_CAPITAL_FLOOR: equity ${equity:.2f} < "
+                f"${capital_floor:.2f} ({self.kill_switch.absolute_capital_floor_pct}% of initial ${self.initial_capital:.2f})"
+            )
+            logger.error(f"[KILL SWITCH] {self._kill_reason}")
+            return True
+
+        # Relative drawdown from high-water mark
         if equity < self.equity_high:
             dd_pct = (self.equity_high - equity) / self.equity_high * 100
             if dd_pct > self.kill_switch.max_drawdown_pct:

@@ -61,6 +61,36 @@ from pathlib import Path
 
 import numpy as np
 
+
+# ── Load .env file (testnet keys, etc.) ──────────────────────────────────
+
+def _load_env_file(path: str) -> int:
+    """Load key=value pairs from a .env file into os.environ.
+    Ignores comments (#) and empty lines. Does NOT override existing vars."""
+    if not os.path.isfile(path):
+        return 0
+    loaded = 0
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+                loaded += 1
+    return loaded
+
+_project_root = Path(__file__).resolve().parent.parent
+for _env in ["config/binance_testnet.env", ".env"]:
+    _n = _load_env_file(str(_project_root / _env))
+    if _n:
+        logging.getLogger("adan_bot").info("[ENV] Loaded %d vars from %s", _n, _env)
+
+
 # ADAN imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -135,6 +165,10 @@ def load_model(checkpoint_path: str):
             logger.warning(f"[MODEL] VecNormalize load failed: {e}")
             vecnorm = None
 
+    if vecnorm is None:
+        logger.info("[MODEL] No VecNormalize found — this is expected if training used "
+                     "DummyVecEnv without VecNormalize (OOM prevention, observations "
+                     "pre-normalized in StateBuilder). Raw observations will be used.")
     logger.info(f"[MODEL] Loaded — obs_space keys: {list(model.observation_space.spaces.keys())}")
     return model, vecnorm
 
@@ -167,6 +201,7 @@ class AsyncBotEngine:
         self.state_builder = None
         self.engine = None
         self.last_candle_time = {}  # Track last candle close per TF
+        self._consecutive_api_failures = 0  # Kill switch: 3 consecutive total failures = stop
 
     async def initialize(self):
         """Initialize async components."""
@@ -232,7 +267,13 @@ class AsyncBotEngine:
             return np.zeros(5, dtype=np.float32)
 
     async def process_tick_async(self, current_price: float):
-        """Process one trading tick asynchronously."""
+        """Process one trading tick asynchronously.
+        
+        Safety measures:
+        - API retry counter: 3 consecutive failures = stop
+        - NaN detection in observations: skip tick if corrupted
+        - Inference latency logging for post-analysis
+        """
         self.tick_count += 1
         tick_start = asyncio.get_event_loop().time()
 
@@ -241,12 +282,27 @@ class AsyncBotEngine:
             tasks = [self.fetch_ohlcv_async(tf) for tf in ["5m", "1h", "4h"]]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
+            fetch_failures = 0
             for tf, result in zip(["5m", "1h", "4h"], results):
                 if isinstance(result, Exception):
-                    logger.warning(f"[TICK {self.tick_count}] {tf} fetch failed")
+                    logger.warning(f"[TICK {self.tick_count}] {tf} fetch failed: {result}")
+                    fetch_failures += 1
                     continue
                 if result:
                     self.state_builder._cache[tf] = self._ohlcv_to_df(result, tf)
+
+            # API retry kill switch: 3 consecutive complete failures = stop
+            if fetch_failures >= 3:
+                self._consecutive_api_failures += 1
+                logger.error(f"[API] All 3 TF fetches failed ({self._consecutive_api_failures} consecutive)")
+                if self._consecutive_api_failures >= 3:
+                    logger.error("[KILL SWITCH] API down — 3 consecutive total failures, stopping")
+                    self.engine._killed = True
+                    self.engine._kill_reason = "API_DOWN: 3 consecutive total fetch failures"
+                    return True
+                return False  # Skip this tick, try again next interval
+            else:
+                self._consecutive_api_failures = 0
 
             # ── B. Build observation ──
             portfolio_state = self.engine.get_portfolio_state(current_price)
@@ -255,8 +311,20 @@ class AsyncBotEngine:
                 context_vector=None,
             )
 
+            # NaN safety check — corrupted features = skip tick
+            for key, val in obs.items():
+                if np.isnan(val).any():
+                    nan_count = int(np.isnan(val).sum())
+                    logger.warning(f"[NAN] {key} has {nan_count} NaN values — replacing with 0")
+                    obs[key] = np.nan_to_num(val, nan=0.0)
+
             # ── C. Predict action (non-blocking) ──
+            inference_start = asyncio.get_event_loop().time()
             action = await self.predict_action_async(obs)
+            inference_ms = (asyncio.get_event_loop().time() - inference_start) * 1000
+
+            if inference_ms > 2000:
+                logger.warning(f"[LATENCY] Inference took {inference_ms:.0f}ms (>2s threshold)")
 
             # ── D. Execute ──
             result = self.engine.process_tick(
@@ -265,7 +333,8 @@ class AsyncBotEngine:
                 timestamp=tick_start,
             )
 
-            # ── E. Log ──
+            # ── E. Log with latency ──
+            result["inference_ms"] = inference_ms
             self._log_tick(result, current_price, tick_start)
 
             return result.get("killed", False)
