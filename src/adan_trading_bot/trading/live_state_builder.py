@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from adan_trading_bot.data_processing.state_builder import StateBuilder
+
 try:
     import pandas_ta as ta
 except ImportError:
@@ -69,7 +71,12 @@ TRAIN_COLUMNS = {
 }
 
 # How many OHLCV bars to fetch per timeframe (need enough for longest indicator)
-FETCH_LIMITS = {"5m": 200, "1h": 200, "4h": 200}
+# FIX: EMA-100 requires ~200 bars to stabilize. With OBS_WINDOW=20, we need
+# at least 300 bars BEFORE the observation window starts to match training
+# distribution (where parquet files have thousands of bars of warmup).
+# 500 bars = 300 warmup + 200 buffer → indicators at the observation window
+# are fully converged, matching what training saw.
+FETCH_LIMITS = {"5m": 500, "1h": 500, "4h": 300}
 
 # Observation window (last N bars fed to model)
 OBS_WINDOW = 20
@@ -119,12 +126,64 @@ class LiveStateBuilder:
         # Cache: tf → DataFrame (with indicators computed)
         self._cache: Dict[str, pd.DataFrame] = {}
         self._last_fetch: Dict[str, float] = {}
+        
+        # Internal StateBuilder for normalization
+        self.state_builder = StateBuilder(
+            features_config=TRAIN_COLUMNS,
+            window_sizes={tf: OBS_WINDOW for tf in self.timeframes},
+            include_portfolio_state=True,
+            normalize=True
+        )
+
+        # 🔧 FIX: Fit scalers on validation data to preserve distribution
+        self.fit_on_parquet()
 
         logger.info(
             f"[LiveStateBuilder] {exchange_id} | {symbol} | TFs={self.timeframes}"
         )
 
     # ── Public API ──────────────────────────────────────────────────────
+
+    def fit_on_parquet(self):
+        """Fit internal scalers on historical Parquet files to fix distribution shift."""
+        import os
+        from pathlib import Path
+        
+        # Use symbol style compatible with filesystem (e.g. BTCUSDT)
+        fs_symbol = self.symbol.replace("/", "").replace(":", "").upper()
+        
+        # Search for Parquet files in common locations
+        possible_paths = [
+            Path("data/processed/indicators/val") / fs_symbol,
+            Path(__file__).parent.parent.parent.parent / "data/processed/indicators/val" / fs_symbol,
+        ]
+        
+        val_dir = None
+        for path in possible_paths:
+            if path.exists():
+                val_dir = path
+                break
+                
+        if val_dir and val_dir.exists():
+            try:
+                data_dict = {}
+                for tf in self.timeframes:
+                    path = val_dir / f"{tf}.parquet"
+                    if path.exists():
+                        data_dict[tf] = pd.read_parquet(path)
+                
+                if data_dict:
+                    logger.info(f"🎯 Fitting LiveStateBuilder scalers on {fs_symbol} Parquet data ({val_dir})")
+                    self.state_builder.fit_scalers({fs_symbol: data_dict})
+                    # Lock scalers to prevent refitting on live data
+                    self.state_builder.scalers_loaded_from_training = True
+                    logger.info("✅ Scalers LOCKED to training distribution.")
+                else:
+                    logger.warning(f"⚠️ No Parquet files found in {val_dir} for fitting.")
+            except Exception as e:
+                logger.error(f"❌ Failed to fit on Parquet: {e}")
+        else:
+            logger.warning(f"⚠️ Validation data directory not found for {fs_symbol}. Distribution shift risk!")
 
     def fetch_and_compute(self, force: bool = False) -> Dict[str, pd.DataFrame]:
         """Fetch OHLCV from exchange and compute all 21 indicators per TF.
@@ -178,36 +237,43 @@ class LiveStateBuilder:
         # Fetch latest data
         self.fetch_and_compute()
 
-        obs: Dict[str, np.ndarray] = {}
+        # Build normalized observations using StateBuilder
+        # Note: self.symbol might contain '/' which StateBuilder doesn't like 
+        # as a dict key if it tries to match against config. We'll use BTCUSDT style.
+        symbol_key = self.symbol.replace("/", "").replace(":", "")
+        data_dict = {symbol_key: self._cache}
+        
+        # Fit scalers if not already loaded from training
+        if not getattr(self.state_builder, "scalers_loaded_from_training", False):
+            self.state_builder.fit_scalers(data_dict)
+            
+        # Build observation using StateBuilder's robust logic
+        # With FETCH_LIMITS=500, last_idx ≈ 499. StateBuilder takes
+        # [last_idx - window_size + 1 : last_idx + 1] = last 20 bars.
+        # These bars have 480+ warmup bars before them → indicators converged.
+        last_idx = len(next(iter(self._cache.values()))) - 1
+        
+        # DIAGNOSTIC: Warn if insufficient warmup history
+        min_warmup = 200  # EMA-100 needs ~200 bars to stabilize
+        if last_idx < min_warmup + OBS_WINDOW:
+            logger.warning(
+                f"[WARMUP] Only {last_idx + 1} bars available, need ≥{min_warmup + OBS_WINDOW} "
+                f"for converged indicators. Distribution shift risk!"
+            )
+        obs = self.state_builder.build_observation(
+            current_idx=last_idx,
+            data=data_dict
+        )
 
-        for tf in self.timeframes:
-            df = self._cache.get(tf)
-            if df is None or len(df) < OBS_WINDOW:
-                # Fallback: zeros
-                obs[tf] = np.zeros((OBS_WINDOW, N_FEATURES), dtype=np.float32)
-                logger.warning(f"[LiveStateBuilder] {tf}: insufficient data, using zeros")
-                continue
-
-            cols = TRAIN_COLUMNS[tf]
-            # Take last OBS_WINDOW rows, select only TRAIN_COLUMNS
-            window = df[cols].iloc[-OBS_WINDOW:]
-            arr = window.values.astype(np.float32)
-
-            # Replace NaN/inf with 0
-            arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
-            obs[tf] = arr
-
-        # Portfolio state
+        # Ensure portfolio_state and context_vector are included
         if portfolio_state is not None:
             obs["portfolio_state"] = portfolio_state.astype(np.float32)
-        else:
+        elif "portfolio_state" not in obs:
             obs["portfolio_state"] = np.zeros(20, dtype=np.float32)
 
-        # Context vector (HMM + Oracle probs)
         if context_vector is not None:
             obs["context_vector"] = context_vector.astype(np.float32)
-        else:
-            # Default: uniform priors (6 HMM states + 3 Oracle states + extras)
+        elif "context_vector" not in obs:
             obs["context_vector"] = np.full(17, 1.0 / 17.0, dtype=np.float32)
 
         return obs

@@ -643,9 +643,9 @@ environment:
   # Agent learned to output negative values (SELL) to avoid trading costs.
   # New thresholds give 20% of action space to HOLD (safe zone).
   action_thresholds:
-    1h: 0.15
-    4h: 0.20
-    5m: 0.10
+    1h: 0.05
+    4h: 0.05
+    5m: 0.02
   assets:
   - btcusdt
   base_currency: USDT
@@ -1387,7 +1387,7 @@ reward_shaping:
     capital_protection:
       bonus_weight: 0.3
       enabled: true
-      threshold: 0.9
+      threshold: 0.7
     entry_quality:
       bonus_weight: 0.15
       enabled: true

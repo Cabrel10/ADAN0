@@ -174,16 +174,35 @@ def load_model(checkpoint_path: str):
 
 
 def normalize_obs(obs: dict, vecnorm) -> dict:
-    """Apply VecNormalize obs normalization if available."""
-    if vecnorm is None:
-        return obs
-    obs_batch = {k: np.expand_dims(v, 0) for k, v in obs.items()}
-    try:
-        normed = vecnorm.normalize_obs(obs_batch)
-        return {k: v[0] for k, v in normed.items()}
-    except Exception as e:
-        logger.warning(f"[NORMALIZE] Failed: {e}, using raw obs")
-        return obs
+    """Apply VecNormalize obs normalization if available.
+    
+    CRITICAL FIX: Even without VecNormalize, we MUST clip observations to
+    prevent tanh saturation. The model was trained on values roughly in [-3, 3].
+    Live data (prices ~66000, volumes ~1000s) will saturate the network.
+    
+    The hard clip at [-5, 5] is a safety net. With proper normalization from
+    StateBuilder, values should already be in [-2, 2].
+    """
+    if vecnorm is not None:
+        obs_batch = {k: np.expand_dims(v, 0) for k, v in obs.items()}
+        try:
+            normed = vecnorm.normalize_obs(obs_batch)
+            obs = {k: v[0] for k, v in normed.items()}
+        except Exception as e:
+            logger.warning(f"[NORMALIZE] VecNormalize failed: {e}, using raw obs")
+    
+    # HARD CLIP: Prevent tanh saturation regardless of normalization source
+    # Values outside [-5, 5] will push tanh to ±1.000 (dead zone)
+    OBS_CLIP_RANGE = 5.0
+    clipped_obs = {}
+    for key, val in obs.items():
+        arr = np.array(val, dtype=np.float32)
+        # Replace NaN/Inf before clipping
+        arr = np.nan_to_num(arr, nan=0.0, posinf=OBS_CLIP_RANGE, neginf=-OBS_CLIP_RANGE)
+        clipped = np.clip(arr, -OBS_CLIP_RANGE, OBS_CLIP_RANGE)
+        clipped_obs[key] = clipped
+    
+    return clipped_obs
 
 
 # ── Async WebSocket Event Loop ─────────────────────────────────────────────
@@ -237,14 +256,21 @@ class AsyncBotEngine:
         logger.info("[ASYNC] Initialized successfully")
 
     async def fetch_ohlcv_async(self, tf: str):
-        """Fetch OHLCV data asynchronously (non-blocking)."""
+        """Fetch OHLCV data asynchronously (non-blocking).
+        
+        FIX: Use FETCH_LIMITS from LiveStateBuilder (500 bars for 5m/1h,
+        300 for 4h) to ensure indicators are fully converged before the
+        observation window. Previous limit=200 caused distribution shift.
+        """
+        from adan_trading_bot.trading.live_state_builder import FETCH_LIMITS
         loop = asyncio.get_event_loop()
+        fetch_limit = FETCH_LIMITS.get(tf, 500)
         try:
             # Run fetch in thread pool to avoid blocking
             ohlcv = await loop.run_in_executor(
                 self.executor,
                 lambda: self.state_builder.exchange.fetch_ohlcv(
-                    self.args.symbol, tf, limit=200
+                    self.args.symbol, tf, limit=fetch_limit
                 )
             )
             return ohlcv
@@ -253,15 +279,53 @@ class AsyncBotEngine:
             return None
 
     async def predict_action_async(self, obs: dict):
-        """Run model inference in thread pool (non-blocking)."""
+        """Run model inference in thread pool (non-blocking).
+        
+        DIAGNOSTIC: Logs observation stats and action outputs for every tick.
+        This is essential to verify the model is actually working.
+        """
         loop = asyncio.get_event_loop()
         try:
             obs_normed = normalize_obs(obs, self.vecnorm)
+            
+            # DIAGNOSTIC: Log observation stats (first 5 ticks detailed, then every 10)
+            if self.tick_count <= 5 or self.tick_count % 10 == 0:
+                for key, val in obs_normed.items():
+                    arr = np.array(val)
+                    logger.info(
+                        f"[DEBUG_OBS] tick={self.tick_count} {key:20s} | "
+                        f"min={arr.min():+8.4f} max={arr.max():+8.4f} "
+                        f"mean={arr.mean():+8.4f} std={arr.std():.4f}"
+                    )
+            
             action, _ = await loop.run_in_executor(
                 self.executor,
-                lambda: self.model.predict(obs_normed, deterministic=True)
+                lambda: self.model.predict(obs_normed, deterministic=False)
+                # NOTE: deterministic=False to allow gSDE exploration
+                # If the model is healthy, this should produce varying outputs
             )
-            return np.array(action, dtype=np.float32).flatten()
+            action = np.array(action, dtype=np.float32).flatten()
+            
+            # DIAGNOSTIC: Log raw action
+            logger.info(
+                f"[DEBUG_ACTION] tick={self.tick_count} "
+                f"dir={action[0]:+.6f} size={action[1]:+.6f} "
+                f"tf={action[2]:+.6f} sl={action[3]:+.6f} tp={action[4]:+.6f}"
+            )
+            
+            # SATURATION ALARM: If direction is ±1.000 for too long
+            if abs(action[0]) > 0.999:
+                self._consecutive_saturated = getattr(self, '_consecutive_saturated', 0) + 1
+                if self._consecutive_saturated >= 10:
+                    logger.error(
+                        f"[SATURATION ALARM] Direction={action[0]:+.4f} for "
+                        f"{self._consecutive_saturated} consecutive ticks! "
+                        f"Model may be broken."
+                    )
+            else:
+                self._consecutive_saturated = 0
+            
+            return action
         except Exception as e:
             logger.error(f"[PREDICT] Failed: {e}")
             return np.zeros(5, dtype=np.float32)
@@ -355,7 +419,7 @@ class AsyncBotEngine:
         return self.state_builder._compute_indicators(df, tf)
 
     def _log_tick(self, result, current_price, tick_start):
-        """Log tick information."""
+        """Log tick information with full action details for validation."""
         decoded = result["decoded_action"]
         portfolio = result["portfolio"]
         trade_info = ""
@@ -363,17 +427,33 @@ class AsyncBotEngine:
             t = result["trade"]
             trade_info = (
                 f" → TRADE: {t['side']} ${t['size_usd']:.2f} "
-                f"@${t['price']:.2f}"
+                f"@${t['price']:.2f} (reason={t.get('reason', '?')})"
             )
 
+        pos_info = ""
+        if result.get("position"):
+            p = result["position"]
+            pos_info = f" | POS: {p['side']} ${p['size_usd']:.2f} PnL=${p['unrealized_pnl']:+.4f}"
+
         ts_str = datetime.datetime.fromtimestamp(tick_start).strftime("%H:%M:%S")
+        
+        # Full action decode for validation
+        raw = decoded.get("raw_action", [0]*5)
+        action_str = (
+            f"Dir={decoded['direction']:+.4f} "
+            f"Size={decoded['size_pct']:.2%} "
+            f"SL={decoded['sl_pct']:.3%} "
+            f"TP={decoded['tp_pct']:.3%}"
+        )
+        
         print(
             f"[{ts_str}] Tick {self.tick_count} | "
             f"BTC=${current_price:,.2f} | "
-            f"Dir={decoded['direction']:+.3f} "
-            f"Size={decoded['size_pct']:.1%} | "
+            f"{action_str} | "
             f"Equity=${portfolio['equity']:.2f} "
-            f"DD={portfolio['drawdown_pct']:.1f}%"
+            f"DD={portfolio['drawdown_pct']:.1f}% "
+            f"Trades={portfolio['n_trades']}"
+            f"{pos_info}"
             f"{trade_info}"
         )
 
@@ -502,8 +582,8 @@ def main():
         help="Kill switch: max trades per hour (default: 5)",
     )
     parser.add_argument(
-        "--max-position-pct", type=float, default=20.0,
-        help="Kill switch: max position size %% (default: 20)",
+        "--max-position-pct", type=float, default=5.0,
+        help="Kill switch: max position size %% (default: 5 — SAFETY FIRST)",
     )
     parser.add_argument(
         "--testnet", action="store_true", default=True,
