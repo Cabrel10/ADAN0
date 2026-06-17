@@ -78,14 +78,20 @@ class Position:
 class KillSwitch:
     """Safety limits — breaching any of these shuts down the bot.
     
-    Non-negotiable rule: equity < 50% of initial capital = immediate stop.
-    This is the absolute floor, regardless of what the model says.
+    Non-negotiable rules (HARD-CODED, cannot be overridden by model):
+    - equity < 50% of initial capital = immediate stop
+    - max_position_pct = 5% (was 20% — a position of 22.5% on 20$ capital is suicide)
+    - max_drawdown = 10%
+    
+    These are MECHANICAL GUARDS. The AI model CANNOT override them.
+    A well-trained model should never hit these limits.
+    If it does, the model is broken.
     """
     max_drawdown_pct: float = 10.0           # relative to equity high-water mark
     absolute_capital_floor_pct: float = 50.0  # equity < 50% of INITIAL capital = STOP
     max_trades_per_hour: int = 5
     max_loss_per_trade_pct: float = 3.0
-    max_position_pct: float = 20.0  # max % of capital per trade
+    max_position_pct: float = 5.0   # FIXED: was 20% — now 5% max per trade
     min_trade_interval_sec: float = 30.0
     api_retry_limit: int = 3                  # max consecutive API failures before stop
 
@@ -372,7 +378,14 @@ class ExecutionEngine:
         self, side: str, price: float, size_pct: float,
         sl_pct: float, tp_pct: float, timestamp: float,
     ) -> Optional[TradeRecord]:
-        """Open a new position (paper or live)."""
+        """Open a new position (paper or live).
+        
+        SAFETY LAYERS (in order of priority):
+        1. HARD CAP: max_position_pct from KillSwitch (default 5%)
+        2. MECHANICAL CAP: Never more than 10% of cash regardless
+        3. MIN SIZE: At least 1$ to avoid dust trades
+        4. CASH RESERVE: Always keep 5% cash buffer
+        """
         if self.position is not None:
             return None  # Only one position at a time
 
@@ -380,11 +393,28 @@ class ExecutionEngine:
         fill_price = price * (1.0 + SLIPPAGE_BPS / 10000.0) if side == "BUY" else \
                      price * (1.0 - SLIPPAGE_BPS / 10000.0)
 
+        # ── SAFETY LAYER 1: Hard cap from KillSwitch ──
+        # The model's size_pct is already capped by decode_action(),
+        # but we double-check here as an absolute safety net.
+        ABSOLUTE_MAX_PCT = self.kill_switch.max_position_pct / 100.0  # e.g. 5% → 0.05
+        size_pct = min(size_pct, ABSOLUTE_MAX_PCT)
+        
+        # ── SAFETY LAYER 2: Mechanical cap ──
+        # Even if kill_switch is misconfigured, NEVER exceed 10% of cash
+        MECHANICAL_MAX_PCT = 0.10  # 10% absolute maximum
+        size_pct = min(size_pct, MECHANICAL_MAX_PCT)
+
         # Position size
         size_usd = self.cash * size_pct
         if size_usd < 1.0:  # minimum trade size
             return None
         size_usd = min(size_usd, self.cash * 0.95)  # Never use 100% of cash
+        
+        logger.info(
+            f"[SIZING] size_pct={size_pct:.4f} ({size_pct*100:.2f}%) "
+            f"size_usd=${size_usd:.2f} of cash=${self.cash:.2f} "
+            f"(kill_switch.max_position_pct={self.kill_switch.max_position_pct}%)"
+        )
 
         size_asset = size_usd / fill_price
         fee_usd = size_usd * 0.001  # 0.1% maker/taker fee

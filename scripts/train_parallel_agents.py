@@ -567,23 +567,28 @@ def make_env(
         vec_env = DummyVecEnv(env_fns)
 
     gamma = config.get("agent", {}).get("gamma", 0.99)
-    # Audit anomaly #5 — DO NOT z-score the reward.
-    # The reward pipeline is: pnl_net_pct - costs + symlog + time_decay(-1e-3).
-    # symlog already compresses outliers AND keeps the absolute financial scale
-    # readable. Applying VecNormalize(norm_reward=True) on top performs a
-    # running Z-score that:
-    #   * destroys the calibrated time_decay magnitude (the -1e-3 baseline gets
-    #     blown up or shrunk by the running std, breaking critic conditioning)
-    #   * makes reward comparisons across runs meaningless (each run sees its
-    #     own moving normalization)
-    #   * tends to AMPLIFY noise during early training (low std → /tiny number)
-    # SB3 docs state norm_reward is OPTIONAL and "useful for hard exploration
-    # problems"; symlog already plays that role for us. We keep norm_obs (obs
-    # have huge dynamic range — price, indicators, FiLM context) but drop
-    # norm_reward so the critic learns on the absolute financial signal.
+    # =========================================================================
+    # DOUBLE NORMALIZATION FIX (Session 15+)
+    # =========================================================================
+    # MultiAssetChunkedEnv internally uses StateBuilder(normalize=True) which
+    # applies per-timeframe scalers (MinMax for 5m, Standard for 1h, Robust
+    # for 4h) AND clips to [-10, +10].  Wrapping with VecNormalize(norm_obs=True)
+    # on top applies a SECOND running z-score, compressing already-normalized
+    # values and destroying the signal calibration.
+    #
+    # Evidence: The sandbox path (line ~1620) deliberately DISABLED VecNormalize
+    # with the comment "observations are already normalized in StateBuilder".
+    # The PBT path must be consistent.
+    #
+    # norm_obs=False: StateBuilder already normalizes observations
+    # norm_reward=False: symlog in reward pipeline already compresses outliers
+    # clip_obs kept at 10.0: safety net matching StateBuilder's own clip range
+    #
+    # Audit anomaly #5 (preserved): DO NOT z-score the reward — see original
+    # reasoning about symlog + time_decay calibration above.
     vec_env = VecNormalize(
         vec_env,
-        norm_obs=True,
+        norm_obs=False,
         norm_reward=False,
         clip_obs=10.0,
         clip_reward=10.0,
@@ -1002,8 +1007,13 @@ class ADAN_PBT_Worker(_TrainableBase):
             self.vec_env = VecNormalize.load(vec_path, venv)
             # CRITICAL: Sync gamma from current PBT state (not stale checkpoint value)
             self.vec_env.gamma = self.gamma
+            # DOUBLE NORMALIZATION FIX: Force norm_obs=False even when loading
+            # from old checkpoints that had norm_obs=True. StateBuilder already
+            # normalizes observations internally.
+            self.vec_env.norm_obs = False
+            self.vec_env.norm_reward = False
             self.model.set_env(self.vec_env)
-            logger.info(f"✅ VecNormalize loaded: {vec_path} (gamma synced to {self.gamma:.4f})")
+            logger.info(f"✅ VecNormalize loaded: {vec_path} (gamma synced to {self.gamma:.4f}, norm_obs=False)")
             
             # Load state
             if os.path.exists(state_path):
@@ -1718,6 +1728,17 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         vec_env.save(str(ckpt_dir / "vecnormalize_sandbox.pkl"))
     else:
         logger.info("[SANDBOX] VecNormalize disabled — skipping vecnorm save")
+
+    # FIX: Save StateBuilder scalers for live/backtest consistency
+    # These scalers were fitted on the training data (first chunk) and must be
+    # used by LiveStateBuilder and deterministic_backtest to avoid distribution shift.
+    try:
+        if hasattr(env, 'state_builder') and env.state_builder is not None:
+            scalers_dir = str(PROJECT_ROOT / "prod_scalers")
+            env.state_builder.save_scalers(scalers_dir)
+            logger.info(f"[SANDBOX] ✅ Training scalers saved to {scalers_dir}")
+    except Exception as e:
+        logger.warning(f"[SANDBOX] ⚠️ Could not save training scalers: {e}")
 
     size = os.path.getsize(ckpt_path + ".zip")
     logger.info(f"[SANDBOX] Training done: +{steps} steps (cum={cumulative_steps}) "

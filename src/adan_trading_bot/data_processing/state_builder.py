@@ -5,6 +5,7 @@ This module provides the StateBuilder class which transforms raw market data
 into a structured observation space suitable for reinforcement learning.
 """
 
+import datetime
 import gc
 import hashlib
 import logging
@@ -757,7 +758,7 @@ class StateBuilder:
 
             # Sauvegarder les scalers si nécessaire
             if self.scaler_path:
-                self.save_scalers()
+                self.save_scalers(self.scaler_path)
 
             # Nettoyer la mémoire après le fitting
             if self.memory_config["aggressive_cleanup"]:
@@ -793,7 +794,68 @@ class StateBuilder:
             f"{cache_hit_rate:.1f}% hit rate"
         )
 
+    def save_scalers(self, path: str = None):
+        """Save fitted scalers to disk for consistent inference.
 
+        Saves each timeframe scaler as a separate pickle file inside
+        the target directory.  Also writes a manifest JSON with metadata
+        (timeframes, feature counts, scaler types) so the loader can
+        verify compatibility.
+
+        Args:
+            path: Directory path to save scalers into.  Created if absent.
+                  Defaults to ``self.scaler_path`` or ``prod_scalers/``.
+        """
+        import pickle, json
+        from pathlib import Path
+
+        target = Path(path or self.scaler_path or "prod_scalers")
+        target.mkdir(parents=True, exist_ok=True)
+
+        manifest = {"timeframes": {}, "saved_at": str(datetime.datetime.now())}
+
+        for tf, scaler in self.scalers.items():
+            if scaler is None:
+                continue
+            fpath = target / f"scaler_{tf}.pkl"
+            with open(fpath, "wb") as f:
+                pickle.dump(scaler, f, protocol=pickle.HIGHEST_PROTOCOL)
+            manifest["timeframes"][tf] = {
+                "file": f"scaler_{tf}.pkl",
+                "type": type(scaler).__name__,
+            }
+            logger.info(f"[SCALER-SAVE] {tf} -> {fpath}")
+
+        manifest_path = target / "scalers_manifest.json"
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        logger.info(f"[SCALER-SAVE] Manifest -> {manifest_path}")
+
+    @classmethod
+    def load_scalers_from_dir(cls, scaler_dir: str) -> Dict[str, Any]:
+        """Load scalers saved by ``save_scalers()`` and return a dict.
+
+        Args:
+            scaler_dir: Path to directory containing ``scaler_<tf>.pkl`` files.
+
+        Returns:
+            dict mapping timeframe str to fitted scaler objects.
+        """
+        import pickle
+        from pathlib import Path
+
+        d = Path(scaler_dir)
+        if not d.exists():
+            raise FileNotFoundError(f"Scaler directory not found: {d}")
+
+        scalers = {}
+        for tf in ["5m", "1h", "4h"]:
+            fpath = d / f"scaler_{tf}.pkl"
+            if fpath.exists():
+                with open(fpath, "rb") as f:
+                    scalers[tf] = pickle.load(f)
+                logger.info(f"[SCALER-LOAD] {tf} <- {fpath}")
+        return scalers
 
 
 

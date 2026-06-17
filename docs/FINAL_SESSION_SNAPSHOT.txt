@@ -1,0 +1,123 @@
+=== SNAPSHOT AT Tue Jun 16 20:58:16 UTC 2026 ===
+
+--- PROCESS ---
+/home/ubuntu/webapp/MORNINGSTAR/miniconda3/envs/trading_env/bin/python -u ADAN0/scripts/run_bot.py --mode paper --duration 4320 --checkpoint ADAN0/checkpoints/ppo_adan0_sandbox_500224steps.zip 
+--- UPTIME ---
+    PID     ELAPSED %CPU %MEM   RSS    VSZ
+3155791    11:33:51  0.3  5.4 443064 6242656
+
+--- ALL SESSION JSONs ---
+FILE: logs/trading/trading_paper_binance_1781560627.json
+{
+  "mode": "paper",
+  "exchange": "binance",
+  "symbol": "BTC/USDT",
+  "initial_capital": 20.5,
+  "final_equity": 20.5,
+  "return_pct": 0.0,
+  "n_trades": 0,
+  "trades": [],
+  "killed": false,
+  "kill_reason": "",
+  "max_drawdown_pct": 0.0
+}
+FILE: logs/trading/trading_paper_binance_1781596373.json
+{
+  "mode": "paper",
+  "exchange": "binance",
+  "symbol": "BTC/USDT",
+  "initial_capital": 20.5,
+  "final_equity": 20.4951,
+  "return_pct": -0.024,
+  "n_trades": 1,
+  "trades": [
+    {
+      "timestamp": 513763.231587013,
+      "side": "BUY",
+      "symbol": "BTC/USDT",
+      "price": 66369.011148,
+      "size_usd": 4.1000000000000005,
+      "size_asset": 6.177581870034464e-05,
+      "sl_pct": 0.049999999999999996,
+      "tp_pct": 0.1,
+      "fee_usd": 0.0041,
+      "source": "paper",
+      "order_id": "",
+      "pnl_usd": 0.0,
+      "reason": "OPEN"
+    }
+  ],
+  "killed": false,
+  "kill_reason": "",
+  "max_drawdown_pct": 0.02
+}
+FILE: logs/trading/trading_paper_binance_1781640321.json
+{
+  "mode": "paper",
+  "exchange": "binance",
+  "symbol": "BTC/USDT",
+  "initial_capital": 20.5,
+  "final_equity": 20.5,
+  "return_pct": 0.0,
+  "n_trades": 0,
+  "trades": [],
+  "killed": false,
+  "kill_reason": "",
+  "max_drawdown_pct": 0.0
+}
+
+--- LOG ---
+2026-06-15 21:56:11 - adan_trading_bot - INFO - ADAN Trading Bot v0.1.0 initialized
+2026-06-15 21:56:11 [INFO] [MODEL] Loading checkpoints/ppo_adan0_sandbox_500224steps.zip
+2026-06-15 21:56:17 [INFO] [MODEL] No VecNormalize found — this is expected if training used DummyVecEnv without VecNormalize (OOM prevention, observations pre-normalized in StateBuilder). Raw observations will be used.
+2026-06-15 21:56:17 [INFO] [MODEL] Loaded — obs_space keys: ['1h', '4h', '5m', 'context_vector', 'portfolio_state']
+2026-06-15 21:56:17 [INFO] [ASYNC] Initializing...
+2026-06-15 21:56:17 - adan_trading_bot.trading.live_state_builder - INFO - [LiveStateBuilder] binance | BTC/USDT | TFs=['5m', '1h', '4h']
+2026-06-15 21:56:17 [INFO] [LiveStateBuilder] binance | BTC/USDT | TFs=['5m', '1h', '4h']
+2026-06-15 21:56:17 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] mode=paper exchange=binance symbol=BTC/USDT capital=$20.50 testnet=True
+2026-06-15 21:56:17 [INFO] [ExecutionEngine] mode=paper exchange=binance symbol=BTC/USDT capital=$20.50 testnet=True
+2026-06-15 21:56:17 [INFO] [ASYNC] Initialized successfully
+2026-06-15 23:57:07 [INFO] [BOT] Duration limit reached
+2026-06-15 23:57:07 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/trading/trading_paper_binance_1781560627.json
+2026-06-15 23:57:07 [INFO] [ExecutionEngine] Report saved: logs/trading/trading_paper_binance_1781560627.json
+======================================================================
+  ADAN0 Trading Bot — PAPER MODE (ASYNC)
+  Exchange:   binance
+  Symbol:     BTC/USDT
+  Capital:    $20.50
+  Checkpoint: checkpoints/ppo_adan0_sandbox_500224steps.zip
+  VecNorm:    NO
+======================================================================
+[11:47:13] Tick 1 | BTC=$66,637.99 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[11:52:18] Tick 2 | BTC=$66,638.00 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[11:57:21] Tick 3 | BTC=$66,558.00 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:02:22] Tick 4 | BTC=$66,579.99 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:07:24] Tick 5 | BTC=$66,570.00 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:12:26] Tick 6 | BTC=$66,530.01 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:17:27] Tick 7 | BTC=$66,546.00 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:22:29] Tick 8 | BTC=$66,558.81 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:27:31] Tick 9 | BTC=$66,641.96 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:32:32] Tick 10 | BTC=$66,628.42 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:37:34] Tick 11 | BTC=$66,658.29 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:42:35] Tick 12 | BTC=$66,540.01 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:47:37] Tick 13 | BTC=$66,528.54 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:52:39] Tick 14 | BTC=$66,507.29 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[12:57:40] Tick 15 | BTC=$66,514.00 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[13:02:42] Tick 16 | BTC=$66,522.00 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[13:07:44] Tick 17 | BTC=$66,489.71 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[13:12:45] Tick 18 | BTC=$66,520.10 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[13:17:47] Tick 19 | BTC=$66,540.00 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[13:22:49] Tick 20 | BTC=$66,474.00 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[13:27:51] Tick 21 | BTC=$66,388.20 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[13:32:53] Tick 22 | BTC=$66,467.66 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[13:37:55] Tick 23 | BTC=$66,440.00 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+[13:42:57] Tick 24 | BTC=$66,394.01 | Dir=-1.000 Size=20.0% | Equity=$20.50 DD=0.0%
+
+======================================================================
+  ADAN0 Bot — Session Complete
+======================================================================
+  Ticks:     24
+  Trades:    0
+  Equity:    $20.50 (+0.0000, +0.00%)
+  Report:    logs/trading/trading_paper_binance_1781560627.json
+======================================================================
