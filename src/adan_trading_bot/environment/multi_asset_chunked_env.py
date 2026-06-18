@@ -5984,10 +5984,14 @@ class MultiAssetChunkedEnv(gym.Env):
             return "Enterprise"
 
         # Get current capital from portfolio manager
+        # FIX: total_equity does NOT exist on PortfolioManager — was silently returning 20.5.
+        # Use get_portfolio_value() which returns cash + unrealized positions.
         try:
-            current_capital = float(self.portfolio_manager.total_equity or 20.5)
+            current_capital = float(self.portfolio_manager.get_portfolio_value())
+            if not (current_capital > 0):
+                current_capital = float(self.portfolio_manager.initial_equity or 20.5)
         except Exception:
-            current_capital = 20.5
+            current_capital = float(getattr(self.portfolio_manager, "initial_equity", 20.5))
 
         current_tier = _get_tier_from_capital(current_capital)
         previous_tier = getattr(self, '_current_tier', current_tier)
