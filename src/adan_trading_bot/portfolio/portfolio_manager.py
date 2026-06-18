@@ -933,7 +933,13 @@ class PortfolioManager:
         max_allowed_proceeds = self.portfolio_value * self.MAX_PORTFOLIO_GROWTH_PER_STEP
         if net_proceeds > max_allowed_proceeds:
             logger.warning(f"Produit de la vente excessif détecté: {net_proceeds} > {max_allowed_proceeds}. Plafonnement.")
+            # FIX: Recalculate PnL to match what cash actually receives.
+            # cost_basis = what was debited from cash at open (entry_price * size + entry_fee)
+            cost_basis = (entry_price * size) + entry_fee
+            pnl = max_allowed_proceeds - cost_basis
+            pnl_gross = pnl + total_fees  # keep gross/net relationship consistent
             net_proceeds = max_allowed_proceeds
+            logger.warning(f"PnL ajusté après plafonnement: ${pnl:.2f} (was ${pnl_gross - total_fees + pnl:.2f})")
         # --- FIN DU PATCH ---
 
         # Disjoncteur PnL: rejeter les PnL aberrants > 10x capital initial
@@ -945,7 +951,7 @@ class PortfolioManager:
             max_pnl = initial_cap * 10.0
             if abs(pnl) > max_pnl:
                 logger.error(
-                    f"🚨 PNL ABERRANT: {pnl:.2f}$ sur un capital initial de {initial_cap:.2f}$. Ce trade est ANNULÉ pour éviter l'explosion."
+                    f"PNL ABERRANT: {pnl:.2f}$ sur un capital initial de {initial_cap:.2f}$. Ce trade est ANNULE pour eviter l'explosion."
                 )
                 return None
 
