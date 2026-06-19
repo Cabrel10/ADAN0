@@ -7076,9 +7076,14 @@ class MultiAssetChunkedEnv(gym.Env):
             if max_steps is None:
                 max_steps = self.config.get("trading_rules", {}).get("max_position_steps", 100)
             if is_open and (self.current_step - position.open_step > max_steps):
+                _maxdur_hold = self.current_step - position.open_step
+                _maxdur_exec_src = "open[t+1]" if (_exec_p is not None and _exec_p > 0) else "close[t]_FALLBACK"
                 self.logger.info(
-                    f"[MAX_DURATION] {asset} | held {self.current_step - position.open_step} steps "
-                    f"> limit {max_steps} ({_wname_dur}) | FORCE CLOSE at ${price:.2f}"
+                    f"[TRADE_AUDIT_CLOSE] {asset} | step={self.current_step} "
+                    f"| exec_src={_maxdur_exec_src} "
+                    f"| entry_price={position.entry_price:.2f} | close_price={_dur_price:.2f} "
+                    f"| hold_steps={_maxdur_hold} > limit={max_steps} "
+                    f"| reason=MAX_DURATION | profile={_wname_dur}"
                 )
                 _dur_price = price * (1.0 - 2.0 / 10000.0) if price else price
                 receipt = self.portfolio_manager.close_position(
@@ -7175,9 +7180,20 @@ class MultiAssetChunkedEnv(gym.Env):
                                 # Déclenche WAIT post-SELL pour cet asset
                                 self._last_sell_step_by_asset[asset] = self.current_step
                                 _wait_map = {"5m": 6, "1h": 10, "4h": 20}
+                                # ── TRADE AUDIT: full chain trace on EVERY close ──
+                                _close_exec_src = "open[t+1]" if (_exec_p is not None and _exec_p > 0) else "close[t]_FALLBACK"
+                                _hold_dur = self.current_step - self._buy_step_by_asset.get(asset, self.current_step)
                                 self.logger.info(
-                                    f"[AGENT_CLOSE] {asset} | TF={_tf} | SELL step={self.current_step} "
-                                    f"pnl={val:.4f} | WAIT until step {self.current_step + _wait_map.get(_tf, 6)}"
+                                    f"[TRADE_AUDIT_CLOSE] {asset} | step={self.current_step} "
+                                    f"| exec_src={_close_exec_src} "
+                                    f"| entry_price={entry_price:.2f} | sell_price={sell_price:.2f} "
+                                    f"| pnl_gross={receipt.get('pnl_gross', 'N/A')} "
+                                    f"| fees={fees:.4f} | pnl_net={val:.4f} "
+                                    f"| hold_steps={_hold_dur} "
+                                    f"| reason=AGENT_CLOSE | TF={_tf} "
+                                    f"| unrealized_pnl_pct={unrealized_pnl_pct:.4%} "
+                                    f"| capital_after=${self.portfolio_manager.get_equity():.2f} "
+                                    f"| WAIT until step {self.current_step + _wait_map.get(_tf, 6)}"
                                 )
                             else:
                                 self.invalid_trade_attempts += 1
@@ -7371,9 +7387,21 @@ class MultiAssetChunkedEnv(gym.Env):
                         self.last_trade_steps_by_tf[tf] = self.current_step
                     except Exception:
                         pass
+                    # ── TRADE AUDIT: full chain trace on EVERY open ──
+                    _exec_src = "open[t+1]" if (_exec_p is not None and _exec_p > 0) else "close[t]_FALLBACK"
+                    _cash_after_open = self.portfolio_manager.get_cash()
                     self.logger.info(
-                        f"[TRADE_OPEN] {asset} size={size_in_asset:.6f} notional={notional_usd:.2f} "
-                        f"SL={sl_pct:.2%} TP={tp_pct:.2%} tier={tier.get('name', '?')}"
+                        f"[TRADE_AUDIT_OPEN] {asset} | step={self.current_step} "
+                        f"| chunk={getattr(self, 'current_chunk_idx', '?')}/{getattr(self, 'total_chunks', '?')} "
+                        f"| step_in_chunk={getattr(self, 'step_in_chunk', '?')} "
+                        f"| exec_src={_exec_src} "
+                        f"| raw_exec_p={_exec_p} | buy_price(+slip)={buy_price:.2f} "
+                        f"| size={size_in_asset:.6f} | notional=${notional_usd:.2f} "
+                        f"| capital_before=${capital:.2f} | cash_after=${_cash_after_open:.2f} "
+                        f"| exposure={final_pct:.2%} "
+                        f"| SL={sl_pct:.2%} TP={tp_pct:.2%} "
+                        f"| tier={tier.get('name', '?')} | TF={self.current_timeframe_for_trade} "
+                        f"| profile={_prof}"
                     )
                 else:
                     self.invalid_trade_attempts += 1
