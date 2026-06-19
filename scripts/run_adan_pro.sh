@@ -159,9 +159,13 @@ echo "📌 Resume Mode: $([[ -n "$RESUME_FLAG" ]] && echo "✅ YES (Resuming fro
 echo ""
 
 # Run in foreground - all output goes to terminal AND log file
+# CRITICAL: 4 samples = 4 workers (Scalper/Intraday/Swing/Position)
+# --profiles assigns each trial to its specialized profile
+# VPS: 8GB RAM + 8GB swap + 4 CPU EPYC → 4 workers, 1 CPU each
 python scripts/train_parallel_agents.py \
-    --num-cpus 8 \
-    --num-samples 2 \
+    --num-cpus 4 \
+    --num-samples 4 \
+    --profiles scalper intraday swing position \
     --no-subproc \
     $RESUME_FLAG \
     --checkpoint-dir /mnt/new_data/adan_logs/checkpoints \

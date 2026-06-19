@@ -299,6 +299,7 @@ class PortfolioManager:
         self.peak_equity = self.initial_equity
         self.portfolio_value = self.initial_equity
         self.current_value = self.initial_equity # AJOUT POUR LA SÉCURITÉ
+        self.current_step = 0  # Synced by env before get_state_vector()
 
         # C8: Realized-only equity tracking (excludes unrealized P&L)
         self.total_realized_pnl = 0.0
@@ -1201,63 +1202,104 @@ class PortfolioManager:
         return realized_pnl, closed_receipts
 
     def get_state_vector(self) -> np.ndarray:
-        """Construit et retourne l'état du portefeuille sous forme de vecteur numpy."""
+        """Construit et retourne l'état du portefeuille sous forme de vecteur numpy.
+        
+        TOUTES les valeurs sont des RATIOS stationnaires (proches de [-1, 1]).
+        Aucune valeur absolue en $ ou en unités BTC — le modèle doit voir
+        des informations exploitables, pas des nombres bruts passés dans un
+        scaler calibré sur des prix à 5 chiffres.
+        
+        Layout (20 dims):
+          [0]  cash_ratio           = cash / initial_capital              (~1.0 au départ)
+          [1]  value_ratio          = total_value / initial_capital       (~1.0 au départ)
+          [2]  trading_pnl_pct      = PnL trading / capital ajusté       (ratio)
+          [3]  exposure_ratio       = (value - cash) / value             (0=tout en cash, 1=tout investi)
+          [4]  drawdown             = drawdown en ratio                   ([0, 1])
+          [5]  sharpe_ratio         = ratio de Sharpe clipé               ([-3, 3])
+          [6]  open_positions_norm  = nb positions / max_positions        ([0, 1])
+          [7]  win_rate             = trades gagnants / total trades      ([0, 1])
+          [8]  profit_factor_norm   = profit_factor clipé / 5.0           ([0, 1])
+          [9]  reserved             = 0.0 (slot libre)
+        
+        Position 1 (features [10-14]):
+          [10] unrealized_pnl_pct   = (current - entry) / entry * sign   (ratio, ~[-0.1, 0.1])
+          [11] position_size_ratio  = notional / total_value             ([0, 1])
+          [12] steps_in_position    = (current_step - open_step) / 1000  (normalisé)
+          [13] sl_distance          = stop_loss_pct                      ([0, 0.1])
+          [14] tp_distance          = take_profit_pct                    ([0, 0.2])
+        
+        Position 2 (features [15-19]):
+          Même layout — zéros si pas de 2ème position ouverte.
+        """
         try:
             metrics = self.get_metrics()
-            total_value = metrics.get("total_value", 0.0)
+            total_value = max(metrics.get("total_value", 0.0), 1e-8)
             cash = metrics.get("cash", 0.0)
+            init_cap = max(self.initial_capital, 1e-8)
 
-            # Obtenir les informations sur les flux de fonds
+            # PnL de trading pur
             fund_analysis = self.get_trading_pnl_vs_external_flows()
             trading_pnl_pct = (
                 fund_analysis["trading_pnl"] / fund_analysis["adjusted_initial_capital"]
                 if fund_analysis["adjusted_initial_capital"] > 0
                 else 0.0
             )
-            external_flow_pct = (
-                fund_analysis["net_external_flow"] / self.initial_capital
-                if self.initial_capital > 0
-                else 0.0
-            )
 
-            # 10 features de base (incluant les flux de fonds)
+            # Métriques de performance
+            sharpe = np.clip(metrics.get("sharpe_ratio", 0.0), -3.0, 3.0)
+            drawdown = metrics.get("drawdown", 0.0) / 100.0  # % → ratio
+            open_count = metrics.get("open_positions_count", 0)
+            max_positions = getattr(self, 'max_concurrent_positions', 5)
+            
+            # Win rate et profit factor depuis les métriques
+            win_rate = metrics.get("win_rate", 0.0) / 100.0 if metrics.get("win_rate", 0.0) > 1 else metrics.get("win_rate", 0.0)
+            profit_factor = np.clip(metrics.get("profit_factor", 0.0), 0.0, 5.0) / 5.0
+
+            # 10 features de base — TOUT en ratios stationnaires
             state = [
-                cash,
-                total_value,
-                trading_pnl_pct,  # PnL de trading pur (excluant flux externes)
-                external_flow_pct,  # Impact des flux externes (positif = dépôts nets)
-                fund_analysis["total_deposits"] / self.initial_capital
-                if self.initial_capital > 0
-                else 0.0,
-                fund_analysis["total_withdrawals"] / self.initial_capital
-                if self.initial_capital > 0
-                else 0.0,
-                metrics.get("sharpe_ratio", 0.0),
-                metrics.get("drawdown", 0.0) / 100.0,  # Convertir de % à ratio
-                metrics.get("open_positions_count", 0),
-                (total_value - cash) / total_value
-                if total_value > 0
-                else 0.0,  # Allocation
+                np.clip(cash / init_cap, 0.0, 10.0),                           # [0] cash_ratio
+                np.clip(total_value / init_cap, 0.0, 10.0),                     # [1] value_ratio
+                np.clip(trading_pnl_pct, -5.0, 5.0),                            # [2] trading_pnl_pct
+                (total_value - cash) / total_value if total_value > 0 else 0.0,  # [3] exposure_ratio
+                np.clip(drawdown, 0.0, 1.0),                                     # [4] drawdown
+                sharpe / 3.0,                                                     # [5] sharpe_norm [-1, 1]
+                min(open_count / max(max_positions, 1), 1.0),                    # [6] positions_norm
+                np.clip(win_rate, 0.0, 1.0),                                     # [7] win_rate
+                np.clip(profit_factor, 0.0, 1.0),                                # [8] profit_factor_norm
+                0.0,                                                              # [9] reserved
             ]
 
-            # 10 features pour les positions (5 positions * 2 features)
-            sorted_positions = sorted(
-                metrics.get("positions", {}).items(),
-                key=lambda item: abs(
-                    item[1].get("size", 0.0) * item[1].get("current_price", 0.0)
-                ),
+            # ---- Positions (2 slots × 5 features = 10 dims) ----
+            open_positions = [
+                (asset, pos) for asset, pos in self.positions.items()
+                if pos.is_open
+            ]
+            # Trier par valeur notionnelle décroissante
+            open_positions.sort(
+                key=lambda x: abs(x[1].size * x[1].current_price),
                 reverse=True,
-            )[:5]
+            )
 
-            for asset, pos_obj in sorted_positions:
-                state.append(pos_obj.get("size", 0.0))
-                state.append(hash(asset) % 1000 / 1000.0)  # Asset encodé et normalisé
+            for slot_idx in range(2):
+                if slot_idx < len(open_positions):
+                    asset, pos = open_positions[slot_idx]
+                    entry_p = max(pos.entry_price, 1e-8)
+                    curr_p = max(pos.current_price, 1e-8)
+                    notional = abs(pos.size * curr_p)
+                    direction = 1.0 if pos.size > 0 else -1.0
+                    steps_held = (self.current_step - pos.open_step) if hasattr(self, 'current_step') else 0
+                    
+                    state.extend([
+                        np.clip((curr_p - entry_p) / entry_p * direction, -0.5, 0.5),  # unrealized_pnl_pct
+                        np.clip(notional / total_value, 0.0, 1.0),                      # position_size_ratio
+                        np.clip(max(steps_held, 0) / 1000.0, 0.0, 1.0),                # steps_norm
+                        np.clip(pos.stop_loss_pct, 0.0, 0.2),                           # sl_distance
+                        np.clip(pos.take_profit_pct, 0.0, 0.5),                         # tp_distance
+                    ])
+                else:
+                    state.extend([0.0, 0.0, 0.0, 0.0, 0.0])
 
-            # Remplir les slots de positions restants avec des zéros
-            num_pos_features = len(sorted_positions) * 2
-            padding_needed = 10 - num_pos_features
-            state.extend([0.0] * padding_needed)
-
+            assert len(state) == 20, f"portfolio_state must be 20 dims, got {len(state)}"
             return np.array(state, dtype=np.float32)
 
         except Exception as e:
@@ -1265,7 +1307,7 @@ class PortfolioManager:
                 f"Erreur lors de la construction du vecteur d'état du portefeuille: {e}",
                 exc_info=True,
             )
-            return np.zeros(20, dtype=np.float32)  # Ajusté pour les nouvelles features
+            return np.zeros(20, dtype=np.float32)
 
     def _update_equity(self, current_prices: Optional[Dict[str, float]] = None):
         """

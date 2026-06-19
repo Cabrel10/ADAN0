@@ -28,7 +28,7 @@ agent:
     enabled: true
     min_delta: 0.001
     patience: 50000
-  ent_coef: 0.10
+  ent_coef: 0.05
   ent_coef_schedule:
     end: 0.005
     start: 0.05
@@ -643,9 +643,9 @@ environment:
   # Agent learned to output negative values (SELL) to avoid trading costs.
   # New thresholds give 20% of action space to HOLD (safe zone).
   action_thresholds:
-    1h: 0.05
-    4h: 0.05
-    5m: 0.02
+    1h: 0.15
+    4h: 0.20
+    5m: 0.10
   assets:
   - btcusdt
   base_currency: USDT

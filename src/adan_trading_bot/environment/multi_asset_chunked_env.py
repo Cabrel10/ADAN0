@@ -606,7 +606,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.portfolio.sl_pct = risk_params.get("stop_loss_pct", 0.02)
                     self.portfolio.tp_pct = risk_params.get("take_profit_pct", 0.04)
                     self.portfolio.pos_size_pct = min(
-                        risk_params.get("position_size_pct", 0.825), 0.9
+                        risk_params.get("position_size_pct", 0.10), 0.9
                     )  # Clip à 90%
                     logging.warning("update_risk_parameters manquant - Ajouté fallback")
                     # Fallback direct pour éviter le crash
@@ -5407,6 +5407,8 @@ class MultiAssetChunkedEnv(gym.Env):
                 hmm_probs=hmm_probs,
                 oracle_probs=oracle_probs,
             )
+            # Sync le step courant sur le portfolio pour steps_in_position
+            self.portfolio.current_step = self.current_step
             # Récupérer le vecteur d'état du portefeuille
             if hasattr(self.portfolio, "get_state_vector"):
                 portfolio_state = self.portfolio.get_state_vector()
@@ -6108,7 +6110,7 @@ class MultiAssetChunkedEnv(gym.Env):
         # PnL signal: 5× stronger (was 0.1, now 0.5) so wins matter
         # Survival bonus: +0.001/step (counterbalance, prevents suicide)
         pnl_base_reward = pnl_pct * 0.5  # Was 0.1, now 5× stronger
-        survival_bonus = 0.001  # Small positive to prevent "impossible game" feeling
+        survival_bonus = 0.0  # REMOVED: was masking PnL signal, making BUY=HOLD
         
         raw_reward = (
             pnl_base_reward  # PnL signal: 5x stronger

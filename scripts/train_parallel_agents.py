@@ -1297,13 +1297,16 @@ def run_pbt(
             reuse_actors=True,  # EXPERT FIX: Must be True for PBT to prevent GCS crashes
         )
         # FIX: Increase timeouts to prevent GCS disconnects during long training
-        tune_config_kwargs["max_concurrent_trials"] = min(num_samples, 2)  # Reduce workers for stability
+        # Limit concurrent trials for stability (user wants 2 simultaneous out of 4 total)
+        _max_concurrent = min(num_samples, 2)
+        tune_config_kwargs["max_concurrent_trials"] = _max_concurrent
+
+        # Resource allocation: distribute CPUs across concurrent trials
+        _avail_cpus = os.cpu_count() or 4
         if _is_colab:
             import torch as _torch
             if _torch.cuda.is_available():
-                # Distribute GPU evenly across trials (4 trials → 0.25 each)
-                # CPU: use all available cores divided by trials
-                _avail_cpus = os.cpu_count() or 4
+                # Colab: distribute GPU evenly across ALL trials (4 trials → 0.25 each)
                 _cpu_per_trial = max(0.5, (_avail_cpus - 1) / max(num_samples, 1))
                 _gpu_per_trial = 1.0 / max(num_samples, 1)
                 tune_config_kwargs["trial_resources"] = {
@@ -1311,6 +1314,20 @@ def run_pbt(
                     "gpu": _gpu_per_trial,
                 }
                 logger.info(f"[COLAB] Trial resources: cpu={_cpu_per_trial:.1f}, gpu={_gpu_per_trial:.2f}")
+        else:
+            # VPS/local: no GPU, distribute CPUs across concurrent trials
+            # Reserve 1 CPU for Ray overhead, split rest among concurrent trials
+            # Example: 8 cores, 2 concurrent → (8-1)/2 = 3.5 CPUs per trial
+            _cpu_per_trial = max(1.0, (_avail_cpus - 1) / max(_max_concurrent, 1))
+            tune_config_kwargs["trial_resources"] = {
+                "cpu": _cpu_per_trial,
+                "gpu": 0,
+            }
+            logger.info(
+                f"[VPS] Trial resources: cpu={_cpu_per_trial:.1f}/trial, "
+                f"concurrent={_max_concurrent}/{num_samples}, "
+                f"total_cpus={_avail_cpus}"
+            )
 
         # Configure checkpointing: save every iteration monitored by our robust interval logic
         # (see step() for 2500-step saves). Keep more checkpoints for recovery options.
