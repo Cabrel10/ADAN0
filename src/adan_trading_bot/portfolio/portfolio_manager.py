@@ -1113,6 +1113,17 @@ class PortfolioManager:
                         val = receipt.get("pnl")
                         if isinstance(val, (int, float)):
                             realized_pnl += float(val)
+                        # ── TRADE AUDIT: SL close chain trace ──
+                        _hold_steps = current_step - getattr(position, 'open_step', current_step)
+                        logger.warning(
+                            f"[TRADE_AUDIT_CLOSE] {asset} | step={current_step} "
+                            f"| reason=SL_HIT "
+                            f"| entry_price={position.entry_price:.2f} "
+                            f"| sl_price={sl_price:.2f} | low_price={low_price:.2f} "
+                            f"| pnl_net={val:.4f} | fees={receipt.get('fees', 0):.4f} "
+                            f"| hold_steps={_hold_steps} "
+                            f"| capital_after={self.get_equity():.2f}"
+                        )
                     continue
 
             # Execute TP if triggered (and SL wasn't)
@@ -1133,6 +1144,17 @@ class PortfolioManager:
                     val = receipt.get("pnl")
                     if isinstance(val, (int, float)):
                         realized_pnl += float(val)
+                    # ── TRADE AUDIT: TP close chain trace ──
+                    _hold_steps_tp = current_step - getattr(position, 'open_step', current_step)
+                    logger.warning(
+                        f"[TRADE_AUDIT_CLOSE] {asset} | step={current_step} "
+                        f"| reason=TP_HIT "
+                        f"| entry_price={position.entry_price:.2f} "
+                        f"| tp_price={tp_price:.2f} | high_price={high_price:.2f} "
+                        f"| pnl_net={val:.4f} | fees={receipt.get('fees', 0):.4f} "
+                        f"| hold_steps={_hold_steps_tp} "
+                        f"| capital_after={self.get_equity():.2f}"
+                    )
                 continue
 
             # Vérification de la durée maximale de la position

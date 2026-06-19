@@ -556,6 +556,27 @@ class StateBuilder:
                     logger.info("=" * 60)
                     logger.info("🎯 PRODUCTION SCALERS LOADED - Distribution Preserved")
                     logger.info("=" * 60)
+                    # ── SCALER AUDIT: report stats of loaded production scalers ──
+                    for _aud_tf, _aud_scaler in self.scalers.items():
+                        try:
+                            import numpy as _np
+                            _inner = getattr(_aud_scaler, 'scaler', _aud_scaler)
+                            _stype = type(_inner).__name__
+                            if hasattr(_inner, 'data_min_') and hasattr(_inner, 'data_max_'):
+                                logger.warning(
+                                    f"[SCALER_AUDIT_PROD] {_aud_tf} | {_stype} "
+                                    f"| GLOBAL_MIN={_np.nanmin(_inner.data_min_):.2f} "
+                                    f"| GLOBAL_MAX={_np.nanmax(_inner.data_max_):.2f} "
+                                    f"| n_features={len(_inner.data_min_)}"
+                                )
+                            elif hasattr(_inner, 'mean_'):
+                                logger.warning(
+                                    f"[SCALER_AUDIT_PROD] {_aud_tf} | {_stype} "
+                                    f"| mean_range=[{_np.nanmin(_inner.mean_):.4f},{_np.nanmax(_inner.mean_):.4f}] "
+                                    f"| std_range=[{_np.nanmin(_inner.scale_):.4f},{_np.nanmax(_inner.scale_):.4f}]"
+                                )
+                        except Exception:
+                            pass
                     self.scalers_loaded_from_training = True
                     return
             except Exception as e:
@@ -748,13 +769,55 @@ class StateBuilder:
                     logger.debug(f"Using cached scaler for {tf}")
                 else:
                     self._scaler_cache_misses += 1
-                    self.scalers[tf].fit(padded_data)
+                    # ── ANTI-LOOKAHEAD FIX: fit scaler on FIRST 70% only ──
+                    # The data is chronologically ordered (oldest first).
+                    # Fitting on 100% = scaler knows global min/max of FUTURE data.
+                    # Fix: fit on first 70%, freeze, apply to remaining 30%.
+                    # In production, the scaler from training is loaded frozen (prod_scalers/).
+                    _fit_ratio = 0.70  # Use first 70% for scaler fitting
+                    _n_fit = max(2, int(len(padded_data) * _fit_ratio))
+                    _fit_data = padded_data[:_n_fit]
+                    self.scalers[tf].fit(_fit_data)
+                    logger.warning(
+                        f"[SCALER_FIX] {tf} | fit on FIRST {_n_fit}/{len(padded_data)} samples "
+                        f"({_fit_ratio:.0%}) to prevent lookahead bias"
+                    )
                     if len(self._scaler_cache) >= self._max_scaler_cache_size:
                         del self._scaler_cache[next(iter(self._scaler_cache))]
                     self._scaler_cache[cache_key] = self.scalers[tf]
                     logger.info(
                         f"Fitted new scaler for {tf} on {len(padded_data)} samples"
                     )
+                    # ── SCALER AUDIT: log min/max/mean/std to detect lookahead bias ──
+                    try:
+                        import numpy as _np
+                        _scaler_inner = getattr(self.scalers[tf], 'scaler', self.scalers[tf])
+                        if hasattr(_scaler_inner, 'data_min_') and hasattr(_scaler_inner, 'data_max_'):
+                            _smn = _np.nanmin(_scaler_inner.data_min_)
+                            _smx = _np.nanmax(_scaler_inner.data_max_)
+                            logger.warning(
+                                f"[SCALER_AUDIT] {tf} | type={type(_scaler_inner).__name__} "
+                                f"| n_features={padded_data.shape[1]} | n_samples={len(padded_data)} "
+                                f"| GLOBAL_MIN={_smn:.4f} | GLOBAL_MAX={_smx:.4f} "
+                                f"| ⚠️ LOOKAHEAD RISK: scaler sees future min/max"
+                            )
+                        elif hasattr(_scaler_inner, 'mean_') and hasattr(_scaler_inner, 'scale_'):
+                            _mean_range = f"[{_np.nanmin(_scaler_inner.mean_):.4f}, {_np.nanmax(_scaler_inner.mean_):.4f}]"
+                            _std_range = f"[{_np.nanmin(_scaler_inner.scale_):.4f}, {_np.nanmax(_scaler_inner.scale_):.4f}]"
+                            logger.warning(
+                                f"[SCALER_AUDIT] {tf} | type={type(_scaler_inner).__name__} "
+                                f"| n_features={padded_data.shape[1]} | n_samples={len(padded_data)} "
+                                f"| mean_range={_mean_range} | std_range={_std_range} "
+                                f"| ⚠️ LOOKAHEAD RISK: scaler sees full distribution"
+                            )
+                        elif hasattr(_scaler_inner, 'center_') and hasattr(_scaler_inner, 'scale_'):
+                            logger.warning(
+                                f"[SCALER_AUDIT] {tf} | type=RobustScaler "
+                                f"| n_features={padded_data.shape[1]} | n_samples={len(padded_data)} "
+                                f"| ⚠️ LOOKAHEAD RISK: scaler sees full IQR distribution"
+                            )
+                    except Exception as _e:
+                        logger.debug(f"[SCALER_AUDIT] Could not audit scaler {tf}: {_e}")
 
             # Sauvegarder les scalers si nécessaire
             if self.scaler_path:
