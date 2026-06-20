@@ -7078,6 +7078,7 @@ class MultiAssetChunkedEnv(gym.Env):
             if is_open and (self.current_step - position.open_step > max_steps):
                 _maxdur_hold = self.current_step - position.open_step
                 _maxdur_exec_src = "open[t+1]" if (_exec_p is not None and _exec_p > 0) else "close[t]_FALLBACK"
+                _dur_price = price * (1.0 - 2.0 / 10000.0) if price else price
                 self.logger.info(
                     f"[TRADE_AUDIT_CLOSE] {asset} | step={self.current_step} "
                     f"| exec_src={_maxdur_exec_src} "
@@ -7085,7 +7086,6 @@ class MultiAssetChunkedEnv(gym.Env):
                     f"| hold_steps={_maxdur_hold} > limit={max_steps} "
                     f"| reason=MAX_DURATION | profile={_wname_dur}"
                 )
-                _dur_price = price * (1.0 - 2.0 / 10000.0) if price else price
                 receipt = self.portfolio_manager.close_position(
                     asset=asset.upper(), price=_dur_price, timestamp=current_timestamp,
                     current_prices=current_prices, reason="MAX_DURATION",
