@@ -1,0 +1,23 @@
+{
+  "agent": "model",
+  "checkpoint": "ppo_adan0_500k_FIXED.zip",
+  "split": "test",
+  "steps_tested": 5000,
+  "episodes": 0,
+  "fixed_capital": 1000.0,
+  "fixed_notional": 100.0,
+  "n_trades": 103,
+  "win_rate": 0.8932,
+  "avg_pnl_pct_per_trade": 2.0761,
+  "median_pnl_pct": 0.8213,
+  "best_trade_pct": 12.0,
+  "worst_trade_pct": -6.0,
+  "gross_win_pct": 239.0386,
+  "gross_loss_pct": 25.1976,
+  "profit_factor": 9.4866,
+  "total_return_pct": 21.3841,
+  "sharpe_like": 0.5659,
+  "expectancy_pct": 2.0761,
+  "max_consecutive_losses": 7,
+  "verdict": "POSITIVE_EDGE (WR=89.3%, E=+2.076%/trade)"
+}
