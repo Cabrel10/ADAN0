@@ -1,0 +1,23 @@
+{
+  "agent": "random",
+  "checkpoint": "RANDOM",
+  "split": "val",
+  "steps_tested": 5000,
+  "episodes": 3,
+  "fixed_capital": 1000.0,
+  "fixed_notional": 100.0,
+  "n_trades": 419,
+  "win_rate": 0.4916,
+  "avg_pnl_pct_per_trade": -0.1546,
+  "median_pnl_pct": -0.04,
+  "best_trade_pct": 11.9688,
+  "worst_trade_pct": -5.987,
+  "gross_win_pct": 709.1353,
+  "gross_loss_pct": 773.9185,
+  "profit_factor": 0.9163,
+  "total_return_pct": -6.4783,
+  "sharpe_like": -0.0322,
+  "expectancy_pct": -0.1546,
+  "max_consecutive_losses": 11,
+  "verdict": "NO_EDGE (WR=49.2%, E=-0.155%/trade)"
+}

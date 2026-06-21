@@ -1,0 +1,23 @@
+{
+  "agent": "model",
+  "checkpoint": "ppo_adan0_sandbox_checkpoint_450000_steps.zip",
+  "split": "val",
+  "steps_tested": 5000,
+  "episodes": 1,
+  "fixed_capital": 1000.0,
+  "fixed_notional": 100.0,
+  "n_trades": 184,
+  "win_rate": 0.6033,
+  "avg_pnl_pct_per_trade": 0.1728,
+  "median_pnl_pct": 0.0578,
+  "best_trade_pct": 12.0,
+  "worst_trade_pct": -4.9323,
+  "gross_win_pct": 207.2062,
+  "gross_loss_pct": 175.4056,
+  "profit_factor": 1.1813,
+  "total_return_pct": 3.1801,
+  "sharpe_like": 0.0468,
+  "expectancy_pct": 0.1728,
+  "max_consecutive_losses": 3,
+  "verdict": "POSITIVE_EDGE (WR=60.3%, E=+0.173%/trade)"
+}

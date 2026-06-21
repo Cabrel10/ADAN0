@@ -101,6 +101,12 @@ def run_fixed_capital_backtest(ckpt_path: str, steps: int, split: str,
     wc = copy.deepcopy(cfg.get("workers", {}).get("w1", {}))
     wc.update({
         "worker_id": 0,
+        # MultiAssetChunkedEnv rebuilds its OWN ChunkedDataLoader internally and
+        # reads worker_config["data_split"] (NOT "data_split_override") — see
+        # multi_asset_chunked_env.py:_build_data_loader. We must set BOTH keys so
+        # the env actually loads the requested split instead of defaulting to
+        # "train". (Bug found when val results came out byte-identical to test.)
+        "data_split": split,
         "data_split_override": split,
         "timeframes": ["5m", "1h", "4h"],
         "assets": ["BTCUSDT"],
