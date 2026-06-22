@@ -145,3 +145,61 @@ chaque `save_report()` (toutes les N ticks et au shutdown).
 config.yaml capital_tiers. La seule différence inter-mode résiduelle (HMM actif en
 train vs confidence=0.5 en paper) est gérée par un fallback identique au comportement
 de l'env, donc cohérente. Le run 72h peut démarrer sans divergence silencieuse.
+
+---
+
+## §8 — Observation runtime du run 72h (2026-06-22 22:08 → en cours)
+
+### 8.1 Le sizing unifié fonctionne en conditions réelles ✅
+Premier tick (22:08:35), les deux bots (500k FIXED + 450k checkpoint) ont ouvert
+exactement la position attendue par la formule LINEAR_EXPO :
+```
+[SIZING] LINEAR_EXPO profile=intraday conf=0.500 size_pct=0.8000 (80.00%)
+         size_usd=$16.40 of cash=$20.50 (tier_cap=90.0%, min_order=$11.00)
+[PAPER_TRADE] BUY BTC/USDT size=$16.40 price=$64536.66
+              SL=$60664.46 (-6.0%) TP=$72281.06 (+12.0%) fee=$0.0164
+```
+- `size_pct=0.80` = `exp_min(0.70) + (exp_max(0.90)-0.70)*conf(0.5)` → **conforme à l'env**.
+- SL=-6.0% / TP=+12.0% = bornes profil `intraday` (_PROFILE_BOUNDS), R/R=2.0 ≥ 1.5 ✅.
+Le tier Micro (11-30$) est correctement sélectionné : exposure_range[70,90], cap 90%.
+
+### 8.2 SATURATION ALARM — diagnostic (cause = MODÈLE, pas moteur)
+À partir du tick 1, les logs montrent :
+```
+[DEBUG_ACTION] tick=N dir=+1.000000 size=-1.000000 tf=+1.000000 sl=+1.000000 tp=+1.000000
+[ERROR] [SATURATION ALARM] Direction=+1.0000 for N consecutive ticks! Model may be broken.
+```
+**TOUTES les composantes de l'action PPO sont collées aux bornes (+1/-1) et constantes.**
+Ce n'est PAS un comportement de marché : c'est une **saturation de la policy PPO**
+(tanh squashing poussé aux extrêmes par des logits de très grande magnitude).
+
+Chaîne de conséquences (toutes du côté MODÈLE, le moteur est correct) :
+1. tick 0 : `dir=+1 > threshold(0.01)` & pas de position → **BUY ouvert** ($16.40). ✅
+2. ticks 1..N : `dir=+1` constant → branche BUY, mais `cash_restant=$4.10 < min_order=$11`
+   → aucun nouveau trade possible (1 seul trade, c'est mécaniquement correct).
+3. Le modèle ne sort JAMAIS `dir < -threshold` → la branche SELL/AGENT_CLOSE
+   (execution_engine.py:445) n'est jamais atteinte → **aucune sortie agentielle**.
+4. SL/TP vérifiés à chaque tick (execution_engine.py:416) mais BTC reste dans
+   [$60664, $72281] → ni STOP_LOSS ni TAKE_PROFIT déclenché.
+
+### 8.3 Réfutation de l'hypothèse `unrealized_pnl_pct < 0.0015`
+La règle de décision évoquait une possible condition `unrealized_pnl_pct < 0.0015`
+bloquant les sorties. **Cette condition n'existe PAS dans execution_engine.py.**
+La sortie agentielle dépend uniquement de `direction < -action_threshold`
+(seuil 0.01, ligne 428/445). Le blocage des sorties vient donc **exclusivement** de
+la saturation `dir=+1.0` permanente du modèle, pas d'un garde-fou PnL.
+
+### 8.4 Verdict & action
+- **Le moteur d'exécution et le sizing unifié sont VALIDÉS en production.** Aucune
+  divergence silencieuse de sizing : la position ouverte est exactement celle de la
+  formule de l'env.
+- **Le défaut est dans la policy PPO entraînée** (actions saturées). C'est un problème
+  d'ENTRAÎNEMENT (récompense / régularisation d'entropie / clipping des logits), pas
+  du code d'inférence paper.
+- **Décision (règle "0-1 trade")** : NE PAS activer le HMM live tant que la policy
+  sature. Activer le HMM live ne changerait que `confidence` (donc la TAILLE), pas la
+  DIRECTION saturée — le bot resterait bloqué long. Le HMM live ne se justifie que si
+  la policy produit des directions variées (>10 trades/24h, WR>55%, PF>1.2).
+- **Prochaine piste d'amélioration (hors run actuel)** : inspecter l'entropie de la
+  policy au checkpoint et, si confirmé saturé, ré-entraîner avec `ent_coef` plus élevé
+  ou un clipping des logits pré-tanh. (Améliorer, pas reconstruire.)
