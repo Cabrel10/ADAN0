@@ -104,3 +104,44 @@ chaque `save_report()` (toutes les N ticks et au shutdown).
   pour exploiter la modulation bull/bear de l'exposition (amélioration, pas blocage).
 - `--profile intraday` choisi car le modèle est un généraliste entraîné sur 4 profils
   simultanément ; intraday = bornes SL/TP médianes [4-6%]/[8-12%].
+
+## 7. Vérification des 4 divergences silencieuses restantes (demande explicite)
+
+### Divergence #1 — Frais & slippage
+- **Frais** : training `0.80%` (4× réel, intentionnel/conservateur, env:1145) ;
+  paper `0.001` = 0.10% Binance réel (execution_engine `fee_usd = size_usd*0.001`).
+  → Le live est *moins* coûteux que le train. Biais conservateur, pas dangereux.
+- **Slippage** : 2 bps directionnel des DEUX côtés
+  (env via `exec_prices` open[t+1]+slippage ; paper `SLIPPAGE_BPS/10000`).
+  → IDENTIQUE. ✅
+
+### Divergence #2 — Ordres rejetés (min_notional / step size / précision)
+- **min_notional** : 11$ partout (env:6815 min_order_value_usdt ;
+  execution_engine.MIN_ORDER_VALUE=11.0 ; config hard_constraints). ✅
+- En **mode paper**, l'ExecutionEngine simule le portefeuille — aucun rejet Binance
+  (pas d'appel réseau d'ordre). Les contraintes step/précision ne s'appliquent qu'en
+  **mode live** (CCXT `_place_live_order`). Pour le run actuel (paper testnet) → N/A.
+- ⚠️ À surveiller pour un futur passage LIVE : ajouter arrondi `amount_to_precision`
+  / `price_to_precision` CCXT avant `create_order`. (Amélioration future, pas blocage paper.)
+
+### Divergence #3 — Données (OHLCV / indicateurs / normalisation / fenêtre)
+- LiveStateBuilder **fit ses scalers sur les Parquet de validation** puis les LOCKE
+  (`fit_on_parquet` + `scalers_loaded_from_training=True`) → même normalisation que
+  l'entraînement. Log au boot : "✅ Scalers LOCKED to training distribution." ✅
+- Mêmes timeframes (5m/1h/4h), mêmes 21 indicateurs (`_compute_indicators` ==
+  TRAIN_COLUMNS), même `window_size`=50 (OBS_WINDOW). ✅
+
+### Divergence #4 — DynamicBehaviorEngine (LE plus critique)
+- DBE lit `max_position_size_pct` et `exposure_range` depuis `self.config["capital_tiers"]`
+  (dbe.py:880,918,1141 + base_pos depuis exposure_range dbe.py:1011-1014) →
+  **MÊME source que l'env et l'ExecutionEngine**. Pas de 35%-vs-90%. ✅
+- **POINT CLÉ** : le DBE n'est **PAS instancié** dans le chemin paper trading
+  (run_bot.py / execution_engine.py ne créent aucun DBE ; `context_vector=None`).
+  Donc la modulation `regime_mult` du DBE est **train-only**. Le paper utilise la
+  formule LINEAR_EXPO unifiée avec confidence=0.5 (= except-branch de l'env). →
+  Aucun conflit de contrainte entre modes. ✅
+
+**Conclusion** : PortfolioManager, DBE et ExecutionEngine lisent tous le sizing depuis
+config.yaml capital_tiers. La seule différence inter-mode résiduelle (HMM actif en
+train vs confidence=0.5 en paper) est gérée par un fallback identique au comportement
+de l'env, donc cohérente. Le run 72h peut démarrer sans divergence silencieuse.
