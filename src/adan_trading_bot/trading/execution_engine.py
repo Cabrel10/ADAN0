@@ -14,6 +14,7 @@ Architecture:
 """
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
@@ -77,21 +78,17 @@ class Position:
 @dataclass
 class KillSwitch:
     """Safety limits — breaching any of these shuts down the bot.
-    
-    Non-negotiable rules (HARD-CODED, cannot be overridden by model):
-    - equity < 50% of initial capital = immediate stop
-    - max_position_pct = 5% (was 20% — a position of 22.5% on 20$ capital is suicide)
-    - max_drawdown = 10%
-    
-    These are MECHANICAL GUARDS. The AI model CANNOT override them.
-    A well-trained model should never hit these limits.
-    If it does, the model is broken.
+
+    max_position_pct = 100.0 : le bridage artificiel est supprimé.
+    Le modèle s'expose selon son capital_tier d'entraînement
+    (Micro ~90%, Small ~65%, Medium ~48%, High ~28%, Enterprise ~20%).
+    Le minimum de 11$ par ordre est imposé dans _execute_open().
     """
-    max_drawdown_pct: float = 10.0           # relative to equity high-water mark
+    max_drawdown_pct: float = 10.0            # relative to equity high-water mark
     absolute_capital_floor_pct: float = 50.0  # equity < 50% of INITIAL capital = STOP
     max_trades_per_hour: int = 5
     max_loss_per_trade_pct: float = 3.0
-    max_position_pct: float = 5.0   # FIXED: was 20% — now 5% max per trade
+    max_position_pct: float = 100.0           # Désactivé : exposition gérée par le tier
     min_trade_interval_sec: float = 30.0
     api_retry_limit: int = 3                  # max consecutive API failures before stop
 
@@ -108,6 +105,17 @@ class ExecutionEngine:
     - Trade logging to JSON
     """
 
+    # ── SL/TP bounds per profile — MUST stay IDENTICAL to the training env ──
+    # multi_asset_chunked_env.py:7009-7014 (single source of truth for SL/TP).
+    # Sizing in training is fee-aware (0.80% train fee); live uses 0.10% real,
+    # so identical bounds remain valid (live is strictly cheaper to trade).
+    _PROFILE_BOUNDS = {
+        "scalper":  {"sl": (0.020, 0.030), "tp": (0.040, 0.060)},
+        "intraday": {"sl": (0.040, 0.060), "tp": (0.080, 0.120)},
+        "swing":    {"sl": (0.070, 0.100), "tp": (0.140, 0.200)},
+        "position": {"sl": (0.150, 0.200), "tp": (0.300, 0.400)},
+    }
+
     def __init__(
         self,
         mode: str = "paper",          # "paper" or "live"
@@ -120,6 +128,8 @@ class ExecutionEngine:
         testnet: bool = True,
         log_dir: str = "logs/trading",
         action_threshold: float = 0.01,
+        capital_tiers: list = None,   # capital_tiers from config.yaml
+        profile: str = "intraday",    # worker profile → SL/TP bounds (train coherence)
     ):
         self.mode = mode
         self.exchange_id = exchange_id
@@ -128,6 +138,22 @@ class ExecutionEngine:
         self.kill_switch = kill_switch or KillSwitch()
         self.action_threshold = action_threshold
         self.testnet = testnet
+
+        # Capital tiers — used to enforce max_position_size_pct per tier
+        # Format: list of dicts matching config.yaml capital_tiers structure
+        self.capital_tiers = capital_tiers or []
+
+        # Worker profile — drives SL/TP bounds IDENTICAL to the training env
+        # (multi_asset_chunked_env.py:7009-7014). Single source of truth = config.
+        _pmap = {"conservative": "scalper", "moderate": "intraday",
+                 "balanced": "intraday", "aggressive": "swing",
+                 "adaptive": "position"}
+        self.profile = _pmap.get(str(profile).lower(), str(profile).lower())
+        if self.profile not in self._PROFILE_BOUNDS:
+            self.profile = "intraday"
+
+        # Last HMM confidence (bull_prob from context_vector[3]); 0.5 == train default
+        self._last_confidence = 0.5
 
         # Portfolio state
         self.cash = initial_capital
@@ -190,14 +216,49 @@ class ExecutionEngine:
 
     # ── Action decoding ────────────────────────────────────────────────
 
-    def decode_action(self, action: np.ndarray) -> Dict[str, float]:
-        """Decode Box(5,) action to human-readable parameters.
+    def _get_tier_exposure_range(self, equity: float) -> tuple:
+        """Return (exp_min, exp_max) as fractions (0.0–1.0) for the current tier.
+
+        Reads exposure_range from config.yaml capital_tiers — the SAME source the
+        training env uses (multi_asset_chunked_env.py:6810-6811). Falls back to the
+        Micro Capital default [70, 90] used by the env when no tier matches.
+        """
+        if self.capital_tiers:
+            for tier in sorted(self.capital_tiers, key=lambda t: t.get("min_capital", 0)):
+                min_cap = float(tier.get("min_capital", 0))
+                max_cap = tier.get("max_capital")
+                max_cap = float(max_cap) if max_cap is not None else float("inf")
+                if min_cap <= equity < max_cap:
+                    er = tier.get("exposure_range", [70, 90])
+                    return float(er[0]) / 100.0, float(er[1]) / 100.0
+            # equity above all tiers → last tier
+            last = sorted(self.capital_tiers, key=lambda t: t.get("min_capital", 0))[-1]
+            er = last.get("exposure_range", [70, 90])
+            return float(er[0]) / 100.0, float(er[1]) / 100.0
+        # No tiers configured → env default
+        return 0.70, 0.90
+
+    def decode_action(
+        self, action: np.ndarray, context_vector: np.ndarray = None,
+        equity: float = None,
+    ) -> Dict[str, float]:
+        """Decode Box(5,) action — UNIFIED with the training env (single source of truth).
+
+        Sizing replicates multi_asset_chunked_env.py:6908 (LINEAR_EXPO):
+            confidence  = context_vector[3] (HMM bull_prob) if present, else 0.5
+            target_exp  = exp_min + (exp_max − exp_min) × confidence
+            size_pct    = target_exposure (then capped by tier max_position_size_pct
+                          inside _execute_open, exactly like the env clamp).
+
+        SL/TP replicate multi_asset_chunked_env.py:7009-7028 (profile bounds + R/R≥1.5).
 
         action[0] = direction   ∈ [-1, 1]
-        action[1] = size_pct    ∈ [-1, 1] → [0, kill_switch.max_position_pct]%
+        action[1] = size_pref   ∈ [-1, 1]  (kept for logging; sizing now HMM-driven
+                                            like training — model size is overridden
+                                            by LINEAR_EXPO in the env, env:6908)
         action[2] = tf_pref     ∈ [-1, 1] (informational)
-        action[3] = sl_pct      ∈ [-1, 1] → [0.5, 5]%
-        action[4] = tp_pct      ∈ [-1, 1] → [0.5, 10]%
+        action[3] = sl_pct      ∈ [-1, 1] → profile SL band
+        action[4] = tp_pct      ∈ [-1, 1] → profile TP band
         """
         direction = float(action[0])
         raw_size = float(action[1])
@@ -205,14 +266,45 @@ class ExecutionEngine:
         raw_sl = float(action[3])
         raw_tp = float(action[4])
 
-        # Map to real ranges
-        size_pct = abs(raw_size) * self.kill_switch.max_position_pct / 100.0
-        sl_pct = 0.005 + abs(raw_sl) * 0.045   # [0.5%, 5%]
-        tp_pct = 0.005 + abs(raw_tp) * 0.095    # [0.5%, 10%]
+        # ── SIZING : LINEAR_EXPO identical to training env (env:6908) ──
+        equity = equity if equity is not None else self.cash
+        exp_min, exp_max = self._get_tier_exposure_range(equity)
+
+        # HMM bull probability — context_vector[3], same index as env:6903
+        confidence = 0.5  # train default when HMM unavailable (env except branch:6986)
+        if context_vector is not None:
+            try:
+                cv = np.asarray(context_vector, dtype=np.float32).flatten()
+                if cv.shape[0] >= 4:
+                    confidence = float(np.clip(cv[3], 0.01, 0.99))
+            except Exception:
+                confidence = 0.5
+        self._last_confidence = confidence
+
+        size_pct = exp_min + (exp_max - exp_min) * confidence
+
+        # ── SL/TP : profile-specific bounds identical to env:7009-7028 ──
+        b = self._PROFILE_BOUNDS.get(self.profile, self._PROFILE_BOUNDS["intraday"])
+        sl_lo, sl_hi = b["sl"]
+        tp_lo, tp_hi = b["tp"]
+        tp_lo = max(tp_lo, 0.006)  # fee gate: 3× round-trip fees (env:7018)
+
+        norm_sl = (raw_sl + 1.0) / 2.0
+        sl_pct = float(np.clip(sl_lo + norm_sl * (sl_hi - sl_lo), sl_lo, sl_hi))
+        norm_tp = (raw_tp + 1.0) / 2.0
+        tp_pct = float(np.clip(tp_lo + norm_tp * (tp_hi - tp_lo), tp_lo, tp_hi))
+
+        # Enforce R/R ≥ 1.5 exactly like the env (env:7027)
+        if tp_pct < sl_pct * 1.5:
+            tp_pct = float(min(sl_pct * 1.5, tp_hi))
 
         return {
             "direction": direction,
             "size_pct": size_pct,
+            "size_pref": raw_size,        # raw model preference (logged, not used)
+            "confidence": confidence,
+            "profile": self.profile,
+            "exposure_range": [exp_min, exp_max],
             "tf_pref": tf_pref,
             "sl_pct": sl_pct,
             "tp_pct": tp_pct,
@@ -282,8 +374,12 @@ class ExecutionEngine:
         action: np.ndarray,
         current_price: float,
         timestamp: float = None,
+        context_vector: np.ndarray = None,
     ) -> Dict[str, Any]:
         """Process one inference tick: decode action, check SL/TP, execute.
+
+        context_vector (optional) carries the HMM regime probs (same vector used
+        in training); context_vector[3] = bull_prob drives LINEAR_EXPO sizing.
 
         Returns a dict with tick results for logging.
         """
@@ -291,7 +387,9 @@ class ExecutionEngine:
         self._price_cache = current_price
         self._price_cache_ts = ts
 
-        decoded = self.decode_action(action)
+        equity_now = self.get_equity(current_price)
+        decoded = self.decode_action(action, context_vector=context_vector,
+                                     equity=equity_now)
         direction = decoded["direction"]
         result = {
             "timestamp": ts,
@@ -374,46 +472,83 @@ class ExecutionEngine:
 
     # ── Open / Close ───────────────────────────────────────────────────
 
+    def _get_tier_cap(self, equity: float) -> float:
+        """Return max_position_size_pct for the current capital tier (0.0–1.0).
+
+        Reads self.capital_tiers (injected from config.yaml).
+        Falls back to KillSwitch.max_position_pct if no tiers configured.
+        """
+        if not self.capital_tiers:
+            return self.kill_switch.max_position_pct / 100.0
+
+        for tier in sorted(self.capital_tiers, key=lambda t: t.get("min_capital", 0)):
+            min_cap = float(tier.get("min_capital", 0))
+            max_cap = tier.get("max_capital")
+            max_cap = float(max_cap) if max_cap is not None else float("inf")
+            if min_cap <= equity < max_cap:
+                pct = float(tier.get("max_position_size_pct", 90))
+                logger.debug(
+                    f"[TIER_CAP] equity=${equity:.2f} → tier='{tier.get('name')}' "
+                    f"max_position_size_pct={pct}%"
+                )
+                return pct / 100.0
+
+        # equity above all tiers → use last tier's value
+        last = sorted(self.capital_tiers, key=lambda t: t.get("min_capital", 0))[-1]
+        return float(last.get("max_position_size_pct", 20)) / 100.0
+
+    # Minimum notional par ordre (exigence de production)
+    MIN_ORDER_VALUE: float = 11.0
+
     def _execute_open(
         self, side: str, price: float, size_pct: float,
         sl_pct: float, tp_pct: float, timestamp: float,
     ) -> Optional[TradeRecord]:
         """Open a new position (paper or live).
-        
+
         SAFETY LAYERS (in order of priority):
-        1. HARD CAP: max_position_pct from KillSwitch (default 5%)
-        2. MECHANICAL CAP: Never more than 10% of cash regardless
-        3. MIN SIZE: At least 1$ to avoid dust trades
-        4. CASH RESERVE: Always keep 5% cash buffer
+        1. TIER CAP : size_pct vient du capital_tier d'entraînement (DBE/Oracle).
+                      max_position_pct = 100% → le modèle s'expose librement.
+        2. CASH RESERVE : jamais 100 % du cash (garde 5 %).
+        3. MIN ORDER : notional < 11 $ → forcé à 11 $ si le capital le permet,
+                       sinon ordre rejeté pour protéger le portefeuille.
         """
         if self.position is not None:
             return None  # Only one position at a time
 
-        # Slippage: BUY at higher price
+        # Slippage : BUY at higher price, SELL at lower price
         fill_price = price * (1.0 + SLIPPAGE_BPS / 10000.0) if side == "BUY" else \
                      price * (1.0 - SLIPPAGE_BPS / 10000.0)
 
-        # ── SAFETY LAYER 1: Hard cap from KillSwitch ──
-        # The model's size_pct is already capped by decode_action(),
-        # but we double-check here as an absolute safety net.
-        ABSOLUTE_MAX_PCT = self.kill_switch.max_position_pct / 100.0  # e.g. 5% → 0.05
-        size_pct = min(size_pct, ABSOLUTE_MAX_PCT)
-        
-        # ── SAFETY LAYER 2: Mechanical cap ──
-        # Even if kill_switch is misconfigured, NEVER exceed 10% of cash
-        MECHANICAL_MAX_PCT = 0.10  # 10% absolute maximum
-        size_pct = min(size_pct, MECHANICAL_MAX_PCT)
+        # ── SAFETY LAYER 1: Respect du tier — cap issu de capital_tiers ──
+        # size_pct est transmis tel quel par le modèle / DBE.
+        # On plafonne au max_position_size_pct du tier courant (ex: 90% pour Micro).
+        equity = self.get_equity(price)
+        tier_cap = self._get_tier_cap(equity)
+        size_pct = min(size_pct, tier_cap)
 
-        # Position size
+        # ── SAFETY LAYER 2: Cash reserve ──
         size_usd = self.cash * size_pct
-        if size_usd < 1.0:  # minimum trade size
-            return None
-        size_usd = min(size_usd, self.cash * 0.95)  # Never use 100% of cash
-        
+        size_usd = min(size_usd, self.cash * 0.95)  # garde 5 % de cash
+
+        # ── SAFETY LAYER 3: Minimum 11 $ par ordre ──
+        if size_usd < self.MIN_ORDER_VALUE:
+            if equity >= self.MIN_ORDER_VALUE:
+                # Capital suffisant : on force au minimum
+                size_usd = self.MIN_ORDER_VALUE
+                size_pct = size_usd / self.cash if self.cash > 0 else size_pct
+            else:
+                logger.warning(
+                    f"[ORDER_REJECTED] Capital insuffisant (${equity:.2f}) "
+                    f"pour atteindre le minimum de ${self.MIN_ORDER_VALUE:.2f}"
+                )
+                return None
+
         logger.info(
-            f"[SIZING] size_pct={size_pct:.4f} ({size_pct*100:.2f}%) "
+            f"[SIZING] LINEAR_EXPO profile={self.profile} conf={self._last_confidence:.3f} "
+            f"size_pct={size_pct:.4f} ({size_pct*100:.2f}%) "
             f"size_usd=${size_usd:.2f} of cash=${self.cash:.2f} "
-            f"(kill_switch.max_position_pct={self.kill_switch.max_position_pct}%)"
+            f"(tier_cap={tier_cap*100:.1f}%, min_order=${self.MIN_ORDER_VALUE:.2f})"
         )
 
         size_asset = size_usd / fill_price
@@ -583,34 +718,95 @@ class ExecutionEngine:
 
     # ── Reporting ─────────────────────────────────────────────────────
 
+    def compute_metrics(self, price: float = None) -> Dict[str, float]:
+        """Compute Sharpe / Profit Factor / Drawdown / WinRate from closed trades.
+
+        Only trades that REALISED PnL (reason in STOP_LOSS/TAKE_PROFIT/AGENT_CLOSE,
+        i.e. pnl_usd != 0) are counted as round-trip results — consistent with the
+        backtest metric convention.
+        """
+        price = price if price is not None else (self._price_cache or 0.0)
+        pnls = [float(t.pnl_usd) for t in self.trades if abs(float(t.pnl_usd)) > 1e-12]
+        n = len(pnls)
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p < 0]
+        gross_win = sum(wins)
+        gross_loss = abs(sum(losses))
+        # Per-trade return relative to initial capital (proxy for Sharpe)
+        rets = [p / self.initial_capital for p in pnls] if self.initial_capital > 0 else []
+        sharpe = 0.0
+        if len(rets) >= 2:
+            mean = sum(rets) / len(rets)
+            var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+            std = var ** 0.5
+            sharpe = (mean / std) if std > 1e-12 else 0.0
+        profit_factor = (gross_win / gross_loss) if gross_loss > 1e-12 else (
+            float("inf") if gross_win > 0 else 0.0)
+        win_rate = (len(wins) / n * 100.0) if n > 0 else 0.0
+        max_dd = ((self.equity_high - min(self.get_equity(price), self.equity_high))
+                  / self.equity_high * 100 if self.equity_high > 0 else 0.0)
+        return {
+            "n_closed_trades": n,
+            "win_rate_pct": round(win_rate, 2),
+            "profit_factor": round(profit_factor, 4) if profit_factor != float("inf") else 9999.0,
+            "sharpe_per_trade": round(sharpe, 4),
+            "gross_win_usd": round(gross_win, 4),
+            "gross_loss_usd": round(gross_loss, 4),
+            "max_drawdown_pct": round(max_dd, 2),
+            "expectancy_usd": round(sum(pnls) / n, 4) if n > 0 else 0.0,
+        }
+
+    def export_trades_csv(self, filename: str = None) -> str:
+        """Export every trade to CSV (audit / post-mortem of the 72h run)."""
+        if filename is None:
+            filename = f"trades_{self.mode}_{self.exchange_id}_{int(time.time())}.csv"
+        path = self.log_dir / filename
+        fields = ["timestamp", "side", "symbol", "price", "size_usd", "size_asset",
+                  "sl_pct", "tp_pct", "fee_usd", "pnl_usd", "reason", "source", "order_id"]
+        with open(path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            for t in self.trades:
+                row = {k: getattr(t, k, "") for k in fields}
+                w.writerow(row)
+        logger.info(f"[ExecutionEngine] Trades CSV exported: {path} ({len(self.trades)} rows)")
+        return str(path)
+
     def save_report(self, filename: str = None) -> str:
-        """Save trading session report to JSON."""
+        """Save trading session report to JSON (+ metrics) and export trades CSV."""
         if filename is None:
             filename = f"trading_{self.mode}_{self.exchange_id}_{int(time.time())}.json"
 
         price = self._price_cache or 0.0
+        metrics = self.compute_metrics(price)
         report = {
             "mode": self.mode,
             "exchange": self.exchange_id,
             "symbol": self.symbol,
+            "profile": self.profile,
             "initial_capital": self.initial_capital,
             "final_equity": round(self.get_equity(price), 4),
             "return_pct": round(
                 (self.get_equity(price) - self.initial_capital) / self.initial_capital * 100, 4
             ),
             "n_trades": len(self.trades),
+            "metrics": metrics,
             "trades": [asdict(t) for t in self.trades],
             "killed": self._killed,
             "kill_reason": self._kill_reason,
-            "max_drawdown_pct": round(
-                (self.equity_high - min(
-                    self.get_equity(price), self.equity_high
-                )) / self.equity_high * 100 if self.equity_high > 0 else 0, 2
-            ),
+            "max_drawdown_pct": metrics["max_drawdown_pct"],
         }
 
         path = self.log_dir / filename
         with open(path, "w") as f:
             json.dump(report, f, indent=2, default=str)
         logger.info(f"[ExecutionEngine] Report saved: {path}")
+        logger.info(
+            f"[METRICS] trades={metrics['n_closed_trades']} WR={metrics['win_rate_pct']}% "
+            f"PF={metrics['profit_factor']} Sharpe={metrics['sharpe_per_trade']} "
+            f"DD={metrics['max_drawdown_pct']}% E=${metrics['expectancy_usd']}"
+        )
+        # CSV export alongside the JSON
+        csv_name = filename.replace(".json", ".csv").replace("trading_", "trades_")
+        self.export_trades_csv(csv_name)
         return str(path)
