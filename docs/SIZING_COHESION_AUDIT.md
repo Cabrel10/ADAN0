@@ -80,3 +80,27 @@ de l'env (`env:6986` : `(exp_min+exp_max)/2`). Train ≈ Paper garanti.
 - [x] logs détaillés activés (`[DEBUG_ACTION]`, `[SIZING]`, `[TIER_CAP]`)
 - [ ] export CSV des trades → ajouté à execution_engine
 - [ ] métriques Sharpe / PF / DD actives → calcul au shutdown
+
+## 6. LANCEMENT PAPER TRADING — confirmé (20260622_220804)
+
+Les 2 modèles tournent en arrière-plan (binance spot testnet, $20.50 chacun,
+profil intraday, intervalle 300s, durée 72h) :
+
+| Modèle | Checkpoint | PID | Log dir |
+|--------|-----------|-----|---------|
+| 500k | ppo_adan0_500k_FIXED.zip | 2422414 | logs/paper/500k_20260622_220804 |
+| 450k | ppo_adan0_sandbox_checkpoint_450000_steps.zip | 2422415 | logs/paper/450k_20260622_220804 |
+
+Premier tick des deux (cohérence prouvée) :
+`[SIZING] LINEAR_EXPO profile=intraday conf=0.500 size_pct=0.8000 (80.00%) size_usd=$16.40`
+= exactement `0.70 + (0.90-0.70)*0.5` du palier Micro → **train ≈ paper garanti**.
+
+CSV trades + métriques (Sharpe/PF/DD/WR/expectancy) générés automatiquement à
+chaque `save_report()` (toutes les N ticks et au shutdown).
+
+### Note opérationnelle (vigilance)
+- `context_vector` reste `None` dans run_bot.py:389 → confidence=0.5 (fallback =
+  comportement except de l'env). Cohérence garantie ; activer le HMM live plus tard
+  pour exploiter la modulation bull/bear de l'exposition (amélioration, pas blocage).
+- `--profile intraday` choisi car le modèle est un généraliste entraîné sur 4 profils
+  simultanément ; intraday = bornes SL/TP médianes [4-6%]/[8-12%].
