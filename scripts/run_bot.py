@@ -225,7 +225,20 @@ class AsyncBotEngine:
     async def initialize(self):
         """Initialize async components."""
         logger.info("[ASYNC] Initializing...")
-        
+
+        # Load capital_tiers from config.yaml so ExecutionEngine respects tier limits
+        _config_path = Path(__file__).resolve().parent.parent / "config" / "config.yaml"
+        _capital_tiers = []
+        try:
+            import yaml
+            with open(_config_path) as _f:
+                _cfg = yaml.safe_load(_f) or {}
+            _capital_tiers = _cfg.get("capital_tiers", [])
+            if _capital_tiers:
+                logger.info(f"[CAPITAL_TIERS] Loaded {len(_capital_tiers)} tiers from config.yaml")
+        except Exception as _e:
+            logger.warning(f"[CAPITAL_TIERS] Could not load config.yaml: {_e} — using KillSwitch cap")
+
         # Init LiveStateBuilder
         self.state_builder = LiveStateBuilder(
             exchange_id=self.args.exchange,
@@ -250,6 +263,8 @@ class AsyncBotEngine:
             testnet=(self.args.mode != "live" or self.args.testnet),
             log_dir=self.args.log_dir,
             action_threshold=self.args.action_threshold,
+            capital_tiers=_capital_tiers,
+            profile=self.args.profile,
         )
 
         self.start_time = asyncio.get_event_loop().time()
@@ -582,8 +597,8 @@ def main():
         help="Kill switch: max trades per hour (default: 5)",
     )
     parser.add_argument(
-        "--max-position-pct", type=float, default=5.0,
-        help="Kill switch: max position size %% (default: 5 — SAFETY FIRST)",
+        "--max-position-pct", type=float, default=100.0,
+        help="Kill switch: max position size %% (default: 100 — géré par capital_tier)",
     )
     parser.add_argument(
         "--testnet", action="store_true", default=True,
@@ -592,6 +607,11 @@ def main():
     parser.add_argument(
         "--log-dir", type=str, default="logs/trading",
         help="Directory for trade logs (default: logs/trading)",
+    )
+    parser.add_argument(
+        "--profile", type=str, default="intraday",
+        choices=["scalper", "intraday", "swing", "position"],
+        help="Worker profile → SL/TP bounds identical to training (default: intraday)",
     )
 
     args = parser.parse_args()
