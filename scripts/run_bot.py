@@ -390,6 +390,26 @@ class AsyncBotEngine:
                 context_vector=None,
             )
 
+            # MISSION 3 — Truth dump: on the very first live tick, persist the full
+            # observation (per-key min/max/mean + portfolio_state vector) so we can
+            # verify live obs are in the training distribution (no OOD / no growth).
+            if self.tick_count == 0:
+                try:
+                    import json as _json
+                    dump = {}
+                    for k, v in obs.items():
+                        arr = np.asarray(v, dtype=np.float64)
+                        dump[k] = {"shape": list(arr.shape),
+                                   "min": float(arr.min()), "max": float(arr.max()),
+                                   "mean": float(arr.mean())}
+                    dump["portfolio_state_vector"] = [float(x) for x in np.asarray(portfolio_state).ravel()]
+                    out = "/tmp/live_obs_dump_%s.json" % getattr(self.args, "capital", "x")
+                    with open(out, "w") as _f:
+                        _json.dump(dump, _f, indent=2)
+                    logger.info(f"[OBS_DUMP] first-tick observation written to {out}")
+                except Exception as _e:
+                    logger.error(f"[OBS_DUMP] failed: {_e}")
+
             # NaN safety check — corrupted features = skip tick
             for key, val in obs.items():
                 if np.isnan(val).any():
@@ -508,6 +528,16 @@ class AsyncBotEngine:
                 if killed:
                     logger.error("[KILL SWITCH] Activated")
                     break
+
+                # Periodic checkpoint: write CSV + metrics during the run (not only
+                # at shutdown) so a long 72h session is observable live. 12 ticks at
+                # the default 300s interval ~= 1 hour.
+                if self.tick_count > 0 and self.tick_count % 12 == 0:
+                    try:
+                        rp = self.engine.save_report()
+                        logger.info(f"[CHECKPOINT] tick={self.tick_count} report saved: {rp}")
+                    except Exception as _e:
+                        logger.error(f"[CHECKPOINT] save_report failed: {_e}")
 
                 # Sleep until next interval
                 await asyncio.sleep(self.args.interval)
