@@ -386,3 +386,100 @@ refitter les scalers inline (l'ancien process tournait avec les pkl biaisés en 
 NE JAMAIS réintroduire le chargement d'un scaler figé pour le live. Le live fitte
 inline sur `data/processed/indicators/train/<SYMBOL>`, point. C'est la seule
 façon de garantir que les « yeux » du modèle en live == ceux de l'entraînement.
+
+---
+
+## 12. VERDICT FINAL — La saturation vient de l'ENTRAÎNEMENT (logits bruts), pas de la chaîne live
+
+Suite à la relecture critique de l'utilisateur (les actions "variées" post-clip ne
+prouvent rien : il faut regarder les logits BRUTS avant clip). Tests décisifs faits :
+
+### 12.1 TEST 3 — deterministic
+`run_bot.py:318` utilise `predict(deterministic=False)` (exploration gSDE active).
+Donc le déterminisme N'EST PAS la cause du figement. `live_state_builder.py:93`
+(`deterministic=True`) est un docstring d'exemple, pas du code exécuté.
+
+### 12.2 TEST 5 — décodage des actions (execution_engine.decode_action)
+- `size` (action[1]) est **IGNORÉ** : sizing = `exp_min+(exp_max-exp_min)*confidence`
+  où confidence = context_vector[3] (HMM). `"size_pref": raw_size` est loggé "not used".
+  → que `size` soit saturé n'a AUCUN impact. C'est cosmétique.
+- Bandes `intraday` : `sl=(0.04,0.06)`, `tp=(0.08,0.12)` → `tp_lo≠tp_hi`. Décodage
+  `tp_pct = tp_lo + (raw_tp+1)/2 * (tp_hi-tp_lo)` clampé. MATHÉMATIQUEMENT CORRECT.
+  `raw_tp=-1 → tp=0.08` (8%), `raw_sl=-0.123 → sl=0.0488` (4.877%). Les logs reflètent
+  fidèlement les sorties du réseau. PAS de bug de décodage (Hypothèse B écartée).
+
+### 12.3 TEST 1 — logits BRUTS (mean_actions, pre-clip) — LE test décisif
+Policy : `MultiInputActorCriticPolicy`, `use_sde=True`,
+`StateDependentNoiseDistribution`, **`squash_output=False`** (donc PAS de tanh — clip
+direct à la frontière Box(-1,1)). mean_actions sur l'observation LIVE :
+```
+raw_dir  = -0.71   (sain)        raw_size = +0.10  (sain, ignoré)
+raw_tf   = +4.11   <== SATURE     raw_sl   = +0.27  (sain)
+raw_tp   = -10.13  <== SATURE MASSIVEMENT -> clip -1.0
+gSDE std : tp=0.13, tf=0.036  -> bruit minuscule, impossible de désaturer.
+```
+→ `tp=-1.0` constant dans les logs = le réseau CRIE -10.13, le clip masque tout.
+C'est l'Hypothèse A (clipping de logits extrêmes), CONFIRMÉE.
+
+### 12.4 TEST 2 — backtest vs live (même checkpoint 500k) — LA preuve de la cause
+Mêmes logits bruts extraits dans l'ENVIRONNEMENT D'ENTRAÎNEMENT :
+```
+BACKTEST step 0-9 : dir=+2.17  size=-10.16  tf=+0.01  sl=-6.25  tp=+0.50   SAT:[dir,size,sl]
+LIVE             : dir=-0.71  size=+0.10   tf=+4.11  sl=+0.27  tp=-10.13  SAT:[tf,tp]
+```
+- Le modèle SATURE AUSSI en backtest (size=-10.16, sl=-6.25, dir=+2.17 hors bornes).
+- Les logits backtest sont quasi-CONSTANTS (±0.003 sur 10 steps) → politique figée
+  indépendamment de l'observation.
+- Quelles têtes saturent diffère selon la région d'obs, mais il y a TOUJOURS 2-3
+  têtes saturées.
+
+### 12.5 CONCLUSION
+La saturation est **intrinsèque à la politique PPO apprise**, PAS un artefact de la
+chaîne live. Le pipeline live est désormais sain (obs ∈ [-2,+4.7], scalers inline,
+décodage/clipping corrects, §9-§11). Mais le réseau produit des logits extrêmes
+(|raw|=4 à 10) sur plusieurs têtes d'action — entropy/std très faible (std 0.03-0.13).
+
+Le backtest affichait 66% WR parce que `dir` (la tête dominante pour le PnL) reste
+exploitable et les têtes saturées sont soit ignorées (size) soit bornées par les
+bandes de profil (sl/tp clampés). En live le résultat est identique côté décision.
+
+### 12.6 Ce que cela implique (sans réentraîner immédiatement)
+La cause racine du "même signal à chaque paper trading" est enfin localisée :
+**ce n'est ni le portfolio_state (§9, réel mais secondaire) ni les scalers (§11, réel
+mais secondaire) — c'est la POLITIQUE elle-même qui a appris des logits saturés**
+(probablement absence de pénalité d'amplitude/entropie sur les têtes continues, ou
+log_std trop bas figé pendant l'entraînement). Les fixes §9-§11 étaient nécessaires
+(ils garantissent Training==Live) mais NON suffisants pour désaturer l'action.
+
+Pistes (à décider par l'utilisateur, NE PAS réentraîner sans accord) :
+1. Vérifier la config PPO d'entraînement : `ent_coef`, bornes de `log_std`,
+   `use_sde`, éventuelle régularisation L2 sur la tête action.
+2. Comparer des checkpoints plus anciens (50k,100k,...) : à partir de quel step la
+   saturation apparaît (entropy collapse progressif ?).
+3. Évaluer si un fine-tuning court avec `ent_coef` relevé + clamp de log_std
+   suffit à restaurer une politique non saturée, SANS repartir de zéro.
+
+### 12.7 Trajectoire d'entropy collapse (logits bruts par checkpoint, même obs live)
+```
+ckpt   dir    size    tf      sl      tp      mean_std  sat_heads(|raw|>1.5)
+50k   -1.76  +3.56  -1.94  -4.82  -4.42    0.470     5/5
+100k  -1.11  +4.47  +2.09  -1.85  -7.36    0.407     4/5
+200k  -0.19 +11.24  +5.25  -0.24  -7.78    0.283     3/5
+300k  -0.00  +6.65  +9.55  +1.55  -8.85    0.253     4/5
+450k  -0.31  +4.39  +6.25  +1.46  -9.98    0.223     3/5
+500k  -0.73  -0.20  +3.87  +0.19 -10.04    0.211     2/5
+```
+Lecture :
+1. Saturé DÈS 50k (5/5 têtes) — ce n'est pas un collapse tardif, la politique apprend
+   des logits extrêmes quasi immédiatement. `tp` empire continûment (-4.4 → -10.0).
+2. Le std d'exploration décroît de façon monotone (0.470 → 0.211) = **entropy collapse
+   classique** : `ent_coef` trop bas (ou nul), aucune pression pour rester exploratoire.
+3. `dir` est la SEULE tête qui reste utilisable (-1.76 → -0.73, jamais extrême à 500k).
+   D'où le 66% WR backtest : la tête qui pilote le PnL (long/short/hold) a appris du
+   réel, tandis que size (ignoré), tf (informational), sl/tp (clampés aux bandes
+   profil) ont collapsé sans casser la rentabilité backtest.
+
+VERDICT consolidé : modèle PARTIELLEMENT sain (cerveau directionnel OK → 66% WR) mais
+têtes auxiliaires dégénérées par entropy collapse à l'entraînement. Chaîne live prouvée
+saine (§9-§11). Le travail restant est côté ENTRAÎNEMENT (ent_coef / log_std), à
+décider par l'utilisateur — NE PAS réentraîner sans accord explicite.
