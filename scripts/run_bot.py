@@ -480,11 +480,21 @@ class AsyncBotEngine:
         
         # Full action decode for validation
         raw = decoded.get("raw_action", [0]*5)
+        # SL/TP source + A/B delta (only meaningful when stochastic calibrator is on)
+        src = decoded.get("sltp_source", "model")
+        sltp_src_str = ""
+        if src == "stochastic":
+            sltp_src_str = (
+                f" [STOCH src={src} "
+                f"model_would=SL{decoded.get('model_sl_pct', 0):.2%}/"
+                f"TP{decoded.get('model_tp_pct', 0):.2%}]"
+            )
         action_str = (
             f"Dir={decoded['direction']:+.4f} "
             f"Size={decoded['size_pct']:.2%} "
             f"SL={decoded['sl_pct']:.3%} "
             f"TP={decoded['tp_pct']:.3%}"
+            f"{sltp_src_str}"
         )
         
         print(
