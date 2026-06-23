@@ -130,6 +130,8 @@ class ExecutionEngine:
         action_threshold: float = 0.01,
         capital_tiers: list = None,   # capital_tiers from config.yaml
         profile: str = "intraday",    # worker profile → SL/TP bounds (train coherence)
+        stochastic_sltp: bool = False,  # if True, SL/TP come from ATR×regime calibrator
+                                        # instead of the (collapsed) model action[3]/[4]
     ):
         self.mode = mode
         self.exchange_id = exchange_id
@@ -154,6 +156,21 @@ class ExecutionEngine:
 
         # Last HMM confidence (bull_prob from context_vector[3]); 0.5 == train default
         self._last_confidence = 0.5
+
+        # STOCHASTIC SL/TP CALIBRATOR (separation of responsibilities) ──────
+        # The PPO `tp` head collapsed (raw≈-10 → always TP=tp_lo) due to training
+        # entropy collapse (see docs/SIZING_COHESION_AUDIT.md §12-§13). The `dir`
+        # head is healthy (66% WR backtest). So when stochastic_sltp=True we KEEP
+        # the model's direction/confidence but DERIVE SL/TP from market state
+        # (ATR + HMM regime) instead of the saturated action[3]/action[4].
+        self.stochastic_sltp = bool(stochastic_sltp)
+        # Last derived SL/TP source for logging ("model" | "stochastic")
+        self._last_sltp_source = "model"
+        if self.stochastic_sltp:
+            logger.info(
+                "[ExecutionEngine] STOCHASTIC SL/TP calibrator ENABLED — "
+                "SL/TP derived from ATR×regime (model tp/sl heads bypassed)."
+            )
 
         # Portfolio state
         self.cash = initial_capital
@@ -298,6 +315,18 @@ class ExecutionEngine:
         if tp_pct < sl_pct * 1.5:
             tp_pct = float(min(sl_pct * 1.5, tp_hi))
 
+        # ── STOCHASTIC OVERRIDE ────────────────────────────────────────
+        # When enabled, replace the (collapsed) model SL/TP with an
+        # ATR×regime-derived pair. Direction & sizing stay model/HMM-driven.
+        self._last_sltp_source = "model"
+        model_sl_pct, model_tp_pct = sl_pct, tp_pct
+        if self.stochastic_sltp:
+            sl_pct, tp_pct = self._compute_stochastic_sltp(
+                context_vector=context_vector, sl_lo=sl_lo, sl_hi=sl_hi,
+                tp_lo=tp_lo, tp_hi=tp_hi, confidence=confidence,
+            )
+            self._last_sltp_source = "stochastic"
+
         return {
             "direction": direction,
             "size_pct": size_pct,
@@ -308,8 +337,71 @@ class ExecutionEngine:
             "tf_pref": tf_pref,
             "sl_pct": sl_pct,
             "tp_pct": tp_pct,
+            "sltp_source": self._last_sltp_source,
+            "model_sl_pct": model_sl_pct,   # what the model WOULD have produced
+            "model_tp_pct": model_tp_pct,   # (logged for A/B comparison)
             "raw_action": action.tolist(),
         }
+
+    def _compute_stochastic_sltp(
+        self, context_vector: np.ndarray, sl_lo: float, sl_hi: float,
+        tp_lo: float, tp_hi: float, confidence: float,
+    ) -> tuple:
+        """Derive (sl_pct, tp_pct) from market state instead of the model.
+
+        Rationale (docs/SIZING_COHESION_AUDIT.md §13): the PPO `tp` head
+        collapsed to -1.0 (always min TP). The `dir` head is healthy. We keep
+        direction/sizing from the model but compute risk from observable market
+        state, separating "where to trade" (model) from "how to size risk"
+        (this calibrator).
+
+        Logic:
+          ATR  = context_vector[0]  (ATR/close ratio, same index as env:7044)
+          regime (bull_prob) = context_vector[3]  (HMM, same index as env:6901)
+
+          SL  = clip(ATR_MULT × ATR, sl_lo, sl_hi)      # volatility-scaled stop
+          RR  = target risk/reward chosen by regime:
+                  bull  (bull_prob ≥ 0.65) → RR = 2.5   (let winners run)
+                  neutral                  → RR = 1.8
+                  bear  (bull_prob ≤ 0.35) → RR = 1.5   (cut quickly)
+          TP  = clip(SL × RR, tp_lo, tp_hi)
+
+        SL/TP stay clamped to the SAME profile bands used in training/backtest,
+        so the calibrator can only re-position WITHIN the validated envelope
+        (never produce out-of-band risk). R/R≥1.5 is still enforced.
+        """
+        ATR_MULT = 2.0          # SL = 2× ATR (3× is the noise floor used for scalper)
+        atr_pct = 0.005         # neutral default ≈ 0.5% if context unavailable
+        bull_prob = float(confidence)  # already clipped [0.01, 0.99]
+
+        if context_vector is not None:
+            try:
+                cv = np.asarray(context_vector, dtype=np.float32).flatten()
+                if cv.shape[0] >= 1:
+                    # context[0] = ATR/close ratio (env:7043-7044)
+                    atr_pct = float(max(0.0005, min(0.10, abs(cv[0]))))
+                if cv.shape[0] >= 4:
+                    bull_prob = float(np.clip(cv[3], 0.01, 0.99))
+            except Exception:
+                pass
+
+        # Regime → target risk/reward
+        if bull_prob >= 0.65:
+            target_rr = 2.5
+        elif bull_prob <= 0.35:
+            target_rr = 1.5
+        else:
+            target_rr = 1.8
+
+        # SL scaled by volatility, clamped to profile band
+        sl_pct = float(np.clip(ATR_MULT * atr_pct, sl_lo, sl_hi))
+        # TP = SL × RR, clamped to profile band
+        tp_pct = float(np.clip(sl_pct * target_rr, tp_lo, tp_hi))
+        # Always keep R/R ≥ 1.5 (same invariant as the env)
+        if tp_pct < sl_pct * 1.5:
+            tp_pct = float(min(sl_pct * 1.5, tp_hi))
+
+        return sl_pct, tp_pct
 
     # ── Kill switch checks ─────────────────────────────────────────────
 
