@@ -135,7 +135,21 @@ class LiveStateBuilder:
             normalize=True
         )
 
-        # 🔧 FIX: Fit scalers on validation data to preserve distribution
+        # 🚫 PROD_SCALERS PKL ARE BANNED (root cause of paper-trading saturation).
+        #    A frozen prod_scalers/*.pkl was fitted on the high-price tail
+        #    (close mean=116k vs train mean=52k) -> live BTC normalized to -13σ
+        #    -> features clipped to -10 -> PPO saw out-of-distribution "eyes"
+        #    -> constant saturated actions (dir=+1, size=-1, ...).
+        #    The training/backtest env fits scalers INLINE on the train chunk
+        #    (multi_asset_chunked_env.py). To keep Training == Backtest == Live
+        #    we ALWAYS refit inline here on the SAME train Parquet data and
+        #    NEVER load a frozen pkl. If StateBuilder auto-loaded any pkl in its
+        #    constructor, we wipe it before refitting.
+        self.state_builder.scalers = {}
+        self.state_builder.scalers_loaded_from_training = False
+
+        # 🔧 Fit scalers inline on the training Parquet data to reproduce the
+        #    exact distribution the PPO was trained on.
         self.fit_on_parquet()
 
         logger.info(
@@ -145,45 +159,118 @@ class LiveStateBuilder:
     # ── Public API ──────────────────────────────────────────────────────
 
     def fit_on_parquet(self):
-        """Fit internal scalers on historical Parquet files to fix distribution shift."""
-        import os
+        """Fit internal scalers INLINE on the TRAINING Parquet data.
+
+        CRITICAL — Training == Backtest == Live invariant:
+        The training/backtest environment (MultiAssetChunkedEnv) loads the
+        ``train`` split and fits its StateBuilder scalers inline on that chunk.
+        We MUST do exactly the same here (same ``train`` split, same inline fit,
+        same StateBuilder anti-lookahead "first 70%" rule) so the PPO receives
+        observations drawn from the distribution it was trained on.
+
+        We deliberately do NOT use the ``val`` split (different price regime:
+        val close mean≈74k vs train mean≈52k) and we NEVER load a frozen
+        ``prod_scalers/*.pkl`` — those caused the paper-trading saturation.
+        """
         from pathlib import Path
-        
+
         # Use symbol style compatible with filesystem (e.g. BTCUSDT)
         fs_symbol = self.symbol.replace("/", "").replace(":", "").upper()
-        
-        # Search for Parquet files in common locations
+
+        # Search for the TRAIN split (same split the env trains on).
         possible_paths = [
-            Path("data/processed/indicators/val") / fs_symbol,
-            Path(__file__).parent.parent.parent.parent / "data/processed/indicators/val" / fs_symbol,
+            Path("data/processed/indicators/train") / fs_symbol,
+            Path(__file__).parent.parent.parent.parent
+            / "data/processed/indicators/train" / fs_symbol,
         ]
-        
-        val_dir = None
+
+        train_dir = None
         for path in possible_paths:
             if path.exists():
-                val_dir = path
+                train_dir = path
                 break
-                
-        if val_dir and val_dir.exists():
-            try:
-                data_dict = {}
-                for tf in self.timeframes:
-                    path = val_dir / f"{tf}.parquet"
-                    if path.exists():
-                        data_dict[tf] = pd.read_parquet(path)
-                
-                if data_dict:
-                    logger.info(f"🎯 Fitting LiveStateBuilder scalers on {fs_symbol} Parquet data ({val_dir})")
-                    self.state_builder.fit_scalers({fs_symbol: data_dict})
-                    # Lock scalers to prevent refitting on live data
-                    self.state_builder.scalers_loaded_from_training = True
-                    logger.info("✅ Scalers LOCKED to training distribution.")
-                else:
-                    logger.warning(f"⚠️ No Parquet files found in {val_dir} for fitting.")
-            except Exception as e:
-                logger.error(f"❌ Failed to fit on Parquet: {e}")
-        else:
-            logger.warning(f"⚠️ Validation data directory not found for {fs_symbol}. Distribution shift risk!")
+
+        if not (train_dir and train_dir.exists()):
+            logger.error(
+                f"❌ Training data directory not found for {fs_symbol}. "
+                f"Cannot fit scalers inline — REFUSING to run with an "
+                f"undefined observation distribution."
+            )
+            raise FileNotFoundError(
+                f"Training Parquet not found for {fs_symbol} "
+                f"(searched: {[str(p) for p in possible_paths]})"
+            )
+
+        try:
+            data_dict = {}
+            for tf in self.timeframes:
+                path = train_dir / f"{tf}.parquet"
+                if path.exists():
+                    data_dict[tf] = pd.read_parquet(path)
+
+            if not data_dict:
+                raise FileNotFoundError(
+                    f"No Parquet files found in {train_dir} for fitting."
+                )
+
+            logger.info(
+                f"🎯 Fitting LiveStateBuilder scalers INLINE on {fs_symbol} "
+                f"TRAIN Parquet data ({train_dir}) — pkl loading is BANNED."
+            )
+            # Force a clean inline fit: wipe any auto-loaded scalers + flag so
+            # StateBuilder.fit_scalers() does not short-circuit.
+            self.state_builder.scalers = {}
+            self.state_builder.scalers_loaded_from_training = False
+            self.state_builder.fit_scalers({fs_symbol: data_dict})
+
+            # Lock to prevent any later refit on live data (would drift).
+            self.state_builder.scalers_loaded_from_training = True
+
+            # ── Consistency proof: log per-TF close normalization stats so we
+            #    can verify Training == Live at a glance in the logs.
+            self._log_scaler_consistency(data_dict)
+            logger.info("✅ Scalers fitted inline & LOCKED to TRAIN distribution.")
+        except Exception as e:
+            logger.error(f"❌ Failed to fit on Parquet: {e}")
+            raise
+
+    def _log_scaler_consistency(self, data_dict: Dict[str, pd.DataFrame]) -> None:
+        """Log the fitted scaler stats vs raw data stats for the 'close' column.
+
+        Emits a [SCALER_CHECK] line per timeframe and a warning if a frozen
+        biased scaler would have been used instead (sanity guard).
+        """
+        try:
+            import numpy as _np
+            for tf, df in data_dict.items():
+                scaler = self.state_builder.scalers.get(tf)
+                if scaler is None:
+                    continue
+                inner = getattr(scaler, "scaler", scaler)
+                cols = [c.lower() for c in TRAIN_COLUMNS.get(tf, [])]
+                if "close" not in cols:
+                    continue
+                ci = cols.index("close")
+                raw_mean = float(df["close"].mean())
+                if hasattr(inner, "mean_"):
+                    fit_center = float(inner.mean_[ci])
+                    fit_scale = float(inner.scale_[ci])
+                    kind = "StandardScaler"
+                elif hasattr(inner, "center_"):
+                    fit_center = float(inner.center_[ci])
+                    fit_scale = float(inner.scale_[ci])
+                    kind = "RobustScaler"
+                else:  # MinMaxScaler — center/scale not meaningful for this log
+                    logger.info(
+                        f"[SCALER_CHECK] {tf} MinMaxScaler | raw_close_mean={raw_mean:.0f}"
+                    )
+                    continue
+                logger.info(
+                    f"[SCALER_CHECK] {tf} {kind} | fit_center={fit_center:.0f} "
+                    f"fit_scale={fit_scale:.1f} | raw_close_mean={raw_mean:.0f}"
+                )
+        except Exception as e:  # never let logging break the run
+            logger.debug(f"[SCALER_CHECK] skipped: {e}")
 
     def fetch_and_compute(self, force: bool = False) -> Dict[str, pd.DataFrame]:
         """Fetch OHLCV from exchange and compute all 21 indicators per TF.
