@@ -483,3 +483,93 @@ VERDICT consolidé : modèle PARTIELLEMENT sain (cerveau directionnel OK → 66%
 têtes auxiliaires dégénérées par entropy collapse à l'entraînement. Chaîne live prouvée
 saine (§9-§11). Le travail restant est côté ENTRAÎNEMENT (ent_coef / log_std), à
 décider par l'utilisateur — NE PAS réentraîner sans accord explicite.
+
+---
+
+## §13 — RAFFINEMENT RUNTIME (ticks 30-45, ~3h45) : le 500k DÉRIVE, le 450k OSCILLE
+
+Données live capturées après ~3h45 de runtime (session 092905), qui **corrigent une
+simplification de §12**. La synthèse critique de l'utilisateur (relecture des logs) a
+poussé à rouvrir les têtes d'action tick-par-tick au lieu de min/max agrégés.
+
+### 13.1 Le 500k n'est PAS figé d'entrée — il DÉRIVE de façon monotone
+
+```
+tick 30: dir=+0.287  size=-1.000  tf=-0.803  sl=-1.000  tp=-1.000
+tick 31: dir=-0.666  size=-1.000  tf=-1.000  sl=+0.475  tp=-1.000
+tick 32: dir=-0.257  ...                       sl=+1.000  tp=-1.000
+tick 33: dir=-0.223
+tick 34: dir=-0.410
+tick 35: dir=-0.599
+tick 36: dir=-0.791        ← dérive continue +0.29 → -1.0 sur 8 ticks (40 min)
+tick 37: dir=-0.996
+tick 38: dir=-1.000        ← atteint la borne
+tick 39..45: dir=-1.000    ← collé à la borne ENSUITE seulement
+```
+
+Lecture : une politique morte ne dérive pas linéairement. Ce profil = `dir` **suit une
+variable d'observation qui dérive** (très probablement le PnL non réalisé de la position
+ouverte qui se creuse → portfolio_state évolue → dir migre). Donc côté `dir`, le 500k
+est RÉACTIF, pas gelé. Mon §12 ("dir reste exploitable") est confirmé ET renforcé : dir
+réagit bel et bien à l'obs en live.
+
+### 13.2 Le 450k n'est PAS figé — il OSCILLE en bang-bang synchronisé
+
+```
+tick 30: dir=+0.835  sl=-1.000  tf=-1.000
+tick 31: dir=-1.000  sl=-1.000  tf=-1.000
+tick 32: dir=+0.737  sl=+0.938  tf=+1.000   } régime "haut" : dir>0, sl>0, tf=+1
+tick 33: dir=-1.000  sl=-1.000  tf=-1.000   } régime "bas"  : dir=-1, sl=-1, tf=-1
+tick 34: dir=+0.518  sl=+0.318  tf=+1.000
+tick 35: dir=-0.989  sl=-1.000  tf=-1.000
+...
+tick 45: dir=-1.000  sl=-1.000  tf=-1.000
+```
+
+Lecture : alternance quasi tick-pair / tick-impair entre deux régimes CORRÉLÉS
+(dir, sl, tf bougent ENSEMBLE). C'est une politique **bi-stable**, pas figée. Les 27
+premiers ticks de la synthèse (dir=+1 constant) étaient une fenêtre transitoire ;
+l'état a évolué. Donc l'affirmation "450k complètement figé" est INVALIDÉE par les
+données ultérieures — exactement le risque de sur-extrapolation que l'utilisateur
+avait pointé.
+
+### 13.3 Ce qui est VRAIMENT dégénéré (et seulement ça)
+
+Sur les DEUX modèles, sur 100% des ticks observés :
+- **`tp = -1.000` constant** (jamais autre chose) → tête `tp` réellement collapsée.
+- **`size = +1.000` (450k) / `-1.000` (500k)** constant → tête `size` collapsée
+  (mais `size` est IGNORÉ par le sizing, qui est piloté par `confidence`/HMM — donc
+  sans impact fonctionnel, cf. §6).
+
+Les têtes `dir`, `sl`, `tf` réagissent à l'obs (dérive 500k, oscillation 450k).
+
+### 13.4 Le clipping d'observation +5.0 persiste (résidu scaler, NON critique)
+
+Malgré la pkl-ban + fit inline sur TRAIN (§11, confirmé au démarrage : "Production
+scalers not found → Fitting INLINE on TRAIN, pkl BANNED ; 5m=18544, 1h=5483,
+4h=1685 samples"), les obs 1h/4h **tangentent +5.0000** de façon persistante (ticks 30
+ET 40). Cause : `SCALER_AUDIT 1h | StandardScaler | std_range=[0.0036, 17037.14]` —
+certaines features 1h/4h ont une échelle énorme, donc en live elles dépassent +5σ et
+sont clippées à la borne. Ce n'est PAS le bug pkl (résolu) ; c'est le clip de sécurité
+±5 qui mord sur des features haute-variance. Impact réel faible (peu de cellules,
+toujours du même côté), mais à noter : la chaîne live n'est pas 100% "propre", elle
+clippe quelques features structurellement larges. À surveiller, non bloquant.
+
+### 13.5 VERDICT CONSOLIDÉ (post-raffinement)
+
+L'utilisateur avait raison sur le fond ET sur la méthode :
+1. Le modèle est **partiellement sain** — `dir`/`sl`/`tf` réagissent à l'obs (dérive +
+   oscillation observées), seules `tp` (et `size`, mais ignoré) sont collapsées.
+2. La "saturation totale" rapportée était une **sur-lecture d'une fenêtre transitoire**
+   (27 premiers ticks). Les têtes bougent quand on regarde 45 ticks.
+3. Cause racine inchangée : **entropy collapse à l'entraînement** sur les têtes
+   auxiliaires (§12.7), confirmé par la trajectoire 50k→500k. La tête `tp` est la plus
+   atteinte (raw -4.4 → -10.0), exactement celle qui reste collée à -1.0 en live.
+4. Chaîne live = saine pour les têtes qui comptent (dir pilote le PnL). Résidu mineur :
+   clip ±5 sur features 1h/4h haute-variance (§13.4).
+
+Conséquence pratique : le comportement live est COHÉRENT avec le backtest 66% WR — la
+tête directionnelle décide, tp/size collapsés mais bornés/ignorés. **Aucun bug de
+chaîne live ne reste à corriger en urgence.** Le seul levier d'amélioration réel est
+côté entraînement (désaturer `tp`), à décider par l'utilisateur — NE PAS réentraîner
+sans accord explicite (règle d'or).
