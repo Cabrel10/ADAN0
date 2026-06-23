@@ -203,3 +203,67 @@ la saturation `dir=+1.0` permanente du modèle, pas d'un garde-fou PnL.
 - **Prochaine piste d'amélioration (hors run actuel)** : inspecter l'entropie de la
   policy au checkpoint et, si confirmé saturé, ré-entraîner avec `ent_coef` plus élevé
   ou un clipping des logits pré-tanh. (Améliorer, pas reconstruire.)
+
+---
+
+## §9 — ROOT CAUSE de la "saturation" : portfolio_state DIVERGENT (hypothèse H2 confirmée)
+
+### 9.1 Le diagnostic §8 (PPO saturé) était INCOMPLET
+Après 10h de run, l'analyse fine des `[DEBUG_ACTION]` montre que `dir` N'EST PAS
+constant : sur 102 ticks on observe 97×`+1.0` MAIS aussi `+0.007`, `+0.148`,
+`+0.732`, `-0.077`, `-0.118`... Le modèle **répond** aux entrées (il sort même des
+directions négatives = signaux SELL). Un PPO réellement saturé (entropy collapse)
+gèlerait TOUTES les composantes. Or seules `size/tf/sl/tp` sont figées, pas `dir`.
+=> Ce n'est pas une saturation intrinsèque. C'est un **distribution shift** des
+observations (hypothèse H2 de l'utilisateur), cohérent avec un backtest
+déterministe à 148 trades / 66% WR : les poids du modèle sont SAINS.
+
+### 9.2 Preuve : portfolio_state live ≠ portfolio_state training
+Le `portfolio_state max` en live monte de 1.0 (tick 1) → 2.0 → **4.0** (tick 110) :
+il CROÎT avec le temps. Une observation normalisée ne fait jamais ça.
+
+Comparaison slot-par-slot (AVANT correction) :
+| idx | TRAINING (portfolio_manager.get_state_vector) | PAPER (execution_engine, AVANT) |
+|-----|-----------------------------------------------|----------------------------------|
+| [0] | cash_ratio (clip 0-10)                        | equity/cap                       |
+| [1] | value_ratio (clip 0-10)                       | cash/cap                         |
+| [2] | trading_pnl_pct (clip ±5)                     | has_position (0/1)               |
+| [3] | exposure_ratio (0-1)                          | unrealized_pnl/cap               |
+| [4] | drawdown (0-1)                                | price_change_pct                 |
+| [5] | sharpe/3 (-1..1)                              | size_usd/cap                     |
+| [6] | open_positions_norm (0-1)                     | side (±1)                        |
+| **[7]** | **win_rate (0-1)**                         | **len(self.trades) RAW (1,2,4,…)**|
+| [8] | profit_factor/5 (0-1)                         | drawdown                         |
+| [10-19] | features de position (10 dims)            | TOUT À ZÉRO (absents)            |
+
+**Le layout entier était faux.** Le pire : `state[7]` portait le nombre BRUT de
+trades (qui croît sans borne) là où le réseau attend un `win_rate ∈ [0,1]`. Le
+modèle voyait littéralement du bruit hors-distribution dans 9 slots sur 10, plus
+10 dims de features de position toujours à zéro. D'où la réaction extrême
+(`size=-1, tf=+1, sl=+1, tp=+1` figés) : c'est la réponse d'un réseau à des
+entrées qu'il n'a jamais vues à l'entraînement.
+
+### 9.3 Correction (SANS toucher au modèle, conformément à la règle d'or)
+`ExecutionEngine.get_portfolio_state()` réécrit pour reproduire EXACTEMENT le
+layout 20-dim de `PortfolioManager.get_state_vector()` :
+- 10 dims de base en ratios stationnaires (cash/value/pnl/exposure/drawdown/
+  sharpe/positions/win_rate/profit_factor/reserved), tous clipés aux mêmes bornes.
+- 2 slots de position × 5 features (unrealized_pnl_pct/size_ratio/steps_norm/
+  sl_distance/tp_distance), slot 0 = position courante, slot 1 = zéros.
+- win_rate / profit_factor / sharpe tirés de `compute_metrics()` (même convention
+  que le backtest).
+
+### 9.4 Preuve de la correction (test fonctionnel)
+Après 200 trades simulés + 1 position ouverte :
+- AVANT : `state[7]` = 201.0, `max` non borné (→ OOD garanti).
+- APRÈS : `max=1.005` (borné), `[7]win_rate=0.500`, `[6]positions_norm=1.0`,
+  `[8]profit_factor_norm=0.333`, `[11]position_size_ratio=0.796`. TOUTES les dims
+  dans la distribution d'entraînement. Assertions de bornes : PASS.
+
+### 9.5 Conséquence
+C'est très probablement la cause des 4-5 échecs successifs en paper trading malgré
+de bons backtests : à chaque run on changeait le modèle, mais le vrai coupable était
+le pipeline d'observation live (les "yeux"), pas le "cerveau". Avec cette correction,
+le modèle existant devrait enfin recevoir des observations cohérentes — aucun
+réentraînement nécessaire. À valider sur le prochain run paper avec les bots
+redémarrés (l'ancien run tournait avec l'ancien portfolio_state cassé).
