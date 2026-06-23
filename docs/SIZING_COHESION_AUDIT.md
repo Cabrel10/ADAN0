@@ -267,3 +267,122 @@ le pipeline d'observation live (les "yeux"), pas le "cerveau". Avec cette correc
 le modèle existant devrait enfin recevoir des observations cohérentes — aucun
 réentraînement nécessaire. À valider sur le prochain run paper avec les bots
 redémarrés (l'ancien run tournait avec l'ancien portfolio_state cassé).
+
+---
+
+## 10. ROOT CAUSE #2 — Scalers `prod_scalers/*.pkl` fittés sur la queue haute-prix (LE vrai poison de la saturation d'action)
+
+### 10.1 Observation runtime (run 500k_20260623_081912, APRÈS le fix §9)
+Le fix portfolio_state (§9) a fonctionné — `portfolio_state | max=+1.0000` borné, plus
+de croissance. MAIS l'action est restée **totalement saturée** sur 7 ticks consécutifs :
+`dir=+1.0 size=-1.0 tf=+1.0 sl=+1.0 tp=+1.0` (identique tick 1→7).
+
+Le log d'observation a révélé le coupable :
+```
+[DEBUG_OBS] tick=2 5m  | min=-5.0 max=+0.81  mean=+0.28   (sain)
+[DEBUG_OBS] tick=2 1h  | min=-5.0 max=+5.0   mean=-0.87 std=2.88  (SATURÉ, figé tick→tick)
+[DEBUG_OBS] tick=2 4h  | min=-5.0 max=+2.31  (clippé)
+```
+Le 5m (MinMaxScaler) est sain ; le 1h (StandardScaler) et 4h (RobustScaler) sont
+écrasés contre les bornes ±5/±10.
+
+### 10.2 Dissection feature-par-feature (reproduction de l'obs live)
+```
+1h last bar:  [0]open=-10  [1]high=-10  [2]low=-10  [3]close=-10  [17]vwap_ratio=-10   ← SATURÉ
+4h last bar:  [8]adx_14=-10  [17]vwap_ratio=-8.1  [19]bb_width=-5.86                    ← SATURÉ
+5m last bar:  tout dans [-0.03, +0.79]                                                  (sain)
+```
+Ce sont les **colonnes de prix brut** (open/high/low/close) + vwap_ratio qui explosent.
+
+### 10.3 Cause mathématique prouvée
+Inspection de `prod_scalers/scaler_1h.pkl` (StandardScaler, par colonne `close`) :
+```
+mean_ = 116 423 $   scale_ = 3 901 $
+→ live close 62 880 $ normalisé = (62880 − 116424) / 3901 = −13.7  → clip −10
+```
+Or la donnée d'entraînement complète `train/BTCUSDT/1h.parquet` a :
+```
+close  mean = 52 498 $   std = 31 047 $   (5483 barres, 2022-07 → 2025-08)
+```
+Le scaler sauvegardé avait `mean=116 423 $` — c'est-à-dire **fitté sur seulement les
+121 dernières barres (2.2 %)** du plateau haut-prix mai-août 2025. BTC live à 62 880 $
+(parfaitement valide historiquement) se retrouve à **−13.7 σ** → saturation hors-distribution.
+
+### 10.4 Pourquoi le backtest (66 % WR) était sain malgré tout
+Le backtest déterministe utilise `MultiAssetChunkedEnv` qui **refitte les scalers inline
+sur son chunk** (`multi_asset_chunked_env.py:2294`) → le scaler matche toujours ses
+propres données. Le bot live, lui, charge le `prod_scalers/*.pkl` figé (biaisé). C'est
+la divergence « cerveau sain / yeux empoisonnés » identifiée par l'hypothèse H2 — mais
+le poison était le **scaler**, pas le portfolio_state (qui était un second bug réel, §9).
+
+### 10.5 Correction (SANS toucher au modèle)
+Régénération de `prod_scalers/*.pkl` sur la **distribution d'entraînement complète**
+(fit sur les premiers 70 % des barres, anti-lookahead, exactement comme l'env) :
+```
+NOUVEAU 1h close  mean_=35 548 $  scale_=16 972 $
+→ live close 62 880 $ = (62880 − 35548) / 16972 = +1.61   (in-distribution, plus de clip)
+```
+Vérification obs live complète après régénération :
+```
+1h: min=-1.94  max=+4.69  saturated_cells = 0/420   (AVANT: open/high/low/close=-10)
+4h: min=-2.14  max=+4.41  saturated_cells = 0/420   (AVANT: adx/vwap/bb saturés)
+5m: min=-10.0  max=+0.80  saturated_cells = 1/420   (1 vieux pic obv_slope, barre row 11,
+                                                      la barre récente row 19 est saine)
+```
+Les anciens scalers biaisés sont archivés dans
+`prod_scalers/_archive_tailfit_20260623/` et `*.BIASED_BACKUP`.
+
+### 10.6 Conséquence
+C'est l'explication finale des 4-5 échecs paper : à chaque run le modèle recevait des
+prix bruts normalisés contre une moyenne de 116 k$ alors qu'il avait appris sur une
+moyenne de ~35-52 k$. Les 4 colonnes de prix brut 1h + vwap saturaient systématiquement
+à −10 → le réseau réagissait par des actions saturées constantes. Après régénération des
+scalers, l'observation live est de nouveau dans la distribution d'entraînement. Le bot
+doit être **redémarré** pour recharger les scalers en mémoire (l'ancien process avait
+chargé les pkl biaisés).
+
+---
+
+## 11. SOLUTION DÉFINITIVE — Interdiction des `prod_scalers/*.pkl` figés (fit inline obligatoire)
+
+### 11.1 Pourquoi la régénération (§10.5) n'était pas la bonne solution
+Régénérer un pkl figé corrige les valeurs une fois, mais reproduit le même piège :
+tout pkl figé peut redevenir obsolète/biaisé et re-empoisonner le live silencieusement.
+Le défaut structurel est le **chargement d'un scaler figé** alors que
+l'environnement d'entraînement/backtest (`MultiAssetChunkedEnv`) **fitte ses scalers
+inline** sur son chunk de `train`. La seule garantie de l'invariant
+`Training == Backtest == Live` est de **fitter inline aux mêmes données**.
+
+### 11.2 Ce qui a été fait (suppression pure du chemin pkl)
+- `prod_scalers/*.pkl`, `*.BIASED_BACKUP` et `scalers_manifest.json` déplacés dans
+  `prod_scalers/_BANNED_DO_NOT_LOAD/` (référence forensique uniquement).
+  `prod_scalers/` racine ne contient plus aucun pkl → `StateBuilder.__init__`
+  ne peut plus en auto-charger.
+- `LiveStateBuilder.__init__` : on **vide** `state_builder.scalers` et on remet
+  `scalers_loaded_from_training=False` AVANT le fit, pour que `fit_scalers()` ne
+  court-circuite pas (il skippait silencieusement quand un pkl était auto-chargé).
+- `LiveStateBuilder.fit_on_parquet()` réécrit :
+  - utilise désormais le split **`train`** (et non plus `val` — régimes de prix
+    différents : val close mean≈74k vs train≈52k) ;
+  - force un fit inline propre ;
+  - lève une exception si la donnée `train` est absente (refus de tourner avec une
+    distribution d'observation indéfinie) ;
+  - log `[SCALER_CHECK]` par timeframe (center/scale vs raw mean) comme preuve.
+- `prod_scalers/README_BANNED.md` documente l'interdiction.
+
+### 11.3 Preuve (obs live après fit inline, pkl banni)
+```
+[SCALER_CHECK] 1h StandardScaler | fit_center=35548 fit_scale=16972 | raw_close_mean=52498
+[SCALER_CHECK] 4h RobustScaler   | fit_center=30376 fit_scale=39433 | raw_close_mean=64117
+5m: min=-1.50 max=+0.80  saturated_cells = 0/420
+1h: min=-1.94 max=+4.69  saturated_cells = 0/420   (AVANT: open/high/low/close = -10)
+4h: min=-2.05 max=+4.41  saturated_cells = 0/420   (AVANT: adx/vwap/bb saturés)
+```
+Toutes les observations sont dans `[-2, +4.7]` — la distribution d'entraînement.
+**Zéro cellule saturée.** Le bot doit être **redémarré** pour recharger le code et
+refitter les scalers inline (l'ancien process tournait avec les pkl biaisés en mémoire).
+
+### 11.4 Invariant à préserver pour toujours
+NE JAMAIS réintroduire le chargement d'un scaler figé pour le live. Le live fitte
+inline sur `data/processed/indicators/train/<SYMBOL>`, point. C'est la seule
+façon de garantir que les « yeux » du modèle en live == ceux de l'entraînement.
