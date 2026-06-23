@@ -689,20 +689,87 @@ class ExecutionEngine:
         return eq
 
     def get_portfolio_state(self, current_price: float) -> np.ndarray:
-        """Build portfolio_state vector (20,) matching training env."""
-        state = np.zeros(20, dtype=np.float32)
+        """Build portfolio_state vector (20,) — MUST mirror, slot-for-slot, the
+        training layout produced by PortfolioManager.get_state_vector(), because
+        the PPO policy was trained on that exact stationary-ratio layout.
+
+        A previous version emitted an ad-hoc layout (e.g. state[7] = RAW trade
+        count, growing 1,2,4,... unbounded) which is out-of-distribution for the
+        network and drives the policy toward saturated actions in live/paper.
+        This rebuild reproduces the canonical layout so live obs == train obs.
+
+        Layout (identical to portfolio_manager.py:get_state_vector):
+          [0] cash_ratio (clip 0-10)          [1] value_ratio (clip 0-10)
+          [2] trading_pnl_pct (clip ±5)       [3] exposure_ratio (0-1)
+          [4] drawdown (0-1)                  [5] sharpe/3 (-1..1)
+          [6] open_positions_norm (0-1)       [7] win_rate (0-1)
+          [8] profit_factor/5 (0-1)           [9] reserved (0)
+          [10-14] position 1 features         [15-19] position 2 features
+        """
         equity = self.get_equity(current_price)
-        state[0] = equity / self.initial_capital  # equity ratio
-        state[1] = self.cash / self.initial_capital  # cash ratio
-        state[2] = 1.0 if self.position is not None else 0.0  # has_position
-        if self.position is not None:
-            state[3] = self.position.unrealized_pnl / self.initial_capital
-            state[4] = (current_price - self.position.entry_price) / self.position.entry_price
-            state[5] = self.position.size_usd / self.initial_capital
-            state[6] = 1.0 if self.position.side == "BUY" else -1.0
-        state[7] = len(self.trades)  # trade count
-        state[8] = (self.equity_high - equity) / self.equity_high if self.equity_high > 0 else 0
-        return state
+        init_cap = max(self.initial_capital, 1e-8)
+        total_value = max(equity, 1e-8)
+        cash = self.cash
+
+        # Trading PnL relative to initial capital (realised + unrealised).
+        realised_pnl = float(sum(float(t.pnl_usd) for t in self.trades))
+        unreal = float(self.position.unrealized_pnl) if self.position is not None else 0.0
+        trading_pnl_pct = (realised_pnl + unreal) / init_cap
+
+        # Performance metrics from closed trades (same convention as training).
+        m = self.compute_metrics(current_price)
+        sharpe = float(np.clip(m["sharpe_per_trade"], -3.0, 3.0))
+        win_rate = float(np.clip(m["win_rate_pct"] / 100.0, 0.0, 1.0))
+        pf_raw = m["profit_factor"]
+        pf = 5.0 if pf_raw >= 9999.0 else float(pf_raw)
+        profit_factor_norm = float(np.clip(pf, 0.0, 5.0) / 5.0)
+
+        drawdown = ((self.equity_high - equity) / self.equity_high
+                    if self.equity_high > 0 else 0.0)
+        exposure_ratio = (total_value - cash) / total_value if total_value > 0 else 0.0
+        open_count = 1 if self.position is not None else 0
+        max_positions = max(int(getattr(self, "max_concurrent_positions", 1)), 1)
+
+        state = [
+            float(np.clip(cash / init_cap, 0.0, 10.0)),          # [0] cash_ratio
+            float(np.clip(total_value / init_cap, 0.0, 10.0)),    # [1] value_ratio
+            float(np.clip(trading_pnl_pct, -5.0, 5.0)),           # [2] trading_pnl_pct
+            float(np.clip(exposure_ratio, 0.0, 1.0)),             # [3] exposure_ratio
+            float(np.clip(drawdown, 0.0, 1.0)),                   # [4] drawdown
+            float(sharpe / 3.0),                                   # [5] sharpe_norm
+            float(min(open_count / max_positions, 1.0)),          # [6] positions_norm
+            win_rate,                                              # [7] win_rate
+            profit_factor_norm,                                    # [8] profit_factor_norm
+            0.0,                                                   # [9] reserved
+        ]
+
+        # Position slots (2 × 5). The paper engine holds at most one position;
+        # slot 0 = current position, slot 1 = zeros.
+        for slot_idx in range(2):
+            if slot_idx == 0 and self.position is not None:
+                pos = self.position
+                entry_p = max(pos.entry_price, 1e-8)
+                direction = 1.0 if pos.side == "BUY" else -1.0
+                notional = abs(pos.size_usd)
+                # steps-in-position proxy: seconds held / (1000 * interval≈300s).
+                held_s = max(0.0, (self._price_cache_ts - pos.open_time)
+                             if hasattr(self, "_price_cache_ts") else 0.0)
+                steps_held = held_s / 300.0
+                # Derive SL/TP pct from stored prices.
+                sl_pct = abs(entry_p - pos.sl_price) / entry_p
+                tp_pct = abs(pos.tp_price - entry_p) / entry_p
+                state.extend([
+                    float(np.clip((current_price - entry_p) / entry_p * direction, -0.5, 0.5)),
+                    float(np.clip(notional / total_value, 0.0, 1.0)),
+                    float(np.clip(steps_held / 1000.0, 0.0, 1.0)),
+                    float(np.clip(sl_pct, 0.0, 0.2)),
+                    float(np.clip(tp_pct, 0.0, 0.5)),
+                ])
+            else:
+                state.extend([0.0, 0.0, 0.0, 0.0, 0.0])
+
+        assert len(state) == 20, f"portfolio_state must be 20 dims, got {len(state)}"
+        return np.array(state, dtype=np.float32)
 
     def _portfolio_snapshot(self, price: float) -> Dict[str, Any]:
         return {
