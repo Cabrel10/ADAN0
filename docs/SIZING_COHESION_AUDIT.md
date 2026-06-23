@@ -658,3 +658,19 @@ fenêtre commune, même capital ($20.50), même profil (intraday), même symbole
   exécution live/paper, point d'injection propre = `decode_action`).
 - `size` (action[1]) reste ignoré côté live au profit du sizing HMM — c'est cohérent
   avec l'env qui, lui, l'utilise ; divergence connue, sans impact (sizing HMM validé).
+
+### 14.7 Observation runtime A/B (T+30min, marché calme)
+
+Premiers trades comparés (BTC≈$62.5k, régime neutre, ATR live bas) :
+```
+Bot 3 stochastique : SL=0.0400  TP=0.0800   (3 OPEN)
+Bot 2 500k model   : SL=0.0488  TP=0.0800   (7 OPEN)
+Bot 1 450k model   : SL=0.040-0.059 TP=0.0800 (variés)
+```
+Lecture : en régime NEUTRE + faible volatilité, le calibrateur produit SL=4%
+(plancher de bande, car 2×ATR_bas < 4%) et TP=8% (plancher, car 4%×RR1.8=7.2%
+clampé à 8%). Donc stochastique ≈ baseline DANS CE RÉGIME — c'est le comportement
+correct et attendu (conservateur). La différenciation n'apparaîtra qu'en marché
+volatil (SL monte vers 6%) ou régime franchement bull (RR 2.5 → TP vers 10-12%),
+comme prouvé par le smoke test §14.3. Le dispositif A/B est opérationnel ; il faut
+laisser tourner sur une fenêtre couvrant plusieurs régimes pour conclure.
