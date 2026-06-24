@@ -1709,10 +1709,16 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     # 2. log_std_init=-0.5: Initial std ≈ exp(-0.5) ≈ 0.61, so actions
     #    start with nuanced variance inside [-1, 1], learning fine position sizing
     #    instead of saturating at extremes (previous 0.5 gave std≈1.65 → epilepsy).
+    # V2 override : ADAN_LOG_STD_INIT (def -0.5, compat checkpoints). Le run
+    # diagnostique le relève (0.0 -> std0≈1.0) pour rouvrir l'exploration.
+    _sb_log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", "-0.5"))
     policy_kwargs = {
         "share_features_extractor": True,
-        "log_std_init": -0.5,  # exp(-0.5) ≈ 0.61 std
+        "log_std_init": _sb_log_std_init,
     }
+    if abs(_sb_log_std_init - (-0.5)) > 1e-9:
+        logger.info(f"[SANDBOX] log_std_init={_sb_log_std_init:+.3f} "
+                    f"(std0≈{float(np.exp(_sb_log_std_init)):.3f}) — override V2.")
 
     # S15 HARD RESET: Use config values (512/64/10) — safe for 7GB CI
     sandbox_n_steps = int(sandbox_cfg.get("n_steps", 512))
@@ -1742,8 +1748,9 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
             gamma=float(agent_cfg.get("gamma", 0.99)),
             gae_lambda=float(agent_cfg.get("gae_lambda", 0.95)),
             clip_range=float(agent_cfg.get("clip_range", 0.2)),
-            ent_coef=float(sandbox_cfg.get("ent_coef",
-                           agent_cfg.get("ent_coef", 0.01))),
+            ent_coef=float(os.environ.get(
+                "ADAN_ENT_COEF",
+                sandbox_cfg.get("ent_coef", agent_cfg.get("ent_coef", 0.01)))),
             vf_coef=float(agent_cfg.get("vf_coef", 0.5)),
             max_grad_norm=float(agent_cfg.get("max_grad_norm", 0.5)),
             use_sde=True,              # Session 8: State-Dependent Exploration
@@ -1768,11 +1775,28 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         save_vecnormalize=False,  # VecNormalize is disabled, don't save it
     )
 
+    # V2 instrumentation (MESURE SEULE) — suit μ/σ pré-tanh par tête pour voir si
+    # μ(size)=-7.2 remonte. Activé via ADAN_ACTIONDIM=1. NE MODIFIE RIEN.
+    _sb_callbacks = [checkpoint_callback]
+    if ActionDimMonitor is not None and os.environ.get("ADAN_ACTIONDIM", "0") == "1":
+        _sb_ad_csv = os.environ.get(
+            "ADAN_ACTIONDIM_CSV",
+            str(ckpt_dir.parent / "logs" / "training" / "actiondim_sandbox.csv"),
+        )
+        _sb_callbacks.append(ActionDimMonitor(
+            log_every=int(os.environ.get("ADAN_ACTIONDIM_EVERY", "1")),
+            pre_tanh_batch=int(os.environ.get("ADAN_ACTIONDIM_BATCH", "256")),
+            csv_path=_sb_ad_csv,
+            verbose=1,
+        ))
+        logger.info(f"[SANDBOX] ActionDimMonitor ACTIF (csv={_sb_ad_csv}) — "
+                    f"mesure seule, ne modifie rien.")
+
     t0 = time.time()
     model.learn(
         total_timesteps=steps,
         reset_num_timesteps=reset_num_timesteps,
-        callback=checkpoint_callback,  # Enable frequent checkpoints
+        callback=_sb_callbacks,  # checkpoints + instrumentation V2
     )
     elapsed = time.time() - t0
 
