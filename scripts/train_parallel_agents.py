@@ -1716,6 +1716,46 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         "share_features_extractor": True,
         "log_std_init": _sb_log_std_init,
     }
+
+    # ------------------------------------------------------------------
+    # CRITICAL FIX (V2 execution audit, 2026-06-24):
+    # The sandbox mode previously built policy_kwargs WITHOUT
+    # features_extractor_class, so SB3 silently fell back to its default
+    # CombinedExtractor (a 0-parameter flatten of the Dict obs). That means
+    # the CNN / cross-attention / FiLM context / aux forward-predictor NEVER
+    # ran in sandbox training — only a bare MLP was trained. This made
+    # sandbox checkpoints architecturally DIFFERENT from heavy-mode (Ray)
+    # checkpoints and invalidated any μ/σ comparison against the 500K model.
+    # We now wire the SAME ContextualTemporalFusionExtractor as heavy mode so
+    # sandbox trains the real architecture (proof: scripts/audit_execution.py).
+    # ------------------------------------------------------------------
+    fe_kwargs = agent_cfg.get("features_extractor_kwargs", {})
+    _cfg_pk = copy.deepcopy(fe_kwargs.get("policy_kwargs", {}))
+    _activation_fn_map = {"ReLU": nn.ReLU, "Tanh": nn.Tanh, "LeakyReLU": nn.LeakyReLU}
+    if "activation_fn" in _cfg_pk:
+        _act_name = str(_cfg_pk["activation_fn"]).split(".")[-1]
+        _cfg_pk["activation_fn"] = _activation_fn_map.get(_act_name, nn.ReLU)
+    # carry over net_arch / activation_fn from config policy_kwargs (if any)
+    for _k, _v in _cfg_pk.items():
+        policy_kwargs.setdefault(_k, _v)
+
+    if ContextualTemporalFusionExtractor is not None:
+        policy_kwargs["features_extractor_class"] = ContextualTemporalFusionExtractor
+        _valid_fe_keys = {"features_dim", "context_dim", "cnn_hidden", "dropout"}
+        _safe_fe_kwargs = {k: v for k, v in fe_kwargs.items() if k in _valid_fe_keys}
+        _safe_fe_kwargs.setdefault("context_dim", 14)
+        policy_kwargs["features_extractor_kwargs"] = _safe_fe_kwargs
+        logger.info(
+            "[SANDBOX] features_extractor=ContextualTemporalFusionExtractor "
+            f"(CNN+cross-attn+FiLM+aux) | fe_kwargs={_safe_fe_kwargs}"
+        )
+    else:
+        logger.warning(
+            "[SANDBOX] ContextualTemporalFusionExtractor UNAVAILABLE — falling "
+            "back to SB3 CombinedExtractor (bare MLP). Architecture will NOT "
+            "match heavy mode. Check the import at the top of this file."
+        )
+
     if abs(_sb_log_std_init - (-0.5)) > 1e-9:
         logger.info(f"[SANDBOX] log_std_init={_sb_log_std_init:+.3f} "
                     f"(std0≈{float(np.exp(_sb_log_std_init)):.3f}) — override V2.")
