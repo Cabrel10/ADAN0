@@ -66,6 +66,8 @@ from .reward_service import (
     symlog,
 )
 
+from .reward_bridge import RewardBridge
+
 __all__ = [
     "Zone",
     "Pivot",
@@ -101,6 +103,7 @@ __all__ = [
     "temporal_efficiency",
     "lost_potential_penalty",
     "symlog",
+    "RewardBridge",
 ]
 
 __schema_version__ = "1.0.0"
