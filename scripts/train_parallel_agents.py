@@ -86,6 +86,14 @@ try:
 except ImportError:
     PpoStdSafetyCallback = None
 
+# ActionDimMonitor: instrumentation par tête (MESURE SEULE — ne modifie rien).
+# Active via ADAN_ACTIONDIM=1 (par défaut OFF pour ne pas alourdir les runs
+# de production). Le run diagnostique V2 l'active pour suivre μ(size)/σ(size).
+try:
+    from adan_trading_bot.utils.action_dim_monitor import ActionDimMonitor
+except ImportError:
+    ActionDimMonitor = None
+
 try:
     from adan_trading_bot.utils.seed_manager import SeedManager
 except ImportError:
@@ -734,10 +742,19 @@ class ADAN_PBT_Worker(_TrainableBase):
         # tripling memory usage and compute for no benefit.
         policy_kwargs["share_features_extractor"] = True
 
-        # gSDE exploration: initial std ≈ exp(-0.5) ≈ 0.61
-        # Produces nuanced actions inside [-1, 1] without saturating at extremes.
-        # Must match sandbox mode for checkpoint compatibility.
-        policy_kwargs["log_std_init"] = -0.5
+        # gSDE exploration: initial std ≈ exp(-0.5) ≈ 0.61 (défaut historique,
+        # compatible checkpoints). Le run diagnostique V2 le relève (0.0 -> std≈1.0
+        # ou 0.25 -> std≈1.28) via ADAN_LOG_STD_INIT pour rouvrir l'exploration.
+        # NB (audit pré-tanh): σ(size)=3.24 est déjà énorme ; relever log_std_init
+        # ne suffira PAS à réveiller SIZE (cause = μ=-7.2). On le fait quand même
+        # pour TP/SL et pour donner du grain à moudre au gradient sur SIZE.
+        _log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", "-0.5"))
+        policy_kwargs["log_std_init"] = _log_std_init
+        if abs(_log_std_init - (-0.5)) > 1e-9:
+            logger.info(
+                f"Worker {self.worker_idx}: log_std_init={_log_std_init:+.3f} "
+                f"(std0≈{float(np.exp(_log_std_init)):.3f}) — override V2."
+            )
 
         # Seed
         seed = self.adan_config.get("general", {}).get("random_seed", 42) + self.worker_idx
@@ -759,6 +776,16 @@ class ADAN_PBT_Worker(_TrainableBase):
         clip_range_final= prof_cfg.get("clip_range", agent_cfg.get("clip_range", 0.2))
         ent_coef_final  = prof_cfg.get("ent_coef",   self.ent_coef)
         lr_final        = prof_cfg.get("learning_rate", self.learning_rate)
+        # Override V2: ADAN_ENT_COEF force l'entropie pour TOUS les profils (run
+        # diagnostique). Pousse l'agent hors du plateau ; ne réveille pas SIZE à
+        # lui seul (cause μ) mais aide TP/SL et augmente la variance des rollouts.
+        _ent_override = os.environ.get("ADAN_ENT_COEF")
+        if _ent_override is not None:
+            ent_coef_final = float(_ent_override)
+            logger.info(
+                f"Worker {self.worker_idx}: ent_coef={ent_coef_final:.4f} "
+                f"(override V2 via ADAN_ENT_COEF)."
+            )
 
         logger.info(
             f"Worker {self.worker_idx} ({self.profile}): "
@@ -818,6 +845,27 @@ class ADAN_PBT_Worker(_TrainableBase):
                 verbose=0,
             )
             self._callbacks.append(ppo_safety)
+
+        # ActionDimMonitor (MESURE SEULE) — suit μ/σ pré-tanh + post-tanh par tête.
+        # Activé seulement si ADAN_ACTIONDIM=1 (run diagnostique V2). NE MODIFIE
+        # RIEN ; permet d'observer si μ(size)=-7.2 remonte au fil de l'entraînement.
+        if ActionDimMonitor is not None and os.environ.get("ADAN_ACTIONDIM", "0") == "1":
+            _ad_csv = os.environ.get(
+                "ADAN_ACTIONDIM_CSV",
+                str(TRAIN_OUTPUT_DIR / f"actiondim_worker_{self.worker_idx}_{profile_tag}.csv"),
+            )
+            _ad_every = int(os.environ.get("ADAN_ACTIONDIM_EVERY", "1"))
+            action_dim_monitor = ActionDimMonitor(
+                log_every=_ad_every,
+                pre_tanh_batch=int(os.environ.get("ADAN_ACTIONDIM_BATCH", "256")),
+                csv_path=_ad_csv,
+                verbose=1,
+            )
+            self._callbacks.append(action_dim_monitor)
+            logger.info(
+                f"Worker {self.worker_idx}: ActionDimMonitor ACTIF "
+                f"(every={_ad_every}, csv={_ad_csv}) — mesure seule, ne modifie rien."
+            )
 
         self._metrics_monitor = metrics_monitor
         
