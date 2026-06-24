@@ -124,6 +124,13 @@ class RewardConfig:
     barrier_mult: float = 1.5
     # Constante de temps (steps) de l'efficacité temporelle par sortie gagnante.
     tau_steps: float = 12.0
+    # Poids de la pénalité « destruction de potentiel futur » sur AGENT_CLOSE.
+    # (remarque utilisateur : la VRAIE faille AGENT_CLOSE n'est pas le micro-gain
+    #  seul, mais COUPER un trade qui allait devenir une zone verte majeure.)
+    w_lost_potential: float = 0.40
+    # Fraction du MFE résiduel considérée comme « raisonnablement capturable »
+    # (on ne punit pas de ne pas avoir pris le pic absolu, seulement le gros gâchis).
+    capturable_frac: float = 0.6
 
     # Le futur ne doit JAMAIS dominer : on plafonne sa contribution nette par step.
     max_future_contrib: float = 0.60
@@ -162,6 +169,10 @@ class TradeOutcome:
     # Information privilégiée forward (futur) — None si indisponible (mode classic).
     mfe: Optional[float] = None
     mae: Optional[float] = None
+    # MFE RÉSIDUEL après le point de sortie : potentiel favorable laissé sur la
+    # table une fois le trade fermé (ratio, >=0). Mesure la « destruction de
+    # potentiel futur » d'un AGENT_CLOSE prématuré. None si indisponible.
+    mfe_residual: Optional[float] = None
     # Pivot 🟢 le plus proche dans la fenêtre de proximité (None si aucun).
     nearest_green: Optional[CriticalPoint] = None
     near_green: bool = False     # dans la fenêtre de proximité d'un 🟢 ?
@@ -180,6 +191,7 @@ class RewardBreakdown:
     sizing_q: float = 0.0
     missed_green: float = 0.0
     agent_close: float = 0.0
+    lost_potential: float = 0.0     # destruction de potentiel futur (AGENT_CLOSE)
     temporal: float = 0.0
     escalation: float = 0.0
     future_contrib: float = 0.0     # somme des termes "futur" (plafonnée)
@@ -196,6 +208,7 @@ class RewardBreakdown:
             "sizing_q": self.sizing_q,
             "missed_green": self.missed_green,
             "agent_close": self.agent_close,
+            "lost_potential": self.lost_potential,
             "temporal": self.temporal,
             "escalation": self.escalation,
             "future_contrib": self.future_contrib,
@@ -332,6 +345,35 @@ def temporal_efficiency(pnl_net: float, steps_held: int, tau: float) -> float:
     return float(pnl_net) * (1.0 - math.exp(-steps_held / tau))
 
 
+def lost_potential_penalty(pnl_realized: float, mfe_residual: Optional[float],
+                           round_trip_fees: float, capturable_frac: float) -> float:
+    """Pénalité « destruction de potentiel futur » sur sortie volontaire (≤ 0).
+
+    Remarque utilisateur : la vraie faille AGENT_CLOSE n'est PAS le micro-gain
+    seul, c'est COUPER un trade qui allait devenir une zone verte majeure. Seule
+    la vision future locale (MFE résiduel après la sortie) peut le mesurer.
+
+    Logique :
+      - potentiel raisonnablement capturable = capturable_frac × MFE_résiduel,
+        net des frais (on ne pénalise pas l'inatteignable, ni < frais A/R).
+      - si ce potentiel dépasse ce que l'agent a réellement encaissé, on punit
+        l'écart de façon NON LINÉAIRE (sqrt borné) → gradient clair mais pas
+        explosif, et asymétrique (couper tôt un gros mouvement coûte cher).
+      - aucune pénalité si le potentiel résiduel est négligeable (sortie OK).
+    """
+    if mfe_residual is None or mfe_residual <= 0:
+        return 0.0
+    capturable = capturable_frac * mfe_residual - round_trip_fees
+    if capturable <= 0:
+        return 0.0
+    # gâchis = potentiel capturable non réalisé (relatif au réalisé).
+    waste = max(0.0, capturable - max(0.0, pnl_realized))
+    if waste <= 0:
+        return 0.0
+    # non-linéaire concave bornée : sqrt amplifie les petits gâchis sans exploser.
+    return -min(1.0, math.sqrt(waste / max(round_trip_fees, 1e-6)) * 0.1)
+
+
 def symlog(x: float) -> float:
     """Compression symétrique log (cohérente avec l'env actuel)."""
     return math.copysign(math.log1p(abs(x)), x)
@@ -418,6 +460,16 @@ class RewardService:
                 bd.escalation += esc_red
             else:
                 self._esc.passive_step("oversize_red")
+
+            # destruction de potentiel futur : ne s'applique qu'aux sorties
+            # VOLONTAIRES (AGENT_CLOSE), jamais sur un SL légitime (le marché
+            # a tranché) ni un TP atteint (objectif rempli).
+            if ev.closed and ev.close_reason.upper() == "AGENT_CLOSE":
+                pnl_realized_net = net_pnl(ev.pnl_gross, cfg.round_trip_fees)
+                bd.lost_potential = cfg.w_lost_potential * lost_potential_penalty(
+                    pnl_realized_net, ev.mfe_residual,
+                    cfg.round_trip_fees, cfg.capturable_frac)
+                future_sum += bd.lost_potential
 
             # plafond anti-oracle : le futur ne peut pas dominer le PnL réel.
             future_sum = max(-cfg.max_future_contrib,

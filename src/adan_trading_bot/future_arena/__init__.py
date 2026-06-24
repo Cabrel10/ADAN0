@@ -62,6 +62,7 @@ from .reward_service import (
     sizing_quality,
     agent_close_barrier,
     temporal_efficiency,
+    lost_potential_penalty,
     symlog,
 )
 
@@ -98,6 +99,7 @@ __all__ = [
     "sizing_quality",
     "agent_close_barrier",
     "temporal_efficiency",
+    "lost_potential_penalty",
     "symlog",
 ]
 

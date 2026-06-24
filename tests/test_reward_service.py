@@ -27,6 +27,7 @@ from adan_trading_bot.future_arena import (
     sizing_quality,
     agent_close_barrier,
     temporal_efficiency,
+    lost_potential_penalty,
 )
 from adan_trading_bot.future_arena.future_zones import (
     CriticalPoint, PivotDirection, Zone,
@@ -199,6 +200,52 @@ def test_real_win_yields_positive_reward():
     bd = svc.compute(ev)
     assert bd.final > 0
     assert bd.pnl_net > 0
+
+
+# ── destruction de potentiel futur (remarque utilisateur clé) ─────────────────
+def test_lost_potential_punishes_cutting_a_big_move():
+    # l'agent encaisse +0.3% mais le trade allait faire +6% de plus → gros gâchis.
+    pen_big = lost_potential_penalty(
+        pnl_realized=0.003, mfe_residual=0.06, round_trip_fees=0.008,
+        capturable_frac=0.6)
+    # couper en réalisant déjà l'essentiel d'un petit mouvement → quasi rien.
+    pen_small = lost_potential_penalty(
+        pnl_realized=0.05, mfe_residual=0.01, round_trip_fees=0.008,
+        capturable_frac=0.6)
+    assert pen_big < 0
+    assert pen_small == 0.0
+    assert pen_big < pen_small
+
+
+def test_lost_potential_no_penalty_without_future():
+    assert lost_potential_penalty(0.01, None, 0.008, 0.6) == 0.0
+    assert lost_potential_penalty(0.01, 0.0, 0.008, 0.6) == 0.0
+
+
+def test_lost_potential_only_on_agent_close_not_on_sl():
+    svc = RewardService(RewardConfig(mode=RewardMode.FUTURE_GUIDED), seed=0)
+    common = dict(profile="scalper", timeframe="5m", direction=1.0, size=0.4,
+                  sl_chosen=0.012, tp_chosen=0.030, closed=True, pnl_gross=0.003,
+                  steps_held=3, mfe=0.06, mae=0.01, mfe_residual=0.06)
+    # SL légitime : pas de pénalité de potentiel (le marché a tranché).
+    bd_sl = svc.compute(TradeOutcome(close_reason="SL", **common))
+    assert bd_sl.lost_potential == 0.0
+    # AGENT_CLOSE prématuré qui détruit un gros potentiel : pénalisé.
+    svc2 = RewardService(RewardConfig(mode=RewardMode.FUTURE_GUIDED), seed=0)
+    bd_ac = svc2.compute(TradeOutcome(close_reason="AGENT_CLOSE", **common))
+    assert bd_ac.lost_potential < 0
+
+
+def test_lost_potential_capped_by_anti_oracle():
+    # même un gâchis énorme reste borné par max_future_contrib.
+    cfg = RewardConfig(mode=RewardMode.FUTURE_GUIDED, max_future_contrib=0.6)
+    svc = RewardService(cfg, seed=0)
+    bd = svc.compute(TradeOutcome(
+        profile="position", timeframe="4h", direction=1.0, size=0.4,
+        sl_chosen=0.09, tp_chosen=0.23, closed=True, pnl_gross=0.001,
+        steps_held=2, close_reason="AGENT_CLOSE",
+        mfe=0.5, mae=0.02, mfe_residual=0.5))
+    assert abs(bd.future_contrib) <= cfg.max_future_contrib + 1e-9
 
 
 def _run_all():
