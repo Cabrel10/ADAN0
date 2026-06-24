@@ -649,7 +649,12 @@ environment:
   assets:
   - btcusdt
   base_currency: USDT
-  commission: 0.001
+  # A2 (cahier §13.9/§14.4) : frais SPOT 0.80 % ALLER-RETOUR.
+  # fee_pct est applique PAR COTE (entry_fee a l'ouverture + exit_fee a la
+  # cloture, cf. portfolio_manager l.764/920-921) donc 0.004 x 2 = 0.008 = 0.80 %.
+  # Auparavant 0.001 (0.10 % A/R = 8x trop bas) -> reproduisait les exploits de
+  # micro-gain (faille #6) en sous-estimant le cout reel du trading.
+  commission: 0.004
   features_config:
     indicators:
     - rsi_14
@@ -1460,7 +1465,8 @@ risk_parameters:
   weekly_loss_limit: 0.2
   winrate_tp_factor: 1.1
 trading_rules:
-  commission_pct: 0.001
+  # A2: aligne sur environment.commission (0.80 % A/R, applique par cote).
+  commission_pct: 0.004
   duration_tracking:
     1h:
       max_duration_steps: 20
