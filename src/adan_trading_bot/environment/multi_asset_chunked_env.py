@@ -3913,11 +3913,22 @@ class MultiAssetChunkedEnv(gym.Env):
                         margin_available=float(cash_after),
                         leverage_used=1.0,
                         buying_power=float(cash_after),
-                        action_buy_score=float(action[0]) if len(action) > 0 else 0.0,
-                        action_sell_score=float(action[1]) if len(action) > 1 else 0.0,
-                        action_hold_score=float(action[2]) if len(action) > 2 else 0.0,
-                        action_size_pct=float(action[3]) if len(action) > 3 else 0.0,
+                        # A8 (cahier §13.6): logging FANTOME corrige. Semantique
+                        # REELLE de l'action continue = [direction, size, tf, sl, tp].
+                        # Les cles buy/sell/hold sont conservees (compat schema) mais
+                        # remplies avec un sens defensif: direction>0 -> "buy",
+                        # direction<0 -> "sell", proche de 0 -> "hold".
+                        action_buy_score=max(0.0, float(action[0])) if len(action) > 0 else 0.0,
+                        action_sell_score=max(0.0, -float(action[0])) if len(action) > 0 else 0.0,
+                        action_hold_score=(1.0 - min(1.0, abs(float(action[0])))) if len(action) > 0 else 0.0,
+                        action_size_pct=float(action[1]) if len(action) > 1 else 0.0,
                         action_confidence=abs(float(action[0])) if len(action) > 0 else 0.0,
+                        # Semantique reelle (nouvelles cles propres, via kwargs).
+                        action_direction=float(action[0]) if len(action) > 0 else 0.0,
+                        action_size_raw=float(action[1]) if len(action) > 1 else 0.0,
+                        action_tf=float(action[2]) if len(action) > 2 else 0.0,
+                        action_sl=float(action[3]) if len(action) > 3 else 0.0,
+                        action_tp=float(action[4]) if len(action) > 4 else 0.0,
                         current_price=0.0,
                         entry_price=0.0,
                         stop_loss_price=0.0,
@@ -5901,7 +5912,19 @@ class MultiAssetChunkedEnv(gym.Env):
         return bonus
 
     def calculate_duration_penalty(self) -> float:
-        """Calculates the penalty for trades that are open for too long, and rewards for optimal duration."""
+        """A4 (cahier §13.9/§14.4): DESACTIVE — mecanisme d'attente unifie.
+
+        On garde UN SEUL axe d'attente: passivity_penalty (MaxDuration) dans
+        calculate_outcome_reward. La penalite de duree faisait doublon avec le
+        passivity_penalty et la penalite MaxDuration de closure_bonus (-0.2),
+        creant des signaux redondants/contradictoires exploitables par le PPO.
+        Retourne 0.0 (neutralise) ; la logique historique est conservee ci-dessous
+        mais court-circuitee, pour reactivation eventuelle documentee.
+        """
+        return 0.0  # A4: neutralise (mecanisme d'attente unique = passivity_penalty)
+
+    def _legacy_calculate_duration_penalty(self) -> float:
+        """Ancienne logique de penalite de duree (conservee, non appelee)."""
         penalty = 0.0
         if not hasattr(self, "portfolio_manager"):
             return penalty
@@ -6087,21 +6110,20 @@ class MultiAssetChunkedEnv(gym.Env):
             pass
 
         # ──────────────────────────────────────────────────────────────────
-        # STEP 6: PATIENCE BONUS (reward waiting, not forced trading)
+        # STEP 6: A4 — MECANISME D'ATTENTE UNIQUE (passivity_penalty)
         # ──────────────────────────────────────────────────────────────────
-        # With 0.80% fees (4× real Binance), forced trading = slow death
-        # Instead: reward the agent for being selective, waiting for high-conviction setups
-        # Philosophy: "Not forced to trade every day" → bonus for patience
+        # Decision utilisateur (cahier §13.9 / §14.4): SUPPRIMER patience_bonus
+        # ET DURATION PENALTY, garder UN SEUL mecanisme d'attente coherent
+        # (passivity_penalty, applique sur MaxDuration dans calculate_outcome_reward).
+        #
+        # Pourquoi: patience_bonus RECOMPENSAIT l'inaction (>100 steps sans trade)
+        # alors que passivity_penalty PENALISE la mort par MaxDuration -> signaux
+        # CONTRADICTOIRES (le bot pouvait grappiller du bonus en restant assis, cf.
+        # exploit "Survival HOLD" + "Contradiction Patience/Passivite"). On retire
+        # le bonus pour ne garder qu'un seul axe d'attente, clair et non exploitable.
+        #
+        # Conserve a 0.0 pour ne pas casser le breakdown/logging aval qui lit la cle.
         patience_bonus_val = 0.0
-        steps_since_last_trade = self.current_step - getattr(self, 'last_trade_step', -10000)
-        if steps_since_last_trade > 100:  # Beyond 100 steps without trade
-            # Logarithmic bonus: grows but saturates (doesn't encourage infinite holding)
-            patience_bonus_val = 0.005 * math.log1p(steps_since_last_trade - 100)
-            if self.current_step % 500 == 0:
-                self.logger.info(
-                    f"[PATIENCE_BONUS] Worker {self.worker_id} waiting {steps_since_last_trade} steps | "
-                    f"Bonus: +{patience_bonus_val:.4f}"
-                )
 
         # ──────────────────────────────────────────────────────────────────
         # STEP 7: COMPOSE FINAL REWARD
