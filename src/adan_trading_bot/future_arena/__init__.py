@@ -47,6 +47,23 @@ from .escalation import (
     EscalationConfig,
     EscalationTracker,
 )
+from .reward_service import (
+    RewardMode,
+    RewardConfig,
+    RewardService,
+    TradeOutcome,
+    RewardBreakdown,
+    ROUND_TRIP_FEES_DEFAULT,
+    profile_tf_targets,
+    net_pnl,
+    entry_quality_score,
+    sl_quality as reward_sl_quality,
+    tp_quality as reward_tp_quality,
+    sizing_quality,
+    agent_close_barrier,
+    temporal_efficiency,
+    symlog,
+)
 
 __all__ = [
     "Zone",
@@ -67,6 +84,21 @@ __all__ = [
     "tp_quality",
     "EscalationConfig",
     "EscalationTracker",
+    "RewardMode",
+    "RewardConfig",
+    "RewardService",
+    "TradeOutcome",
+    "RewardBreakdown",
+    "ROUND_TRIP_FEES_DEFAULT",
+    "profile_tf_targets",
+    "net_pnl",
+    "entry_quality_score",
+    "reward_sl_quality",
+    "reward_tp_quality",
+    "sizing_quality",
+    "agent_close_barrier",
+    "temporal_efficiency",
+    "symlog",
 ]
 
 __schema_version__ = "1.0.0"
