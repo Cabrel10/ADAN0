@@ -34,6 +34,19 @@ from .future_zones import (
     classify_zone,
     build_critical_points,
 )
+from .wick_stats import (
+    WickDistribution,
+    SLTPTargets,
+    compute_wick_distribution,
+    compute_distributions_by_regime,
+    derive_sltp_targets,
+    sl_quality,
+    tp_quality,
+)
+from .escalation import (
+    EscalationConfig,
+    EscalationTracker,
+)
 
 __all__ = [
     "Zone",
@@ -45,6 +58,15 @@ __all__ = [
     "compute_mfe_mae",
     "classify_zone",
     "build_critical_points",
+    "WickDistribution",
+    "SLTPTargets",
+    "compute_wick_distribution",
+    "compute_distributions_by_regime",
+    "derive_sltp_targets",
+    "sl_quality",
+    "tp_quality",
+    "EscalationConfig",
+    "EscalationTracker",
 ]
 
 __schema_version__ = "1.0.0"
