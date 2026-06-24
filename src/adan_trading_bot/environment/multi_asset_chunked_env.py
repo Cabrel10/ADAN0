@@ -6128,20 +6128,24 @@ class MultiAssetChunkedEnv(gym.Env):
         # ──────────────────────────────────────────────────────────────────
         # STEP 7: COMPOSE FINAL REWARD
         # ──────────────────────────────────────────────────────────────────
-        # With 0.80% fees, patience > forced trading
-        # PnL signal: 5× stronger (was 0.1, now 0.5) so wins matter
-        # Survival bonus: +0.001/step (counterbalance, prevents suicide)
-        pnl_base_reward = pnl_pct * 0.5  # Was 0.1, now 5× stronger
-        survival_bonus = 0.0  # REMOVED: was masking PnL signal, making BUY=HOLD
-        
+        # A6 (cahier §14.4): survival_bonus SUPPRIME definitivement.
+        # Il recompensait la simple existence (+0.001/step) -> masquait le signal
+        # PnL et rendait BUY ~ HOLD (exploit "Survival HOLD"). On le retire du
+        # calcul (plus dans raw_reward). La cle de breakdown reste a 0.0 pour
+        # compatibilite logging mais N'INFLUENCE PLUS le reward.
+        # patience_bonus_val (A4) est aussi a 0.0: mecanisme d'attente unique =
+        # passivity_penalty.
+        pnl_base_reward = pnl_pct * 0.5  # PnL signal: 5x plus fort
+        survival_bonus = 0.0  # A6: supprime (ne participe plus a raw_reward)
+
         raw_reward = (
-            pnl_base_reward  # PnL signal: 5x stronger
-            + promotion_bonus  # Tier promotion (big incentive)
-            + demotion_penalty  # Tier demotion (big penalty)
-            + closure_bonus  # Active closure bonuses / MaxDuration penalties
-            + drawdown_penalty  # Risk management (quadratic, harsh)
-            + patience_bonus_val  # Reward waiting (not forced trading)
-            + survival_bonus  # +0.001/step just for existing
+            pnl_base_reward  # PnL signal (terme structurant)
+            + promotion_bonus  # Tier promotion (gros incitatif)
+            + demotion_penalty  # Tier demotion (grosse penalite)
+            + closure_bonus  # Bonus de cloture active / penalite MaxDuration
+            + drawdown_penalty  # Gestion du risque (quadratique)
+            # A4: patience_bonus_val retire (= 0.0, mecanisme d'attente unique)
+            # A6: survival_bonus retire (recompensait l'inaction)
         )
 
         # Use symlog to compress large rewards while preserving small signal
@@ -7172,15 +7176,35 @@ class MultiAssetChunkedEnv(gym.Env):
                         current_price = price
                         unrealized_pnl_pct = (current_price - entry_price) / entry_price if entry_price != 0 else 0.0
                         
-                        # Only close via AGENT_CLOSE if profit > 0.15% (above typical break-even with fees)
-                        # This prevents the "paper cut" loss pattern where fees exceed profits
-                        if unrealized_pnl_pct < 0.0015:  # 0.15% threshold
-                            # Reject AGENT_CLOSE - profit too small to cover fees
+                        # A5 (cahier §14.4) — BARRIERE AGENT_CLOSE DYNAMIQUE + PENALITE GRADIENT.
+                        # A7 a PROUVE: 0% de TP atteint, 100% des cloctures en AGENT_CLOSE
+                        # (1776 AGENT_CLOSE / 0 TP / 0 SL sur 3582 trades paper). La tete TP
+                        # est SAINE (cas C): le vrai probleme = AGENT_CLOSE coupe AVANT le TP.
+                        #
+                        # Ancien comportement: seuil STATIQUE 0.15% + rejet NO-OP (discrete=0
+                        # sans penalite). Le PPO apprenait "ouvrir -> +0.2% -> AGENT_CLOSE".
+                        #
+                        # Nouveau: seuil DYNAMIQUE = 1.5 x frais A/R (== reward_service.
+                        # agent_close_barrier). Sous le seuil -> convertir en HOLD ET emettre
+                        # une PENALITE GRADIENT proportionnelle au deficit de rentabilite
+                        # (gradient, pas no-op) pour decourager le micro-close repete.
+                        try:
+                            _rt_fees = 2.0 * float(getattr(self.portfolio_manager, "fee_pct", 0.004))
+                        except Exception:
+                            _rt_fees = 0.008
+                        _barrier = 1.5 * _rt_fees  # ex: 1.5 x 0.8% = 1.2%
+                        if unrealized_pnl_pct < _barrier:
+                            # Reject AGENT_CLOSE - rentabilite insuffisante vs frais.
                             discrete_action = 0
                             self.rejection_reasons["hysteresis"] += 1
+                            # Penalite GRADIENT (cf. reward_service.agent_close_barrier):
+                            # proportionnelle au manque de rentabilite, bornee, negative.
+                            _deficit = (_barrier - unrealized_pnl_pct) / max(_barrier, 1e-9)
+                            _ac_pen = -0.15 * min(1.0, max(0.0, _deficit))
+                            self._step_invalid_penalty += _ac_pen
                             self.logger.debug(
-                                f"[AGENT_CLOSE BLOCKED] {asset}: unrealized PnL {unrealized_pnl_pct:.4%} < 0.15% threshold. "
-                                f"Entry={entry_price:.2f}, Current={current_price:.2f}"
+                                f"[AGENT_CLOSE BLOCKED] {asset}: PnL {unrealized_pnl_pct:.4%} < "
+                                f"barriere {_barrier:.4%} (1.5x frais) | penalite gradient={_ac_pen:.5f}"
                             )
                         else:
                             self.trade_attempts += 1
