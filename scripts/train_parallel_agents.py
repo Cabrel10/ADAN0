@@ -1711,11 +1711,31 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     #    instead of saturating at extremes (previous 0.5 gave std≈1.65 → epilepsy).
     # V2 override : ADAN_LOG_STD_INIT (def -0.5, compat checkpoints). Le run
     # diagnostique le relève (0.0 -> std0≈1.0) pour rouvrir l'exploration.
-    _sb_log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", "-0.5"))
+    # gSDE STABILITY FIX (V2 execution audit, 2026-06-24 — MEASURED, not guessed):
+    # gSDE variance = (latent_sde**2) @ (get_std(log_std)**2), i.e. for ~uniform
+    # std,  σ_eff ≈ ||features||_2 * exp(log_std_init).
+    # scripts/diag_gsde_latent.py MEASURED ||features||_2 ≈ 11.4 with the real
+    # ContextualTemporalFusionExtractor (features_dim=256). So log_std_init=-0.5
+    # gives σ_eff ≈ 6.9 AT INIT (chaotic) and PPO then drives log_std up further
+    # -> σ explodes (3.4->13->41->110 observed). The old "frozen size μ=-7" was
+    # the network DEFENDING against this chaos by saturating tanh.
+    # Fixes (both SB3-documented, no architecture surgery):
+    #   - log_std_init=-2.0  -> std≈0.135 -> σ_eff ≈ 1.5 (sane exploration)
+    #   - use_expln=True     -> SB3: "keeps variance above zero and prevents it
+    #                           from growing too fast" (bounds the blow-up)
+    # NOTE: VecNormalize(norm_obs) is NOT the fix here — StateBuilder already
+    # normalizes+clips obs to [-10,10] (measured), and heavy/500k_FIXED used
+    # norm_obs=False too. LayerNorm on features makes it WORSE (||.||_2->16).
+    _sb_log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", "-2.0"))
+    _sb_use_expln = os.environ.get("ADAN_USE_EXPLN", "1") == "1"
+    _sb_use_sde = os.environ.get("ADAN_USE_SDE", "1") == "1"
     policy_kwargs = {
         "share_features_extractor": True,
         "log_std_init": _sb_log_std_init,
     }
+    if _sb_use_sde:
+        # use_expln only matters for gSDE
+        policy_kwargs["use_expln"] = _sb_use_expln
 
     # ------------------------------------------------------------------
     # CRITICAL FIX (V2 execution audit, 2026-06-24):
@@ -1756,9 +1776,12 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
             "match heavy mode. Check the import at the top of this file."
         )
 
-    if abs(_sb_log_std_init - (-0.5)) > 1e-9:
-        logger.info(f"[SANDBOX] log_std_init={_sb_log_std_init:+.3f} "
-                    f"(std0≈{float(np.exp(_sb_log_std_init)):.3f}) — override V2.")
+    logger.info(
+        f"[SANDBOX] gSDE: use_sde={_sb_use_sde} use_expln={_sb_use_expln} "
+        f"log_std_init={_sb_log_std_init:+.3f} (std0≈{float(np.exp(_sb_log_std_init)):.3f}) "
+        f"-> expected σ_eff≈{11.4*float(np.exp(_sb_log_std_init)):.2f} at init "
+        f"(target <~1.5)."
+    )
 
     # S15 HARD RESET: Use config values (512/64/10) — safe for 7GB CI
     sandbox_n_steps = int(sandbox_cfg.get("n_steps", 512))
@@ -1793,8 +1816,10 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
                 sandbox_cfg.get("ent_coef", agent_cfg.get("ent_coef", 0.01)))),
             vf_coef=float(agent_cfg.get("vf_coef", 0.5)),
             max_grad_norm=float(agent_cfg.get("max_grad_norm", 0.5)),
-            use_sde=True,              # Session 8: State-Dependent Exploration
-            sde_sample_freq=4,         # Resample noise every 4 steps
+            use_sde=_sb_use_sde,       # gSDE (set ADAN_USE_SDE=0 to fall back to
+                                       # plain DiagGaussian — σ then independent of
+                                       # features, cannot diverge).
+            sde_sample_freq=int(os.environ.get("ADAN_SDE_SAMPLE_FREQ", "4")),
             verbose=1,
             device="cpu",
             policy_kwargs=policy_kwargs,
