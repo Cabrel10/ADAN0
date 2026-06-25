@@ -16,8 +16,15 @@
 # CE QUI N'EST PAS ACTIVÉ : ActionSaturationGuard (reste en réserve, cf. consigne).
 #
 # Paramètres V2 (overrides via env, lus par train_parallel_agents.py) :
-#   ADAN_LOG_STD_INIT   (def 0.0)   -> std0≈1.0 (rouvre l'exploration TP/SL)
-#   ADAN_ENT_COEF       (def 0.02)  -> entropie uniforme tous profils
+#   ADAN_USE_SDE        (def 0)     -> 0=DiagGaussian (σ DÉCOUPLÉE des features,
+#                                      mathématiquement stable — RECOMMANDÉ 500k) ;
+#                                      1=gSDE (state-dependent, dérive possible).
+#   ADAN_LOG_STD_INIT   (def -1.0)  -> DiagGaussian: std0≈exp(-1.0)≈0.37.
+#                                      ⚠ NE PLUS mettre 0.0/-0.5 : avec gSDE +
+#                                      ||features||₂≈11.4 => σ_eff≈6.9 -> DIVERGENCE
+#                                      (cf. README CRITICAL FINDING #2).
+#   ADAN_USE_EXPLN      (def 1)     -> gSDE seul : borne la croissance de variance.
+#   ADAN_ENT_COEF       (def 0.0)   -> 0.02 poussait aussi l'explosion ; 0.0 sûr.
 #   ADAN_ACTIONDIM=1                -> active l'instrumentation par tête
 #
 # MACHINES SUPPORTÉES (auto-détection, override avec --machine) :
@@ -47,8 +54,10 @@ cd "$PROJECT_DIR"
 MACHINE=""                 # auto-détection si vide
 STEPS="${ADAN_STEPS:-80000}"          # 50k-100k recommandé
 STEPS_PER_ITER="${ADAN_STEPS_PER_ITER:-5000}"
-LOG_STD_INIT="${ADAN_LOG_STD_INIT:-0.0}"
-ENT_COEF="${ADAN_ENT_COEF:-0.02}"
+USE_SDE="${ADAN_USE_SDE:-0}"          # 0=DiagGaussian (stable), 1=gSDE
+USE_EXPLN="${ADAN_USE_EXPLN:-1}"      # gSDE seul : borne la variance
+LOG_STD_INIT="${ADAN_LOG_STD_INIT:--1.0}"   # std0≈0.37 (SAFE) — NE PAS remettre 0.0
+ENT_COEF="${ADAN_ENT_COEF:-0.0}"     # 0.0 sûr (0.02 amplifiait l'explosion)
 PROFILES="${ADAN_PROFILES:-intraday swing}"   # 2 profils par défaut (diagnostic)
 DRY_RUN=0
 
@@ -56,6 +65,7 @@ DRY_RUN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --machine)        MACHINE="$2"; shift 2;;
+    --use-sde)        USE_SDE="$2"; shift 2;;
     --steps)          STEPS="$2"; shift 2;;
     --steps-per-iter) STEPS_PER_ITER="$2"; shift 2;;
     --log-std-init)   LOG_STD_INIT="$2"; shift 2;;
@@ -121,6 +131,7 @@ echo "  Machine        : $MACHINE   (OS=$OS, GPU=$HAS_GPU)"
 echo "  RAM totale/dispo: ${TOTAL_MB}Mo / ${FREE_MB}Mo   CPU=$NCPU"
 echo "  Mode exécution : $([[ "$USE_RAY" == "1" ]] && echo "Ray PBT ($NUM_SAMPLES workers, DummyVec)" || echo "Sandbox (1 worker, SANS Ray)")"
 echo "  Steps          : $STEPS (par itér: $STEPS_PER_ITER)"
+echo "  use_sde        : $USE_SDE ($([[ "$USE_SDE" == "0" ]] && echo "DiagGaussian — STABLE" || echo "gSDE use_expln=$USE_EXPLN"))"
 echo "  log_std_init   : $LOG_STD_INIT (std0≈$(awk "BEGIN{printf \"%.2f\", exp($LOG_STD_INIT)}"))"
 echo "  ent_coef       : $ENT_COEF"
 echo "  Profils        : $PROFILES"
@@ -141,6 +152,8 @@ export PYTHONUNBUFFERED=1
 export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
 export ADAN_ACTIONDIM=1
 export ADAN_ACTIONDIM_EVERY="${ADAN_ACTIONDIM_EVERY:-1}"
+export ADAN_USE_SDE="$USE_SDE"
+export ADAN_USE_EXPLN="$USE_EXPLN"
 export ADAN_LOG_STD_INIT="$LOG_STD_INIT"
 export ADAN_ENT_COEF="$ENT_COEF"
 export OMP_NUM_THREADS="$([[ $NCPU -ge 4 ]] && echo 4 || echo $NCPU)"
