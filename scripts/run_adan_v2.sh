@@ -7,7 +7,7 @@
 #         -> Cas A : μ remonte (ex. -7.2 -> -2.5) = PPO réapprend, PAS de guard.
 #         -> Cas B : μ stagne (~-7) malgré σ≈3 = problème reward/credit-assignment.
 #
-# Diagnostic basé sur audit_pre_tanh.py :
+# Diagnostic basé sur diagnostics/audit_pre_tanh.py :
 #   size  μ=-7.20 σ=3.24 -> figée par la MOYENNE (pas l'exploration)
 #   tp    μ=+4.13 σ=1.11 -> saturée plafond (Cas B' A7 v2)
 #   direction/tf/sl : saines
@@ -219,6 +219,6 @@ echo "════════════════════════�
 echo "  TERMINÉ (exit=$EXIT_CODE)"
 echo "  Log  : $LOG_FILE"
 echo "  CSV  : $ADAN_ACTIONDIM_CSV"
-echo "  Analyse : python scripts/analyze_actiondim.py \"$ADAN_ACTIONDIM_CSV\""
+echo "  Analyse : python scripts/diagnostics/analyze_actiondim.py \"$ADAN_ACTIONDIM_CSV\""
 echo "═══════════════════════════════════════════════════════════════════════════════"
 exit $EXIT_CODE
