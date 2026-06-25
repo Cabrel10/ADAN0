@@ -1467,6 +1467,17 @@ risk_parameters:
 trading_rules:
   # A2: aligne sur environment.commission (0.80 % A/R, applique par cote).
   commission_pct: 0.004
+  # 🔴 CRITICAL FIX (2026-06-25): enforce the per-tier exposure cap on EVERY
+  # open (was only enforced at hour==4). Without this, the agent ignored
+  # max_position_size_pct / exposure_range and sized positions arbitrarily.
+  enable_position_cap: true
+  # 🔴 AGENT_CLOSE quota (2026-06-25): l'agent ne peut interrompre manuellement
+  # qu'un nombre limité de positions par jour, et jamais trop d'affilée. Au-delà
+  # du quota, l'AGENT_CLOSE est converti en HOLD + pénalité (laisse jouer SL/TP).
+  # Les sorties SL / TP / MAX_DURATION ne comptent PAS dans ce quota.
+  agent_close:
+    max_per_day: 7        # interruptions manuelles max par jour (24h glissantes en steps)
+    max_consecutive: 3    # max d'AGENT_CLOSE d'affilée sans nouvelle entrée entre-deux
   duration_tracking:
     1h:
       max_duration_steps: 20

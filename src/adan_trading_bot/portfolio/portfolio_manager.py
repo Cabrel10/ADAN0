@@ -740,10 +740,25 @@ class PortfolioManager:
         except Exception:
             available_cash = 0.0
         if available_cash > 0:
-            max_position_value = available_cash * 5.0  # 5x le cash disponible (DYNAMIQUE, CASH ONLY)
-            if cost > max_position_value:
+            # 🔴 CRITICAL FIX (2026-06-25): SPOT pur => le notionnel ne peut JAMAIS
+            # dépasser le cash disponible. L'ancien "* 5.0" autorisait un levier
+            # fantôme de 5x alors que config leverage=1 et futures_enabled=false,
+            # ce qui contaminait les rewards (equity 20$ -> 3792$ impossible).
+            # On lit le levier configuré (défaut 1.0) et on borne strictement à
+            # leverage * cash. Le buffer 1e-9 absorbe l'arrondi flottant.
+            try:
+                _lev = float(
+                    (self.config.get("trading_rules", {}) or {}).get("leverage", 1.0)
+                ) if isinstance(self.config, dict) else 1.0
+                if not (np.isfinite(_lev) and _lev > 0):
+                    _lev = 1.0
+            except Exception:
+                _lev = 1.0
+            # En spot (leverage<=1), le plafond dur = cash disponible.
+            max_position_value = available_cash * max(1.0, _lev) if _lev > 1.0 else available_cash
+            if cost > max_position_value + 1e-9:
                 logger.error(
-                    f"🚨 POSITION TROP GRANDE: {cost:.2f}$ > max {max_position_value:.2f}$ (cash={available_cash:.2f}$). Rejet de l'ouverture pour {asset}."
+                    f"🚨 POSITION TROP GRANDE: {cost:.2f}$ > max {max_position_value:.2f}$ (cash={available_cash:.2f}$, lev={_lev}). Rejet de l'ouverture pour {asset}."
                 )
                 try:
                     if hasattr(self, "metrics") and self.metrics:
