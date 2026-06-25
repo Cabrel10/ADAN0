@@ -1478,6 +1478,45 @@ trading_rules:
   agent_close:
     max_per_day: 7        # interruptions manuelles max par jour (24h glissantes en steps)
     max_consecutive: 3    # max d'AGENT_CLOSE d'affilée sans nouvelle entrée entre-deux
+    min_gap_steps: 12     # cooldown STRUCTUREL: >= 12 steps entre deux AGENT_CLOSE
+  # 🔵 DECISION BUDGET (V3, 2026-06-25) — friction structurelle continue.
+  # Jauge d'energie [0,1]. HOLD recharge (+recharge_hold), BUY/CLOSE coutent.
+  # Quand budget < cost_close => AGENT_CLOSE converti en HOLD + penalite douce.
+  # Effet mecanique : apres ~3 closes (3*0.30) le budget est quasi vide ; il
+  # faut ~15 HOLD (15*0.02=0.30) pour pouvoir refermer -> cooldown NATUREL.
+  # Les murs rigides (if/else) ne s'apprennent pas bien ; un cout continu
+  # modifie la geometrie de l'espace d'apprentissage du PPO.
+  decision_budget:
+    enabled: true
+    max: 1.0              # jauge pleine
+    cost_buy: 0.15        # ouvrir une position consomme 0.15
+    cost_close: 0.30      # AGENT_CLOSE consomme 0.30 (cher: tue le micro-scalping)
+    recharge_hold: 0.02   # chaque HOLD recharge +0.02 (recompense la patience)
+  # 🔵 SYMMETRY & VOLATILITY ENFORCEMENT (V3) — penalite latente (par step
+  # tant que la position est ouverte) contre la triche SL/TP.
+  #  - rr_penalty   : penalise |RR_effectif - target_RR| (asymetrie risque/gain)
+  #  - sl_atr_penalty: penalise un SL trop large vs la volatilite (ATR) = "lachete"
+  symmetry_enforcement:
+    enabled: true
+    target_rr: 1.5            # ratio risque/recompense cible (profil intraday)
+    rr_tolerance: 0.5         # zone morte : pas de penalite si |RR-target| <= 0.5
+    rr_lambda: 0.02           # poids penalite asymetrie (par step, latent)
+    sl_atr_mult_max: 2.0      # SL acceptable jusqu'a 2.0 x ATR ; au-dela = lachete
+    sl_atr_lambda: 0.02       # poids penalite SL-trop-large-vs-ATR (par step)
+    max_step_penalty: 0.15    # plafond de la penalite de symetrie par step
+  # 🔵 CLOSE INTENTION PENALTY (V3) — un AGENT_CLOSE precoce / non rentable
+  # coute proportionnellement a sa nuisance (duree trop courte + PnL faible).
+  close_intention_penalty:
+    enabled: true
+    min_hold_steps: 6         # en dessous => penalise (close trop precoce)
+    lambda_duration: 0.05     # poids du deficit de duree
+  # 🔵 ACTION ENTROPY CONSTRAINT (V3) — penalise une frequence de switch
+  # d'action (HOLD<->BUY<->SELL) trop elevee sur une fenetre glissante.
+  action_entropy:
+    enabled: true
+    window: 20                # taille de la fenetre glissante (steps)
+    switch_threshold: 0.5     # part de switches au-dela de laquelle on penalise
+    lambda_switch: 0.03       # poids de la penalite de switch
   duration_tracking:
     1h:
       max_duration_steps: 20

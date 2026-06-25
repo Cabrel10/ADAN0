@@ -215,3 +215,47 @@ seulement APRÈS avoir confirmé que le portefeuille est sain.
 - **Les frais** : 0.4% par côté (0.8% A/R) — réalistes, conservés.
 - **Le `agent_close_barrier`** (seuil 1.5× frais) : conservé, complémentaire au
   quota.
+
+---
+
+## 8. ADDENDUM — Decision Budget & Symmetry Enforcement (IMPLÉMENTÉ 2026-06-25)
+
+Suite à l'analyse « décisions gratuites / coût nul des intentions », les murs
+rigides (`if/else`, quota 7/jour) ont été remplacés / complétés par une
+**friction structurelle continue** de niveau HFT institutionnel. Tout est
+configurable sous `trading_rules:` dans `config/config.yaml`.
+
+### 8.1 Decision Budget (jauge d'énergie [0,1])
+| Événement | Effet sur la jauge |
+|---|---|
+| Départ / nouvel épisode | `budget = max = 1.0` |
+| HOLD (aucun trade exécuté) | `+recharge_hold` (0.02), plafonné à `max` |
+| BUY exécuté | `−cost_buy` (0.15) |
+| AGENT_CLOSE exécuté | `−cost_close` (0.30) |
+| `budget < cost_close` **ou** gap < `min_gap_steps` **ou** quota/jour atteint | AGENT_CLOSE → **HOLD forcé** + pénalité gradient `−0.10 − 0.10·deficit` |
+
+**Effet mécanique prouvé** (`tests/test_decision_budget_v3.py`) : sur 40
+tentatives de scalping consécutives → **4 closes seulement**, 36 bloquées,
+cooldown naturel de **12 steps** entre chaque close. Micro-scalping
+mathématiquement étouffé.
+
+### 8.2 Symmetry & Volatility Enforcement (pénalité LATENTE, par step ouvert)
+- **Asymétrie RR** : `−rr_lambda · (|RR − target_rr| − rr_tolerance)` si déviation
+  > tolérance. `RR = take_profit_pct / stop_loss_pct`. Cible 1.5, tolérance 0.5.
+- **Lâcheté SL/ATR** : `−sl_atr_lambda · ((SL − sl_atr_mult_max·ATR%) / ATR%)`
+  si le SL dépasse `2.0 × ATR%`. ATR% lu via `_get_atr_pct_for_asset`.
+- Plafonnée à `max_step_penalty` (0.15) par position et par step.
+
+### 8.3 Close Intention Penalty (au site AGENT_CLOSE)
+`−lambda_duration · ((min_hold − durée)/min_hold) · pnl_factor` si durée <
+`min_hold_steps` (6). `pnl_factor = 1.5` si PnL ≤ 0 (close panique non rentable).
+
+### 8.4 Action Entropy Constraint (fenêtre glissante)
+`−lambda_switch · (taux_switch − switch_threshold)` si la fréquence de
+changement d'action sur `window` (20) steps dépasse `switch_threshold` (0.5).
+Alimentée par `_action_history` (actions EFFECTIVES).
+
+### 8.5 Intégration reward
+`symmetry_penalty` et `action_entropy_penalty` sont ajoutés à `raw_reward` ;
+`close_intention` et le gate budget passent par `_step_invalid_penalty`
+(propagé dans `realized_pnl`). Le tout reste comprimé par le `symlog` final.

@@ -1,0 +1,17 @@
+{
+  "timeframes": {
+    "5m": {
+      "file": "scaler_5m.pkl",
+      "type": "SafeScalerWrapper"
+    },
+    "1h": {
+      "file": "scaler_1h.pkl",
+      "type": "SafeScalerWrapper"
+    },
+    "4h": {
+      "file": "scaler_4h.pkl",
+      "type": "SafeScalerWrapper"
+    }
+  },
+  "saved_at": "2026-06-25 17:23:03.702410"
+}
