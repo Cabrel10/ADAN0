@@ -363,6 +363,17 @@ class MultiAssetChunkedEnv(gym.Env):
         self.current_timeframe_for_trade = "5m"
         self.daily_reset_step = 0
         self.current_day = 0
+        # FIX (2026-06-25): quota AGENT_CLOSE (interruptions manuelles).
+        # Lu depuis trading_rules.agent_close (defaults sains ci-dessous).
+        _ac_cfg = {}
+        try:
+            _ac_cfg = (self.config.get('trading_rules', {}) or {}).get('agent_close', {}) or {}
+        except Exception:
+            _ac_cfg = {}
+        self.agent_close_max_per_day = int(_ac_cfg.get('max_per_day', 7))
+        self.agent_close_max_consecutive = int(_ac_cfg.get('max_consecutive', 3))
+        self.agent_close_count_today = 0
+        self.agent_close_consecutive = 0
         self.last_trade_steps_by_tf = {}
 
         self.last_trade_timestamps = {"5m": None, "1h": None, "4h": None}
@@ -5594,6 +5605,10 @@ class MultiAssetChunkedEnv(gym.Env):
             self.positions_count = {"5m": 0, "1h": 0, "4h": 0, "daily_total": 0}
             self.current_day = current_day
             self.daily_reset_step = self.current_step
+            # FIX (2026-06-25): reset du quota AGENT_CLOSE quotidien. L'agent ne
+            # peut interrompre manuellement qu'un nombre limite de positions par
+            # jour (agent_close_max_per_day). SL/TP/MAX_DURATION ne comptent PAS.
+            self.agent_close_count_today = 0
 
             self.smart_logger.info(
                 f"[FREQUENCY] Nouveau jour détecté (jour {current_day}), reset des compteurs de positions",
@@ -7193,7 +7208,32 @@ class MultiAssetChunkedEnv(gym.Env):
                         except Exception:
                             _rt_fees = 0.008
                         _barrier = 1.5 * _rt_fees  # ex: 1.5 x 0.8% = 1.2%
-                        if unrealized_pnl_pct < _barrier:
+                        # FIX (2026-06-25): QUOTA AGENT_CLOSE. L'agent ne peut
+                        # interrompre manuellement qu'au plus agent_close_max_per_day
+                        # positions par jour, et jamais plus de
+                        # agent_close_max_consecutive d'affilee (sinon micro-scalping
+                        # par fermetures repetees -> blocage des BUY). Au-dela du
+                        # quota: la fermeture est convertie en HOLD + penalite.
+                        _ac_today = int(getattr(self, "agent_close_count_today", 0))
+                        _ac_consec = int(getattr(self, "agent_close_consecutive", 0))
+                        _ac_max_day = int(getattr(self, "agent_close_max_per_day", 7))
+                        _ac_max_consec = int(getattr(self, "agent_close_max_consecutive", 3))
+                        _quota_blocked = (
+                            _ac_today >= _ac_max_day
+                            or _ac_consec >= _ac_max_consec
+                        )
+                        if _quota_blocked:
+                            discrete_action = 0
+                            self.rejection_reasons["hysteresis"] += 1
+                            # Penalite fixe moderee: l'agent doit laisser jouer SL/TP.
+                            _q_pen = -0.10
+                            self._step_invalid_penalty += _q_pen
+                            self.logger.debug(
+                                f"[AGENT_CLOSE QUOTA] {asset}: bloque "
+                                f"(today={_ac_today}/{_ac_max_day}, "
+                                f"consec={_ac_consec}/{_ac_max_consec}) -> HOLD, pen={_q_pen}"
+                            )
+                        elif unrealized_pnl_pct < _barrier:
                             # Reject AGENT_CLOSE - rentabilite insuffisante vs frais.
                             discrete_action = 0
                             self.rejection_reasons["hysteresis"] += 1
@@ -7223,6 +7263,10 @@ class MultiAssetChunkedEnv(gym.Env):
                                 self._apply_trade_results_safely(
                                     pnl_value=float(val), fees=float(fees))
                                 trade_executed_this_step = True
+                                # FIX (2026-06-25): comptabilise cet AGENT_CLOSE
+                                # dans le quota quotidien + serie consecutive.
+                                self.agent_close_count_today = int(getattr(self, "agent_close_count_today", 0)) + 1
+                                self.agent_close_consecutive = int(getattr(self, "agent_close_consecutive", 0)) + 1
                                 # Déclenche WAIT post-SELL pour cet asset
                                 self._last_sell_step_by_asset[asset] = self.current_step
                                 _wait_map = {"5m": 6, "1h": 10, "4h": 20}
@@ -7415,6 +7459,9 @@ class MultiAssetChunkedEnv(gym.Env):
                     self._last_open_step_by_asset[asset] = self.current_step
                     # Enregistre le step du BUY pour le cooldown HOLD_MIN post-BUY
                     self._buy_step_by_asset[asset] = self.current_step
+                    # FIX (2026-06-25): une nouvelle entree casse la serie
+                    # consecutive d'AGENT_CLOSE (le quota /jour, lui, reste).
+                    self.agent_close_consecutive = 0
                     trade_executed_this_step = True
                     # Update frequency counters
                     if not force_trade:
