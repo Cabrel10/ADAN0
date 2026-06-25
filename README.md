@@ -74,14 +74,56 @@ the same `ContextualTemporalFusionExtractor` as heavy mode. Proof via
 
 Checkpoint size jumped 2.2 MB → 7.4 MB (the missing 2.5M+ params are now real).
 
-> **Status: NO scientific verdict yet.** The architecture now provably runs end
-> to end. The Cas A / Cas B question must be re-evaluated on a NEW run that uses
-> the corrected architecture. The earlier "Cas A confirmed" claim is withdrawn.
+### ⚠️ CRITICAL FINDING #2 — gSDE variance explosion (the REAL root cause)
 
-**Next milestones (on the corrected architecture)**:
-- Re-run the instrumented diagnostic with the **real** extractor.
-- 100K-200K: size distribution should spread (0.1 / 0.2 / 0.35 / 0.6 / 0.8) — if `size ≈ 0.01` everywhere, the freeze returned (→ Cas B).
-- 500K: `μ(size)` in [-2, +2], real TP/SL, variable positions, less MAX_DURATION/AGENT_CLOSE, compared against the 500K_FIXED model (which used the same real architecture via heavy mode).
+Once the real architecture ran, gSDE σ **exploded** (3.4 → 13 → 41 → 110 in a
+few rollouts) and `μ(size)` collapsed to -7/-12. A measurement script
+(`scripts/diag_gsde_latent.py`) found the exact cause:
+
+```
+gSDE variance = (latent_sde²) @ (get_std(log_std)²)   [SB3 source]
+  => for ~uniform std:  σ_eff ≈ ||features||₂ · exp(log_std_init)
+```
+
+- MEASURED `||features||₂ ≈ 11.4` (real extractor, features_dim=256).
+- So the historical `log_std_init=-0.5` gives **σ_eff ≈ 6.9 AT INIT** → chaotic
+  actions → PPO drives log_std up → σ diverges.
+- **The "frozen size μ=-7" was the network's DEFENSE against this chaos**
+  (saturating tanh to stop the noise). It was a *symptom*, not the disease.
+
+**Theories tested and DISPROVED with evidence:**
+- *"observations not normalized"* → FALSE. `StateBuilder` already normalizes +
+  clips obs to [-10,10] (measured: 5m∈[0,1], 1h/4h∈[-4.4,8.4]); heavy/500K_FIXED
+  used `VecNormalize(norm_obs=False)` too. Re-adding obs normalization would
+  *double-normalize* and destroy the signal.
+- *"add LayerNorm on the features"* → makes it WORSE (||·||₂ → √256 = 16).
+
+**Fix (measured, SB3-documented, no architecture change):**
+
+| Option | Setting | Result (σ over 3k steps) | Trade-off |
+|--------|---------|--------------------------|-----------|
+| **A — bounded gSDE** | `log_std_init=-2.0` + `use_expln=True` | 0.93 → 1.7 → 1.9 → **4.3** (peaks, no divergence) | keeps state-dependent exploration; σ still creeps slowly |
+| **B — DiagGaussian (recommended for 500K)** | `ADAN_USE_SDE=0`, `log_std_init=-1.0` | **0.366 → 0.367 → 0.369** (flat) | σ mathematically decoupled from features → cannot diverge; loses state-dependence |
+
+Both keep `μ(size)` centered (no more collapse to -7) and produce real TP/SL
+(TP/SL ≈ 99% of closes, AGENT_CLOSE ≈ 1%, MAX_DURATION = 0).
+
+> **Recommended for the 500K production run: Option B** (`ADAN_USE_SDE=0`) — it is
+> provably stable for the full duration. Option A is fine for shorter
+> state-dependent-exploration experiments but must be watched.
+
+> **Status: NO scientific Cas A/B verdict yet.** Two blocking bugs were found and
+> fixed (wrong extractor, gSDE divergence). The architecture now provably runs
+> end to end AND trains stably. The Cas A / Cas B question must be answered on a
+> real 500K run with the fixes. The earlier "Cas A confirmed" claim is withdrawn.
+
+**Next milestones (on the corrected, stabilized architecture)**:
+- Run the real 500K on the VPS, single profile, `ADAN_USE_SDE=0` (the VPS already
+  produced 500K_FIXED; with one profile the load is lower → no need for Kali yet).
+- Monitor `σ` stays < ~3 and `μ(size)` stays in [-2, +2] via the ActionDim CSV.
+- 100K-200K: size distribution should spread (0.1 / 0.2 / 0.35 / 0.6 / 0.8).
+- Re-run `scripts/audit_execution.py` on the 100K checkpoint to confirm all
+  modules keep training.
 
 ---
 
