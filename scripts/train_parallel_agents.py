@@ -742,19 +742,24 @@ class ADAN_PBT_Worker(_TrainableBase):
         # tripling memory usage and compute for no benefit.
         policy_kwargs["share_features_extractor"] = True
 
-        # gSDE exploration: initial std ≈ exp(-0.5) ≈ 0.61 (défaut historique,
-        # compatible checkpoints). Le run diagnostique V2 le relève (0.0 -> std≈1.0
-        # ou 0.25 -> std≈1.28) via ADAN_LOG_STD_INIT pour rouvrir l'exploration.
-        # NB (audit pré-tanh): σ(size)=3.24 est déjà énorme ; relever log_std_init
-        # ne suffira PAS à réveiller SIZE (cause = μ=-7.2). On le fait quand même
-        # pour TP/SL et pour donner du grain à moudre au gradient sur SIZE.
-        _log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", "-0.5"))
+        # gSDE STABILITY (V2 execution audit, 2026-06-24 — MEASURED):
+        # σ_eff ≈ ||features||_2 * exp(log_std_init). With the real extractor
+        # (features_dim=256) ||features||_2≈11.4 (scripts/diag_gsde_latent.py),
+        # so the historical log_std_init=-0.5 gave σ_eff≈6.9 AT INIT -> gSDE
+        # diverged and the net defended by saturating size to μ=-7. We now
+        # default to -2.0 (σ_eff≈1.5) + use_expln=True (bounds growth). This is
+        # the SAME fix as sandbox so a 500k run does not repeat the collapse.
+        # Override via ADAN_LOG_STD_INIT / ADAN_USE_EXPLN if needed.
+        _log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", "-2.0"))
         policy_kwargs["log_std_init"] = _log_std_init
-        if abs(_log_std_init - (-0.5)) > 1e-9:
-            logger.info(
-                f"Worker {self.worker_idx}: log_std_init={_log_std_init:+.3f} "
-                f"(std0≈{float(np.exp(_log_std_init)):.3f}) — override V2."
-            )
+        if os.environ.get("ADAN_USE_EXPLN", "1") == "1":
+            policy_kwargs["use_expln"] = True
+        logger.info(
+            f"Worker {self.worker_idx}: gSDE log_std_init={_log_std_init:+.3f} "
+            f"(std0≈{float(np.exp(_log_std_init)):.3f}) use_expln="
+            f"{policy_kwargs.get('use_expln', False)} -> σ_eff≈"
+            f"{11.4*float(np.exp(_log_std_init)):.2f} at init."
+        )
 
         # Seed
         seed = self.adan_config.get("general", {}).get("random_seed", 42) + self.worker_idx
