@@ -106,14 +106,20 @@ class ExecutionEngine:
     """
 
     # ── SL/TP bounds per profile — MUST stay IDENTICAL to the training env ──
-    # multi_asset_chunked_env.py:7009-7014 (single source of truth for SL/TP).
-    # Sizing in training is fee-aware (0.80% train fee); live uses 0.10% real,
-    # so identical bounds remain valid (live is strictly cheaper to trade).
+    # SINGLE SOURCE OF TRUTH = multi_asset_chunked_env.py `_BOUNDS` (line ~7451).
+    # SYNC 2026-06-26 (FINDING #4 / capture-ratio): these were stale at the OLD
+    # 8-40% bands (pre-FINDING#4). A tp_raw=0 used to decode to ~5% TP in live vs
+    # ~1.25% in training -> total divergence. Re-aligned to the tight, real-wick
+    # bands the PPO actually trained on. DO NOT EDIT without editing the env too.
+    #   scalper : SL 0.3-1.2%  TP 0.5-2.0%
+    #   intraday: SL 0.5-2.0%  TP 0.8-4.0%
+    #   swing   : SL 1.0-3.5%  TP 1.5-7.0%
+    #   position: SL 2.0-6.0%  TP 3.0-12.0%
     _PROFILE_BOUNDS = {
-        "scalper":  {"sl": (0.020, 0.030), "tp": (0.040, 0.060)},
-        "intraday": {"sl": (0.040, 0.060), "tp": (0.080, 0.120)},
-        "swing":    {"sl": (0.070, 0.100), "tp": (0.140, 0.200)},
-        "position": {"sl": (0.150, 0.200), "tp": (0.300, 0.400)},
+        "scalper":  {"sl": (0.003, 0.012), "tp": (0.005, 0.020)},
+        "intraday": {"sl": (0.005, 0.020), "tp": (0.008, 0.040)},
+        "swing":    {"sl": (0.010, 0.035), "tp": (0.015, 0.070)},
+        "position": {"sl": (0.020, 0.060), "tp": (0.030, 0.120)},
     }
 
     def __init__(
@@ -314,6 +320,24 @@ class ExecutionEngine:
         # Enforce R/R ≥ 1.5 exactly like the env (env:7027)
         if tp_pct < sl_pct * 1.5:
             tp_pct = float(min(sl_pct * 1.5, tp_hi))
+
+        # ── ATR scalper SL floor — IDENTICAL to env:7523-7540 (N2 sync) ──
+        # On scalper, SL must never sit below 3× market noise (~0.2% ATR),
+        # else it is stopped out by noise. context_vector[0] = ATR/close ratio.
+        if self.profile == "scalper":
+            atr_pct_estimate = 0.002  # default 0.2% ATR (env default)
+            try:
+                if context_vector is not None:
+                    cv = np.asarray(context_vector, dtype=np.float32).flatten()
+                    if cv.shape[0] >= 1:
+                        atr_pct_estimate = max(0.001, float(cv[0]))
+            except Exception:
+                pass
+            min_scalp_sl = max(0.006, 3.0 * atr_pct_estimate)  # 3× ATR floor (env:7535)
+            if sl_pct < min_scalp_sl:
+                sl_pct = min_scalp_sl
+                if tp_pct < sl_pct * 1.5:   # re-enforce R/R after SL bump
+                    tp_pct = float(min(sl_pct * 1.5, tp_hi))
 
         # ── STOCHASTIC OVERRIDE ────────────────────────────────────────
         # When enabled, replace the (collapsed) model SL/TP with an
