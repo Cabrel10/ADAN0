@@ -117,6 +117,71 @@ Both keep `μ(size)` centered (no more collapse to -7) and produce real TP/SL
 > end to end AND trains stably. The Cas A / Cas B question must be answered on a
 > real 500K run with the fixes. The earlier "Cas A confirmed" claim is withdrawn.
 
+### ⚠️ CRITICAL FINDING #4 — TP/SL incoherent with the market + the Future Arena was a DEAD pipeline
+
+A 500K run launched on the VPS produced a **broken, "cowardly" model** — not impatient,
+not lazy, but mathematically doomed by the reward geometry. The trade stats are brutal:
+
+| Metric | Value | Meaning |
+|--------|-------|---------|
+| SL_HIT | **258 trades (84%)**, avg **−$0.92** | the stop is hit almost systematically |
+| TP_HIT | 42 trades (14%), avg +$1.40 | the TP is rarely reached |
+| AGENT_CLOSE | 20 trades (6%), avg +$0.06 | manual micro-scalping to escape |
+| Hold mean | **5.5 steps (~45 min)** | the model never holds |
+| **Expectancy** | **(0.84×−0.92)+(0.14×+1.40)+(0.06×+0.06) = −$0.58 / trade** | guaranteed bleed |
+
+**Root cause A — TP/SL bands are ~10–50× the achievable move.** The env clamps TP/SL
+with a hardcoded `_PROFILE_BOUNDS` table calibrated for a **fake 0.80% round-trip fee**
+(4× the real 0.10% Binance fee), forcing intraday **TP into the 8–12% range**. We measured
+the **real BTC future wicks** on the actual dataset:
+
+| Horizon | MFE p50 | MFE p75 | MFE p90 |
+|---------|---------|---------|---------|
+| 5m × 15 bars (1h15) | 0.22% | 0.45% | 0.84% |
+| 5m × 36 bars (3h) | 0.36% | 0.73% | **1.44%** |
+
+A TP of 8–12% over minutes/hours is **practically never touched** → the SL fires first →
+the model panics with AGENT_CLOSE. Exactly the user's diagnosis: *"cibler 4 à 5 % en
+quelques minutes est pratiquement impossible, normal que le model panique."*
+
+**Root cause B — the Future Arena (the heart of the project) was never connected.** The
+`future_arena/` package (1703 lines) implements the **"Arène Guidée par le Futur"
+(Privileged Oracle-Critic)** philosophy exactly:
+
+- During training the whole dataset is in RAM, so the env reads the **future** of the
+  current chunk (1 chunk ≈ 1 day) and computes, per trade:
+  - **MFE** (Maximum Favorable Excursion = future upper wick),
+  - **MAE** (Maximum Adverse Excursion = future lower wick).
+- It then **scores the TP/SL the agent chose** against those values:
+  *future max wick = +3% and the agent puts TP at +2.5% → big bonus (realistic, capturable);
+  TP at +10% → penalty (utopian, never touched).*
+- Zones **🟢/🟡/🔴** are derived per chunk from the ex-post RR = MFE/MAE
+  (🟢 RR ≥ 1.5 **and** MFE ≥ 0.6%; 🔴 RR ≤ 0.8; 🟡 in between).
+- This is **reward shaping only** (anti-oracle guard §10.10: future data NEVER enters the
+  actor's observation).
+
+But a `grep` proved **zero** `future_arena` imports/calls in the training env, and the
+config had **no `reward_shaping.future_reward` block** → the entire pipeline was dead
+code. The model was therefore a pure mirror of `_PROFILE_BOUNDS`, with no signal teaching
+it to choose a *capturable* TP/SL.
+
+**Fix (this commit):**
+1. **Market-aware `_PROFILE_BOUNDS`** — bands re-derived from the real wick distribution and
+   widened **downward** so the agent *can* pick realistic small TPs (scalper TP from ~0.5%,
+   intraday in the user-requested **3–6%** envelope) instead of being forced ≥4–8%. Fee gate
+   uses the real `commission_pct` (0.4% spot) not the fake 0.80%.
+2. **RewardBridge connected** — the env now instantiates `RewardBridge.from_config(self.config)`,
+   computes MFE/MAE **ex-post per closed trade** from the in-RAM chunk
+   (`compute_mfe_mae(chunk_df, entry_idx, LOW, horizon)`), and **adds the capped
+   `future_contrib`** (≤ 0.60, never dominates PnL) to `raw_reward`. EQS / sl_quality /
+   tp_quality now appear in the reward breakdown.
+3. **New config block** `reward_shaping.future_reward: {enabled, mode: future_guided,
+   round_trip_fees, max_future_contrib}` activates the bridge.
+
+> Philosophy (user): *"le but n'est pas que le model soit le miroir des données mais qu'il
+> arrive à mieux maîtriser son SL et son TP."* The bridge teaches **mastery of TP/SL within
+> a plausible band**, it does not hardcode the answer.
+
 **Next milestones (on the corrected, stabilized architecture)**:
 - Run the real 500K on the VPS, single profile, `ADAN_USE_SDE=0` (the VPS already
   produced 500K_FIXED; with one profile the load is lower → no need for Kali yet).

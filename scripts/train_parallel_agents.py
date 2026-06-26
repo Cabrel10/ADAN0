@@ -1633,7 +1633,7 @@ def main(
 # ===========================================================================
 def sandbox_train(steps: int = None, initial_capital: float = None,
                   config_path: str = None, resume_ckpt: str = None,
-                  checkpoint_out: str = None):
+                  checkpoint_out: str = None, worker_key: str = None):
     """Run training in sandbox/CI mode — no Ray, no GPU, single-process.
 
     Uses the REAL MultiAssetChunkedEnv from src/adan_trading_bot with all
@@ -1670,8 +1670,31 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     config["environment"]["initial_capital"] = initial_capital
     logger.info(f"[SANDBOX] Config: steps={steps}, initial_capital={initial_capital}")
 
-    # Worker config: use w1 (scalper) as default sandbox worker
-    worker_config = _copy.deepcopy(config.get("workers", {}).get("w1", {}))
+    # Worker config: use w1 (scalper) as default sandbox worker.
+    # worker_key allows validating other profiles (w2=intraday, w3=swing,
+    # w4=position) — accepts either the worker key ("w2") or a profile name
+    # ("intraday"). Falls back to w1 when unknown.
+    _workers = config.get("workers", {})
+    _wkey = "w1"
+    if worker_key:
+        wk = str(worker_key).strip().lower()
+        if wk in _workers:
+            _wkey = wk
+        else:
+            # match by profile name
+            _profile_map = {
+                str(cfg.get("profile", "")).strip().lower(): k
+                for k, cfg in _workers.items() if isinstance(cfg, dict)
+            }
+            if wk in _profile_map:
+                _wkey = _profile_map[wk]
+            else:
+                logger.warning(
+                    f"[SANDBOX] worker_key='{worker_key}' unknown — falling back to w1"
+                )
+    logger.info(f"[SANDBOX] Using worker_config key='{_wkey}' "
+                f"(profile={_workers.get(_wkey, {}).get('profile', '?')})")
+    worker_config = _copy.deepcopy(_workers.get(_wkey, {}))
     worker_config["worker_id"] = 0
     worker_config.setdefault("data_split_override", "train")
     worker_config.setdefault("timeframes", config.get("data", {}).get("timeframes", ["5m", "1h", "4h"]))
@@ -1970,6 +1993,7 @@ if __name__ == "__main__":
             config_path=args.config if args.config != "config/config.yaml" else None,
             resume_ckpt=args.resume_from,
             checkpoint_out=args.checkpoint_out,
+            worker_key=(args.profiles[0] if args.profiles else None),
         )
         print(json.dumps(result, indent=2, default=str))
     else:

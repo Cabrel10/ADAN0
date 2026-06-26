@@ -114,11 +114,38 @@ class RewardBridge:
 
         max_fc = float(block.get("max_future_contrib", 0.60))
 
-        rcfg = RewardConfig(
+        # ── Anti-dette : surcharge des cibles FALLBACK + tf_scale depuis config ──
+        # (le chemin principal reste MFE/MAE ; ceci ne touche que le fallback).
+        try:
+            from .reward_service import configure_targets
+            configure_targets(
+                targets=block.get("targets"),
+                tf_scale=block.get("tf_scale"),
+            )
+        except Exception:
+            pass
+
+        # ── Poids configurables (sinon défauts RewardConfig) ────────────────────
+        weights = block.get("weights") or {}
+        rcfg_kwargs = dict(
             mode=mode,
             round_trip_fees=float(rtf),
             max_future_contrib=max_fc,
         )
+        _wmap = {
+            "w_pnl": "w_pnl", "w_eqs": "w_eqs", "w_sl": "w_sl", "w_tp": "w_tp",
+            "w_sizing": "w_sizing", "w_missed_green": "w_missed_green",
+            "w_lost_potential": "w_lost_potential",
+        }
+        if isinstance(weights, dict):
+            for ck, fk in _wmap.items():
+                if ck in weights:
+                    try:
+                        rcfg_kwargs[fk] = float(weights[ck])
+                    except Exception:
+                        continue
+
+        rcfg = RewardConfig(**rcfg_kwargs)
         return cls(config=rcfg, seed=seed, enabled=enabled)
 
     # ── API principale (appelée par l'env) ────────────────────────────────────
