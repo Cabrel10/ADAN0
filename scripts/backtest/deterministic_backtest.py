@@ -27,7 +27,9 @@ from pathlib import Path
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# File lives in scripts/backtest/ → repo root is two levels up from the parent dir.
+# (parent = scripts/backtest, parent.parent = scripts, parent.parent.parent = repo)
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 # Silence env's INFO chatter during evaluation
