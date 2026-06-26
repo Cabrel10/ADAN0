@@ -850,6 +850,10 @@ class ExecutionEngine:
                 # Derive SL/TP pct from stored prices.
                 sl_pct = abs(entry_p - pos.sl_price) / entry_p
                 tp_pct = abs(pos.tp_price - entry_p) / entry_p
+                # NOTE (FINDING #4 / revue): ces clips 0.2 / 0.5 ne FIXENT PAS le TP/SL
+                # d'un ordre — ils NORMALISENT une feature SL/TP pour le vecteur d'etat
+                # (live trading uniquement; execution_engine n'est PAS importe en training).
+                # La source de verite d'execution = _BOUNDS (env). Ne pas confondre.
                 state.extend([
                     float(np.clip((current_price - entry_p) / entry_p * direction, -0.5, 0.5)),
                     float(np.clip(notional / total_value, 0.0, 1.0)),

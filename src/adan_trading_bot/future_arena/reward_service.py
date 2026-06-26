@@ -47,35 +47,65 @@ ROUND_TRIP_FEES_DEFAULT: float = 0.008  # 0.40 % entrée + 0.40 % sortie (SPOT)
 
 # ───────────────────────────────────────────────────────────────────────────
 # Cibles SL/TP par (profil × timeframe).  RATIOS de prix.
-# Cohérent avec _PROFILE_BOUNDS (execution_engine / env) mais raffiné PAR
-# TIMEFRAME : une même intention de profil exige des bandes plus larges en 4h
-# qu'en 5m (un "scalper 4h" doit laisser respirer la bougie).  Les bornes ici
-# servent de CIBLE de qualité (sl_target / tp_target), pas de clip dur — le clip
-# dur reste dans l'env (single source of truth d'exécution).
 #
-# Règle de construction (anti-arbitraire) :
-#   - sl_target = milieu de bande SL du profil, ajusté par un facteur timeframe.
-#   - tp_target = sl_target × RR_cible(profil), avec RR_cible >= seuil rentable
-#     net de frais (TP doit couvrir 0.80 % A/R + marge).
+# ⚠️ STATUT (revue utilisateur 2026-06-26) : ces cibles ne sont plus le signal
+# PRINCIPAL de sl_quality/tp_quality. Le juge principal est désormais le MAE/MFE
+# RÉELLEMENT observé (capture-ratio) — voir tp_quality/sl_quality. Ces tables ne
+# servent QUE de FALLBACK FAIBLE quand le futur est indisponible (mode classic).
+# Elles ne plafonnent JAMAIS la récompense : le marché n'a pas de TP maximum.
+#
+# ANTI-DETTE : toutes ces constantes sont SURCHARGEABLES depuis config.yaml
+# (bloc reward_shaping.future_reward.targets / tf_scale) via configure_targets().
+# Le module ne contient donc plus de constante métier "dure" non configurable.
 # ───────────────────────────────────────────────────────────────────────────
-# facteur d'échelle temporelle : 5m = base, 1h et 4h élargissent.
-_TF_SCALE = {"5m": 1.0, "1h": 1.8, "4h": 3.0}
+# facteur d'échelle temporelle (FALLBACK) : 5m = base, 1h et 4h élargissent.
+# NB : ce n'est qu'un fallback ; le potentiel réel est porté par le MFE observé,
+# qui encode déjà nativement la durée de détention et le régime de marché.
+_TF_SCALE_DEFAULT = {"5m": 1.0, "1h": 1.8, "4h": 3.0}
+_TF_SCALE = dict(_TF_SCALE_DEFAULT)
 
-# (sl_target, tp_target) de BASE en 5m, par profil. Issus du milieu des bandes
-# _PROFILE_BOUNDS, RR cible >= 2.0 (net de 0.8 % de frais).
-_PROFILE_BASE_5M = {
+# (sl_target, tp_target) de BASE en 5m, par profil — FALLBACK uniquement.
+_PROFILE_BASE_5M_DEFAULT = {
     "scalper":  (0.012, 0.030),   # serré : on capture l'impulsion courte
     "intraday": (0.025, 0.060),
     "swing":    (0.045, 0.110),
     "position": (0.090, 0.230),
 }
+_PROFILE_BASE_5M = {k: tuple(v) for k, v in _PROFILE_BASE_5M_DEFAULT.items()}
+
+
+def configure_targets(targets: Optional[dict] = None,
+                      tf_scale: Optional[dict] = None) -> None:
+    """Surcharge les cibles FALLBACK depuis config.yaml (anti-dette technique).
+
+    Args:
+        targets: {profil: [sl_target, tp_target]} en ratios, base 5m.
+        tf_scale: {timeframe: facteur} d'élargissement temporel.
+
+    Idempotent et tolérant : toute clé manquante garde la valeur par défaut.
+    N'impacte QUE le fallback (pas de futur) — le chemin MFE/MAE reste prioritaire.
+    """
+    global _PROFILE_BASE_5M, _TF_SCALE
+    if isinstance(targets, dict):
+        for prof, pair in targets.items():
+            try:
+                sl_t, tp_t = float(pair[0]), float(pair[1])
+                _PROFILE_BASE_5M[str(prof).lower()] = (sl_t, tp_t)
+            except Exception:
+                continue
+    if isinstance(tf_scale, dict):
+        for tf, fac in tf_scale.items():
+            try:
+                _TF_SCALE[str(tf).lower()] = float(fac)
+            except Exception:
+                continue
 
 
 def profile_tf_targets(profile: str, timeframe: str) -> tuple[float, float]:
     """Renvoie (sl_target, tp_target) en RATIO pour (profil × timeframe).
 
-    Définition explicite, non linéaire vis-à-vis du modèle (il ne voit jamais
-    ces cibles : elles ne servent qu'à juger la qualité ex-post du SL/TP choisi).
+    FALLBACK uniquement : utilisé par sl_quality/tp_quality SEULEMENT si le
+    MAE/MFE observé est indisponible. Le modèle ne voit jamais ces cibles.
     """
     profile = (profile or "intraday").lower()
     timeframe = (timeframe or "5m").lower()
@@ -258,40 +288,77 @@ def sl_quality(sl_chosen: float, sl_target: float, mae: Optional[float],
                tol: float = 0.5) -> float:
     """Qualité du SL ∈ [-1, +1].
 
-    - Trop large vs cible → capital exposé inutilement.
-    - Trop serré vs bruit (MAE futur) → stoppé par le bruit.
-    On combine proximité à la cible profil×TF ET cohérence avec le MAE réel futur.
+    PHILOSOPHIE (revue utilisateur) : le marché n'a pas de SL "cible" fixe. Le
+    SEUL juge légitime est le MAE RÉELLEMENT observé après l'entrée (le bruit que
+    le marché a effectivement infligé). La cible profil×TF (``sl_target``) n'est
+    qu'un FALLBACK FAIBLE quand le MAE est indisponible (mode classic / pas de
+    futur). On NE veut PAS enfermer le SL dans un plafond pédagogique arbitraire.
+
+    Critère principal (MAE-relatif), SL idéal ≈ MAE × marge :
+      - SL < MAE            → trop serré, stoppé par le bruit (pénalité forte).
+      - MAE ≤ SL ≤ 2.0×MAE  → zone optimale (couvre le bruit sans gaspiller).
+      - SL > 2.5×MAE        → trop large, capital exposé inutilement.
     """
     if sl_chosen <= 0:
         return -0.5
-    prox = _gauss(sl_chosen, sl_target, tol)
-    score = 2.0 * prox - 1.0            # [0,1] → [-1,1]
+    # ── Chemin PRINCIPAL : relatif au MAE observé (pas de cible fixe) ──────────
     if mae is not None and mae > 1e-6:
-        # SL doit couvrir le MAE futur (sinon stoppé par le bruit) sans excès.
-        if sl_chosen < mae:
-            score -= 0.5 * (1.0 - sl_chosen / mae)   # trop serré
-        elif sl_chosen > 2.5 * mae:
-            score -= 0.3                              # franchement trop large
-    return max(-1.0, min(1.0, score))
+        ratio = sl_chosen / mae
+        if ratio < 1.0:
+            # trop serré : on perd sur le bruit. Pénalité ∝ déficit, plancher -1.
+            return max(-1.0, -1.0 * (1.0 - ratio))
+        if ratio <= 2.0:
+            # zone optimale : pic à ~1.3×MAE, décroît doucement vers 2×.
+            # mappe ratio∈[1,2] → score∈[+1, +0.4] (toujours positif = bon SL).
+            return float(max(0.4, 1.0 - 0.6 * (ratio - 1.0)))
+        # trop large : pénalité croissante mais bornée.
+        return float(max(-1.0, 0.4 - 0.5 * (ratio - 2.0)))
+    # ── FALLBACK FAIBLE : pas de MAE → proximité à la cible profil×TF ──────────
+    prox = _gauss(sl_chosen, sl_target, tol)
+    return max(-1.0, min(1.0, 2.0 * prox - 1.0))
 
 
 def tp_quality(tp_chosen: float, tp_target: float, mfe: Optional[float],
                tol: float = 0.5) -> float:
     """Qualité du TP ∈ [-1, +1].
 
-    Pénalise un TP ridicule devant le MFE futur (argent laissé sur la table) et
-    un TP utopique très au-delà du MFE atteignable.
+    PHILOSOPHIE (revue utilisateur) : le marché n'a PAS de TP maximum. Pendant un
+    bullrun le MFE peut être +35 % ; pendant un marché plat +1.5 %. Le Future
+    Arena doit juger le TP choisi contre le POTENTIEL RÉELLEMENT OBSERVÉ (MFE),
+    PAS contre une cible codée en dur (sinon « bravo, ton TP de 4 % était parfait »
+    alors que le marché a fait +35 %). On mesure donc un CAPTURE-RATIO :
+
+        capture = tp_chosen / mfe   (part du potentiel réel capturée)
+
+      - capture très faible (< 0.25)  → énormément laissé sur la table (pénalité).
+      - capture ∈ [0.4, 0.9]          → excellent : on prend gros sans être gourmand.
+      - capture > 1.0 (TP > MFE)      → TP inatteignable, jamais touché (pénalité).
+
+    La cible profil×TF (``tp_target``) n'est qu'un FALLBACK FAIBLE quand le MFE
+    est indisponible. Ainsi un TP de 1.6 % est EXCELLENT si MFE=1.8 %, mais MÉDIOCRE
+    si MFE=18 % — exactement le signal pédagogique voulu, sans plafond arbitraire.
     """
     if tp_chosen <= 0:
         return -0.5
-    prox = _gauss(tp_chosen, tp_target, tol)
-    score = 2.0 * prox - 1.0
+    # ── Chemin PRINCIPAL : capture-ratio relatif au MFE observé ────────────────
     if mfe is not None and mfe > 1e-6:
-        if tp_chosen < 0.5 * mfe:
-            score -= 0.4 * (1.0 - tp_chosen / mfe)    # TP ridicule
-        elif tp_chosen > 1.5 * mfe:
-            score -= 0.3                              # TP utopique
-    return max(-1.0, min(1.0, score))
+        capture = tp_chosen / mfe
+        if capture > 1.0:
+            # TP au-delà du potentiel réel → ordre jamais touché. Pénalité ∝ excès.
+            return float(max(-1.0, -0.6 * min(1.0, capture - 1.0) - 0.1))
+        if capture >= 0.4:
+            # zone optimale [0.4, 1.0] : pic vers ~0.7 (gros gain, marge anti-mèche).
+            # mappe capture∈[0.4,1.0] → score∈[+0.5, +1.0, +0.6] (cloche douce).
+            # +1.0 au pic capture≈0.7, légèrement < à 1.0 (ne pas viser le sommet exact).
+            peak = 0.7
+            spread = 0.45
+            z = (capture - peak) / spread
+            return float(max(0.5, 1.0 - 0.5 * z * z))
+        # capture < 0.4 : argent laissé sur la table, pénalité ∝ (0.4 - capture).
+        return float(max(-1.0, -1.0 * (0.4 - capture) / 0.4))
+    # ── FALLBACK FAIBLE : pas de MFE → proximité à la cible profil×TF ──────────
+    prox = _gauss(tp_chosen, tp_target, tol)
+    return max(-1.0, min(1.0, 2.0 * prox - 1.0))
 
 
 def sizing_quality(size: float, mfe: Optional[float], mae: Optional[float],

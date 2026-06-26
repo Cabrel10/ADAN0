@@ -426,6 +426,32 @@ class MultiAssetChunkedEnv(gym.Env):
         self._action_history = deque(maxlen=max(2, self.action_entropy_window))
         self.last_trade_steps_by_tf = {}
 
+        # ── FUTURE ARENA / REWARD BRIDGE (FINDING #4) ─────────────────────────
+        # Pont ADDITIF guide par le futur (MFE/MAE ex-post). Lit le bloc
+        # reward_shaping.future_reward ; si absent -> no-op (classic). On evalue
+        # la qualite des TP/SL choisis par l'agent contre l'amplitude reelle des
+        # bougies futures du chunk (anti-oracle: jamais dans l'observation).
+        self._reward_bridge = None
+        self._future_zone_cfg = None
+        try:
+            from adan_trading_bot.future_arena.reward_bridge import RewardBridge
+            from adan_trading_bot.future_arena.future_zones import ZoneConfig
+            _seed = kwargs.get("seed", None)
+            self._reward_bridge = RewardBridge.from_config(self.config, seed=_seed)
+            self._future_zone_cfg = ZoneConfig()
+            if not self._reward_bridge.is_noop:
+                logger.info(
+                    "[FUTURE_ARENA] RewardBridge ACTIVE (mode=%s, rtf=%.4f, cap=%.2f)",
+                    self._reward_bridge.config.mode.value,
+                    self._reward_bridge.config.round_trip_fees,
+                    self._reward_bridge.config.max_future_contrib,
+                )
+            else:
+                logger.info("[FUTURE_ARENA] RewardBridge present mais NO-OP (classic/disabled).")
+        except Exception as _e:  # pragma: no cover - robustesse: jamais crasher l'env
+            logger.warning("[FUTURE_ARENA] RewardBridge non initialise: %r", _e)
+            self._reward_bridge = None
+
         self.last_trade_timestamps = {"5m": None, "1h": None, "4h": None}
         self.receipts: deque = deque(maxlen=100)
 
@@ -1186,9 +1212,28 @@ class MultiAssetChunkedEnv(gym.Env):
             #   SL: 2.0-5.0%  |  TP: 4.0-10.0%  |  R/R target: 2:1
             #   Rationale: holds days-weeks, needs wide SL to avoid noise
             #
-            # Fee gate: TP must cover 3x round-trip fees (0.6% minimum)
-            ROUND_TRIP_FEES = 0.002   # 0.1% maker + 0.1% taker
-            FEE_MULTIPLIER  = 3.0     # TP must be >= 3x fees to be worth trading
+            # ── MARKET-AWARE FEE GATE (FINDING #4 fix) ──────────────────
+            # Real BTC 5m future move is only ~1-2% over 30 steps (measured):
+            #   15 bars: MFE p50=0.22% p75=0.45% p90=0.84%
+            #   36 bars: MFE p50=0.36% p75=0.73% p90=1.44%
+            # The old 8-12% TP (calibrated for a FAKE 0.80% fee) was 10-50x the
+            # achievable move -> SL fires first -> 84% SL_HIT -> the model panics.
+            # User decision: lower round-trip fees 0.80% -> 0.50% and TIGHTEN the
+            # TP/SL bands so the agent can do 15-20 capturable trades/day.
+            try:
+                _comm = float(
+                    (self.config.get("environment", {}) or {}).get(
+                        "commission",
+                        (self.config.get("trading_rules", {}) or {}).get(
+                            "commission_pct", 0.0025
+                        ),
+                    )
+                )
+            except Exception:
+                _comm = 0.0025
+            # round-trip = entry + exit; default real fee 0.50% A/R (0.25% x2).
+            ROUND_TRIP_FEES = max(2.0 * _comm, 0.005)
+            FEE_MULTIPLIER  = 1.2     # TP must be >= 1.2x fees to be worth trading
 
             profile = self.worker_config.get("profile") or self.worker_config.get("name", "intraday")
             profile = str(profile).lower()
@@ -1199,24 +1244,38 @@ class MultiAssetChunkedEnv(gym.Env):
                 "aggressive": "swing",  "adaptive": "position",
             }
             profile = _profile_map.get(profile, profile)
+            # FINDING #4 robustness: worker names are like "w1 scalper" / "W2 Intraday".
+            # Detect the profile by SUBSTRING so the right (tight) band is applied,
+            # instead of silently falling back to intraday (or worse, a wide band).
+            if profile not in ("scalper", "intraday", "swing", "position"):
+                _matched = None
+                for _kw in ("scalper", "intraday", "swing", "position"):
+                    if _kw in profile:
+                        _matched = _kw
+                        break
+                profile = _matched or "intraday"
 
+            # MARKET-AWARE bands TIGHTENED to the real wick distribution so that
+            # 15-20 trades/day are achievable. The band is widened DOWNWARD so the
+            # agent CAN choose a realistic small TP; the Future Arena reward
+            # (RewardBridge / MFE-MAE) teaches WHERE inside the band to land.
+            # The model is expected to GENERALISE to more volatile assets where
+            # the upper end of each band becomes reachable.
+            #   scalper : minutes   -> SL 0.3-1.2%   TP 0.5-2.0%
+            #   intraday: hours     -> SL 0.5-2.0%   TP 0.8-4.0%
+            #   swing   : 1-3 days  -> SL 1.0-3.5%   TP 1.5-7.0%
+            #   position: days+     -> SL 2.0-6.0%   TP 3.0-12.0%
             _PROFILE_BOUNDS = {
-                # OPTIMIZATION FOR 0.80% FEES (4× real 0.10% Binance fee)
-                # With 0.80% A/R fees, tighter SL are not viable
-                # Scalper: 2-3% SL (viable ONLY with AGENT_CLOSE at ~-0.8%)
-                # Intraday: 4-6% SL (R:R net 1.5:1, BE 40%)
-                # Swing: 7-10% SL (R:R net 1.69:1, BE 37%)
-                # Position: 15-20% SL (R:R net 1.85:1, BE 35%)
-                "scalper":  {"sl": (0.020, 0.030), "tp": (0.040, 0.060)},
-                "intraday": {"sl": (0.040, 0.060), "tp": (0.080, 0.120)},
-                "swing":    {"sl": (0.070, 0.100), "tp": (0.140, 0.200)},
-                "position": {"sl": (0.150, 0.200), "tp": (0.300, 0.400)},
+                "scalper":  {"sl": (0.003, 0.012), "tp": (0.005, 0.020)},
+                "intraday": {"sl": (0.005, 0.020), "tp": (0.008, 0.040)},
+                "swing":    {"sl": (0.010, 0.035), "tp": (0.015, 0.070)},
+                "position": {"sl": (0.020, 0.060), "tp": (0.030, 0.120)},
             }
             bounds = _PROFILE_BOUNDS.get(profile, _PROFILE_BOUNDS["intraday"])
             sl_min, sl_max = bounds["sl"]
             tp_min, tp_max = bounds["tp"]
 
-            # Enforce fee gate: TP_min >= 3x round-trip fees
+            # Enforce fee gate: TP_min >= 1.2x REAL round-trip fees (0.5% A/R)
             tp_min = max(tp_min, ROUND_TRIP_FEES * FEE_MULTIPLIER)
 
             risk_params["stop_loss_pct"] = float(np.clip(
@@ -6088,6 +6147,129 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             return 0.0
 
+    def _get_chunk_df_for_asset(self, asset, preferred_tf="5m"):
+        """Retourne (df, timeframe) du chunk courant pour un asset.
+
+        Robuste aux deux ordres d'indexation current_data[asset][tf] et
+        current_data[tf][asset]. Prefere le timeframe 5m (horizon MFE/MAE).
+        Renvoie (None, None) si indisponible.
+        """
+        try:
+            if not asset or not getattr(self, "current_data", None):
+                return None, None
+            asset_u = str(asset).upper()
+            tf_map = None
+            for _k, _v in self.current_data.items():
+                if str(_k).upper() == asset_u and isinstance(_v, dict):
+                    tf_map = _v
+                    break
+            if tf_map is None:
+                _collected = {}
+                for _tf, _v in self.current_data.items():
+                    if isinstance(_v, dict):
+                        for _ak, _df in _v.items():
+                            if str(_ak).upper() == asset_u:
+                                _collected[_tf] = _df
+                if _collected:
+                    tf_map = _collected
+            if not isinstance(tf_map, dict) or not tf_map:
+                return None, None
+            if preferred_tf in tf_map and hasattr(tf_map[preferred_tf], "iloc"):
+                return tf_map[preferred_tf], preferred_tf
+            for _tf, _df in tf_map.items():
+                if hasattr(_df, "iloc") and len(_df) > 0:
+                    return _df, str(_tf)
+            return None, None
+        except Exception:
+            return None, None
+
+    def _future_contrib_from_receipts(self) -> float:
+        """Somme des contributions guidees par le futur (FINDING #4).
+
+        Pour chaque trade FERME ce step, on retrouve l'index d'entree dans le
+        chunk courant, on calcule MFE/MAE EX-POST sur les bougies futures du
+        chunk (anti-oracle: jamais dans l'observation), et on demande au
+        RewardBridge de noter le TP/SL choisis. La contribution est deja
+        plafonnee (<= max_future_contrib) par le service -> ne domine jamais le PnL.
+        Ne leve jamais : 0.0 en cas de probleme.
+        """
+        bridge = getattr(self, "_reward_bridge", None)
+        if bridge is None or bridge.is_noop:
+            return 0.0
+        receipts = getattr(self, "_step_closed_receipts", None)
+        if not receipts:
+            return 0.0
+        try:
+            from adan_trading_bot.future_arena.future_zones import (
+                compute_mfe_mae, PivotDirection,
+            )
+        except Exception:
+            return 0.0
+
+        zcfg = getattr(self, "_future_zone_cfg", None)
+        horizon = int(getattr(zcfg, "horizon", 36)) if zcfg is not None else 36
+        mae_floor = float(getattr(zcfg, "mae_floor", 0.0015)) if zcfg is not None else 0.0015
+
+        profile = "intraday"
+        try:
+            profile = str(
+                self.worker_config.get("profile")
+                or self.worker_config.get("name", "intraday")
+            ).lower()
+            profile = {
+                "conservative": "scalper", "moderate": "intraday",
+                "balanced": "intraday", "aggressive": "swing",
+                "adaptive": "position",
+            }.get(profile, profile)
+        except Exception:
+            profile = "intraday"
+
+        total = 0.0
+        # chunk-local index de l'instant courant
+        cur_local = int(getattr(self, "step_in_chunk", 0))
+        cur_global = int(getattr(self, "current_step", 0))
+        for receipt in receipts:
+            if not isinstance(receipt, dict):
+                continue
+            try:
+                asset = receipt.get("asset")
+                df, tf = self._get_chunk_df_for_asset(asset, preferred_tf="5m")
+                if df is None or len(df) == 0:
+                    continue
+                open_step = int(receipt.get("open_step", -1))
+                if open_step < 0:
+                    continue
+                # entry index dans le chunk = position locale courante - (delta global)
+                entry_idx = cur_local - (cur_global - open_step)
+                if entry_idx < 0 or entry_idx >= len(df):
+                    # trade ouvert dans un chunk anterieur -> on ne note pas (ex-post
+                    # impossible proprement sur le chunk courant).
+                    continue
+                # SPOT long uniquement -> direction LOW (opportunite d'achat)
+                mfe, mae = compute_mfe_mae(
+                    df, entry_idx, PivotDirection.LOW, horizon, mae_floor=mae_floor
+                )
+                # duree en steps
+                steps_held = max(0, cur_global - open_step)
+                contrib = bridge.contribution(
+                    profile=profile,
+                    timeframe=str(tf or "5m"),
+                    closed=True,
+                    pnl_gross=float(receipt.get("pnl_gross", receipt.get("pnl", 0.0)) or 0.0),
+                    steps_held=int(steps_held),
+                    close_reason=str(receipt.get("reason", receipt.get("close_reason", "")) or ""),
+                    direction=1.0,  # SPOT long
+                    size=float(receipt.get("size", 0.0) or 0.0),
+                    sl_chosen=float(receipt.get("stop_loss_pct", 0.0) or 0.0),
+                    tp_chosen=float(receipt.get("take_profit_pct", 0.0) or 0.0),
+                    mfe=float(mfe),
+                    mae=float(mae),
+                )
+                total += float(contrib)
+            except Exception:
+                continue
+        return float(total)
+
     def _calculate_reward(self, action: np.ndarray, realized_pnl: float) -> float:
         """TIER-BASED CAPITAL PROGRESSION REWARD (Prop Firm Model).
 
@@ -6317,6 +6499,15 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             action_entropy_penalty = 0.0
 
+        # FUTURE ARENA (FINDING #4): note EX-POST la qualite des TP/SL choisis
+        # contre l'amplitude reelle des bougies futures (MFE/MAE). Plafonne par
+        # le service (<= max_future_contrib) -> ne domine jamais le PnL.
+        future_contrib = 0.0
+        try:
+            future_contrib = float(self._future_contrib_from_receipts())
+        except Exception:
+            future_contrib = 0.0
+
         raw_reward = (
             pnl_base_reward  # PnL signal (terme structurant)
             + promotion_bonus  # Tier promotion (gros incitatif)
@@ -6325,12 +6516,43 @@ class MultiAssetChunkedEnv(gym.Env):
             + drawdown_penalty  # Gestion du risque (quadratique)
             + symmetry_penalty  # V3: anti-triche SL/TP (RR + lachete ATR), latent
             + action_entropy_penalty  # V3: anti switch-spam (BUY<->CLOSE)
+            + future_contrib  # FINDING #4: bonus/penalite guide par le futur (MFE/MAE)
             # A4: patience_bonus_val retire (= 0.0, mecanisme d'attente unique)
             # A6: survival_bonus retire (recompensait l'inaction)
         )
 
         # Use symlog to compress large rewards while preserving small signal
         final_reward = float(_np.sign(raw_reward) * _np.log1p(_np.abs(raw_reward)))
+
+        # FUTURE-ARENA WATCHDOG (revue utilisateur) : surveiller que le shaping
+        # guide par le futur ne DOMINE jamais le PnL reel. Accumule |future| et
+        # |pnl|, logue le ratio toutes les 200 steps ; alerte si > 40%.
+        try:
+            if not hasattr(self, "_fa_abs_sum"):
+                self._fa_abs_sum = 0.0
+                self._pnl_abs_sum = 0.0
+                self._fa_n = 0
+            self._fa_abs_sum += abs(float(future_contrib))
+            self._pnl_abs_sum += abs(float(pnl_base_reward))
+            self._fa_n += 1
+            if self._fa_n % 200 == 0:
+                _denom = self._fa_abs_sum + self._pnl_abs_sum
+                _ratio = (self._fa_abs_sum / _denom) if _denom > 1e-9 else 0.0
+                _tag = "OK"
+                if _ratio > 0.50:
+                    _tag = "CRITICAL"
+                elif _ratio > 0.40:
+                    _tag = "WARN"
+                _logfn = self.logger.warning if _ratio > 0.40 else self.logger.info
+                _logfn(
+                    f"[FA_WATCHDOG {_tag}] Worker {self.worker_id} | "
+                    f"future_share={_ratio:.1%} (target<40%) | "
+                    f"mean_abs_future={self._fa_abs_sum/self._fa_n:.4f} | "
+                    f"mean_abs_pnl={self._pnl_abs_sum/self._fa_n:.4f} | "
+                    f"n={self._fa_n}"
+                )
+        except Exception:
+            pass
 
         # ──────────────────────────────────────────────────────────────────
         # STEP 8: LOGGING
@@ -6365,6 +6587,7 @@ class MultiAssetChunkedEnv(gym.Env):
             "inaction":         patience_bonus_val,  # Logger fallback key (was inaction_penalty)
             "inaction_penalty": patience_bonus_val,  # Logger compatibility key
             "survival_bonus":   survival_bonus,
+            "future_contrib":   future_contrib,
             "raw":              raw_reward,
             "final_reward":     final_reward,
         }
@@ -7206,29 +7429,87 @@ class MultiAssetChunkedEnv(gym.Env):
             _pmap = {"conservative": "scalper", "moderate": "intraday",
                      "balanced": "intraday", "aggressive": "swing", "adaptive": "position"}
             _prof = _pmap.get(_prof, _prof)
-            # ── ATR-AWARE SL/TP BOUNDS ──────────────────────────────
-            # OPTIMIZATION FOR 0.80% FEES (4× Binance real fee 0.10%)
-            # With high fees, tight SL become non-viable mathematically
-            # Scalper: 2-3% SL only viable via AGENT_CLOSE compression (-0.8% effective)
-            # Intraday: 4-6% SL (R:R net 1.5:1, BE winrate 40%)
-            # Swing: 7-10% SL (R:R net 1.69:1, BE winrate 37%)
-            # Position: 15-20% SL (R:R net 1.85:1, BE winrate 35%, most robust)
+            # FINDING #4: worker names are like "w1 scalper" -> substring match so
+            # the right TIGHT band applies (was silently falling to intraday 8-12%).
+            if _prof not in ("scalper", "intraday", "swing", "position"):
+                _m = None
+                for _kw in ("scalper", "intraday", "swing", "position"):
+                    if _kw in _prof:
+                        _m = _kw
+                        break
+                _prof = _m or "intraday"
+            # ── MARKET-AWARE SL/TP BOUNDS (FINDING #4) ───────────────
+            # THESE ARE THE AUTHORITATIVE bounds: the model action (sl_raw/tp_raw)
+            # is scaled into [lo, hi] HERE, at open time. The old 8-12% intraday TP
+            # was 10-50x the real BTC move (~1-2% / 30 steps) -> 84% SL_HIT -> panic.
+            # Bands tightened to the real wick distribution; widened DOWNWARD so the
+            # agent CAN pick a capturable TP. Future Arena reward teaches WHERE.
+            #   scalper : SL 0.3-1.2%  TP 0.5-2.0%
+            #   intraday: SL 0.5-2.0%  TP 0.8-4.0%
+            #   swing   : SL 1.0-3.5%  TP 1.5-7.0%
+            #   position: SL 2.0-6.0%  TP 3.0-12.0%
             _BOUNDS = {
-                "scalper":  {"sl": (0.020, 0.030), "tp": (0.040, 0.060)},
-                "intraday": {"sl": (0.040, 0.060), "tp": (0.080, 0.120)},
-                "swing":    {"sl": (0.070, 0.100), "tp": (0.140, 0.200)},
-                "position": {"sl": (0.150, 0.200), "tp": (0.300, 0.400)},
+                "scalper":  {"sl": (0.003, 0.012), "tp": (0.005, 0.020)},
+                "intraday": {"sl": (0.005, 0.020), "tp": (0.008, 0.040)},
+                "swing":    {"sl": (0.010, 0.035), "tp": (0.015, 0.070)},
+                "position": {"sl": (0.020, 0.060), "tp": (0.030, 0.120)},
             }
             _b = _BOUNDS.get(_prof, _BOUNDS["intraday"])
             sl_lo, sl_hi = _b["sl"]
             tp_lo, tp_hi = _b["tp"]
-            tp_lo = max(tp_lo, 0.006)  # fee gate: 3x 0.2% RT fees
+            # fee gate (real 0.50% A/R): TP_min >= 1.2x round-trip fees = 0.6%
+            tp_lo = max(tp_lo, 0.006)
 
             normalized_sl = (sl_raw + 1.0) / 2.0
             sl_pct = float(np.clip(sl_lo + normalized_sl * (sl_hi - sl_lo), sl_lo, sl_hi))
 
             normalized_tp = (tp_raw + 1.0) / 2.0
             tp_pct = float(np.clip(tp_lo + normalized_tp * (tp_hi - tp_lo), tp_lo, tp_hi))
+
+            # ACTION-SATURATION TRACKER (revue utilisateur) : le clip masque-t-il
+            # une politique qui VEUT sortir de la bande ? On suit la part d'actions
+            # brutes SATUREES (|raw|>=0.9 = colle au bord) + la moyenne du raw. Si la
+            # saturation reste haute longtemps, la policy n'a pas appris (clip = pansement).
+            try:
+                if not hasattr(self, "_act_n"):
+                    self._act_n = 0
+                    self._act_tp_sat_hi = 0
+                    self._act_tp_sat_lo = 0
+                    self._act_sl_sat_hi = 0
+                    self._act_sl_sat_lo = 0
+                    self._act_tp_raw_sum = 0.0
+                    self._act_sl_raw_sum = 0.0
+                    self._act_tp_pct_sum = 0.0
+                self._act_n += 1
+                self._act_tp_raw_sum += float(tp_raw)
+                self._act_sl_raw_sum += float(sl_raw)
+                self._act_tp_pct_sum += float(tp_pct)
+                if float(tp_raw) >= 0.9:
+                    self._act_tp_sat_hi += 1
+                elif float(tp_raw) <= -0.9:
+                    self._act_tp_sat_lo += 1
+                if float(sl_raw) >= 0.9:
+                    self._act_sl_sat_hi += 1
+                elif float(sl_raw) <= -0.9:
+                    self._act_sl_sat_lo += 1
+                if self._act_n % 200 == 0:
+                    _n = float(self._act_n)
+                    _tp_sat = (self._act_tp_sat_hi + self._act_tp_sat_lo) / _n
+                    _sl_sat = (self._act_sl_sat_hi + self._act_sl_sat_lo) / _n
+                    _tag = "WARN" if max(_tp_sat, _sl_sat) > 0.5 else "OK"
+                    _lf = self.logger.warning if _tag == "WARN" else self.logger.info
+                    _lf(
+                        f"[ACTION_DIST {_tag}] W{self.worker_id} | "
+                        f"tp_raw_mean={self._act_tp_raw_sum/_n:+.3f} "
+                        f"sl_raw_mean={self._act_sl_raw_sum/_n:+.3f} | "
+                        f"tp_sat={_tp_sat:.0%}(hi={self._act_tp_sat_hi/_n:.0%},"
+                        f"lo={self._act_tp_sat_lo/_n:.0%}) "
+                        f"sl_sat={_sl_sat:.0%} | "
+                        f"tp_pct_mean={self._act_tp_pct_sum/_n:.2%} | "
+                        f"band[{tp_lo:.2%},{tp_hi:.2%}] | n={self._act_n}"
+                    )
+            except Exception:
+                pass
 
             # Enforce R/R >= 1.5
             if tp_pct < sl_pct * 1.5:
