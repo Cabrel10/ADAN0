@@ -128,3 +128,45 @@ I/O disque (iowait ~0), Ray (absent en sandbox).
 - **×20-30 ?** Mesuré : crash-loop = ×2.3 prouvé ; pics de déploiement → <1 fps
   ponctuel ; le facteur cumulé extrême (×20-30) correspond à un VPS multi-stack saturé
   + estimation pendant un pic, PAS à un bug du code ADAN0.
+
+---
+
+## ADDENDUM — Résolution appliquée + verdict final (relance d'entraînement)
+
+### Facteur ×2 résiduel ÉLUCIDÉ (heavy vs sandbox / évolution du modèle)
+`git log -S ContextualTemporalFusionExtractor` → commit **`5bc5e13` (2026-06-24)**
+"fix(sandbox): wire ContextualTemporalFusionExtractor (CNN+attn+FiLM+aux)".
+**AVANT** ce commit, `--mode sandbox` utilisait le **MLP par défaut SB3** (léger, rapide).
+**APRÈS**, il utilise le **CNN+Attention+FiLM** complet (39.4 % du CPU mesuré).
+S'ajoutent les commits récents de complexification (rewards friction par palier, bug
+cross-timeframe corrigé, Decision Budget V3, AGENT_CLOSE quota, frais 0.80 %, etc.).
+
+→ **Le run historique "15 h / 9.3 fps" n'était PAS le même système.** Les benchmarks de
+vitesse antérieurs sont caducs : modèle MLP→CNN+Attn, données timeframe corrigées,
+rewards/env devenus un vrai simulateur de marché. Le ralentissement est **normal**.
+
+`--mode heavy` = Ray Tune PBT (L1600 `ray.init`, L1260 PBT, L1424 `tune.Tuner`).
+`--mode sandbox` = SB3 pur, `DummyVecEnv`, **0 Ray**. Ray hors cause pour le sandbox.
+
+### Isolation CPU appliquée (réversible) — gain mesuré
+`docker update --cpuset-cpus=0` sur les 2 stacks tierces (gaintime crash-loop + whatsapp)
++ `taskset -c 1-3` sur ADAN0. Script: `scripts/isolate_cpu.sh {confine|release}`.
+
+| Avant isolation | Après isolation |
+|-----------------|-----------------|
+| FPS ADAN0 ~2.9 | **FPS ADAN0 ~8.5** |
+| CPU user 83 % | CPU user 33 % |
+| 500k ≈ ~48 h | **500k ≈ ~16 h** (≈ le run historique !) |
+
+### Santé de l'apprentissage (run prod, ~9 itérations)
+- explained_variance: -0.25 → **0.138** (>0.1, value function apprend)
+- value_loss: 0.38 → **0.042** (baisse nette)
+- approx_kl ~0.025-0.034 (sain), entropy_loss -2.05 (exploration ok), std 0.366 stable
+- trading: **398 OPEN / 130 CLOSE** (ouvre ET ferme, pas inerte)
+
+### VERDICT FINAL (validé avec l'utilisateur)
+On ARRÊTE la chasse à la performance. ~8.5 FPS CPU pour un simulateur CNN+Attn+DBE
+complexe est **acceptable→très bon**. Priorité désormais : **qualité des données
+(timeframes) → stabilité du reward → comportement du modèle**, PAS la vitesse.
+Optimisations futures possibles (différées) : DBE KMeans/HMM (17 %), gSDE scipy (14 %),
+GPU, Ray heavy. À ne traiter qu'après avoir prouvé que le modèle apprend bien.
