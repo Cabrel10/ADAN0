@@ -1336,7 +1336,9 @@ reward_shaping:
       min_capital: 11.0
       max_capital: 30.0
       max_steps_in_tier: 500
-      stagnation_penalty_per_step: -0.00025  # was -0.0005 (÷2 further) — SESSION 15
+      # FIX B (2026-06-27): stagnation CROISSANTE x1.6/palier (était ÷2 décroissante,
+      # ce qui rendait l'inaction de plus en plus gratuite en haut). Base Micro inchangée.
+      stagnation_penalty_per_step: -0.00025  # k=0 base
       drawdown_penalty_factor: 2.0
       promotion_bonus: 1.0  # V4 (2026-06-27): rescale 5.0->1.0. Le bonus de promotion
       # ETAIT la root-cause du reward hacking (5/10/20/40 cumules = +75, ~100-750x
@@ -1346,21 +1348,21 @@ reward_shaping:
       min_capital: 30.0
       max_capital: 100.0
       max_steps_in_tier: 1000
-      stagnation_penalty_per_step: -0.000125  # was -0.00025 (÷2 further) — SESSION 15
+      stagnation_penalty_per_step: -0.0004  # k=1 : -0.00025 * 1.6 (FIX B croissante)
       drawdown_penalty_factor: 1.5
       promotion_bonus: 1.3  # V4: rescale 10.0->1.3 (log, proportionnel decroissant)
     Medium:
       min_capital: 100.0
       max_capital: 300.0
       max_steps_in_tier: 2000
-      stagnation_penalty_per_step: -0.0000625  # was -0.000125 (÷2 further) — SESSION 15
+      stagnation_penalty_per_step: -0.00064  # k=2 : -0.00025 * 1.6^2 (FIX B croissante)
       drawdown_penalty_factor: 1.0
       promotion_bonus: 1.6  # V4: rescale 20.0->1.6 (log, proportionnel decroissant)
     High:
       min_capital: 300.0
       max_capital: 1000.0
       max_steps_in_tier: 3000
-      stagnation_penalty_per_step: -0.000025  # was -0.00005 (÷2 further) — SESSION 15
+      stagnation_penalty_per_step: -0.001024  # k=3 : -0.00025 * 1.6^3 (FIX B croissante)
       drawdown_penalty_factor: 0.5
       promotion_bonus: 1.9  # V4: rescale 40.0->1.9 (log, proportionnel decroissant)
     Enterprise:
@@ -1372,6 +1374,13 @@ reward_shaping:
       promotion_bonus: 0.0  # No higher tier
   # At 0.005, a 5-step HOLD_MIN violation costs -0.025 reward.
   invalid_trade_penalty_weight: 0.005
+  # ── FIX A+B (2026-06-27): coût GEOMETRIQUE de l'action stérile ──
+  # SELL-sans-position était GRATUIT (aucune branche) → PPO a collapsé sur
+  # action[0]=-1 (point fixe sans douleur). La pénalité croît géométriquement
+  # avec le palier (Micro=0..High=3): pen = invalid_trade_penalty_weight * r^k,
+  # bornée par cap. Neutralise le gain géométrique de la lâcheté aux paliers hauts.
+  sterile_action_geom_ratio: 1.6     # r > 1 : friction croissante par palier
+  sterile_action_penalty_cap: 0.05   # borne dure (jamais exponentiel non maîtrisé)
   logging:
     disable_existing_loggers: false
     formatters:
