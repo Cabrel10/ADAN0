@@ -7930,6 +7930,53 @@ class MultiAssetChunkedEnv(gym.Env):
                                 self.rejection_reasons["pm_rejected"] += 1
 
             # ================================================================
+            # A-bis. SELL-SANS-POSITION — action invalide STERILE (FIX A + B)
+            #   Cause prouvee (DIAG 2026-06-27): aucune branche ne traitait
+            #   `discrete_action == 2 and not is_open`, donc SELL repete sans
+            #   position = HOLD GRATUIT (inv_penalty=0). PPO a converge vers
+            #   action[0]=-1 (point fixe sans douleur) -> collapse total.
+            #
+            #   Correctif: cette action est invalide -> penalite reliee au
+            #   pipeline principal (realized_pnl += _step_invalid_penalty).
+            #   La magnitude CROIT GEOMETRIQUEMENT avec le palier (point central
+            #   utilisateur: difficulte geometrique => friction geometrique),
+            #   bornee par un cap (jamais exponentiel non maitrise).
+            # ================================================================
+            if discrete_action == 2 and not is_open:
+                self.invalid_trade_attempts += 1
+                try:
+                    self.rejection_reasons["sell_no_position"] += 1
+                except Exception:
+                    self.rejection_reasons["sell_no_position"] = 1
+                # --- penalite geometrique par palier ---
+                # index palier: Micro=0, Small=1, Medium=2, High=3, Enterprise=4
+                _tier_order = {"micro": 0, "small": 1, "medium": 2,
+                               "high": 3, "enterprise": 4}
+                _tname = "micro"
+                try:
+                    _ct = self.portfolio_manager.get_current_tier()
+                    if isinstance(_ct, dict):
+                        _tname = str(_ct.get("name", "Micro")).split()[0].lower()
+                except Exception:
+                    pass
+                _k = _tier_order.get(_tname, 0)
+                # base = invalid_trade_penalty_weight (config), ratio r>1, cap borne.
+                # NB: ces clefs sont sous reward_shaping (cf. structure config.yaml).
+                _rs_cfg = self.config.get("reward_shaping", {})
+                _base = float(_rs_cfg.get("invalid_trade_penalty_weight", 0.005))
+                _r = float(_rs_cfg.get("sterile_action_geom_ratio", 1.6))
+                _cap = float(_rs_cfg.get("sterile_action_penalty_cap", 0.05))
+                _sterile_pen = min(_cap, _base * (_r ** _k))
+                self._step_invalid_penalty += -_sterile_pen
+                if self.current_step % 50 == 0:
+                    self.logger.info(
+                        f"[STERILE_SELL] {asset} | SELL sans position | "
+                        f"tier={_tname}(k={_k}) | pen=-{_sterile_pen:.5f} "
+                        f"(base={_base:.4f} r={_r} cap={_cap})"
+                    )
+                # action reste HOLD (rien a fermer), mais elle n'est plus gratuite.
+
+            # ================================================================
             # B. BUY — ouvre une position (USDT → crypto)
             #    Conditions :
             #    1. Signal BUY (discrete_action == 1)
