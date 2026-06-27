@@ -54,3 +54,19 @@ le même chemin de code validé. Aucune source ne produit de TP hors-borne.
 
 ## Journal de surveillance
 (chaque entrée = un rapport horodaté, append-only)
+
+### 2026-06-27 — Run `fa_500k_v4` (post-corrections cross-TF + PnL latent + saturation)
+Relancé après commit `8cf8ac6` (fix cross-TF / latent PnL / saturation / promotion rescale).
+Watcher automatique : `scripts/diagnostics/surveil_fa_500k.sh` (audit compact + rotation 200MB).
+
+- **C0 (step ~898)** : démarrage propre. exceptions=0 ; **OHLC_INCOHER=0** ;
+  TRADE_AUDIT_OPEN `exec_src=open[t+1]` (TF d'exécution fixe actif) ; SL 0.79-0.82% /
+  TP 1.45-1.46% dans la bande scalper ; FA_WATCHDOG future_share 10.6-11.1% ;
+  ACTION_DIST tp_sat 2% sl_sat 1%. ✅
+- **C1 (step 3433, ~9 min)** : exceptions=0 ; **OHLC_INCOHER=0** ;
+  future_share=16.7% (<40%) ; mean_abs_pnl=0.0506 (sain, vs 0.72 du run buggé) ;
+  tp_pct_mean=1.32% bande [0.60%,2.00%] ; TRADE_AUDIT SL=0.65% TP=1.05% réalistes ;
+  raw log 19MB / audit 16KB. ✅
+- Preuve clé : le watchdog OHLC (FIX2) ne déclenche **aucune** incohérence →
+  le bug cross-TF (entry 108114 / low 87645 = -18.9% impossible) est éradiqué.
+- Règle d'arrêt active : OHLC_INCOHER>0 OU exception OU future_share>50% persistant → KILL.
