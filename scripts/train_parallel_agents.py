@@ -43,10 +43,36 @@ _SRC_DIR = _SCRIPT_DIR.parent / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
+# ── GARDE-FOU ANTI-DEADLOCK (2026-06-27) ──────────────────────────────────
+# Le run fa_500k_v4 a gelé à step 12417 (= fin du 6e rollout, 6*2048=12288)
+# pendant l'update PPO (n_epochs=20 + CNN+Attention) : thread contention
+# OpenMP/MKL sur un VPS 4 cœurs -> deadlock silencieux de PyTorch.
+# On borne les threads AVANT d'importer torch/numpy (lus à l'import).
+# Surchargeable via ADAN_NUM_THREADS (défaut: nproc-1, min 1).
+try:
+    _ncpu = os.cpu_count() or 2
+    _nthreads = int(os.environ.get("ADAN_NUM_THREADS", max(1, _ncpu - 1)))
+except Exception:
+    _nthreads = 1
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, str(_nthreads))
+# Évite l'oversubscription / les blocages de pool OpenMP imbriqués.
+os.environ.setdefault("OMP_DYNAMIC", "FALSE")
+os.environ.setdefault("KMP_BLOCKTIME", "0")
+
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+
+# Borne aussi le thread-pool interne de PyTorch (intra-op) : la vraie cause
+# du deadlock pendant backward(). 1 thread inter-op pour éviter le contention.
+try:
+    torch.set_num_threads(_nthreads)
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
@@ -1860,8 +1886,15 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     # MEMORY FIX: Add frequent checkpoints to recover from OOM crashes
+    # GARDE-FOU (2026-06-27): fréquence pilotable par ADAN_CKPT_FREQ (défaut 10k)
+    # pour récupérer si re-gel à 12k-20k sans tout perdre.
+    try:
+        _ckpt_freq = int(os.environ.get("ADAN_CKPT_FREQ", "10000"))
+    except Exception:
+        _ckpt_freq = 10000
+    _ckpt_freq = max(1000, min(_ckpt_freq, max(1000, steps)))
     checkpoint_callback = CheckpointCallback(
-        save_freq=max(1000, steps // 10),  # Save every 1000 steps or 10% of total
+        save_freq=_ckpt_freq,  # Save every ADAN_CKPT_FREQ steps (default 10k)
         save_path=str(ckpt_dir),
         name_prefix="ppo_adan0_sandbox_checkpoint",
         save_replay_buffer=False,  # Don't save replay buffer to save memory
