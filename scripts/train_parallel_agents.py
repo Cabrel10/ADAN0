@@ -1840,7 +1840,12 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     # S15 HARD RESET: Use config values (512/64/10) — safe for 7GB CI
     sandbox_n_steps = int(sandbox_cfg.get("n_steps", 512))
     sandbox_batch_size = int(sandbox_cfg.get("batch_size", 64))
-    sandbox_n_epochs = int(sandbox_cfg.get("n_epochs", 10))
+    # GARDE-FOU (2026-06-27): n_epochs surchargeable via ADAN_N_EPOCHS.
+    # Le gel a step 12417 s'est produit pendant un update PPO ; reduire
+    # n_epochs (20->10) raccourcit la fenetre de backward intensif ou le
+    # deadlock OpenMP/CPU se manifeste (test recommande utilisateur).
+    sandbox_n_epochs = int(os.environ.get("ADAN_N_EPOCHS",
+                                          sandbox_cfg.get("n_epochs", 10)))
     logger.info(f"[SANDBOX] PPO: n_steps={sandbox_n_steps}, batch_size={sandbox_batch_size}, "
                 f"n_epochs={sandbox_n_epochs}")
 

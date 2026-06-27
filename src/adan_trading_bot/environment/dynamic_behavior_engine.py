@@ -1148,7 +1148,7 @@ class DynamicBehaviorEngine:
             adjusted_pos = max(adjusted_pos, 0.01)  # Min 1%
 
             tier_name = current_tier if isinstance(current_tier, str) else getattr(current_tier, "name", str(current_tier))
-            logger.info(
+            logger.debug(
                 f"[DBE_V2_FINAL] {worker_key} | Tier={tier_name} | Regime={regime} | Final: SL={adjusted_sl:.2%}, TP={adjusted_tp:.2%}, Pos={adjusted_pos:.2%}"
             )
 

@@ -713,7 +713,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 risk_params["take_profit_pct"] = dbe_modulation.get("tp_pct", risk_params.get("take_profit_pct", 0.04))
                 risk_params["position_size_pct"] = dbe_modulation.get("position_size_pct", risk_params.get("position_size_pct", 0.1))
                 if dbe_enabled:
-                    logger.info(f"[RISK_PARAMS_FROM_DBE] Worker {self.worker_id}: SL={risk_params['stop_loss_pct']:.4f}, TP={risk_params['take_profit_pct']:.4f}, PosSize={risk_params['position_size_pct']:.4f}")
+                    logger.debug(f"[RISK_PARAMS_FROM_DBE] Worker {self.worker_id}: SL={risk_params['stop_loss_pct']:.4f}, TP={risk_params['take_profit_pct']:.4f}, PosSize={risk_params['position_size_pct']:.4f}")
                 else:
                     logger.info(f"[RISK_PARAMS_FROM_CONFIG] Worker {self.worker_id}: SL={risk_params['stop_loss_pct']:.4f}, TP={risk_params['take_profit_pct']:.4f}, PosSize={risk_params['position_size_pct']:.4f}")
 
@@ -3067,7 +3067,7 @@ class MultiAssetChunkedEnv(gym.Env):
             self.current_chunk_idx,
             self.step_in_chunk,
         )
-        logger.info(
+        logger.debug(
             f"[STEP {self.current_step} - {chunk_info}] Executing step with action: {action}"
         )
 
@@ -3368,7 +3368,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
 
                 try:
-                    logger.info(
+                    logger.debug(
                         f"[FREQ GATE POST-TRADE] TF={timeframe} last_step={self.last_trade_steps_by_tf.get(timeframe, '-')} | "
                         f"since_last={steps_since_last_trade} | min_pos_tf={min_pos_tf} | count={self.positions_count.get(timeframe, 0)} | "
                         f"force_after={force_trade_steps} | action_thr={action_threshold:.2f}"
@@ -3403,7 +3403,7 @@ class MultiAssetChunkedEnv(gym.Env):
 
             # Journalisation du PnL réalisé (uniquement depuis worker principal)
             if getattr(self, "worker_id", 0) == 0:
-                logger.info(f"[REWARD] Realized PnL for step: ${realized_pnl:.2f}")
+                logger.debug(f"[REWARD] Realized PnL for step: ${realized_pnl:.2f}")
 
             # step_in_chunk is already incremented earlier in step() method - removing duplicate
 
@@ -3441,7 +3441,7 @@ class MultiAssetChunkedEnv(gym.Env):
             # Log de vérification de terminaison (uniquement depuis worker principal)
             if getattr(self, "worker_id", 0) == 0:
                 _re = float(self.portfolio_manager.get_realized_equity()) if hasattr(self.portfolio_manager, 'get_realized_equity') else self.portfolio_manager.get_portfolio_value()
-                logger.info(
+                logger.debug(
                     f"[TERMINATION CHECK] Step: {self.current_step}, "
                     f"Max Steps: {self.max_steps}, "
                     f"Portfolio Value: {self.portfolio_manager.get_portfolio_value():.2f}, "
@@ -4669,7 +4669,7 @@ class MultiAssetChunkedEnv(gym.Env):
             # self._log_summary(
             #     self.current_step, self.current_chunk_idx + 1, self.total_chunks
             # )
-            logger.info("End of step processing.")
+            logger.debug("End of step processing.")
 
             # Accumulate episode reward for SB3 ep_info reporting
             if not hasattr(self, 'episode_reward'):
@@ -6693,7 +6693,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     _tag = "CRITICAL"
                 elif _ratio > 0.40:
                     _tag = "WARN"
-                _logfn = self.logger.warning if _ratio > 0.40 else self.logger.info
+                _logfn = self.logger.warning  # surveillance: survit SILENT
                 _logfn(
                     f"[FA_WATCHDOG {_tag}] Worker {self.worker_id} | "
                     f"future_share={_ratio:.1%} (target<40%) | "
@@ -7657,7 +7657,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     _tp_sat = (self._act_tp_sat_hi + self._act_tp_sat_lo) / _n
                     _sl_sat = (self._act_sl_sat_hi + self._act_sl_sat_lo) / _n
                     _tag = "WARN" if max(_tp_sat, _sl_sat) > 0.5 else "OK"
-                    _lf = self.logger.warning if _tag == "WARN" else self.logger.info
+                    _lf = self.logger.warning  # surveillance: survit SILENT
                     _lf(
                         f"[ACTION_DIST {_tag}] W{self.worker_id} | "
                         f"tp_raw_mean={self._act_tp_raw_sum/_n:+.3f} "
@@ -7969,7 +7969,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 _sterile_pen = min(_cap, _base * (_r ** _k))
                 self._step_invalid_penalty += -_sterile_pen
                 if self.current_step % 50 == 0:
-                    self.logger.info(
+                    self.logger.warning(
                         f"[STERILE_SELL] {asset} | SELL sans position | "
                         f"tier={_tname}(k={_k}) | pen=-{_sterile_pen:.5f} "
                         f"(base={_base:.4f} r={_r} cap={_cap})"
@@ -8175,7 +8175,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     # ── TRADE AUDIT: full chain trace on EVERY open ──
                     _exec_src = "open[t+1]" if (_exec_p is not None and _exec_p > 0) else "close[t]_FALLBACK"
                     _cash_after_open = self.portfolio_manager.get_cash()
-                    self.logger.info(
+                    self.logger.warning(
                         f"[TRADE_AUDIT_OPEN] {asset} | step={self.current_step} "
                         f"| chunk={getattr(self, 'current_chunk_idx', '?')}/{getattr(self, 'total_chunks', '?')} "
                         f"| step_in_chunk={getattr(self, 'step_in_chunk', '?')} "
