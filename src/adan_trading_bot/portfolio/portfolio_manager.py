@@ -5,6 +5,7 @@ Module de gestion de portefeuille pour le bot de trading ADAN.
 """
 
 import logging
+import os
 from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,13 @@ from ..performance.metrics import PerformanceMetrics
 from ..utils.smart_logger import create_smart_logger
 
 logger = logging.getLogger(__name__)
+
+# ─── Fast-path logging gate (2026-06-27) ──────────────────────────────────
+# [RISK_UPDATE] est emis a chaque step (≈2780 lignes en 3 min) et plombe l'I/O.
+# Aligne ce module sur ADAN_TRAINING_SILENT (comme env + DBE) : passe en WARNING
+# pendant l'entrainement pour tuer le flood per-step. Mettre =0 pour debug.
+if os.environ.get("ADAN_TRAINING_SILENT", "0") == "1":
+    logger.setLevel(logging.WARNING)
 
 
 class Position:
@@ -1590,6 +1598,10 @@ class PortfolioManager:
         """Log un warning avec le préfixe du worker."""
         logger.warning(f"[Worker {self.worker_id}] {message}")
 
+    def log_debug(self, message: str):
+        """Log DEBUG (per-step, supprime sous seuil INFO du root)."""
+        logger.debug(f"[Worker {self.worker_id}] {message}")
+
     def update_risk_parameters(
         self, risk_params: Dict[str, Any], tier: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -1641,7 +1653,7 @@ class PortfolioManager:
 
         self.pos_size_pct = float(clamped_by_range)
 
-        self.log_info(
+        self.log_debug(
             f"[RISK_UPDATE] Palier: {tier.get('name', 'N/A') if isinstance(tier, dict) else 'N/A'}, "
             f"PosSize: {self.pos_size_pct:.2%} (cap≤{max_pos_size_pct:.2%}{', range applied' if isinstance(tier, dict) and tier.get('exposure_range') else ''}), "
             f"SL: {self.sl_pct:.2%}, TP: {self.tp_pct:.2%}"
