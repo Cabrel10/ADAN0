@@ -1338,28 +1338,31 @@ reward_shaping:
       max_steps_in_tier: 500
       stagnation_penalty_per_step: -0.00025  # was -0.0005 (÷2 further) — SESSION 15
       drawdown_penalty_factor: 2.0
-      promotion_bonus: 5.0  # was 0.5 (×10)
+      promotion_bonus: 1.0  # V4 (2026-06-27): rescale 5.0->1.0. Le bonus de promotion
+      # ETAIT la root-cause du reward hacking (5/10/20/40 cumules = +75, ~100-750x
+      # plus fort que les penalites anti-SL). One-shot, proportionnel au palier
+      # franchi, ne doit JAMAIS dominer le PnL (croissance log/decroissante).
     Small:
       min_capital: 30.0
       max_capital: 100.0
       max_steps_in_tier: 1000
       stagnation_penalty_per_step: -0.000125  # was -0.00025 (÷2 further) — SESSION 15
       drawdown_penalty_factor: 1.5
-      promotion_bonus: 10.0  # was 1.0 (×10)
+      promotion_bonus: 1.3  # V4: rescale 10.0->1.3 (log, proportionnel decroissant)
     Medium:
       min_capital: 100.0
       max_capital: 300.0
       max_steps_in_tier: 2000
       stagnation_penalty_per_step: -0.0000625  # was -0.000125 (÷2 further) — SESSION 15
       drawdown_penalty_factor: 1.0
-      promotion_bonus: 20.0  # was 2.0 (×10)
+      promotion_bonus: 1.6  # V4: rescale 20.0->1.6 (log, proportionnel decroissant)
     High:
       min_capital: 300.0
       max_capital: 1000.0
       max_steps_in_tier: 3000
       stagnation_penalty_per_step: -0.000025  # was -0.00005 (÷2 further) — SESSION 15
       drawdown_penalty_factor: 0.5
-      promotion_bonus: 40.0  # was 4.0 (×10)
+      promotion_bonus: 1.9  # V4: rescale 40.0->1.9 (log, proportionnel decroissant)
     Enterprise:
       min_capital: 1000.0
       max_capital: 999999.0
@@ -1572,6 +1575,31 @@ trading_rules:
     window: 20                # taille de la fenetre glissante (steps)
     switch_threshold: 0.5     # part de switches au-dela de laquelle on penalise
     lambda_switch: 0.03       # poids de la penalite de switch
+  # 🟢 LATENT PnL SHAPING (V4, 2026-06-27) — la "ligne imaginaire" (cf. user).
+  # Des qu'une position est REELLEMENT ouverte, le PnL courant (non realise)
+  # est positif (au-dessus de l'entree) ou negatif (en-dessous). Le modele doit
+  # ressentir cette ligne a CHAQUE phase de detention, pas seulement a la
+  # cloture. Sinon il ne peut pas apprendre la gestion de portefeuille.
+  # Applique TOUTES LES every_n_steps (def 3) tant qu'une position est ouverte:
+  #   PnL_courant > 0 -> +reward (borne, attenue: on ne paie pas le non-realise plein)
+  #   PnL_courant < 0 -> -penalite (asymetrique: la perte fait plus mal)
+  # Compression log pour eviter la domination ; plafonne par |cap|.
+  latent_pnl_shaping:
+    enabled: true
+    every_n_steps: 3          # cadence (toutes les 3 steps de detention)
+    lambda_gain: 0.10         # poids du PnL latent POSITIF
+    lambda_loss: 0.15         # poids du PnL latent NEGATIF (asymetrie: perte > gain)
+    cap: 0.30                 # plafond absolu de la contribution latente par application
+  # 🟢 SATURATION PENALTY (V4, 2026-06-27) — penalise (log, plafonnee) le SPAM
+  # de SL/TP qui saturent les bornes du profil. Le clip masque le probleme ;
+  # si la policy sature les bornes en permanence, elle n'a pas appris a doser.
+  # Croissance LOGARITHMIQUE (pas exponentielle) avec un PLAFOND (cf. user).
+  saturation_penalty:
+    enabled: true
+    window: 50                # fenetre glissante (nb de trades/decisions SL-TP)
+    threshold: 0.5            # part de saturation au-dela de laquelle on penalise
+    lambda: 0.10              # poids de la penalite log
+    cap: 0.20                 # plafond absolu de la penalite par step
   duration_tracking:
     1h:
       max_duration_steps: 20

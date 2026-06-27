@@ -361,6 +361,15 @@ class MultiAssetChunkedEnv(gym.Env):
         self.last_trade_ids = set()  # MEMORY FIX: Will be cleared every 1000 steps
         self._last_trade_ids_cleared_at = 0  # Track when we last cleared it
         self.current_timeframe_for_trade = "5m"
+        # FIX CROSS-TF (2026-06-27): TF de MARK-TO-MARKET / execution FIXE.
+        # current_timeframe_for_trade est decode depuis l'action et change a
+        # chaque step -> il NE DOIT PAS servir a lire les prix d'execution
+        # (close entry, high/low pour TP/SL). Sinon entry_price (TF_a) et
+        # high/low du check (TF_b) proviennent d'index/TF incompatibles ->
+        # divergence jusqu'a +493% -> TP/SL touches sur mouvements FICTIFS
+        # (cf. scripts/diagnostics/prove_cross_tf_bug.py). On fige le prix
+        # d'execution sur le TF le plus fin et contigu (5m).
+        self.execution_timeframe = "5m"
         self.daily_reset_step = 0
         self.current_day = 0
         # FIX (2026-06-25): quota AGENT_CLOSE (interruptions manuelles).
@@ -425,6 +434,35 @@ class MultiAssetChunkedEnv(gym.Env):
         self.action_entropy_lambda = float(_ae_cfg.get('lambda_switch', 0.03))
         self._action_history = deque(maxlen=max(2, self.action_entropy_window))
         self.last_trade_steps_by_tf = {}
+        # LATENT PnL SHAPING (V4, 2026-06-27): la "ligne imaginaire". Reward du
+        # PnL non realise tant qu'une position est ouverte, applique toutes les
+        # every_n_steps. Donne au modele le sens gain/perte EN COURS de trade.
+        _lps = {}
+        try:
+            _lps = (self.config.get('trading_rules', {}) or {}).get('latent_pnl_shaping', {}) or {}
+        except Exception:
+            _lps = {}
+        self.latent_pnl_enabled = bool(_lps.get('enabled', True))
+        self.latent_pnl_every_n = max(1, int(_lps.get('every_n_steps', 3)))
+        self.latent_pnl_lambda_gain = float(_lps.get('lambda_gain', 0.10))
+        self.latent_pnl_lambda_loss = float(_lps.get('lambda_loss', 0.15))
+        self.latent_pnl_cap = float(_lps.get('cap', 0.30))
+        # SATURATION PENALTY (V4, 2026-06-27): penalise (log, plafonnee) le fait
+        # que SL/TP saturent les bornes du profil sur une fenetre glissante.
+        # Avant: seulement LOGGE (ACTION-SATURATION TRACKER), jamais penalise.
+        _sat = {}
+        try:
+            _sat = (self.config.get('trading_rules', {}) or {}).get('saturation_penalty', {}) or {}
+        except Exception:
+            _sat = {}
+        self.saturation_pen_enabled = bool(_sat.get('enabled', True))
+        self.saturation_pen_window = max(5, int(_sat.get('window', 50)))
+        self.saturation_pen_threshold = float(_sat.get('threshold', 0.5))
+        self.saturation_pen_lambda = float(_sat.get('lambda', 0.10))
+        self.saturation_pen_cap = float(_sat.get('cap', 0.20))
+        from collections import deque as _dq2
+        self._sl_sat_hist = _dq2(maxlen=self.saturation_pen_window)
+        self._tp_sat_hist = _dq2(maxlen=self.saturation_pen_window)
 
         # ── FUTURE ARENA / REWARD BRIDGE (FINDING #4) ─────────────────────────
         # Pont ADDITIF guide par le futur (MFE/MAE ex-post). Lit le bloc
@@ -3120,8 +3158,39 @@ class MultiAssetChunkedEnv(gym.Env):
                         for k, v in self.portfolio_manager.positions.items()
                     }
                     # Extraire lows/highs pour SL/TP précis (OHLC)
-                    current_lows = {asset: self._get_price_for_asset(asset, 'low') for asset in self.assets}
-                    current_highs = {asset: self._get_price_for_asset(asset, 'high') for asset in self.assets}
+                    # FIX CROSS-TF: for_execution=True (defaut) -> TF fixe 5m.
+                    current_lows = {asset: self._get_price_for_asset(asset, 'low', for_execution=True) for asset in self.assets}
+                    current_highs = {asset: self._get_price_for_asset(asset, 'high', for_execution=True) for asset in self.assets}
+                    # WATCHDOG COHERENCE OHLC (2026-06-27): garde-fou permanent
+                    # contre toute reapparition du bug cross-timeframe. close, high
+                    # et low DOIVENT venir de la meme bougie 5m -> (high-low)/close
+                    # realiste (<5%). Sinon: ERROR + compteur ; assert si strict.
+                    try:
+                        if not hasattr(self, "_ohlc_incoherence_count"):
+                            self._ohlc_incoherence_count = 0
+                        _strict = bool(getattr(self, "_ohlc_assert_strict", False))
+                        for _a in self.assets:
+                            _ak = _a.upper() if hasattr(_a, "upper") else _a
+                            _c = current_prices.get(_ak) if isinstance(current_prices, dict) else None
+                            _hi = current_highs.get(_a); _lo = current_lows.get(_a)
+                            if _c and _hi and _lo and float(_c) > 0:
+                                _rng = (float(_hi) - float(_lo)) / float(_c)
+                                if not (float(_lo) <= float(_c) <= float(_hi)) or _rng > 0.05:
+                                    self._ohlc_incoherence_count += 1
+                                    if self._ohlc_incoherence_count <= 20 or self._ohlc_incoherence_count % 500 == 0:
+                                        self.logger.error(
+                                            f"[OHLC_INCOHERENCE] {_ak} | exec_tf={getattr(self,'execution_timeframe','5m')} "
+                                            f"| step_in_chunk={getattr(self,'step_in_chunk',0)} "
+                                            f"| close={float(_c):.2f} high={float(_hi):.2f} low={float(_lo):.2f} "
+                                            f"| (high-low)/close={_rng:.2%} (>5% = bug cross-TF) "
+                                            f"| count={self._ohlc_incoherence_count}"
+                                        )
+                                    if _strict:
+                                        assert False, f"OHLC incoherence {_ak}: range={_rng:.2%}"
+                    except AssertionError:
+                        raise
+                    except Exception:
+                        pass
                     
                     # CRITICAL FIX: Capture SL/TP receipts AND PnL from early price update.
                     # Store both for later use in _execute_trades.
@@ -4931,7 +5000,13 @@ class MultiAssetChunkedEnv(gym.Env):
                 self.smart_logger.warning(f"PRICE_DATA_MISSING | asset={asset_key} | reason=empty_timeframe_map", dedupe=True)
                 continue
 
-            preferred_order = [getattr(self, "current_timeframe_for_trade", None), "5m", "1h", "4h"]
+            # FIX CROSS-TF (2026-06-27): le prix d'EXECUTION (close = entry/mark)
+            # doit etre lu sur le TF d'execution FIXE (5m), coherent avec les
+            # high/low du check TP/SL (_get_price_for_asset for_execution=True).
+            # Avant: current_timeframe_for_trade (variable selon l'action) ->
+            # entry_price (TF_a) incompatible avec high/low (TF_b) -> bug.
+            _exec_tf = getattr(self, "execution_timeframe", "5m")
+            preferred_order = [_exec_tf, "5m", "1h", "4h"]
             timeframe = next((tf for tf in preferred_order if tf and tf in tf_map), next(iter(tf_map)))
             df = tf_map.get(timeframe)
 
@@ -5035,7 +5110,10 @@ class MultiAssetChunkedEnv(gym.Env):
             prices[asset_key] = None
             if not isinstance(tf_map, dict) or not tf_map:
                 continue
-            preferred_order = [getattr(self, "current_timeframe_for_trade", None), "5m", "1h", "4h"]
+            # FIX CROSS-TF (2026-06-27): prix de fill (open[t+1]) sur le TF
+            # d'execution FIXE (5m), coherent avec entry close + high/low TP/SL.
+            _exec_tf = getattr(self, "execution_timeframe", "5m")
+            preferred_order = [_exec_tf, "5m", "1h", "4h"]
             timeframe = next((tf for tf in preferred_order if tf and tf in tf_map), next(iter(tf_map)))
             df = tf_map.get(timeframe)
             if df is None or df.empty:
@@ -5081,16 +5159,27 @@ class MultiAssetChunkedEnv(gym.Env):
             prices[asset_key] = price
         return prices
 
-    def _get_price_for_asset(self, asset: str, price_type: str = 'close') -> float:
+    def _get_price_for_asset(self, asset: str, price_type: str = 'close',
+                             for_execution: bool = True) -> float:
         """Extract a specific OHLC price (close/low/high) for an asset at current step.
         Falls back to close price if the requested column is unavailable.
+
+        FIX CROSS-TF (2026-06-27): par defaut for_execution=True -> lit sur le TF
+        d'execution FIXE (self.execution_timeframe, def 5m), JAMAIS sur
+        current_timeframe_for_trade (qui change a chaque step selon l'action et
+        provoquait des prix entry/check incompatibles). Mettre for_execution=False
+        uniquement pour des usages d'observation/decision lies au TF courant.
         """
         asset_key = asset.upper()
         tf_map = self.current_data.get(asset) if hasattr(self, "current_data") else None
         if not isinstance(tf_map, dict) or not tf_map:
             return 0.0
 
-        preferred_order = [getattr(self, "current_timeframe_for_trade", None), "5m", "1h", "4h"]
+        if for_execution:
+            _exec_tf = getattr(self, "execution_timeframe", "5m")
+            preferred_order = [_exec_tf, "5m", "1h", "4h"]
+        else:
+            preferred_order = [getattr(self, "current_timeframe_for_trade", None), "5m", "1h", "4h"]
         timeframe = next((tf for tf in preferred_order if tf and tf in tf_map), next(iter(tf_map)))
         df = tf_map.get(timeframe)
         if df is None or df.empty:
@@ -6508,6 +6597,65 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             future_contrib = 0.0
 
+        # ------------------------------------------------------------------
+        # LATENT PnL SHAPING (V4, 2026-06-27) — la "ligne imaginaire".
+        # Tant qu'une position est ouverte, on note le PnL NON REALISE toutes
+        # les every_n_steps (def 3). PnL>0 -> +reward (attenue), PnL<0 ->
+        # -penalite (asymetrique). Compression log + plafond |cap|. Donne au
+        # modele le sens gain/perte EN COURS de trade (gestion de portefeuille).
+        # ------------------------------------------------------------------
+        latent_pnl_contrib = 0.0
+        try:
+            if getattr(self, "latent_pnl_enabled", False) and hasattr(self, "portfolio_manager"):
+                _every = int(getattr(self, "latent_pnl_every_n", 3))
+                _lg = float(getattr(self, "latent_pnl_lambda_gain", 0.10))
+                _ll = float(getattr(self, "latent_pnl_lambda_loss", 0.15))
+                _lcap = float(getattr(self, "latent_pnl_cap", 0.30))
+                _cur_step = int(getattr(self, "current_step", 0))
+                for _pos in self.portfolio_manager.positions.values():
+                    if not getattr(_pos, "is_open", False):
+                        continue
+                    _ep = float(getattr(_pos, "entry_price", 0.0) or 0.0)
+                    _cp = float(getattr(_pos, "current_price", 0.0) or 0.0)
+                    _open_step = int(getattr(_pos, "open_step", _cur_step))
+                    _held = _cur_step - _open_step
+                    # n'applique qu'aux multiples de every_n (et held>0)
+                    if _ep <= 0 or _cp <= 0 or _held <= 0 or (_held % _every) != 0:
+                        continue
+                    _u = (_cp - _ep) / _ep  # PnL latent fractionnaire (SPOT long)
+                    if _u >= 0:
+                        # gain: log1p attenue, poids gain, plafonne
+                        _c = _lg * float(_np.log1p(_u * 10.0)) / 10.0
+                        latent_pnl_contrib += min(_lcap, _c)
+                    else:
+                        # perte: asymetrique (poids loss > gain), plafonne
+                        _c = _ll * float(_np.log1p(abs(_u) * 10.0)) / 10.0
+                        latent_pnl_contrib -= min(_lcap, _c)
+        except Exception:
+            latent_pnl_contrib = 0.0
+
+        # ------------------------------------------------------------------
+        # SATURATION PENALTY (V4, 2026-06-27) — penalise le SPAM de SL/TP qui
+        # saturent les bornes du profil. Croissance LOG (pas exp) + PLAFOND.
+        # Les historiques _sl_sat_hist / _tp_sat_hist sont alimentes au decode
+        # (1 si la valeur a sature une borne, 0 sinon).
+        # ------------------------------------------------------------------
+        saturation_penalty = 0.0
+        try:
+            if getattr(self, "saturation_pen_enabled", False):
+                _thr = float(getattr(self, "saturation_pen_threshold", 0.5))
+                _lam = float(getattr(self, "saturation_pen_lambda", 0.10))
+                _scap = float(getattr(self, "saturation_pen_cap", 0.20))
+                for _hist in (getattr(self, "_sl_sat_hist", None), getattr(self, "_tp_sat_hist", None)):
+                    if _hist is not None and len(_hist) >= 5:
+                        _rate = sum(_hist) / float(len(_hist))
+                        if _rate > _thr:
+                            # log: penalite croissante mais saturante (1+exces)
+                            _p = _lam * float(_np.log1p((_rate - _thr) * 10.0))
+                            saturation_penalty -= min(_scap, _p)
+        except Exception:
+            saturation_penalty = 0.0
+
         raw_reward = (
             pnl_base_reward  # PnL signal (terme structurant)
             + promotion_bonus  # Tier promotion (gros incitatif)
@@ -6517,6 +6665,8 @@ class MultiAssetChunkedEnv(gym.Env):
             + symmetry_penalty  # V3: anti-triche SL/TP (RR + lachete ATR), latent
             + action_entropy_penalty  # V3: anti switch-spam (BUY<->CLOSE)
             + future_contrib  # FINDING #4: bonus/penalite guide par le futur (MFE/MAE)
+            + latent_pnl_contrib  # V4: PnL latent (ligne imaginaire), toutes N steps
+            + saturation_penalty  # V4: anti-spam saturation SL/TP (log, plafonne)
             # A4: patience_bonus_val retire (= 0.0, mecanisme d'attente unique)
             # A6: survival_bonus retire (recompensait l'inaction)
         )
@@ -7465,6 +7615,16 @@ class MultiAssetChunkedEnv(gym.Env):
 
             normalized_tp = (tp_raw + 1.0) / 2.0
             tp_pct = float(np.clip(tp_lo + normalized_tp * (tp_hi - tp_lo), tp_lo, tp_hi))
+
+            # SATURATION FEED (V4): 1 si le raw pousse hors-bande (colle a un bord)
+            # -> alimente la penalite de saturation (log, plafonnee) du reward.
+            try:
+                if hasattr(self, "_sl_sat_hist"):
+                    self._sl_sat_hist.append(1 if abs(float(sl_raw)) >= 0.9 else 0)
+                if hasattr(self, "_tp_sat_hist"):
+                    self._tp_sat_hist.append(1 if abs(float(tp_raw)) >= 0.9 else 0)
+            except Exception:
+                pass
 
             # ACTION-SATURATION TRACKER (revue utilisateur) : le clip masque-t-il
             # une politique qui VEUT sortir de la bande ? On suit la part d'actions
