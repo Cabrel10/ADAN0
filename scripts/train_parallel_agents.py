@@ -477,6 +477,173 @@ class MetricsMonitor(BaseCallback):
 
 
 # ===========================================================================
+# DIAGNOSTIC-V3 (2026-06-29) — Entropy-collapse instrumentation
+# ===========================================================================
+# Measure-only callback. Reads, never writes, the env/policy state. Logs the
+# four numbers the decision tree needs, every `log_every` steps, to a CSV:
+#   - action0 histogram + mean/std (collapse signature = bimodal at +-1)
+#   - HOLD/BUY/SELL share of REQUESTED discrete actions
+#   - steps_flat / steps_open share (collapse = 99.7% open)
+#   - illegal_ratio (rejected actions / steps)
+#   - policy entropy (mean of policy distribution entropy on the rollout batch)
+# Activated by env ADAN_DIAG_COLLAPSE=1 so it never perturbs normal CI runs.
+# It is purely additive: failures are swallowed so training can never break.
+class DiagnosticCollapseCallback(BaseCallback):
+    """Per-window collapse telemetry (action0 histo, HOLD%, flat/open, illegal,
+    entropy). Measure-only — does NOT touch reward, gradient or env state."""
+
+    def __init__(self, csv_path: str, log_every: int = 10000, verbose: int = 1):
+        super().__init__(verbose)
+        self.csv_path = csv_path
+        self.log_every = max(500, int(log_every))
+        self._reset_window()
+        self._prev_rej_total = None
+        self._header_written = False
+
+    def _reset_window(self):
+        self._a0 = []                 # continuous action0 seen this window
+        self._req = {0: 0, 1: 0, 2: 0}  # HOLD / BUY / SELL requested
+        self._flat = 0
+        self._open = 0
+        self._ent = []                # entropy samples this window
+        self._rej_delta = 0           # rejections accumulated this window
+
+    @staticmethod
+    def _is_open(env) -> bool:
+        try:
+            pm = getattr(env, "portfolio_manager", None)
+            positions = getattr(pm, "positions", None)
+            if isinstance(positions, dict):
+                for p in positions.values():
+                    if bool(getattr(p, "is_open", False)):
+                        return True
+            elif isinstance(positions, (list, tuple)):
+                for p in positions:
+                    if bool(getattr(p, "is_open", False)):
+                        return True
+        except Exception:
+            pass
+        return False
+
+    def _on_step(self) -> bool:
+        try:
+            # 1) continuous action0 from the rollout (already sampled by PPO)
+            acts = self.locals.get("actions", None)
+            if acts is not None:
+                arr = np.asarray(acts, dtype=np.float32).reshape(len(acts), -1) \
+                    if hasattr(acts, "__len__") else None
+                if arr is not None and arr.shape[1] >= 1:
+                    for v in arr[:, 0]:
+                        self._a0.append(float(v))
+
+            # 2) per-env requested discrete action + position state + rejections
+            try:
+                reqs = self.training_env.get_attr("_last_discrete_action_requested")
+            except Exception:
+                reqs = []
+            try:
+                envs = self.training_env.get_attr("rejection_reasons")
+            except Exception:
+                envs = []
+            # position state via env_method is unsafe (pickling); read per-env attr
+            for i in range(len(reqs)):
+                r = int(reqs[i] or 0)
+                if r in self._req:
+                    self._req[r] += 1
+                # in-position flag — read via get_attr on the unwrapped env
+                try:
+                    pm_list = self.training_env.get_attr("portfolio_manager")
+                    is_open = False
+                    if i < len(pm_list):
+                        positions = getattr(pm_list[i], "positions", None)
+                        if isinstance(positions, dict):
+                            is_open = any(bool(getattr(p, "is_open", False))
+                                          for p in positions.values())
+                    if is_open:
+                        self._open += 1
+                    else:
+                        self._flat += 1
+                except Exception:
+                    pass
+
+            # 3) rejection delta (illegal actions) summed across envs
+            cur_total = 0
+            for rd in envs:
+                if isinstance(rd, dict):
+                    cur_total += sum(int(v) for v in rd.values())
+            if self._prev_rej_total is not None and cur_total >= self._prev_rej_total:
+                self._rej_delta += (cur_total - self._prev_rej_total)
+            self._prev_rej_total = cur_total
+
+            # 4) policy entropy estimate (cheap: from log_std of the policy)
+            try:
+                pol = self.model.policy
+                if hasattr(pol, "log_std"):
+                    log_std = pol.log_std.detach().cpu().numpy().reshape(-1)
+                    # diagonal-Gaussian differential entropy per dim
+                    ent = float(np.mean(0.5 * np.log(2 * np.pi * np.e) + log_std))
+                    self._ent.append(ent)
+            except Exception:
+                pass
+
+            # window flush
+            if self.num_timesteps > 0 and self.num_timesteps % self.log_every < \
+                    self.training_env.num_envs + 1:
+                self._flush()
+        except Exception:
+            pass
+        return True
+
+    def _flush(self):
+        try:
+            import csv
+            a0 = np.asarray(self._a0, dtype=np.float32) if self._a0 else np.zeros(1)
+            total_req = sum(self._req.values()) or 1
+            total_state = (self._flat + self._open) or 1
+            bins = np.linspace(-1.0, 1.0, 11)
+            histo, _ = np.histogram(np.clip(a0, -1, 1), bins=bins)
+            row = {
+                "timesteps": int(self.num_timesteps),
+                "a0_mean": round(float(a0.mean()), 4),
+                "a0_std": round(float(a0.std()), 4),
+                "a0_pct_buy": round(float((a0 > 0.01).mean()), 4),
+                "a0_pct_sell": round(float((a0 < -0.01).mean()), 4),
+                "a0_pct_hold_band": round(float((np.abs(a0) <= 0.01).mean()), 4),
+                "req_HOLD_pct": round(self._req[0] / total_req, 4),
+                "req_BUY_pct": round(self._req[1] / total_req, 4),
+                "req_SELL_pct": round(self._req[2] / total_req, 4),
+                "steps_flat_pct": round(self._flat / total_state, 4),
+                "steps_open_pct": round(self._open / total_state, 4),
+                "illegal_ratio": round(self._rej_delta / total_state, 4),
+                "policy_entropy": round(float(np.mean(self._ent)), 4) if self._ent else 0.0,
+                "a0_histo": "|".join(str(int(x)) for x in histo),
+            }
+            os.makedirs(os.path.dirname(self.csv_path), exist_ok=True)
+            write_header = not self._header_written and not os.path.exists(self.csv_path)
+            with open(self.csv_path, "a", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=list(row.keys()))
+                if write_header:
+                    w.writeheader()
+                w.writerow(row)
+            self._header_written = True
+            if self.verbose:
+                logging.getLogger(__name__).info(
+                    "[DIAG-V3 %d] HOLD=%.1f%% BUY=%.1f%% SELL=%.1f%% | "
+                    "flat=%.1f%% open=%.1f%% | illegal=%.3f | a0 mu=%.3f sd=%.3f | "
+                    "ent=%.3f | histo=%s",
+                    row["timesteps"], row["req_HOLD_pct"] * 100,
+                    row["req_BUY_pct"] * 100, row["req_SELL_pct"] * 100,
+                    row["steps_flat_pct"] * 100, row["steps_open_pct"] * 100,
+                    row["illegal_ratio"], row["a0_mean"], row["a0_std"],
+                    row["policy_entropy"], row["a0_histo"],
+                )
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[DIAG-V3] flush failed: {e}")
+        finally:
+            self._reset_window()
+
+
+# ===========================================================================
 # OMEGA Worker Profiles
 # ===========================================================================
 
@@ -484,14 +651,19 @@ WORKER_PROFILES: Dict[str, Dict[str, Any]] = {
     # ── W0 Scalper 5m ────────────────────────────────────────────────────────
     # Horizon: gamma=0.95 -> ~20 steps = ~1.7h of 5m candles
     # n_steps=512: small rollout, fast learning on noisy 5m signal
-    # ent_coef=0.01: moderate exploration, enough to escape local optima
+    # ent_coef=0.03 (DIAGNOSTIC-V3 2026-06-29): was 0.01. Forensic confusion
+    # matrix (430k/480k/500k) proved ENTROPY COLLAPSE: action0 is bimodal at
+    # +-1 (std=0.995), HOLD=0%, agent in-position 99.7% of steps. 0.01 was too
+    # low to keep exploration alive once the policy found the "always max long"
+    # attractor. Tripling ent_coef is the #1 anti-collapse lever (fees held at
+    # 0.5% by user decision, so entropy + sterile penalty must carry the fix).
     "scalper": {
         "name": "Scalper",
         "specialization": {"timeframe": "5m"},
         "n_steps": 512,
         "batch_size": 64,
         "learning_rate": 3e-5,
-        "ent_coef": 0.01,
+        "ent_coef": 0.03,
         "gamma": 0.95,
         "clip_range": 0.15,
     },
@@ -1909,6 +2081,23 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     # V2 instrumentation (MESURE SEULE) — suit μ/σ pré-tanh par tête pour voir si
     # μ(size)=-7.2 remonte. Activé via ADAN_ACTIONDIM=1. NE MODIFIE RIEN.
     _sb_callbacks = [checkpoint_callback]
+
+    # DIAGNOSTIC-V3 (2026-06-29): entropy-collapse telemetry. Activated by
+    # ADAN_DIAG_COLLAPSE=1. Measure-only — logs action0 histo / HOLD% /
+    # flat-open / illegal_ratio / entropy every ADAN_DIAG_EVERY (default 10k)
+    # steps to a CSV. Feeds the post-50k decision tree.
+    if os.environ.get("ADAN_DIAG_COLLAPSE", "0") == "1":
+        _diag_csv = os.environ.get(
+            "ADAN_DIAG_CSV",
+            str(PROJECT_ROOT / "logs" / "training" / "diagnostic_collapse_v3.csv"),
+        )
+        _diag_every = int(os.environ.get("ADAN_DIAG_EVERY", "10000"))
+        _sb_callbacks.append(DiagnosticCollapseCallback(
+            csv_path=_diag_csv, log_every=_diag_every, verbose=1,
+        ))
+        logger.info(f"[SANDBOX] DiagnosticCollapseCallback ACTIF "
+                    f"(every={_diag_every}, csv={_diag_csv}) — mesure seule.")
+
     if ActionDimMonitor is not None and os.environ.get("ADAN_ACTIONDIM", "0") == "1":
         _sb_ad_csv = os.environ.get(
             "ADAN_ACTIONDIM_CSV",
