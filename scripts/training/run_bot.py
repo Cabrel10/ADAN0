@@ -265,6 +265,7 @@ class AsyncBotEngine:
             action_threshold=self.args.action_threshold,
             capital_tiers=_capital_tiers,
             profile=self.args.profile,
+            stochastic_sltp=getattr(self.args, "stochastic_sltp", False),
         )
 
         self.start_time = asyncio.get_event_loop().time()
@@ -426,10 +427,15 @@ class AsyncBotEngine:
                 logger.warning(f"[LATENCY] Inference took {inference_ms:.0f}ms (>2s threshold)")
 
             # ── D. Execute ──
+            # Pass the live context_vector (HMM regime + ATR) so the engine can
+            # (a) drive HMM-confidence sizing and (b) feed the stochastic SL/TP
+            # calibrator with context[0]=ATR ratio and context[3]=bull_prob.
+            ctx_vec = obs.get("context_vector") if isinstance(obs, dict) else None
             result = self.engine.process_tick(
                 action=action,
                 current_price=current_price,
                 timestamp=tick_start,
+                context_vector=ctx_vec,
             )
 
             # ── E. Log with latency ──
@@ -474,11 +480,21 @@ class AsyncBotEngine:
         
         # Full action decode for validation
         raw = decoded.get("raw_action", [0]*5)
+        # SL/TP source + A/B delta (only meaningful when stochastic calibrator is on)
+        src = decoded.get("sltp_source", "model")
+        sltp_src_str = ""
+        if src == "stochastic":
+            sltp_src_str = (
+                f" [STOCH src={src} "
+                f"model_would=SL{decoded.get('model_sl_pct', 0):.2%}/"
+                f"TP{decoded.get('model_tp_pct', 0):.2%}]"
+            )
         action_str = (
             f"Dir={decoded['direction']:+.4f} "
             f"Size={decoded['size_pct']:.2%} "
             f"SL={decoded['sl_pct']:.3%} "
             f"TP={decoded['tp_pct']:.3%}"
+            f"{sltp_src_str}"
         )
         
         print(
@@ -642,6 +658,12 @@ def main():
         "--profile", type=str, default="intraday",
         choices=["scalper", "intraday", "swing", "position"],
         help="Worker profile → SL/TP bounds identical to training (default: intraday)",
+    )
+    parser.add_argument(
+        "--stochastic-sltp", action="store_true", default=False,
+        help="Derive SL/TP from an ATR×regime calibrator instead of the (collapsed) "
+             "model tp/sl heads. Direction & sizing stay model/HMM-driven. "
+             "See docs/SIZING_COHESION_AUDIT.md §13-§14.",
     )
 
     args = parser.parse_args()

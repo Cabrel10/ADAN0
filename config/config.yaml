@@ -649,7 +649,13 @@ environment:
   assets:
   - btcusdt
   base_currency: USDT
-  commission: 0.001
+  # FINDING #4 (2026-06-25) : frais SPOT 0.50 % ALLER-RETOUR (etait 0.80%).
+  # fee_pct est applique PAR COTE (entry_fee a l'ouverture + exit_fee a la
+  # cloture, cf. portfolio_manager l.764/920-921) donc 0.0025 x 2 = 0.005 = 0.50%.
+  # Decision utilisateur: le 0.80% gonflait artificiellement le TP_min, forcant
+  # des TP 8-12% impossibles (mouvement reel ~1-2% / 30 steps). 0.50% permet des
+  # TP serres et donc 15-20 trades/jour capturables.
+  commission: 0.0025
   features_config:
     indicators:
     - rsi_14
@@ -722,12 +728,18 @@ environment:
     max_risk_per_trade_pct: 0.02
     min_order_value_usdt: 11.0
     min_position_size_pct: 0.01
+    # FINDING #4: HARD caps TIGHTENED to the real BTC wick distribution.
+    # These are the AUTHORITATIVE final clamps (applied by PortfolioManager
+    # ._calculate_dynamic_sltp). The old TP max=0.50 / SL max=0.20 let trades
+    # open at TP=10% (impossible vs ~1-2% real move / 30 steps) -> 84% SL_HIT.
+    # New caps keep TP capturable so the agent can do 15-20 trades/day; the
+    # Future Arena reward then teaches WHERE inside the band to place TP/SL.
     stop_loss_pct:
-      max: 0.2
-      min: 0.005
+      max: 0.06      # was 0.20 (position profile upper bound)
+      min: 0.003
     take_profit_pct:
-      max: 0.5
-      min: 0.01
+      max: 0.12      # was 0.50 (position profile upper bound)
+      min: 0.005
   initial_balance: 20.5
   max_chunks_per_episode: 10
   max_steps: 25000
@@ -821,20 +833,23 @@ environment:
         SOLUSDT: 0.3
         XRPUSDT: 0.2
       initial_position_size: 0.1
-      initial_sl_pct: 0.1
-      initial_tp_pct: 0.15
+      # DEPRECATED (FINDING #4 / revue): valeurs realistes pour eviter qu'un futur
+      # refactor reactive un SL/TP 10-15%. Le chemin runtime = _BOUNDS (env) +
+      # workers.*.trading_parameters. Ces cles ne sont PLUS la source de verite.
+      initial_sl_pct: 0.015
+      initial_tp_pct: 0.030
       max_asset_allocation_pct: 1.0
       max_position_size: 0.9
       max_risk_per_trade_pct: 0.01
       min_trade_value: 11.0
-      risk_parameters:
-        base_sl_pct: 0.1
-        base_tp_pct: 0.15
+      risk_parameters:                 # DEPRECATED -> voir workers.*.trading_parameters
+        base_sl_pct: 0.015
+        base_tp_pct: 0.030
         daily_loss_limit: 0.1
         max_risk_level: 2.0
-        max_sl_pct: 0.1
+        max_sl_pct: 0.06
         min_risk_level: 0.5
-        min_sl_pct: 0.01
+        min_sl_pct: 0.003
         weekly_loss_limit: 0.2
       take_profit:
         enabled: true
@@ -1230,6 +1245,47 @@ reset_parameters:
   min_capital_before_reset: 11.0
   reset_mode: soft
 reward_shaping:
+  # ── FUTURE ARENA / ORACLE-CRITIC (FINDING #4) ───────────────────────────────
+  # Active le RewardBridge : pendant l'entrainement, l'env lit le FUTUR du chunk
+  # (tout le dataset est en RAM) et calcule MFE/MAE (meche haute/basse futures)
+  # pour NOTER la qualite des TP/SL choisis par l'agent. Reward shaping UNIQUEMENT
+  # (anti-oracle §10.10 : le futur n'entre JAMAIS dans l'observation de l'acteur).
+  #   enabled            : pont actif ?
+  #   mode               : classic | future_guided | stochastic_hybrid
+  #   round_trip_fees    : frais A/R reels (0.50% = 0.005) pour les cibles SL/TP
+  #   max_future_contrib : plafond de la contribution (<= 0.60) -> le PnL reste roi
+  future_reward:
+    enabled: true
+    mode: future_guided
+    round_trip_fees: 0.005
+    max_future_contrib: 0.60
+    # ── PHILOSOPHIE (revue utilisateur 2026-06-26) ──────────────────────────
+    # Le Future Arena juge le TP/SL contre le POTENTIEL REELLEMENT OBSERVE
+    # (MFE/MAE = capture-ratio), PAS contre une cible fixe. Le marche n'a pas de
+    # TP maximum : en bullrun MFE peut etre +35%, en marche plat +1.5%. Le FA
+    # doit pouvoir dire "tu as laisse de l'argent sur la table" SANS etre bride
+    # par les bornes d'execution (qui restent serrees, elles, dans l'env).
+    #   -> targets / tf_scale ci-dessous ne sont qu'un FALLBACK (mode classic,
+    #      ou futur indisponible). Ils ne plafonnent JAMAIS la recompense.
+    #   -> weights : ponderations des termes de qualite (anti-dette: plus de
+    #      constante metier codee en dur dans reward_service.py).
+    targets:            # (sl_target, tp_target) base 5m, FALLBACK uniquement
+      scalper:  [0.008, 0.015]
+      intraday: [0.012, 0.030]
+      swing:    [0.025, 0.060]
+      position: [0.045, 0.110]
+    tf_scale:           # elargissement temporel du FALLBACK (pas du MFE reel)
+      "5m": 1.0
+      "1h": 1.8
+      "4h": 3.0
+    weights:
+      w_pnl: 1.0
+      w_eqs: 0.35
+      w_sl: 0.20
+      w_tp: 0.20
+      w_sizing: 0.25
+      w_missed_green: 0.30
+      w_lost_potential: 0.40
   # Session 10 calibration — dense baseline signal for the PPO critic.
   # Session 9 used -1e-4: empirically too weak (over a 500-step episode,
   # cumulative drag ≈ -0.05, lost in symlog noise). explained_variance got
@@ -1280,30 +1336,35 @@ reward_shaping:
       min_capital: 11.0
       max_capital: 30.0
       max_steps_in_tier: 500
-      stagnation_penalty_per_step: -0.00025  # was -0.0005 (÷2 further) — SESSION 15
+      # FIX B (2026-06-27): stagnation CROISSANTE x1.6/palier (était ÷2 décroissante,
+      # ce qui rendait l'inaction de plus en plus gratuite en haut). Base Micro inchangée.
+      stagnation_penalty_per_step: -0.00025  # k=0 base
       drawdown_penalty_factor: 2.0
-      promotion_bonus: 5.0  # was 0.5 (×10)
+      promotion_bonus: 1.0  # V4 (2026-06-27): rescale 5.0->1.0. Le bonus de promotion
+      # ETAIT la root-cause du reward hacking (5/10/20/40 cumules = +75, ~100-750x
+      # plus fort que les penalites anti-SL). One-shot, proportionnel au palier
+      # franchi, ne doit JAMAIS dominer le PnL (croissance log/decroissante).
     Small:
       min_capital: 30.0
       max_capital: 100.0
       max_steps_in_tier: 1000
-      stagnation_penalty_per_step: -0.000125  # was -0.00025 (÷2 further) — SESSION 15
+      stagnation_penalty_per_step: -0.0004  # k=1 : -0.00025 * 1.6 (FIX B croissante)
       drawdown_penalty_factor: 1.5
-      promotion_bonus: 10.0  # was 1.0 (×10)
+      promotion_bonus: 1.3  # V4: rescale 10.0->1.3 (log, proportionnel decroissant)
     Medium:
       min_capital: 100.0
       max_capital: 300.0
       max_steps_in_tier: 2000
-      stagnation_penalty_per_step: -0.0000625  # was -0.000125 (÷2 further) — SESSION 15
+      stagnation_penalty_per_step: -0.00064  # k=2 : -0.00025 * 1.6^2 (FIX B croissante)
       drawdown_penalty_factor: 1.0
-      promotion_bonus: 20.0  # was 2.0 (×10)
+      promotion_bonus: 1.6  # V4: rescale 20.0->1.6 (log, proportionnel decroissant)
     High:
       min_capital: 300.0
       max_capital: 1000.0
       max_steps_in_tier: 3000
-      stagnation_penalty_per_step: -0.000025  # was -0.00005 (÷2 further) — SESSION 15
+      stagnation_penalty_per_step: -0.001024  # k=3 : -0.00025 * 1.6^3 (FIX B croissante)
       drawdown_penalty_factor: 0.5
-      promotion_bonus: 40.0  # was 4.0 (×10)
+      promotion_bonus: 1.9  # V4: rescale 40.0->1.9 (log, proportionnel decroissant)
     Enterprise:
       min_capital: 1000.0
       max_capital: 999999.0
@@ -1313,6 +1374,13 @@ reward_shaping:
       promotion_bonus: 0.0  # No higher tier
   # At 0.005, a 5-step HOLD_MIN violation costs -0.025 reward.
   invalid_trade_penalty_weight: 0.005
+  # ── FIX A+B (2026-06-27): coût GEOMETRIQUE de l'action stérile ──
+  # SELL-sans-position était GRATUIT (aucune branche) → PPO a collapsé sur
+  # action[0]=-1 (point fixe sans douleur). La pénalité croît géométriquement
+  # avec le palier (Micro=0..High=3): pen = invalid_trade_penalty_weight * r^k,
+  # bornée par cap. Neutralise le gain géométrique de la lâcheté aux paliers hauts.
+  sterile_action_geom_ratio: 1.6     # r > 1 : friction croissante par palier
+  sterile_action_penalty_cap: 0.05   # borne dure (jamais exponentiel non maîtrisé)
   logging:
     disable_existing_loggers: false
     formatters:
@@ -1443,24 +1511,104 @@ reward_shaping:
     stop_loss_multiplier: 0.05
     take_profit_multiplier: 0.6
 risk_parameters:
-  base_sl_pct: 0.1
-  base_tp_pct: 0.15
+  # DEPRECATED (FINDING #4 / revue utilisateur): ce bloc top-level n'est lu QUE
+  # par DBE._compute_risk_parameters, qui est CODE MORT (0 appelant). Valeurs
+  # realignees sur les bandes realistes pour neutraliser tout piege 10-20% si la
+  # fonction etait reactivee. Source de verite runtime = workers.*.trading_parameters.
+  base_sl_pct: 0.015
+  base_tp_pct: 0.030
   daily_loss_limit: 0.1
   drawdown_risk_multiplier: 1.5
   max_drawdown_pct: 40.0    # C3: aligned with Tier Micro (was 0.25)
   max_risk_level: 2.0
-  max_sl_pct: 0.1
-  max_tp_pct: 0.2
+  max_sl_pct: 0.06
+  max_tp_pct: 0.12
   min_risk_level: 0.5
-  min_sl_pct: 0.01
-  min_tp_pct: 0.01
+  min_sl_pct: 0.003
+  min_tp_pct: 0.005
   risk_step: 0.1
   volatility_impact: 0.5
   volatility_sl_factor: 1.2
   weekly_loss_limit: 0.2
   winrate_tp_factor: 1.1
 trading_rules:
-  commission_pct: 0.001
+  # FINDING #4: aligne sur environment.commission (0.50 % A/R, applique par cote).
+  commission_pct: 0.0025
+  # 🔴 CRITICAL FIX (2026-06-25): enforce the per-tier exposure cap on EVERY
+  # open (was only enforced at hour==4). Without this, the agent ignored
+  # max_position_size_pct / exposure_range and sized positions arbitrarily.
+  enable_position_cap: true
+  # 🔴 AGENT_CLOSE quota (2026-06-25): l'agent ne peut interrompre manuellement
+  # qu'un nombre limité de positions par jour, et jamais trop d'affilée. Au-delà
+  # du quota, l'AGENT_CLOSE est converti en HOLD + pénalité (laisse jouer SL/TP).
+  # Les sorties SL / TP / MAX_DURATION ne comptent PAS dans ce quota.
+  agent_close:
+    max_per_day: 7        # interruptions manuelles max par jour (24h glissantes en steps)
+    max_consecutive: 3    # max d'AGENT_CLOSE d'affilée sans nouvelle entrée entre-deux
+    min_gap_steps: 12     # cooldown STRUCTUREL: >= 12 steps entre deux AGENT_CLOSE
+  # 🔵 DECISION BUDGET (V3, 2026-06-25) — friction structurelle continue.
+  # Jauge d'energie [0,1]. HOLD recharge (+recharge_hold), BUY/CLOSE coutent.
+  # Quand budget < cost_close => AGENT_CLOSE converti en HOLD + penalite douce.
+  # Effet mecanique : apres ~3 closes (3*0.30) le budget est quasi vide ; il
+  # faut ~15 HOLD (15*0.02=0.30) pour pouvoir refermer -> cooldown NATUREL.
+  # Les murs rigides (if/else) ne s'apprennent pas bien ; un cout continu
+  # modifie la geometrie de l'espace d'apprentissage du PPO.
+  decision_budget:
+    enabled: true
+    max: 1.0              # jauge pleine
+    cost_buy: 0.15        # ouvrir une position consomme 0.15
+    cost_close: 0.30      # AGENT_CLOSE consomme 0.30 (cher: tue le micro-scalping)
+    recharge_hold: 0.02   # chaque HOLD recharge +0.02 (recompense la patience)
+  # 🔵 SYMMETRY & VOLATILITY ENFORCEMENT (V3) — penalite latente (par step
+  # tant que la position est ouverte) contre la triche SL/TP.
+  #  - rr_penalty   : penalise |RR_effectif - target_RR| (asymetrie risque/gain)
+  #  - sl_atr_penalty: penalise un SL trop large vs la volatilite (ATR) = "lachete"
+  symmetry_enforcement:
+    enabled: true
+    target_rr: 1.5            # ratio risque/recompense cible (profil intraday)
+    rr_tolerance: 0.5         # zone morte : pas de penalite si |RR-target| <= 0.5
+    rr_lambda: 0.02           # poids penalite asymetrie (par step, latent)
+    sl_atr_mult_max: 2.0      # SL acceptable jusqu'a 2.0 x ATR ; au-dela = lachete
+    sl_atr_lambda: 0.02       # poids penalite SL-trop-large-vs-ATR (par step)
+    max_step_penalty: 0.15    # plafond de la penalite de symetrie par step
+  # 🔵 CLOSE INTENTION PENALTY (V3) — un AGENT_CLOSE precoce / non rentable
+  # coute proportionnellement a sa nuisance (duree trop courte + PnL faible).
+  close_intention_penalty:
+    enabled: true
+    min_hold_steps: 6         # en dessous => penalise (close trop precoce)
+    lambda_duration: 0.05     # poids du deficit de duree
+  # 🔵 ACTION ENTROPY CONSTRAINT (V3) — penalise une frequence de switch
+  # d'action (HOLD<->BUY<->SELL) trop elevee sur une fenetre glissante.
+  action_entropy:
+    enabled: true
+    window: 20                # taille de la fenetre glissante (steps)
+    switch_threshold: 0.5     # part de switches au-dela de laquelle on penalise
+    lambda_switch: 0.03       # poids de la penalite de switch
+  # 🟢 LATENT PnL SHAPING (V4, 2026-06-27) — la "ligne imaginaire" (cf. user).
+  # Des qu'une position est REELLEMENT ouverte, le PnL courant (non realise)
+  # est positif (au-dessus de l'entree) ou negatif (en-dessous). Le modele doit
+  # ressentir cette ligne a CHAQUE phase de detention, pas seulement a la
+  # cloture. Sinon il ne peut pas apprendre la gestion de portefeuille.
+  # Applique TOUTES LES every_n_steps (def 3) tant qu'une position est ouverte:
+  #   PnL_courant > 0 -> +reward (borne, attenue: on ne paie pas le non-realise plein)
+  #   PnL_courant < 0 -> -penalite (asymetrique: la perte fait plus mal)
+  # Compression log pour eviter la domination ; plafonne par |cap|.
+  latent_pnl_shaping:
+    enabled: true
+    every_n_steps: 3          # cadence (toutes les 3 steps de detention)
+    lambda_gain: 0.10         # poids du PnL latent POSITIF
+    lambda_loss: 0.15         # poids du PnL latent NEGATIF (asymetrie: perte > gain)
+    cap: 0.30                 # plafond absolu de la contribution latente par application
+  # 🟢 SATURATION PENALTY (V4, 2026-06-27) — penalise (log, plafonnee) le SPAM
+  # de SL/TP qui saturent les bornes du profil. Le clip masque le probleme ;
+  # si la policy sature les bornes en permanence, elle n'a pas appris a doser.
+  # Croissance LOGARITHMIQUE (pas exponentielle) avec un PLAFOND (cf. user).
+  saturation_penalty:
+    enabled: true
+    window: 50                # fenetre glissante (nb de trades/decisions SL-TP)
+    threshold: 0.5            # part de saturation au-dela de laquelle on penalise
+    lambda: 0.10              # poids de la penalite log
+    cap: 0.20                 # plafond absolu de la penalite par step
   duration_tracking:
     1h:
       max_duration_steps: 20
@@ -1580,6 +1728,7 @@ workers:
   # ============================================================================
   w1:
     name: W1 Scalper
+    profile: scalper      # explicite (revue utilisateur: pas de detection implicite)
     specialization:
       timeframe: 5m
       tracking_periods:
@@ -1597,8 +1746,15 @@ workers:
       take_profit_pct: 0.030
       trailing_stop: true
       trailing_delta: 0.005
+    # EXPLICIT source-of-truth read by the DBE (_get_tier_based_parameters).
+    # Revue utilisateur: les fallbacks doivent etre des securites, PAS le mode normal.
+    trading_parameters:
+      stop_loss_pct: 0.008
+      take_profit_pct: 0.015
+      position_size_pct: 0.70
   w2:
     name: W2 Intraday
+    profile: intraday     # explicite
     specialization:
       timeframe: 1h
       tracking_periods:
@@ -1610,8 +1766,13 @@ workers:
     assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
+    trading_parameters:
+      stop_loss_pct: 0.012
+      take_profit_pct: 0.030
+      position_size_pct: 0.70
   w3:
     name: W3 Swing
+    profile: swing        # explicite
     specialization:
       timeframe: 4h
       tracking_periods:
@@ -1623,8 +1784,13 @@ workers:
     assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
+    trading_parameters:
+      stop_loss_pct: 0.025
+      take_profit_pct: 0.060
+      position_size_pct: 0.70
   w4:
     name: W4 Position
+    profile: position     # explicite
     specialization:
       timeframe: 4h
       tracking_periods:
@@ -1636,6 +1802,10 @@ workers:
     assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
+    trading_parameters:
+      stop_loss_pct: 0.045
+      take_profit_pct: 0.110
+      position_size_pct: 0.70
 
 # ============================================================================
 # SANDBOX / CI TRAINING PARAMETERS

@@ -43,10 +43,36 @@ _SRC_DIR = _SCRIPT_DIR.parent / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
+# ── GARDE-FOU ANTI-DEADLOCK (2026-06-27) ──────────────────────────────────
+# Le run fa_500k_v4 a gelé à step 12417 (= fin du 6e rollout, 6*2048=12288)
+# pendant l'update PPO (n_epochs=20 + CNN+Attention) : thread contention
+# OpenMP/MKL sur un VPS 4 cœurs -> deadlock silencieux de PyTorch.
+# On borne les threads AVANT d'importer torch/numpy (lus à l'import).
+# Surchargeable via ADAN_NUM_THREADS (défaut: nproc-1, min 1).
+try:
+    _ncpu = os.cpu_count() or 2
+    _nthreads = int(os.environ.get("ADAN_NUM_THREADS", max(1, _ncpu - 1)))
+except Exception:
+    _nthreads = 1
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, str(_nthreads))
+# Évite l'oversubscription / les blocages de pool OpenMP imbriqués.
+os.environ.setdefault("OMP_DYNAMIC", "FALSE")
+os.environ.setdefault("KMP_BLOCKTIME", "0")
+
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+
+# Borne aussi le thread-pool interne de PyTorch (intra-op) : la vraie cause
+# du deadlock pendant backward(). 1 thread inter-op pour éviter le contention.
+try:
+    torch.set_num_threads(_nthreads)
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
@@ -85,6 +111,14 @@ try:
     from adan_trading_bot.utils.ppo_safety import PpoStdSafetyCallback
 except ImportError:
     PpoStdSafetyCallback = None
+
+# ActionDimMonitor: instrumentation par tête (MESURE SEULE — ne modifie rien).
+# Active via ADAN_ACTIONDIM=1 (par défaut OFF pour ne pas alourdir les runs
+# de production). Le run diagnostique V2 l'active pour suivre μ(size)/σ(size).
+try:
+    from adan_trading_bot.utils.action_dim_monitor import ActionDimMonitor
+except ImportError:
+    ActionDimMonitor = None
 
 try:
     from adan_trading_bot.utils.seed_manager import SeedManager
@@ -734,10 +768,24 @@ class ADAN_PBT_Worker(_TrainableBase):
         # tripling memory usage and compute for no benefit.
         policy_kwargs["share_features_extractor"] = True
 
-        # gSDE exploration: initial std ≈ exp(-0.5) ≈ 0.61
-        # Produces nuanced actions inside [-1, 1] without saturating at extremes.
-        # Must match sandbox mode for checkpoint compatibility.
-        policy_kwargs["log_std_init"] = -0.5
+        # gSDE STABILITY (V2 execution audit, 2026-06-24 — MEASURED):
+        # σ_eff ≈ ||features||_2 * exp(log_std_init). With the real extractor
+        # (features_dim=256) ||features||_2≈11.4 (scripts/diag_gsde_latent.py),
+        # so the historical log_std_init=-0.5 gave σ_eff≈6.9 AT INIT -> gSDE
+        # diverged and the net defended by saturating size to μ=-7. We now
+        # default to -2.0 (σ_eff≈1.5) + use_expln=True (bounds growth). This is
+        # the SAME fix as sandbox so a 500k run does not repeat the collapse.
+        # Override via ADAN_LOG_STD_INIT / ADAN_USE_EXPLN if needed.
+        _log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", "-2.0"))
+        policy_kwargs["log_std_init"] = _log_std_init
+        if os.environ.get("ADAN_USE_EXPLN", "1") == "1":
+            policy_kwargs["use_expln"] = True
+        logger.info(
+            f"Worker {self.worker_idx}: gSDE log_std_init={_log_std_init:+.3f} "
+            f"(std0≈{float(np.exp(_log_std_init)):.3f}) use_expln="
+            f"{policy_kwargs.get('use_expln', False)} -> σ_eff≈"
+            f"{11.4*float(np.exp(_log_std_init)):.2f} at init."
+        )
 
         # Seed
         seed = self.adan_config.get("general", {}).get("random_seed", 42) + self.worker_idx
@@ -759,6 +807,16 @@ class ADAN_PBT_Worker(_TrainableBase):
         clip_range_final= prof_cfg.get("clip_range", agent_cfg.get("clip_range", 0.2))
         ent_coef_final  = prof_cfg.get("ent_coef",   self.ent_coef)
         lr_final        = prof_cfg.get("learning_rate", self.learning_rate)
+        # Override V2: ADAN_ENT_COEF force l'entropie pour TOUS les profils (run
+        # diagnostique). Pousse l'agent hors du plateau ; ne réveille pas SIZE à
+        # lui seul (cause μ) mais aide TP/SL et augmente la variance des rollouts.
+        _ent_override = os.environ.get("ADAN_ENT_COEF")
+        if _ent_override is not None:
+            ent_coef_final = float(_ent_override)
+            logger.info(
+                f"Worker {self.worker_idx}: ent_coef={ent_coef_final:.4f} "
+                f"(override V2 via ADAN_ENT_COEF)."
+            )
 
         logger.info(
             f"Worker {self.worker_idx} ({self.profile}): "
@@ -818,6 +876,27 @@ class ADAN_PBT_Worker(_TrainableBase):
                 verbose=0,
             )
             self._callbacks.append(ppo_safety)
+
+        # ActionDimMonitor (MESURE SEULE) — suit μ/σ pré-tanh + post-tanh par tête.
+        # Activé seulement si ADAN_ACTIONDIM=1 (run diagnostique V2). NE MODIFIE
+        # RIEN ; permet d'observer si μ(size)=-7.2 remonte au fil de l'entraînement.
+        if ActionDimMonitor is not None and os.environ.get("ADAN_ACTIONDIM", "0") == "1":
+            _ad_csv = os.environ.get(
+                "ADAN_ACTIONDIM_CSV",
+                str(TRAIN_OUTPUT_DIR / f"actiondim_worker_{self.worker_idx}_{profile_tag}.csv"),
+            )
+            _ad_every = int(os.environ.get("ADAN_ACTIONDIM_EVERY", "1"))
+            action_dim_monitor = ActionDimMonitor(
+                log_every=_ad_every,
+                pre_tanh_batch=int(os.environ.get("ADAN_ACTIONDIM_BATCH", "256")),
+                csv_path=_ad_csv,
+                verbose=1,
+            )
+            self._callbacks.append(action_dim_monitor)
+            logger.info(
+                f"Worker {self.worker_idx}: ActionDimMonitor ACTIF "
+                f"(every={_ad_every}, csv={_ad_csv}) — mesure seule, ne modifie rien."
+            )
 
         self._metrics_monitor = metrics_monitor
         
@@ -1580,7 +1659,7 @@ def main(
 # ===========================================================================
 def sandbox_train(steps: int = None, initial_capital: float = None,
                   config_path: str = None, resume_ckpt: str = None,
-                  checkpoint_out: str = None):
+                  checkpoint_out: str = None, worker_key: str = None):
     """Run training in sandbox/CI mode — no Ray, no GPU, single-process.
 
     Uses the REAL MultiAssetChunkedEnv from src/adan_trading_bot with all
@@ -1617,8 +1696,31 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     config["environment"]["initial_capital"] = initial_capital
     logger.info(f"[SANDBOX] Config: steps={steps}, initial_capital={initial_capital}")
 
-    # Worker config: use w1 (scalper) as default sandbox worker
-    worker_config = _copy.deepcopy(config.get("workers", {}).get("w1", {}))
+    # Worker config: use w1 (scalper) as default sandbox worker.
+    # worker_key allows validating other profiles (w2=intraday, w3=swing,
+    # w4=position) — accepts either the worker key ("w2") or a profile name
+    # ("intraday"). Falls back to w1 when unknown.
+    _workers = config.get("workers", {})
+    _wkey = "w1"
+    if worker_key:
+        wk = str(worker_key).strip().lower()
+        if wk in _workers:
+            _wkey = wk
+        else:
+            # match by profile name
+            _profile_map = {
+                str(cfg.get("profile", "")).strip().lower(): k
+                for k, cfg in _workers.items() if isinstance(cfg, dict)
+            }
+            if wk in _profile_map:
+                _wkey = _profile_map[wk]
+            else:
+                logger.warning(
+                    f"[SANDBOX] worker_key='{worker_key}' unknown — falling back to w1"
+                )
+    logger.info(f"[SANDBOX] Using worker_config key='{_wkey}' "
+                f"(profile={_workers.get(_wkey, {}).get('profile', '?')})")
+    worker_config = _copy.deepcopy(_workers.get(_wkey, {}))
     worker_config["worker_id"] = 0
     worker_config.setdefault("data_split_override", "train")
     worker_config.setdefault("timeframes", config.get("data", {}).get("timeframes", ["5m", "1h", "4h"]))
@@ -1661,15 +1763,89 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     # 2. log_std_init=-0.5: Initial std ≈ exp(-0.5) ≈ 0.61, so actions
     #    start with nuanced variance inside [-1, 1], learning fine position sizing
     #    instead of saturating at extremes (previous 0.5 gave std≈1.65 → epilepsy).
+    # V2 override : ADAN_LOG_STD_INIT (def -0.5, compat checkpoints). Le run
+    # diagnostique le relève (0.0 -> std0≈1.0) pour rouvrir l'exploration.
+    # gSDE STABILITY FIX (V2 execution audit, 2026-06-24 — MEASURED, not guessed):
+    # gSDE variance = (latent_sde**2) @ (get_std(log_std)**2), i.e. for ~uniform
+    # std,  σ_eff ≈ ||features||_2 * exp(log_std_init).
+    # scripts/diag_gsde_latent.py MEASURED ||features||_2 ≈ 11.4 with the real
+    # ContextualTemporalFusionExtractor (features_dim=256). So log_std_init=-0.5
+    # gives σ_eff ≈ 6.9 AT INIT (chaotic) and PPO then drives log_std up further
+    # -> σ explodes (3.4->13->41->110 observed). The old "frozen size μ=-7" was
+    # the network DEFENDING against this chaos by saturating tanh.
+    # Fixes (both SB3-documented, no architecture surgery):
+    #   - log_std_init=-2.0  -> std≈0.135 -> σ_eff ≈ 1.5 (sane exploration)
+    #   - use_expln=True     -> SB3: "keeps variance above zero and prevents it
+    #                           from growing too fast" (bounds the blow-up)
+    # NOTE: VecNormalize(norm_obs) is NOT the fix here — StateBuilder already
+    # normalizes+clips obs to [-10,10] (measured), and heavy/500k_FIXED used
+    # norm_obs=False too. LayerNorm on features makes it WORSE (||.||_2->16).
+    _sb_log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", "-2.0"))
+    _sb_use_expln = os.environ.get("ADAN_USE_EXPLN", "1") == "1"
+    _sb_use_sde = os.environ.get("ADAN_USE_SDE", "1") == "1"
     policy_kwargs = {
         "share_features_extractor": True,
-        "log_std_init": -0.5,  # exp(-0.5) ≈ 0.61 std
+        "log_std_init": _sb_log_std_init,
     }
+    if _sb_use_sde:
+        # use_expln only matters for gSDE
+        policy_kwargs["use_expln"] = _sb_use_expln
+
+    # ------------------------------------------------------------------
+    # CRITICAL FIX (V2 execution audit, 2026-06-24):
+    # The sandbox mode previously built policy_kwargs WITHOUT
+    # features_extractor_class, so SB3 silently fell back to its default
+    # CombinedExtractor (a 0-parameter flatten of the Dict obs). That means
+    # the CNN / cross-attention / FiLM context / aux forward-predictor NEVER
+    # ran in sandbox training — only a bare MLP was trained. This made
+    # sandbox checkpoints architecturally DIFFERENT from heavy-mode (Ray)
+    # checkpoints and invalidated any μ/σ comparison against the 500K model.
+    # We now wire the SAME ContextualTemporalFusionExtractor as heavy mode so
+    # sandbox trains the real architecture (proof: scripts/audit_execution.py).
+    # ------------------------------------------------------------------
+    fe_kwargs = agent_cfg.get("features_extractor_kwargs", {})
+    _cfg_pk = copy.deepcopy(fe_kwargs.get("policy_kwargs", {}))
+    _activation_fn_map = {"ReLU": nn.ReLU, "Tanh": nn.Tanh, "LeakyReLU": nn.LeakyReLU}
+    if "activation_fn" in _cfg_pk:
+        _act_name = str(_cfg_pk["activation_fn"]).split(".")[-1]
+        _cfg_pk["activation_fn"] = _activation_fn_map.get(_act_name, nn.ReLU)
+    # carry over net_arch / activation_fn from config policy_kwargs (if any)
+    for _k, _v in _cfg_pk.items():
+        policy_kwargs.setdefault(_k, _v)
+
+    if ContextualTemporalFusionExtractor is not None:
+        policy_kwargs["features_extractor_class"] = ContextualTemporalFusionExtractor
+        _valid_fe_keys = {"features_dim", "context_dim", "cnn_hidden", "dropout"}
+        _safe_fe_kwargs = {k: v for k, v in fe_kwargs.items() if k in _valid_fe_keys}
+        _safe_fe_kwargs.setdefault("context_dim", 14)
+        policy_kwargs["features_extractor_kwargs"] = _safe_fe_kwargs
+        logger.info(
+            "[SANDBOX] features_extractor=ContextualTemporalFusionExtractor "
+            f"(CNN+cross-attn+FiLM+aux) | fe_kwargs={_safe_fe_kwargs}"
+        )
+    else:
+        logger.warning(
+            "[SANDBOX] ContextualTemporalFusionExtractor UNAVAILABLE — falling "
+            "back to SB3 CombinedExtractor (bare MLP). Architecture will NOT "
+            "match heavy mode. Check the import at the top of this file."
+        )
+
+    logger.info(
+        f"[SANDBOX] gSDE: use_sde={_sb_use_sde} use_expln={_sb_use_expln} "
+        f"log_std_init={_sb_log_std_init:+.3f} (std0≈{float(np.exp(_sb_log_std_init)):.3f}) "
+        f"-> expected σ_eff≈{11.4*float(np.exp(_sb_log_std_init)):.2f} at init "
+        f"(target <~1.5)."
+    )
 
     # S15 HARD RESET: Use config values (512/64/10) — safe for 7GB CI
     sandbox_n_steps = int(sandbox_cfg.get("n_steps", 512))
     sandbox_batch_size = int(sandbox_cfg.get("batch_size", 64))
-    sandbox_n_epochs = int(sandbox_cfg.get("n_epochs", 10))
+    # GARDE-FOU (2026-06-27): n_epochs surchargeable via ADAN_N_EPOCHS.
+    # Le gel a step 12417 s'est produit pendant un update PPO ; reduire
+    # n_epochs (20->10) raccourcit la fenetre de backward intensif ou le
+    # deadlock OpenMP/CPU se manifeste (test recommande utilisateur).
+    sandbox_n_epochs = int(os.environ.get("ADAN_N_EPOCHS",
+                                          sandbox_cfg.get("n_epochs", 10)))
     logger.info(f"[SANDBOX] PPO: n_steps={sandbox_n_steps}, batch_size={sandbox_batch_size}, "
                 f"n_epochs={sandbox_n_epochs}")
 
@@ -1694,12 +1870,15 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
             gamma=float(agent_cfg.get("gamma", 0.99)),
             gae_lambda=float(agent_cfg.get("gae_lambda", 0.95)),
             clip_range=float(agent_cfg.get("clip_range", 0.2)),
-            ent_coef=float(sandbox_cfg.get("ent_coef",
-                           agent_cfg.get("ent_coef", 0.01))),
+            ent_coef=float(os.environ.get(
+                "ADAN_ENT_COEF",
+                sandbox_cfg.get("ent_coef", agent_cfg.get("ent_coef", 0.01)))),
             vf_coef=float(agent_cfg.get("vf_coef", 0.5)),
             max_grad_norm=float(agent_cfg.get("max_grad_norm", 0.5)),
-            use_sde=True,              # Session 8: State-Dependent Exploration
-            sde_sample_freq=4,         # Resample noise every 4 steps
+            use_sde=_sb_use_sde,       # gSDE (set ADAN_USE_SDE=0 to fall back to
+                                       # plain DiagGaussian — σ then independent of
+                                       # features, cannot diverge).
+            sde_sample_freq=int(os.environ.get("ADAN_SDE_SAMPLE_FREQ", "4")),
             verbose=1,
             device="cpu",
             policy_kwargs=policy_kwargs,
@@ -1712,19 +1891,43 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     # MEMORY FIX: Add frequent checkpoints to recover from OOM crashes
+    # GARDE-FOU (2026-06-27): fréquence pilotable par ADAN_CKPT_FREQ (défaut 10k)
+    # pour récupérer si re-gel à 12k-20k sans tout perdre.
+    try:
+        _ckpt_freq = int(os.environ.get("ADAN_CKPT_FREQ", "10000"))
+    except Exception:
+        _ckpt_freq = 10000
+    _ckpt_freq = max(1000, min(_ckpt_freq, max(1000, steps)))
     checkpoint_callback = CheckpointCallback(
-        save_freq=max(1000, steps // 10),  # Save every 1000 steps or 10% of total
+        save_freq=_ckpt_freq,  # Save every ADAN_CKPT_FREQ steps (default 10k)
         save_path=str(ckpt_dir),
         name_prefix="ppo_adan0_sandbox_checkpoint",
         save_replay_buffer=False,  # Don't save replay buffer to save memory
         save_vecnormalize=False,  # VecNormalize is disabled, don't save it
     )
 
+    # V2 instrumentation (MESURE SEULE) — suit μ/σ pré-tanh par tête pour voir si
+    # μ(size)=-7.2 remonte. Activé via ADAN_ACTIONDIM=1. NE MODIFIE RIEN.
+    _sb_callbacks = [checkpoint_callback]
+    if ActionDimMonitor is not None and os.environ.get("ADAN_ACTIONDIM", "0") == "1":
+        _sb_ad_csv = os.environ.get(
+            "ADAN_ACTIONDIM_CSV",
+            str(ckpt_dir.parent / "logs" / "training" / "actiondim_sandbox.csv"),
+        )
+        _sb_callbacks.append(ActionDimMonitor(
+            log_every=int(os.environ.get("ADAN_ACTIONDIM_EVERY", "1")),
+            pre_tanh_batch=int(os.environ.get("ADAN_ACTIONDIM_BATCH", "256")),
+            csv_path=_sb_ad_csv,
+            verbose=1,
+        ))
+        logger.info(f"[SANDBOX] ActionDimMonitor ACTIF (csv={_sb_ad_csv}) — "
+                    f"mesure seule, ne modifie rien.")
+
     t0 = time.time()
     model.learn(
         total_timesteps=steps,
         reset_num_timesteps=reset_num_timesteps,
-        callback=checkpoint_callback,  # Enable frequent checkpoints
+        callback=_sb_callbacks,  # checkpoints + instrumentation V2
     )
     elapsed = time.time() - t0
 
@@ -1828,6 +2031,7 @@ if __name__ == "__main__":
             config_path=args.config if args.config != "config/config.yaml" else None,
             resume_ckpt=args.resume_from,
             checkpoint_out=args.checkpoint_out,
+            worker_key=(args.profiles[0] if args.profiles else None),
         )
         print(json.dumps(result, indent=2, default=str))
     else:

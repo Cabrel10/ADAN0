@@ -42,7 +42,10 @@ from pathlib import Path
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# NOTE: this script lives in scripts/backtest/, so the repo root is THREE
+# levels up (backtest/ -> scripts/ -> <repo root>). Using parent.parent only
+# resolved to scripts/ and made config/data lookups fail with FileNotFoundError.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 os.environ.setdefault("ADAN_TRAINING_SILENT", "1")

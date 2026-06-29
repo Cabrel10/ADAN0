@@ -5,6 +5,7 @@ Module de gestion de portefeuille pour le bot de trading ADAN.
 """
 
 import logging
+import os
 from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,13 @@ from ..performance.metrics import PerformanceMetrics
 from ..utils.smart_logger import create_smart_logger
 
 logger = logging.getLogger(__name__)
+
+# ─── Fast-path logging gate (2026-06-27) ──────────────────────────────────
+# [RISK_UPDATE] est emis a chaque step (≈2780 lignes en 3 min) et plombe l'I/O.
+# Aligne ce module sur ADAN_TRAINING_SILENT (comme env + DBE) : passe en WARNING
+# pendant l'entrainement pour tuer le flood per-step. Mettre =0 pour debug.
+if os.environ.get("ADAN_TRAINING_SILENT", "0") == "1":
+    logger.setLevel(logging.WARNING)
 
 
 class Position:
@@ -306,8 +314,10 @@ class PortfolioManager:
         self.realized_equity = self.initial_equity  # cash + total_realized_pnl basis
         self.peak_realized_equity = self.initial_equity
         # Paramètres de risque courants (par défaut)
-        self.sl_pct = kwargs.get("stop_loss_pct", 0.02)
-        self.tp_pct = kwargs.get("take_profit_pct", 0.05)
+        # FINDING #4: defaults market-aware (SL 1.5% / TP 3%, RR=2) au lieu de
+        # 2%/5% qui, gonfles par le DBE, produisaient des TP ~10% impossibles.
+        self.sl_pct = kwargs.get("stop_loss_pct", 0.015)
+        self.tp_pct = kwargs.get("take_profit_pct", 0.030)
         self.pos_size_pct = kwargs.get("position_size_pct", 0.1)
 
         # Force close all open positions to avoid orphan positions missing from logs
@@ -422,8 +432,9 @@ class PortfolioManager:
             
             hard_constraints = self.config.get('environment', {}).get('hard_constraints', {})
             min_trade = hard_constraints.get('min_order_value_usdt', 11.0)
-            sl_bounds = hard_constraints.get('stop_loss_pct', {'min': 0.005, 'max': 0.20})
-            tp_bounds = hard_constraints.get('take_profit_pct', {'min': 0.01, 'max': 0.50})
+            # FINDING #4: fallback bounds market-aware (etaient 0.20 / 0.50).
+            sl_bounds = hard_constraints.get('stop_loss_pct', {'min': 0.003, 'max': 0.06})
+            tp_bounds = hard_constraints.get('take_profit_pct', {'min': 0.005, 'max': 0.12})
             
             self.log_info(
                 f"[TIER 1] Environnement: Palier={tier_name}, MaxPos={max_position_pct*100:.0f}%, MinTrade={min_trade} USDT"
@@ -435,8 +446,8 @@ class PortfolioManager:
             trading_params = worker_config.get('trading_parameters', {})
             
             base_position_pct = trading_params.get('position_size_pct', 0.1)
-            base_sl_pct = trading_params.get('stop_loss_pct', 0.02)
-            base_tp_pct = trading_params.get('take_profit_pct', 0.05)
+            base_sl_pct = trading_params.get('stop_loss_pct', 0.015)  # FINDING #4
+            base_tp_pct = trading_params.get('take_profit_pct', 0.030)  # FINDING #4
             base_risk_pct = trading_params.get('risk_per_trade_pct', 0.01)
             
             self.log_info(
@@ -473,8 +484,8 @@ class PortfolioManager:
             
             # ========== ÉTAPE 4 : APPLIQUER CONTRAINTES FINALES (ENVIRONNEMENT) ==========
             # Clamp SL/TP par hard_constraints
-            final_sl_pct = max(min(adjusted_sl_pct, sl_bounds.get('max', 0.20)), sl_bounds.get('min', 0.005))
-            final_tp_pct = max(min(adjusted_tp_pct, tp_bounds.get('max', 0.50)), tp_bounds.get('min', 0.01))
+            final_sl_pct = max(min(adjusted_sl_pct, sl_bounds.get('max', 0.06)), sl_bounds.get('min', 0.003))
+            final_tp_pct = max(min(adjusted_tp_pct, tp_bounds.get('max', 0.12)), tp_bounds.get('min', 0.005))
             
             # Clamp position par palier
             final_position_pct = min(adjusted_position_pct, max_position_pct)
@@ -740,10 +751,25 @@ class PortfolioManager:
         except Exception:
             available_cash = 0.0
         if available_cash > 0:
-            max_position_value = available_cash * 5.0  # 5x le cash disponible (DYNAMIQUE, CASH ONLY)
-            if cost > max_position_value:
+            # 🔴 CRITICAL FIX (2026-06-25): SPOT pur => le notionnel ne peut JAMAIS
+            # dépasser le cash disponible. L'ancien "* 5.0" autorisait un levier
+            # fantôme de 5x alors que config leverage=1 et futures_enabled=false,
+            # ce qui contaminait les rewards (equity 20$ -> 3792$ impossible).
+            # On lit le levier configuré (défaut 1.0) et on borne strictement à
+            # leverage * cash. Le buffer 1e-9 absorbe l'arrondi flottant.
+            try:
+                _lev = float(
+                    (self.config.get("trading_rules", {}) or {}).get("leverage", 1.0)
+                ) if isinstance(self.config, dict) else 1.0
+                if not (np.isfinite(_lev) and _lev > 0):
+                    _lev = 1.0
+            except Exception:
+                _lev = 1.0
+            # En spot (leverage<=1), le plafond dur = cash disponible.
+            max_position_value = available_cash * max(1.0, _lev) if _lev > 1.0 else available_cash
+            if cost > max_position_value + 1e-9:
                 logger.error(
-                    f"🚨 POSITION TROP GRANDE: {cost:.2f}$ > max {max_position_value:.2f}$ (cash={available_cash:.2f}$). Rejet de l'ouverture pour {asset}."
+                    f"🚨 POSITION TROP GRANDE: {cost:.2f}$ > max {max_position_value:.2f}$ (cash={available_cash:.2f}$, lev={_lev}). Rejet de l'ouverture pour {asset}."
                 )
                 try:
                     if hasattr(self, "metrics") and self.metrics:
@@ -1003,6 +1029,12 @@ class PortfolioManager:
             "order_id": str(uuid.uuid4()),
             **({"reason": str(reason)} if reason else {}),
             "risk_horizon": float(position.risk_horizon),
+            # FINDING #4: expose the chosen SL/TP and entry step so the env's
+            # RewardBridge can score them against the future MFE/MAE (ex-post).
+            "stop_loss_pct": float(getattr(position, "stop_loss_pct", 0.0) or 0.0),
+            "take_profit_pct": float(getattr(position, "take_profit_pct", 0.0) or 0.0),
+            "open_step": int(getattr(position, "open_step", 0) or 0),
+            "timeframe": str(getattr(position, "timeframe", "") or ""),
         }
 
         self._update_equity(current_prices)
@@ -1566,6 +1598,10 @@ class PortfolioManager:
         """Log un warning avec le préfixe du worker."""
         logger.warning(f"[Worker {self.worker_id}] {message}")
 
+    def log_debug(self, message: str):
+        """Log DEBUG (per-step, supprime sous seuil INFO du root)."""
+        logger.debug(f"[Worker {self.worker_id}] {message}")
+
     def update_risk_parameters(
         self, risk_params: Dict[str, Any], tier: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -1580,8 +1616,10 @@ class PortfolioManager:
             tier = self.get_current_tier()
 
         # Mise à jour des paramètres de base
-        self.sl_pct = risk_params.get("stop_loss_pct", getattr(self, "sl_pct", 0.02))
-        self.tp_pct = risk_params.get("take_profit_pct", getattr(self, "tp_pct", 0.05))
+        # FINDING #4: fallbacks market-aware (1.5% / 3%, RR=2) au lieu de 2%/5%
+        # pour rester coherent avec __init__ et les hard_constraints (SL<=6% TP<=12%).
+        self.sl_pct = risk_params.get("stop_loss_pct", getattr(self, "sl_pct", 0.015))
+        self.tp_pct = risk_params.get("take_profit_pct", getattr(self, "tp_pct", 0.030))
 
         pos_size = risk_params.get(
             "position_size_pct", getattr(self, "pos_size_pct", 0.1)
@@ -1615,7 +1653,7 @@ class PortfolioManager:
 
         self.pos_size_pct = float(clamped_by_range)
 
-        self.log_info(
+        self.log_debug(
             f"[RISK_UPDATE] Palier: {tier.get('name', 'N/A') if isinstance(tier, dict) else 'N/A'}, "
             f"PosSize: {self.pos_size_pct:.2%} (cap≤{max_pos_size_pct:.2%}{', range applied' if isinstance(tier, dict) and tier.get('exposure_range') else ''}), "
             f"SL: {self.sl_pct:.2%}, TP: {self.tp_pct:.2%}"
