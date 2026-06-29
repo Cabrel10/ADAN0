@@ -499,6 +499,7 @@ class DiagnosticCollapseCallback(BaseCallback):
         self._reset_window()
         self._prev_rej_total = None
         self._header_written = False
+        self._next_flush = self.log_every  # first flush at exactly log_every steps
 
     def _reset_window(self):
         self._a0 = []                 # continuous action0 seen this window
@@ -586,10 +587,12 @@ class DiagnosticCollapseCallback(BaseCallback):
             except Exception:
                 pass
 
-            # window flush
-            if self.num_timesteps > 0 and self.num_timesteps % self.log_every < \
-                    self.training_env.num_envs + 1:
+            # window flush — fires once each time we cross the next multiple of
+            # log_every (robust to multi-env step increments; no spurious step-1 row).
+            if self.num_timesteps >= self._next_flush:
                 self._flush()
+                while self._next_flush <= self.num_timesteps:
+                    self._next_flush += self.log_every
         except Exception:
             pass
         return True
