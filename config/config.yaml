@@ -1379,8 +1379,13 @@ reward_shaping:
   # action[0]=-1 (point fixe sans douleur). La pénalité croît géométriquement
   # avec le palier (Micro=0..High=3): pen = invalid_trade_penalty_weight * r^k,
   # bornée par cap. Neutralise le gain géométrique de la lâcheté aux paliers hauts.
+  # DIAGNOSTIC-V3 (2026-06-29): cap 0.05 -> 0.10. The forensic confusion matrix
+  # showed sterile/illegal action requests at ~0.5/step that the env mostly
+  # neutralises to HOLD at ZERO cost (so saturation at action0=+-1 was free).
+  # Doubling the cap makes the agent FEEL the cost of sterile SELL-no-position
+  # without exploding the reward (kept well below the +-1.2% SL magnitude).
   sterile_action_geom_ratio: 1.6     # r > 1 : friction croissante par palier
-  sterile_action_penalty_cap: 0.05   # borne dure (jamais exponentiel non maîtrisé)
+  sterile_action_penalty_cap: 0.10   # borne dure (DIAGNOSTIC-V3: was 0.05)
   logging:
     disable_existing_loggers: false
     formatters:
@@ -1647,7 +1652,9 @@ trading_rules:
     # WAIT post-SELL: minimum steps between SELL and next BUY.
     # SELL at step N -> BUY allowed from step N + wait_steps_post_sell.
     wait_steps_post_sell:
-      5m: 2    # 10 min wait after SELL (~2 x 5min candles) - REDUCED from 6
+      5m: 5    # DIAGNOSTIC-V3 (2026-06-29): was 2. Forces ~25min FLAT after SELL to
+               #   test whether steps_flat rises above 5% (collapse: flat=0.3%). One
+               #   variable at a time; not aggressive (15+) so exploration survives.
       1h: 3    # 3h wait after SELL - REDUCED from 10
       4h: 4    # ~16h wait after SELL - REDUCED from 20
     # Anti-spam cooldown between consecutive BUY signals per worker profile.
@@ -1831,7 +1838,13 @@ sandbox:
   max_training_steps: 10000   # CI: ~4 min on 2-CPU runner
   ci_training_steps: 10000    # Relay segment size
   learning_rate: 0.0003       # Standard
-  ent_coef: 0.01              # Standard PPO for continuous control
+  ent_coef: 0.03              # DIAGNOSTIC-V3 (2026-06-29): was 0.01. The sandbox
+                              #   path reads ent_coef from sandbox_cfg (NOT
+                              #   WORKER_PROFILES), so this is the value that
+                              #   reaches the 50k diagnostic. Tripled to fight the
+                              #   measured entropy collapse (action0 bimodal at +-1,
+                              #   HOLD=0%, 99.7% in-position). Can be overridden at
+                              #   launch via ADAN_ENT_COEF. Fees held at 0.5%.
   # Session 6 fixes:
   # A8 FIX: Reward is now scaled by 100/initial_capital (percentage-based).
   #   On $20.50 capital, a $0.05 PnL → 0.244% → symlog(0.244) = 0.219
