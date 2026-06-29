@@ -1373,7 +1373,13 @@ reward_shaping:
       drawdown_penalty_factor: 0.1
       promotion_bonus: 0.0  # No higher tier
   # At 0.005, a 5-step HOLD_MIN violation costs -0.025 reward.
-  invalid_trade_penalty_weight: 0.005
+  # DIAGNOSTIC-V4 (2026-06-30): 0.005 -> 0.02. This is now the BASE of the
+  # SYMMETRIC sterile penalty applied to BOTH SELL-flat AND BUY-illegal
+  # (anti_spam / min_notional). At Micro tier (k=0) the penalty is 0.02,
+  # capped at 0.10. The 28k diagnostic proved that with a near-zero penalty
+  # the agent saturated BUY (illegal_ratio 97%). 0.02 makes the invalid
+  # intent clearly visible to the PPO gradient without dominating real PnL.
+  invalid_trade_penalty_weight: 0.02
   # ── FIX A+B (2026-06-27): coût GEOMETRIQUE de l'action stérile ──
   # SELL-sans-position était GRATUIT (aucune branche) → PPO a collapsé sur
   # action[0]=-1 (point fixe sans douleur). La pénalité croît géométriquement
