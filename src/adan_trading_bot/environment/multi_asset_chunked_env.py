@@ -7994,10 +7994,19 @@ class MultiAssetChunkedEnv(gym.Env):
                 _sterile_pen = _sterile_penalty_for_tier()
                 self._step_invalid_penalty += -_sterile_pen
                 if self.current_step % 50 == 0:
+                    # DIAGNOSTIC-V4: log components re-read from config
+                    # because _base/_r/_cap now live in the helper.
+                    _rs_log = self.config.get("reward_shaping", {})
+                    _base_log = float(
+                        _rs_log.get("invalid_trade_penalty_weight", 0.005))
+                    _r_log = float(
+                        _rs_log.get("sterile_action_geom_ratio", 1.6))
+                    _cap_log = float(
+                        _rs_log.get("sterile_action_penalty_cap", 0.05))
                     self.logger.warning(
                         f"[STERILE_SELL] {asset} | SELL sans position | "
                         f"tier={_tname}(k={_k}) | pen=-{_sterile_pen:.5f} "
-                        f"(base={_base:.4f} r={_r} cap={_cap})"
+                        f"(base={_base_log:.4f} r={_r_log} cap={_cap_log})"
                     )
                 # action reste HOLD (rien a fermer), mais elle n'est plus gratuite.
 
