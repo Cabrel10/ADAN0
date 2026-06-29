@@ -28,7 +28,38 @@ from .services import (
     telemetry_service,
 )
 
-app = FastAPI(title="ADAN0 Terminal", version="0.1.0")
+OPENAPI_TAGS = [
+    {"name": "Health", "description": "Liveness / readiness du backend."},
+    {"name": "Training", "description": "Suivi temps réel du run 500k V4 : "
+     "statut process, télémétrie collapse, verdict, log."},
+    {"name": "Models", "description": "Checkpoints SB3 (checkpoints/*.zip)."},
+    {"name": "Config", "description": "Extrait read-only de config.yaml — "
+     "expose les frais (verrouillés) sans jamais les modifier."},
+    {"name": "System", "description": "CPU / RAM / swap du VPS via psutil."},
+    {"name": "Runs", "description": "Runs détectés (log + checkpoints)."},
+]
+
+DESCRIPTION = """
+**ADAN0 Terminal — Mission Control API** (lecture seule).
+
+Observe les artefacts RÉELS produits par `scripts/train_parallel_agents.py` :
+- `logs/training/train_v4_500k.log`
+- `logs/training/diagnostic_collapse_v4.csv`
+- `checkpoints/*.zip`
+- `config/config.yaml` (frais exposés, **jamais modifiés** : commission 0.0025,
+  round_trip_fees 0.005).
+
+WebSocket temps réel : `ws://<host>/ws/training` (push toutes les 3 s).
+"""
+
+app = FastAPI(
+    title="ADAN0 Terminal API",
+    version="0.1.0",
+    description=DESCRIPTION,
+    openapi_tags=OPENAPI_TAGS,
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,12 +69,13 @@ app.add_middleware(
 )
 
 
-@app.get("/api/health")
+@app.get("/api/health", tags=["Health"], summary="Statut du service")
 def health() -> dict:
     return {"status": "ok", "service": "adan0-terminal"}
 
 
-@app.get("/api/training/status")
+@app.get("/api/training/status", tags=["Training"],
+         summary="Statut du process d'entraînement + progression")
 def training_status() -> dict:
     proc = system_service.training_process()
     prog = log_service.parse_progress()
@@ -64,39 +96,46 @@ def training_status() -> dict:
     }
 
 
-@app.get("/api/training/telemetry")
+@app.get("/api/training/telemetry", tags=["Training"],
+         summary="Lignes de télémétrie collapse (CSV) après le step `since`")
 def telemetry(since: int = 0) -> dict:
     rows = telemetry_service.read_telemetry(since=since)
     return {"rows": rows, "count": len(rows)}
 
 
-@app.get("/api/training/collapse")
+@app.get("/api/training/collapse", tags=["Training"],
+         summary="Verdict de collapse basé sur les FAITS (a0_std, HOLD%, illegal)")
 def collapse() -> dict:
     return telemetry_service.collapse_verdict()
 
 
-@app.get("/api/training/log")
+@app.get("/api/training/log", tags=["Training"],
+         summary="N dernières lignes du log d'entraînement")
 def log(tail: int = 200) -> dict:
     return {"lines": log_service.tail_lines(tail)}
 
 
-@app.get("/api/checkpoints")
+@app.get("/api/checkpoints", tags=["Models"],
+         summary="Liste des checkpoints SB3 (.zip)")
 def checkpoints() -> dict:
     cks = checkpoint_service.list_checkpoints()
     return {"checkpoints": cks, "count": len(cks)}
 
 
-@app.get("/api/config")
+@app.get("/api/config", tags=["Config"],
+         summary="Config sûre (frais verrouillés + reward shaping + sandbox)")
 def config() -> dict:
     return config_service.safe_config()
 
 
-@app.get("/api/system")
+@app.get("/api/system", tags=["System"],
+         summary="Stats système VPS (CPU/RAM/swap)")
 def system() -> dict:
     return system_service.system_stats()
 
 
-@app.get("/api/runs")
+@app.get("/api/runs", tags=["Runs"],
+         summary="Runs détectés (log + checkpoints)")
 def runs() -> dict:
     """Detected runs = present log + checkpoints, summarized as one active run."""
     prog = log_service.parse_progress()
@@ -149,8 +188,12 @@ if _DIST.exists():
     def index() -> FileResponse:
         return FileResponse(str(_DIST / "index.html"))
 
-    @app.get("/{full_path:path}")
-    def spa(full_path: str) -> FileResponse:
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa(full_path: str):
+        # Never let the SPA fallback swallow API/WS/doc routes.
+        if full_path.startswith(("api/", "ws/", "docs", "redoc", "openapi")):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
         target = _DIST / full_path
         if target.exists() and target.is_file():
             return FileResponse(str(target))
