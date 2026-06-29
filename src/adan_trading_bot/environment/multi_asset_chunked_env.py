@@ -7278,6 +7278,29 @@ class MultiAssetChunkedEnv(gym.Env):
         # agent actively chose to violate a known timing constraint.
         _inv_pen_weight = 0.0  # was 0.005 — C6 fix (all gate rejections = 0 reward)
 
+        # DIAGNOSTIC-V4 (2026-06-30): symmetric sterile penalty helper.
+        # Root cause of the entropy collapse = asymmetry. SELL-while-flat is
+        # penalized (geometric sterile pen) but BUY-illegal was FREE, so the
+        # agent saturated on BUY. This closure returns the SAME geometric
+        # penalty for ANY invalid intent, making BUY/SELL symmetric. It reads
+        # the same reward_shaping knobs; fees are not involved.
+        def _sterile_penalty_for_tier():
+            _tier_order = {"micro": 0, "small": 1, "medium": 2,
+                           "high": 3, "enterprise": 4}
+            _tname = "micro"
+            try:
+                _ct = self.portfolio_manager.get_current_tier()
+                if isinstance(_ct, dict):
+                    _tname = str(_ct.get("name", "Micro")).split()[0].lower()
+            except Exception:
+                pass
+            _k = _tier_order.get(_tname, 0)
+            _rs = self.config.get("reward_shaping", {})
+            _base = float(_rs.get("invalid_trade_penalty_weight", 0.005))
+            _r = float(_rs.get("sterile_action_geom_ratio", 1.6))
+            _cap = float(_rs.get("sterile_action_penalty_cap", 0.05))
+            return min(_cap, _base * (_r ** _k))
+
         # 🔧 CRITICAL FIX: Use ONLY the pre-captured SL/TP receipts from step()
         # NO SECOND update_market_price() call — that was causing double updates!
         # The early update in step() (line ~2950) already checked SL/TP and captured receipts.
@@ -7505,6 +7528,9 @@ class MultiAssetChunkedEnv(gym.Env):
                     if exposure_diff < 0.10:  # Within 10% -> no action needed (OMEGA-4E)
                         discrete_action = 0  # Override to HOLD
                         self.rejection_reasons["anti_spam_hold"] += 1
+                        # DIAGNOSTIC-V4: BUY-while-open is invalid intent. It is
+                        # converted to HOLD but must NOT be free (root-cause fix).
+                        self._step_invalid_penalty += -_sterile_penalty_for_tier()
                         if self.current_step % 100 == 0:
                             self.logger.info(
                                 f"[ANTI_SPAM] {asset} exposure={current_exposure:.2%} ~ "
@@ -7543,6 +7569,9 @@ class MultiAssetChunkedEnv(gym.Env):
                         # Truly cannot afford — hard HOLD
                         self.invalid_trade_attempts += 1
                         self.rejection_reasons["min_notional"] += 1
+                        # DIAGNOSTIC-V4: spamming BUY with no cash was the main
+                        # collapse exploit (5000+ free rejections). Now penalized.
+                        self._step_invalid_penalty += -_sterile_penalty_for_tier()
                         if self.current_step % 50 == 0:
                             self.logger.info(
                                 f"[CASH_FLOOR] {asset} cash=${available_cash_for_sizing:.2f} "
@@ -7960,13 +7989,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 except Exception:
                     pass
                 _k = _tier_order.get(_tname, 0)
-                # base = invalid_trade_penalty_weight (config), ratio r>1, cap borne.
-                # NB: ces clefs sont sous reward_shaping (cf. structure config.yaml).
-                _rs_cfg = self.config.get("reward_shaping", {})
-                _base = float(_rs_cfg.get("invalid_trade_penalty_weight", 0.005))
-                _r = float(_rs_cfg.get("sterile_action_geom_ratio", 1.6))
-                _cap = float(_rs_cfg.get("sterile_action_penalty_cap", 0.05))
-                _sterile_pen = min(_cap, _base * (_r ** _k))
+                # DIAGNOSTIC-V4: use the shared helper so SELL & BUY sterile
+                # penalties stay symmetric. Numeric behavior identical to before.
+                _sterile_pen = _sterile_penalty_for_tier()
                 self._step_invalid_penalty += -_sterile_pen
                 if self.current_step % 50 == 0:
                     self.logger.warning(
