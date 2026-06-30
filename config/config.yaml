@@ -1391,7 +1391,16 @@ reward_shaping:
   # Doubling the cap makes the agent FEEL the cost of sterile SELL-no-position
   # without exploding the reward (kept well below the +-1.2% SL magnitude).
   sterile_action_geom_ratio: 1.6     # r > 1 : friction croissante par palier
-  sterile_action_penalty_cap: 0.10   # borne dure (DIAGNOSTIC-V3: was 0.05)
+  sterile_action_penalty_cap: 0.30   # DIAGNOSTIC-V5: was 0.10. Streak-escalated
+                                     #   penalty now reaches ~15x base on a
+                                     #   persistent collapse -> PPO feels it.
+  # DIAGNOSTIC-V5 (2026-06-30): persistence-indexed sterile penalty.
+  #   acc_t = sterile_acc_decay*acc_{t-1} + severity(reason)
+  #   pen   = invalid_trade_penalty_weight * min(cap/base, 1 + alpha*acc) * window_mult
+  #   Replaces capital-tier indexing (flat at Micro k=0). Keyed on rejection
+  #   reason so any collapse mode (SELL-flat, BUY-open) escalates automatically.
+  sterile_acc_decay: 0.97            # relaxation per legal action / decay
+  sterile_acc_alpha: 0.45            # accumulator -> penalty multiplier slope
   logging:
     disable_existing_loggers: false
     formatters:
@@ -1840,10 +1849,16 @@ sandbox:
   # 10000 steps / 512 = ~19 PPO updates × 10 epochs = 190 gradient passes.
   n_steps: 512                # Safe for 7GB CI (512 × obs ≈ 2.5 MB)
   batch_size: 64              # 512/64 = 8 minibatches per epoch
-  n_epochs: 20                # Standard PPO
+  n_epochs: 10                # DIAGNOSTIC-V5: was 20. KL>0.3 on 214/215
+                              #   updates => 20 passes/rollout over-amplified
+                              #   each update. Halved to stabilise PPO.
   max_training_steps: 10000   # CI: ~4 min on 2-CPU runner
   ci_training_steps: 10000    # Relay segment size
-  learning_rate: 0.0003       # Standard
+  learning_rate: 0.00015      # DIAGNOSTIC-V5: was 0.0003. clip_fraction 0.73
+                              #   (>0.6 on 100% updates) => steps too aggressive.
+  clip_range: 0.15            # DIAGNOSTIC-V5: stricter trust region (was 0.2)
+  target_kl: 0.02             # DIAGNOSTIC-V5: was 0.035. Early-stop runaway KL.
+  max_grad_norm: 0.5          # DIAGNOSTIC-V5: explicit gradient clip (kept 0.5)
   ent_coef: 0.03              # DIAGNOSTIC-V3 (2026-06-29): was 0.01. The sandbox
                               #   path reads ent_coef from sandbox_cfg (NOT
                               #   WORKER_PROFILES), so this is the value that

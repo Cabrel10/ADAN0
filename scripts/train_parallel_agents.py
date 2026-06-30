@@ -2044,12 +2044,21 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
             n_epochs=sandbox_n_epochs,
             gamma=float(agent_cfg.get("gamma", 0.99)),
             gae_lambda=float(agent_cfg.get("gae_lambda", 0.95)),
-            clip_range=float(agent_cfg.get("clip_range", 0.2)),
+            # DIAGNOSTIC-V5: read clip_range/target_kl/max_grad_norm from the
+            # sandbox block FIRST (that is the path that runs) so the PPO
+            # stabilisation knobs actually take effect. clip_fraction was 0.73
+            # and approx_kl 0.58 on the V4 run -> stricter trust region + KL
+            # early-stop are required.
+            clip_range=float(sandbox_cfg.get("clip_range",
+                             agent_cfg.get("clip_range", 0.2))),
+            target_kl=float(sandbox_cfg.get("target_kl",
+                            agent_cfg.get("target_kl", 0.035))),
             ent_coef=float(os.environ.get(
                 "ADAN_ENT_COEF",
                 sandbox_cfg.get("ent_coef", agent_cfg.get("ent_coef", 0.01)))),
             vf_coef=float(agent_cfg.get("vf_coef", 0.5)),
-            max_grad_norm=float(agent_cfg.get("max_grad_norm", 0.5)),
+            max_grad_norm=float(sandbox_cfg.get("max_grad_norm",
+                                agent_cfg.get("max_grad_norm", 0.5))),
             use_sde=_sb_use_sde,       # gSDE (set ADAN_USE_SDE=0 to fall back to
                                        # plain DiagGaussian — σ then independent of
                                        # features, cannot diverge).

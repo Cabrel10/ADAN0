@@ -28,6 +28,7 @@ from .services import (
     config_service,
     control_service,
     log_service,
+    metrics_engine,
     system_service,
     telemetry_service,
 )
@@ -45,6 +46,11 @@ OPENAPI_TAGS = [
      "(Sharpe/Sortino/Calmar/PF/VaR/CVaR), registre de modèles, bougies OHLCV."},
     {"name": "Control", "description": "Pilotage de l'entraînement : "
      "Hyperparameter Lab, choix du worker, launch/stop. FRAIS VERROUILLÉS."},
+    {"name": "Metrics", "description": "Metrics Engine fiable : métriques "
+     "RECALCULÉES depuis les données brutes, avec provenance "
+     "(value/computed_at/source/window) + Validator (dashboard vs recompute)."},
+    {"name": "Agent", "description": "Endpoint unique machine-readable : un agent "
+     "IA peut lire TOUT l'état fiable du système avec une seule URL."},
 ]
 
 DESCRIPTION = """
@@ -207,6 +213,80 @@ def analytics_metrics(limit: int = 5000) -> dict:
          summary="Bougies OHLCV par timeframe (5m/1h/4h) pour TradingView")
 def analytics_candles(timeframe: str = "5m", limit: int = 500) -> dict:
     return analytics_service.candles(timeframe=timeframe, limit=limit)
+
+
+# ----------------------------- Metrics Engine ----------------------------- #
+@app.get("/api/metrics/performance", tags=["Metrics"],
+         summary="Bloc performance+risque RECALCULÉ depuis le CSV brut (avec provenance)")
+def metrics_performance() -> dict:
+    return metrics_engine.cached(
+        "perf", 5.0, lambda: metrics_engine.performance_block())
+
+
+@app.get("/api/metrics/rl", tags=["Metrics"],
+         summary="Métriques RL (entropy/illegal/HOLD/std/histo) avec provenance")
+def metrics_rl() -> dict:
+    return metrics_engine.cached("rl", 3.0, metrics_engine.rl_block)
+
+
+@app.get("/api/metrics/validate", tags=["Metrics"],
+         summary="Validator : dashboard vs recompute indépendant (match/mismatch)")
+def metrics_validate() -> dict:
+    return metrics_engine.cached("validate", 5.0, lambda: metrics_engine.validate())
+
+
+@app.get("/api/metrics/markers", tags=["Metrics"],
+         summary="Validation des marqueurs de trade (prix dans la plage marché)")
+def metrics_markers(timeframe: str = "5m") -> dict:
+    return metrics_engine.validate_markers(timeframe=timeframe)
+
+
+@app.get("/api/metrics/equity_drawdown", tags=["Metrics"],
+         summary="Courbes equity + drawdown reconstruites depuis les trades")
+def metrics_equity_drawdown() -> dict:
+    return metrics_engine.cached(
+        "eqdd", 5.0, lambda: metrics_engine.equity_and_drawdown())
+
+
+# -------------------------------- Agent ----------------------------------- #
+@app.get("/api/agent/snapshot", tags=["Agent"],
+         summary="État COMPLET et fiable du système en une seule URL (pour agent IA)")
+def agent_snapshot() -> dict:
+    """Single machine-readable snapshot. Everything an AI agent needs to reason
+    about ADAN's state — training progress, collapse verdict, reliable metrics
+    (with provenance), validation result, fees (locked), system — in one call."""
+    def build() -> dict:
+        status = training_status()
+        collapse = telemetry_service.collapse_verdict()
+        perf = metrics_engine.performance_block()
+        rl = metrics_engine.rl_block()
+        val = metrics_engine.validate()
+        cfg = config_service.safe_config()
+        return {
+            "service": "adan0-mission-control",
+            "generated_at": metrics_engine._now_iso(),
+            "schema": "agent.snapshot.v1",
+            "training": status,
+            "collapse": collapse,
+            "metrics_reliable": {
+                "performance": perf,
+                "rl": rl,
+            },
+            "validation": val,
+            "fees_locked": {
+                "commission": cfg.get("fees", {}).get("commission"),
+                "round_trip_fees": cfg.get("fees", {}).get("round_trip_fees"),
+                "editable": False,
+            },
+            "system": system_service.system_stats(),
+            "checkpoints_count": len(checkpoint_service.list_checkpoints()),
+            "notes": [
+                "All metrics are recomputed from raw CSV with provenance.",
+                "validation.all_match must be true to trust the numbers.",
+                "Fees are immutable at 0.5% (commission 0.0025 / round_trip 0.005).",
+            ],
+        }
+    return metrics_engine.cached("agent_snapshot", 4.0, build)
 
 
 # -------------------------------- Control --------------------------------- #

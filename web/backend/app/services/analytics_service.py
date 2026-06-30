@@ -112,19 +112,37 @@ def _read_paper_csv(f: Path, limit: int) -> list[dict[str, Any]]:
             "symbol": r.get("symbol"),
             "price": num("price"),
             "size_usd": num("size_usd"),
+            "size_asset": num("size_asset"),
+            "sl_pct": num("sl_pct"),
+            "tp_pct": num("tp_pct"),
             "fee_usd": num("fee_usd"),
             "pnl_usd": num("pnl_usd"),
             "reason": r.get("reason"),
+            "source": r.get("source"),
+            "order_id": r.get("order_id"),
         })
     return out
 
 
+# Module-level TTL cache: the paper-file scan is expensive (up to 60 files), and
+# several services (performance, validation, markers, equity) call load_trades
+# within the same request cycle. Caching keeps the agent snapshot fast.
+_LOAD_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
+_LOAD_TTL = 8.0
+
+
 def load_trades(limit: int = 2000) -> dict[str, Any]:
-    """Trade-by-trade from the RICHEST recent paper CSV.
+    """Trade-by-trade from the RICHEST recent paper CSV (TTL-cached).
 
     Prefers files that actually contain closed trades (non-zero pnl), so the
     metrics matrices are meaningful instead of showing an OPEN-only file.
     """
+    import time as _t
+    now = _t.time()
+    hit = _LOAD_CACHE.get(limit)
+    if hit and (now - hit[0]) < _LOAD_TTL:
+        return hit[1]
+
     files = _find_paper_trade_files()
     best: tuple[int, Path, list[dict[str, Any]]] | None = None
     # Scan up to 60 most-recent files; pick the one with most pnl-bearing rows.
@@ -138,13 +156,16 @@ def load_trades(limit: int = 2000) -> dict[str, Any]:
         if scored >= 20:  # good enough, stop early
             break
     if best is None:
-        return {"file": None, "count": 0, "trades": []}
-    _, f, trades = best
-    return {
-        "file": str(f.relative_to(settings.REPO_ROOT)),
-        "count": len(trades),
-        "trades": trades,
-    }
+        result = {"file": None, "count": 0, "trades": []}
+    else:
+        _, f, trades = best
+        result = {
+            "file": str(f.relative_to(settings.REPO_ROOT)),
+            "count": len(trades),
+            "trades": trades,
+        }
+    _LOAD_CACHE[limit] = (now, result)
+    return result
 
 
 def equity_curve_from_trades(trades: list[dict[str, Any]], start: float = 1000.0):
