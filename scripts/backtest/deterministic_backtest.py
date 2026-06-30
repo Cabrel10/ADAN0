@@ -159,6 +159,26 @@ def run_backtest(ckpt_path: str, steps: int = 1000, split: str = "val") -> dict:
     # FIX: Load model WITHOUT env to avoid double VecNormalize wrapping
     # PPO.load(ckpt, env=vec_env) would create a second VecNormalize internally
     model = PPO.load(ckpt_path, device="cpu")
+
+    # obs_schema_v2 GUARD: refuse a pre-ACM (20-dim) checkpoint against the
+    # current 28-dim env instead of crashing at model.predict().
+    try:
+        EXPECTED_PORTFOLIO_DIM = 28
+        _sd = model.policy.state_dict()
+        _proj_in = None
+        for _k, _v in _sd.items():
+            if _k.endswith("portfolio_proj.0.weight") and hasattr(_v, "shape"):
+                _proj_in = int(_v.shape[1]); break
+        if _proj_in is not None and _proj_in != EXPECTED_PORTFOLIO_DIM:
+            return {"error": (
+                f"SCHEMA MISMATCH: checkpoint {os.path.basename(ckpt_path)} expects "
+                f"portfolio dim={_proj_in}, env emits obs_schema_v2 dim={EXPECTED_PORTFOLIO_DIM}. "
+                f"This checkpoint predates the ACM migration (20->28) and cannot be backtested. "
+                f"Use a 28-dim checkpoint.")}
+        print(f"[DEBUG] [SCHEMA OK] portfolio_proj input dim = {_proj_in} (obs_schema_v2)", file=sys.stderr)
+    except Exception as _ge:
+        print(f"[WARNING] schema guard could not verify: {_ge}", file=sys.stderr)
+
     model.set_env(vec_env)
 
     obs = vec_env.reset()
