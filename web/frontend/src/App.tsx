@@ -98,6 +98,7 @@ export default function App() {
         {tab === "Hyper Lab" && <HyperLab />}
         {tab === "Backtest" && <Backtest />}
         {tab === "Paper" && <Paper />}
+        {tab === "Validator" && <Reliability />}
         {tab === "Live" && (
           <Soon
             name="Live Trading Center"
