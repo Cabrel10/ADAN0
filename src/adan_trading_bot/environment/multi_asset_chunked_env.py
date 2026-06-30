@@ -7306,15 +7306,19 @@ class MultiAssetChunkedEnv(gym.Env):
         def _sterile_severity_v5(reason):
             # Per-family gravity. SELL-no-position is the worst (it is the
             # collapse attractor); cash-blocked BUY is milder.
+            # DIAGNOSTIC-V6: severities recalibrated. min_notional is an
+            # UNCONTROLLABLE state (no cash) -> near-zero so we do not teach
+            # 'BUY = pain'. The controllable mistake (BUY while open) keeps
+            # a real but moderate severity. SELL-no-position stays the worst.
             _sev = {
-                "sell_no_position": 1.5,
-                "anti_spam_hold": 1.2,   # BUY while already open
-                "min_notional": 0.8,     # BUY blocked by cash
-                "hysteresis": 0.7,
-                "cooldown_wait": 0.6,
-                "cooldown_hold_min": 0.6,
+                "sell_no_position": 1.2,
+                "anti_spam_hold": 0.8,   # BUY while already open (controllable)
+                "min_notional": 0.05,    # BUY blocked by cash (NOT a fault)
+                "hysteresis": 0.4,
+                "cooldown_wait": 0.4,
+                "cooldown_hold_min": 0.4,
             }
-            return float(_sev.get(reason, 1.0))
+            return float(_sev.get(reason, 0.8))
 
         def _invalid_ratio_mult_v5():
             # Sliding-window invalid ratio -> multiplier (collapse detector).
@@ -7346,8 +7350,14 @@ class MultiAssetChunkedEnv(gym.Env):
             _acc = self._sterile_acc.get(reason, 0.0) * _decay + _sev
             self._sterile_acc[reason] = _acc
             _mult = _invalid_ratio_mult_v5()
+            # DIAGNOSTIC-V6: WARMUP ramp. Penalty scales 0->1 over the first
+            # sterile_warmup_steps env steps so PPO can explore/learn BEFORE
+            # being punished (user: 'trop agressive trop tot').
+            _warm = float(_rs.get('sterile_warmup_steps', 50000))
+            _cur = float(getattr(self, 'current_step', 0) or 0)
+            _ramp = 1.0 if _warm <= 0 else min(1.0, _cur / _warm)
             _pen = _base * min(_cap / _base if _base > 0 else _cap,
-                               1.0 + _alpha * _acc) * _mult
+                               1.0 + _alpha * _acc) * _mult * _ramp
             _pen = min(_pen, _cap)
             return _pen, self._sterile_streak[reason], _acc, _mult
 
@@ -7692,17 +7702,23 @@ class MultiAssetChunkedEnv(gym.Env):
             #   intraday: SL 0.5-2.0%  TP 0.8-4.0%
             #   swing   : SL 1.0-3.5%  TP 1.5-7.0%
             #   position: SL 2.0-6.0%  TP 3.0-12.0%
+            # DIAGNOSTIC-V6: recalibrated for the REAL 0.50% round-trip fee.
+            # Old scalper SL floor 0.3% was TIGHTER than fees -> SL hit on noise
+            # while TP (0.6% floor) netted only ~0.1% after fees => 1 TP : 6.7 SL
+            # (FACTS: TP_HIT 40, SL_HIT 204). New floors guarantee a winning trade
+            # clears fees with margin AND SL is never tighter than the TP can profit.
             _BOUNDS = {
-                "scalper":  {"sl": (0.003, 0.012), "tp": (0.005, 0.020)},
-                "intraday": {"sl": (0.005, 0.020), "tp": (0.008, 0.040)},
-                "swing":    {"sl": (0.010, 0.035), "tp": (0.015, 0.070)},
-                "position": {"sl": (0.020, 0.060), "tp": (0.030, 0.120)},
+                "scalper":  {"sl": (0.008, 0.020), "tp": (0.012, 0.030)},
+                "intraday": {"sl": (0.010, 0.025), "tp": (0.016, 0.045)},
+                "swing":    {"sl": (0.015, 0.035), "tp": (0.025, 0.070)},
+                "position": {"sl": (0.020, 0.060), "tp": (0.035, 0.120)},
             }
             _b = _BOUNDS.get(_prof, _BOUNDS["intraday"])
             sl_lo, sl_hi = _b["sl"]
             tp_lo, tp_hi = _b["tp"]
-            # fee gate (real 0.50% A/R): TP_min >= 1.2x round-trip fees = 0.6%
-            tp_lo = max(tp_lo, 0.006)
+            # fee gate (real 0.50% A/R): TP_min must clear round-trip + margin.
+            # 1.2% TP - 0.5% fees = 0.7% net profit floor (vs old 0.1%).
+            tp_lo = max(tp_lo, 0.012)
 
             normalized_sl = (sl_raw + 1.0) / 2.0
             sl_pct = float(np.clip(sl_lo + normalized_sl * (sl_hi - sl_lo), sl_lo, sl_hi))

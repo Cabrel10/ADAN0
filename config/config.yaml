@@ -187,13 +187,17 @@ capital_tiers:
 # risk_per_trade_pct: % du capital risqué par trade (pour SL sizing).
 # ============================================================================
 - exposure_range:
-  - 70
-  - 90
+  # DIAGNOSTIC-V6 (2026-06-30): was [70,90]. At $20.50 capital that forced a
+  # single BUY to consume ~95% of cash -> ~$1.8 left < $11 min_notional ->
+  # CASH_FLOOR death spiral (284 blocked / 28 executed BUY). Lowered so the
+  # agent keeps a cash buffer and is not structurally locked all-in.
+  - 40
+  - 60
   leverage: 1.0
   max_capital: 30.0
   max_concurrent_positions: 1
   max_drawdown_pct: 40.0   # Training: 40% = ~130 losing trades before kill. Allows full exploration.
-  max_position_size_pct: 90
+  max_position_size_pct: 60
   min_capital: 11.0
   name: Micro Capital
   risk_per_trade_pct: 4.0
@@ -1401,6 +1405,10 @@ reward_shaping:
   #   reason so any collapse mode (SELL-flat, BUY-open) escalates automatically.
   sterile_acc_decay: 0.97            # relaxation per legal action / decay
   sterile_acc_alpha: 0.45            # accumulator -> penalty multiplier slope
+  # DIAGNOSTIC-V6: warmup ramp. Sterile penalty scales 0->1 over the first
+  #   N env steps so PPO can explore BEFORE being punished (user: penalty
+  #   was "trop agressive trop tot"). After N steps full penalty applies.
+  sterile_warmup_steps: 50000
   logging:
     disable_existing_loggers: false
     formatters:
@@ -1849,16 +1857,20 @@ sandbox:
   # 10000 steps / 512 = ~19 PPO updates × 10 epochs = 190 gradient passes.
   n_steps: 512                # Safe for 7GB CI (512 × obs ≈ 2.5 MB)
   batch_size: 64              # 512/64 = 8 minibatches per epoch
-  n_epochs: 10                # DIAGNOSTIC-V5: was 20. KL>0.3 on 214/215
-                              #   updates => 20 passes/rollout over-amplified
-                              #   each update. Halved to stabilise PPO.
+  n_epochs: 4                 # DIAGNOSTIC-V6: was 10. KL exploded on the FIRST
+                              #   minibatch ("Early stopping at step 0" x68) =>
+                              #   even 10 passes was too many. 4 passes lets a
+                              #   real (small) update land before KL early-stop.
   max_training_steps: 10000   # CI: ~4 min on 2-CPU runner
   ci_training_steps: 10000    # Relay segment size
-  learning_rate: 0.00015      # DIAGNOSTIC-V5: was 0.0003. clip_fraction 0.73
-                              #   (>0.6 on 100% updates) => steps too aggressive.
-  clip_range: 0.15            # DIAGNOSTIC-V5: stricter trust region (was 0.2)
-  target_kl: 0.02             # DIAGNOSTIC-V5: was 0.035. Early-stop runaway KL.
-  max_grad_norm: 0.5          # DIAGNOSTIC-V5: explicit gradient clip (kept 0.5)
+  learning_rate: 0.00008      # DIAGNOSTIC-V6: was 1.5e-4. approx_kl 0.12-0.17 per
+                              #   update => step size still too large. Halved again.
+  clip_range: 0.12            # DIAGNOSTIC-V6: tighter trust region (was 0.15)
+  target_kl: 0.04             # DIAGNOSTIC-V6: was 0.02. 0.02 tripped early-stop at
+                              #   step 0 (1.5*0.02=0.03 < first-batch KL). 0.04 lets
+                              #   a small update complete before stopping.
+  max_grad_norm: 0.3          # DIAGNOSTIC-V6: was 0.5. Tighter gradient clip to
+                              #   prevent the violent first-batch KL jump.
   ent_coef: 0.03              # DIAGNOSTIC-V3 (2026-06-29): was 0.01. The sandbox
                               #   path reads ent_coef from sandbox_cfg (NOT
                               #   WORKER_PROFILES), so this is the value that
