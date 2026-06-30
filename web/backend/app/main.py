@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -86,6 +87,92 @@ app.add_middleware(
 @app.get("/api/health", tags=["Health"], summary="Statut du service")
 def health() -> dict:
     return {"status": "ok", "service": "adan0-terminal"}
+
+
+@app.get("/api/schema", tags=["Schema"],
+         summary="Version du schéma d'observation (obs_schema) + fichiers actifs")
+def schema() -> dict:
+    """Expose the observation schema version + which telemetry/log files the
+    dashboard is currently reading. Lets the frontend show a Schema/Version
+    panel and detect obs_schema_v1(20) vs obs_schema_v2(28) checkpoints, so a
+    stale/incompatible run can never be displayed silently."""
+    import zipfile, glob as _glob, io, pickle
+    try:
+        import torch  # optional; precise dim inspection if present
+    except Exception:
+        torch = None
+
+    def _ckpt_dim(path: str):
+        """Return the portfolio_state input dim of a SB3 checkpoint.
+
+        Strategy 1 (preferred, torch present): read policy.pth weights and
+        take portfolio_proj.0.weight.shape[1].
+        Strategy 2 (torch-free): unpickle the observation_space stored in the
+        zip's 'data' member and read spaces['portfolio_state'].shape[0].
+        Returns None if neither works.
+        """
+        # Strategy 1: torch weights
+        if torch is not None:
+            try:
+                with zipfile.ZipFile(path) as z:
+                    names = [n for n in z.namelist() if n.endswith("policy.pth")]
+                    if names:
+                        sd = torch.load(io.BytesIO(z.open(names[0]).read()), map_location="cpu")
+                        for k, v in sd.items():
+                            if k.endswith("portfolio_proj.0.weight") and hasattr(v, "shape"):
+                                return int(v.shape[1])
+            except Exception:
+                pass
+        # Strategy 2: torch-free / gymnasium-free. SB3 stores a human-readable
+        # 'spaces' string in the zip's JSON 'data' member, e.g.
+        #   'portfolio_state': Box(-inf, inf, (28,), float32)
+        # Parse the dim straight out of that string.
+        try:
+            import json as _json, re as _re
+            with zipfile.ZipFile(path) as z:
+                if "data" not in z.namelist():
+                    return None
+                obj = _json.loads(z.read("data").decode("utf-8", "ignore"))
+            osp = obj.get("observation_space", {})
+            spaces_str = osp.get("spaces") if isinstance(osp, dict) else None
+            if isinstance(spaces_str, str):
+                m = _re.search(r"'portfolio_state':\s*Box\([^)]*?\(\s*(\d+)\s*,", spaces_str)
+                if m:
+                    return int(m.group(1))
+        except Exception:
+            return None
+        return None
+
+    active_ckpts = []
+    try:
+        for p in sorted(_glob.glob(str(settings.CHECKPOINTS_DIR / "*.zip")),
+                        key=os.path.getmtime, reverse=True)[:5]:
+            d = _ckpt_dim(p)
+            active_ckpts.append({
+                "name": os.path.basename(p),
+                "portfolio_dim": d,
+                "schema": ("obs_schema_v2" if d == 28 else
+                           "obs_schema_v1" if d == 20 else "unknown"),
+                "compatible": (d == settings.OBS_PORTFOLIO_DIM) if d is not None else None,
+            })
+    except Exception:
+        pass
+
+    return {
+        "obs_schema_version": settings.OBS_SCHEMA_VERSION,
+        "obs_portfolio_dim": settings.OBS_PORTFOLIO_DIM,
+        "obs_total_layout": {
+            "base": 20,
+            "acm_capability_vector": 8,
+            "acm_slots": ["can_open", "can_close", "free_slots_ratio",
+                          "cash_ratio_for_trade", "risk_budget_remaining",
+                          "max_size_remaining", "cooldown_active",
+                          "capital_self_caused"],
+        },
+        "active_telemetry_csv": settings.TELEMETRY_CSV.name,
+        "active_train_log": settings.TRAIN_LOG.name,
+        "active_checkpoints": active_ckpts,
+    }
 
 
 @app.get("/api/training/status", tags=["Training"],
