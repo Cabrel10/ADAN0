@@ -19,10 +19,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from pydantic import BaseModel
+
 from . import settings
 from .services import (
+    analytics_service,
     checkpoint_service,
     config_service,
+    control_service,
     log_service,
     system_service,
     telemetry_service,
@@ -37,6 +41,10 @@ OPENAPI_TAGS = [
      "expose les frais (verrouillés) sans jamais les modifier."},
     {"name": "System", "description": "CPU / RAM / swap du VPS via psutil."},
     {"name": "Runs", "description": "Runs détectés (log + checkpoints)."},
+    {"name": "Analytics", "description": "Trades, equity, matrices de métriques "
+     "(Sharpe/Sortino/Calmar/PF/VaR/CVaR), registre de modèles, bougies OHLCV."},
+    {"name": "Control", "description": "Pilotage de l'entraînement : "
+     "Hyperparameter Lab, choix du worker, launch/stop. FRAIS VERROUILLÉS."},
 ]
 
 DESCRIPTION = """
@@ -152,6 +160,85 @@ def runs() -> dict:
             }
         ]
     }
+
+
+# ------------------------------- Analytics -------------------------------- #
+@app.get("/api/analytics/registry", tags=["Analytics"],
+         summary="Registre de modèles : backtests par checkpoint")
+def analytics_registry() -> dict:
+    return {"models": analytics_service.model_registry(),
+            "named": analytics_service.named_backtests()}
+
+
+@app.get("/api/analytics/named", tags=["Analytics"],
+         summary="Backtests nommés (logs/validation/backtest_*.json)")
+def analytics_named() -> dict:
+    return {"backtests": analytics_service.named_backtests()}
+
+
+@app.get("/api/analytics/equity", tags=["Analytics"],
+         summary="Courbe d'equity reconstruite depuis les trades")
+def analytics_equity() -> dict:
+    data = analytics_service.load_trades(limit=5000)
+    eq = analytics_service.equity_curve_from_trades(data["trades"])
+    return {"points": eq, "file": data["file"]}
+
+
+@app.get("/api/analytics/trades", tags=["Analytics"],
+         summary="Trades trade-par-trade + courbe d'equity")
+def analytics_trades(limit: int = 2000) -> dict:
+    data = analytics_service.load_trades(limit=limit)
+    eq = analytics_service.equity_curve_from_trades(data["trades"])
+    return {**data, "equity": eq}
+
+
+@app.get("/api/analytics/metrics", tags=["Analytics"],
+         summary="Matrices de métriques (Sharpe/Sortino/Calmar/PF/VaR/CVaR…)")
+def analytics_metrics(limit: int = 5000) -> dict:
+    data = analytics_service.load_trades(limit=limit)
+    return {
+        "file": data["file"],
+        "metrics": analytics_service.compute_metrics(data["trades"]),
+        "confusion": analytics_service.confusion_buy_sell(data["trades"]),
+    }
+
+
+@app.get("/api/analytics/candles", tags=["Analytics"],
+         summary="Bougies OHLCV par timeframe (5m/1h/4h) pour TradingView")
+def analytics_candles(timeframe: str = "5m", limit: int = 500) -> dict:
+    return analytics_service.candles(timeframe=timeframe, limit=limit)
+
+
+# -------------------------------- Control --------------------------------- #
+class LaunchRequest(BaseModel):
+    steps: int = 50000
+    worker: str = "scalper"
+    hyperparams: dict = {}
+    diag: bool = True
+
+
+@app.get("/api/control/status", tags=["Control"],
+         summary="État du process d'entraînement (pilotage)")
+def control_status() -> dict:
+    return {"status": control_service.status(),
+            "workers": control_service.WORKERS,
+            "editable_hyperparams": list(control_service.HYPERPARAM_ENV.keys()),
+            "forbidden": sorted(control_service.FORBIDDEN_KEYS),
+            "fees_locked": True}
+
+
+@app.post("/api/control/launch", tags=["Control"],
+          summary="Lancer un run (worker + hyperparams sûrs). FRAIS VERROUILLÉS.")
+def control_launch(req: LaunchRequest) -> dict:
+    return control_service.launch(
+        steps=req.steps, worker=req.worker,
+        hyperparams=req.hyperparams, diag=req.diag)
+
+
+@app.post("/api/control/stop", tags=["Control"],
+          summary="Arrêter le run d'entraînement actif")
+def control_stop() -> dict:
+    return control_service.stop()
 
 
 @app.websocket("/ws/training")

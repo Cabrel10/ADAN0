@@ -15,18 +15,18 @@ import { Panel, Badge } from "../components/ui";
 import { usePoll } from "../usePoll";
 import { api, TelemetryRow } from "../api";
 
-const AXIS = { stroke: "#52525b", fontSize: 10 };
-const GRID = "#27272a";
+const AXIS = { stroke: "#64748B", fontSize: 10 };
+const GRID = "rgba(36,51,82,0.5)";
 
 function tooltipStyle() {
   return {
     contentStyle: {
-      background: "#18181B",
-      border: "1px solid #2a2a30",
+      background: "#111B2E",
+      border: "1px solid #243352",
       borderRadius: 6,
       fontSize: 11,
     },
-    labelStyle: { color: "#a1a1aa" },
+    labelStyle: { color: "#CBD5E1" },
   };
 }
 
@@ -98,7 +98,7 @@ export default function Training() {
               <Line
                 type="monotone"
                 dataKey="a0_std"
-                stroke="#EF4444"
+                stroke="#FF4D4D"
                 dot={false}
                 name="a0_std"
               />
@@ -106,6 +106,7 @@ export default function Training() {
                 type="monotone"
                 dataKey="policy_entropy"
                 stroke="#8B5CF6"
+                strokeWidth={1.5}
                 dot={false}
                 name="entropy"
               />
@@ -122,8 +123,8 @@ export default function Training() {
               <Tooltip {...tooltipStyle()} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Line type="monotone" dataKey="req_HOLD_pct" stroke="#3B82F6" dot={false} name="HOLD" />
-              <Line type="monotone" dataKey="req_BUY_pct" stroke="#22C55E" dot={false} name="BUY" />
-              <Line type="monotone" dataKey="req_SELL_pct" stroke="#EF4444" dot={false} name="SELL" />
+              <Line type="monotone" dataKey="req_BUY_pct" stroke="#00FF88" dot={false} name="BUY" />
+              <Line type="monotone" dataKey="req_SELL_pct" stroke="#FF4D4D" dot={false} name="SELL" />
             </LineChart>
           </Chart>
         </Panel>
@@ -136,9 +137,9 @@ export default function Training() {
               <YAxis {...AXIS} domain={[0, 1]} />
               <Tooltip {...tooltipStyle()} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Line type="monotone" dataKey="illegal_ratio" stroke="#F97316" dot={false} name="illegal" />
-              <Line type="monotone" dataKey="steps_flat_pct" stroke="#a1a1aa" dot={false} name="flat%" />
-              <Line type="monotone" dataKey="steps_open_pct" stroke="#22C55E" dot={false} name="open%" />
+              <Line type="monotone" dataKey="illegal_ratio" stroke="#FFC857" dot={false} name="illegal" />
+              <Line type="monotone" dataKey="steps_flat_pct" stroke="#64748B" dot={false} name="flat%" />
+              <Line type="monotone" dataKey="steps_open_pct" stroke="#00FF88" dot={false} name="open%" />
             </LineChart>
           </Chart>
         </Panel>
@@ -150,7 +151,7 @@ export default function Training() {
               <XAxis dataKey="bucket" {...AXIS} />
               <YAxis {...AXIS} />
               <Tooltip {...tooltipStyle()} />
-              <Bar dataKey="count" fill="#8B5CF6" />
+              <Bar dataKey="count" fill="#3B82F6" />
             </BarChart>
           </Chart>
           <p className="text-[10px] text-muted mt-1">

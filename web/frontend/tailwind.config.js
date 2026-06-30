@@ -4,16 +4,17 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "#09090B",
-        panel: "#18181B",
-        panel2: "#202024",
-        edge: "#2a2a30",
-        up: "#22C55E",
-        down: "#EF4444",
-        warn: "#F97316",
+        bg: "#0B1220",
+        panel: "#111B2E",
+        panel2: "#16233A",
+        edge: "#243352",
+        up: "#00FF88",
+        down: "#FF4D4D",
         info: "#3B82F6",
+        warn: "#FFC857",
         accent: "#8B5CF6",
-        muted: "#71717A",
+        muted: "#64748B",
+        txt: "#CBD5E1",
       },
       fontFamily: {
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],

@@ -1,6 +1,12 @@
 import { useState } from "react";
 import Dashboard from "./tabs/Dashboard";
 import Training from "./tabs/Training";
+import TradeViz from "./tabs/TradeViz";
+import Metrics from "./tabs/Metrics";
+import Models from "./tabs/Models";
+import HyperLab from "./tabs/HyperLab";
+import Backtest from "./tabs/Backtest";
+import Paper from "./tabs/Paper";
 import Soon from "./tabs/Soon";
 import { usePoll } from "./usePoll";
 import { api } from "./api";
@@ -8,42 +14,51 @@ import { api } from "./api";
 const TABS = [
   "Dashboard",
   "Training",
+  "Trades",
+  "Metrics",
+  "Models",
+  "Hyper Lab",
   "Backtest",
   "Paper",
   "Live",
-  "Research",
-  "Models",
-  "Agents",
-  "System",
+  "Settings",
 ] as const;
 type Tab = (typeof TABS)[number];
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("Dashboard");
   const { data: status } = usePoll(api.status, 4000);
+  const { data: collapse } = usePoll(api.collapse, 6000);
   const running = status?.process.running;
+  const danger = collapse?.level === "critical";
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="border-b border-edge bg-panel/80 backdrop-blur sticky top-0 z-10">
+      <header className="border-b border-edge bg-panel/80 backdrop-blur sticky top-0 z-20">
         <div className="px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-accent text-lg">◢◤</span>
             <h1 className="text-sm font-semibold tracking-widest">
-              ADAN0 <span className="text-muted">TERMINAL</span>
+              ADAN <span className="text-info">MISSION</span>{" "}
+              <span className="text-muted">CONTROL</span>
             </h1>
             <span className="text-[10px] text-muted hidden sm:inline">
-              Mission Control · BTC/USDT · scalper
+              BTC/USDT · SPOT · scalper · lev 1
             </span>
           </div>
           <div className="flex items-center gap-3">
+            {danger && (
+              <span className="text-[11px] text-down border border-down/40 bg-down/10 rounded-full px-2 py-0.5 animate-pulse">
+                ⚠ COLLAPSE
+              </span>
+            )}
             <a
               href="/docs"
               target="_blank"
               rel="noreferrer"
               className="text-[11px] text-info hover:underline"
             >
-              API Swagger ↗
+              API ↗
             </a>
             <span
               className={`flex items-center gap-1 text-[11px] ${
@@ -51,7 +66,7 @@ export default function App() {
               }`}
             >
               <span className={running ? "pulse-dot" : ""}>●</span>
-              {running ? "LIVE" : "OFFLINE"}
+              {running ? "TRAINING" : "OFFLINE"}
             </span>
           </div>
         </div>
@@ -72,63 +87,34 @@ export default function App() {
         </nav>
       </header>
 
-      <main className="flex-1 p-4 max-w-[1400px] w-full mx-auto">
+      <main className="flex-1 p-4 max-w-[1500px] w-full mx-auto">
         {tab === "Dashboard" && <Dashboard />}
         {tab === "Training" && <Training />}
-        {tab === "Backtest" && (
-          <Soon
-            name="Backtest Studio"
-            phase="Phase 2"
-            desc="Equity curve, distribution des trades, MAE/MFE, confusion matrix, timeline des positions — wrap des scripts scripts/backtest/*."
-          />
-        )}
-        {tab === "Paper" && (
-          <Soon
-            name="Paper Trading Center"
-            phase="Phase 3"
-            desc="Positions ouvertes, ordres, PnL et exposition simulés en temps réel."
-          />
-        )}
+        {tab === "Trades" && <TradeViz />}
+        {tab === "Metrics" && <Metrics />}
+        {tab === "Models" && <Models />}
+        {tab === "Hyper Lab" && <HyperLab />}
+        {tab === "Backtest" && <Backtest />}
+        {tab === "Paper" && <Paper />}
         {tab === "Live" && (
           <Soon
             name="Live Trading Center"
             phase="Phase 3"
-            desc="État exchange, capital, levier, ordres, métriques de risque, alertes."
+            desc="État exchange, capital, levier, ordres, métriques de risque, panic button. Désactivé tant qu'aucune clé exchange n'est branchée."
           />
         )}
-        {tab === "Research" && (
+        {tab === "Settings" && (
           <Soon
-            name="Research Lab"
-            phase="Phase 2"
-            desc="Campagnes scripts/research/* : confusion matrix, winner distribution, fee horizon sensitivity, zone lookahead audit."
-          />
-        )}
-        {tab === "Models" && (
-          <Soon
-            name="Model Registry / Checkpoint Explorer"
-            phase="Phase 2"
-            desc="Checkpoints versionnés, métadonnées, promotion/déploiement, comparaison de runs."
-          />
-        )}
-        {tab === "Agents" && (
-          <Soon
-            name="Agents"
+            name="Settings & Notifications"
             phase="Phase 3"
-            desc="Communication multi-agents, tâches, statut, logs, timeouts."
-          />
-        )}
-        {tab === "System" && (
-          <Soon
-            name="System Center"
-            phase="Phase 3"
-            desc="CPU/RAM/swap/Docker/process — au MVP, surveillé dans le Dashboard."
+            desc="Telegram / Discord / Email, thèmes, seuils d'alerte collapse. Les FRAIS (0.5%) sont verrouillés et non éditables."
           />
         )}
       </main>
 
       <footer className="border-t border-edge px-4 py-2 text-[10px] text-muted flex justify-between">
         <span>ADAN0 v2 — Arène Guidée par le Futur</span>
-        <span>read-only · frais verrouillés (0.5%)</span>
+        <span>frais verrouillés 0.5% · données réelles</span>
       </footer>
     </div>
   );
