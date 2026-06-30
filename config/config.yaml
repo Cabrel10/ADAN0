@@ -187,17 +187,13 @@ capital_tiers:
 # risk_per_trade_pct: % du capital risqué par trade (pour SL sizing).
 # ============================================================================
 - exposure_range:
-  # DIAGNOSTIC-V6 (2026-06-30): was [70,90]. At $20.50 capital that forced a
-  # single BUY to consume ~95% of cash -> ~$1.8 left < $11 min_notional ->
-  # CASH_FLOOR death spiral (284 blocked / 28 executed BUY). Lowered so the
-  # agent keeps a cash buffer and is not structurally locked all-in.
-  - 40
-  - 60
+  - 70
+  - 90
   leverage: 1.0
   max_capital: 30.0
   max_concurrent_positions: 1
   max_drawdown_pct: 40.0   # Training: 40% = ~130 losing trades before kill. Allows full exploration.
-  max_position_size_pct: 60
+  max_position_size_pct: 90
   min_capital: 11.0
   name: Micro Capital
   risk_per_trade_pct: 4.0

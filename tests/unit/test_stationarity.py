@@ -276,7 +276,7 @@ class TestObservationFiniteness:
         obs = sb.build_observation(current_idx=50, data=data, portfolio_manager=None)
         ps = obs.get("portfolio_state")
         assert ps is not None, "portfolio_state should always be present"
-        assert ps.shape == (20,), f"portfolio_state shape should be (20,), got {ps.shape}"
+        assert ps.shape == (28,), f"portfolio_state shape should be (28,), got {ps.shape}"
         assert np.all(np.isfinite(ps)), f"portfolio_state has NaN/Inf: {ps}"
 
     def test_context_vector_always_in_observation(self):

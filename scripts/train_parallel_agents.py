@@ -2034,11 +2034,27 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         prior_steps = int(getattr(model, "num_timesteps", 0))
         logger.info(f"[SANDBOX] Prior cumulative timesteps: {prior_steps}")
     else:
+        # DIAGNOSTIC-V6.1: learning-rate WARMUP schedule. The FIRST PPO updates on
+        # random init produced approx_kl 0.17 (>1.5*target_kl) -> "Early stopping
+        # at step 0", almost no gradient applied. A warmup ramps lr from 10% ->
+        # 100% of target over the first 20% of training, so the violent first
+        # updates are tiny and KL stays under control; full lr afterwards.
+        _lr_target = float(sandbox_cfg.get("learning_rate",
+                           agent_cfg.get("learning_rate", 3e-4)))
+        _warmup_frac = float(sandbox_cfg.get("lr_warmup_frac", 0.20))
+        def _lr_schedule(progress_remaining: float) -> float:
+            # SB3 passes progress_remaining: 1.0 at start -> 0.0 at end.
+            done = 1.0 - float(progress_remaining)
+            if _warmup_frac > 0 and done < _warmup_frac:
+                ramp = 0.10 + 0.90 * (done / _warmup_frac)  # 0.10 -> 1.0
+                return _lr_target * ramp
+            return _lr_target
+        logger.info(f"[SANDBOX] LR warmup schedule: target={_lr_target:.2e}, "
+                    f"warmup_frac={_warmup_frac} (start={_lr_target*0.10:.2e})")
         model = PPO(
             "MultiInputPolicy",
             vec_env,
-            learning_rate=float(sandbox_cfg.get("learning_rate",
-                                agent_cfg.get("learning_rate", 3e-4))),
+            learning_rate=_lr_schedule,
             n_steps=sandbox_n_steps,
             batch_size=sandbox_batch_size,
             n_epochs=sandbox_n_epochs,
