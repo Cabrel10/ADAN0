@@ -139,6 +139,28 @@ def load_model(checkpoint_path: str):
     logger.info(f"[MODEL] Loading {checkpoint_path}")
     model = PPO.load(checkpoint_path, device="cpu")
 
+    # obs_schema_v2 GUARD (LIVE): refuse a pre-ACM (20-dim) checkpoint. The live
+    # observation is 28-dim (20 base + 8 ACM Capability Vector); a 20-dim policy
+    # would crash at predict(). Fail fast with a clear, actionable message.
+    try:
+        EXPECTED_PORTFOLIO_DIM = 28
+        _sd = model.policy.state_dict()
+        _proj_in = None
+        for _k, _v in _sd.items():
+            if _k.endswith("portfolio_proj.0.weight") and hasattr(_v, "shape"):
+                _proj_in = int(_v.shape[1]); break
+        if _proj_in is not None and _proj_in != EXPECTED_PORTFOLIO_DIM:
+            raise RuntimeError(
+                f"[SCHEMA MISMATCH] Live model {checkpoint_path} expects portfolio "
+                f"dim={_proj_in} but live obs is obs_schema_v2 dim={EXPECTED_PORTFOLIO_DIM}. "
+                f"This checkpoint predates the ACM migration (20->28) and MUST NOT be used "
+                f"for live trading. Train/select a 28-dim checkpoint.")
+        logger.info(f"[MODEL] [SCHEMA OK] portfolio_proj input dim = {_proj_in} (obs_schema_v2)")
+    except RuntimeError:
+        raise
+    except Exception as _ge:
+        logger.warning(f"[MODEL] schema guard could not verify portfolio dim: {_ge}")
+
     vecnorm_path = checkpoint_path.replace(".zip", "_vecnorm.pkl")
     vecnorm = None
     if os.path.isfile(vecnorm_path):

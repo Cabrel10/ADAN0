@@ -555,6 +555,33 @@ class PaperTradingMonitor:
         PPOClass = WorldModelPPO if WorldModelPPO is not None else PPO
         self.model = PPOClass.load(model_path, device="cpu")
         logger.info(f"Model loaded: {model_path} ({type(self.model).__name__})")
+
+        # ----------------------------------------------------------------
+        # obs_schema_v2 GUARD: the policy was trained on a fixed portfolio
+        # input dim. ADAN0 migrated 20 -> 28 (ACM Capability Vector). A model
+        # whose portfolio_proj expects 20 is INCOMPATIBLE with the current
+        # 28-dim env and MUST be refused loudly (never crash mid-inference).
+        # ----------------------------------------------------------------
+        try:
+            EXPECTED_PORTFOLIO_DIM = 28
+            sd = self.model.policy.state_dict()
+            proj_in = None
+            for k, v in sd.items():
+                if k.endswith("portfolio_proj.0.weight") and hasattr(v, "shape"):
+                    proj_in = int(v.shape[1])
+                    break
+            if proj_in is not None and proj_in != EXPECTED_PORTFOLIO_DIM:
+                logger.error(
+                    f"[SCHEMA MISMATCH] Model {model_path} expects portfolio_state "
+                    f"dim={proj_in} but env emits obs_schema_v2 dim={EXPECTED_PORTFOLIO_DIM}. "
+                    f"This model predates the ACM migration (20->28) and CANNOT be used. "
+                    f"Retrain on the 28-dim schema before paper trading."
+                )
+                self.model = None
+                return False
+            logger.info(f"[SCHEMA OK] Model portfolio_proj input dim = {proj_in} (obs_schema_v2)")
+        except Exception as _guard_err:
+            logger.warning(f"[SCHEMA GUARD] could not verify portfolio dim: {_guard_err}")
         return True
 
     def fetch_live_data(self) -> dict:
