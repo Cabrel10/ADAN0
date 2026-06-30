@@ -40,7 +40,7 @@ if _TRAINING_SILENT:
     logger.setLevel(logging.WARNING)
 
 # Standard portfolio state vector dimension
-DEFAULT_PORTFOLIO_STATE_SIZE = 20
+DEFAULT_PORTFOLIO_STATE_SIZE = 28
 # Maximum attempts to reload a data chunk
 MAX_RELOAD_ATTEMPTS = 3
 # Fallback chunk index when primary fails
@@ -5653,6 +5653,22 @@ class MultiAssetChunkedEnv(gym.Env):
             )
             # Sync le step courant sur le portfolio pour steps_in_position
             self.portfolio.current_step = self.current_step
+
+            # ACM: Sync cooldown state to portfolio for Capability Vector [26]
+            try:
+                _any_cooldown = False
+                for _tf in getattr(self, 'timeframes', []):
+                    _cd_wait = getattr(self, '_last_sell_step_by_asset', {})
+                    _cd_buy = getattr(self, '_buy_step_by_asset', {})
+                    for _asset in getattr(self, 'assets', []):
+                        if _asset in _cd_wait or _asset in _cd_buy:
+                            _any_cooldown = True
+                            break
+                    if _any_cooldown:
+                        break
+                self.portfolio._cooldown_active = 1.0 if _any_cooldown else 0.0
+            except Exception:
+                pass
             # Récupérer le vecteur d'état du portefeuille
             if hasattr(self.portfolio, "get_state_vector"):
                 portfolio_state = self.portfolio.get_state_vector()
@@ -7594,21 +7610,22 @@ class MultiAssetChunkedEnv(gym.Env):
                     if exposure_diff < 0.10:  # Within 10% -> no action needed (OMEGA-4E)
                         discrete_action = 0  # Override to HOLD
                         self.rejection_reasons["anti_spam_hold"] += 1
-                        # DIAGNOSTIC-V5: BUY-while-open escalated by streak.
-                        _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5('anti_spam_hold')
-                        self._step_invalid_penalty += -_pv5
-                        try: self._invalid_window.append(1)
-                        except Exception: pass
-                        if self.current_step % 50 == 0:
-                            self.logger.warning(
-                                f'[BUY_WHILE_OPEN] {asset} | streak={_sk5} '
-                                f'acc={_ac5:.2f} mult={_mu5:.1f} pen=-{_pv5:.5f}')
+                        # ============================================================
+                        # ACM: BUY_WHILE_OPEN is a SYMPTOM of missing information,
+                        # not a strategic error. The agent should KNOW:
+                        #   - position open? (ACM [21] can_close = 1)
+                        #   - exposure already near target? (ACM [25] max_size_remaining)
+                        # With the Capability Vector, illegal BUYs become rare.
+                        # NO escalating penalty. Just telemetry + minimal signal.
+                        # The Capability Vector teaches legality; the penalty only
+                        # signals poor arsenal MANAGEMENT (not blindness).
+                        # ============================================================
                         if self.current_step % 100 == 0:
                             self.logger.info(
-                                f"[ANTI_SPAM] {asset} exposure={current_exposure:.2%} ~ "
-                                f"target={target_exposure_pct:.2%} -> OVERRIDE TO HOLD"
+                                f"[BUY_WHILE_OPEN] {asset} exposure={current_exposure:.2%} ~ "
+                                f"target={target_exposure_pct:.2%} -> OVERRIDE TO HOLD "
+                                f"(ACM: agent should read can_open signal)"
                             )
-                        # We jump straight to action processing (which does nothing for HOLD)
                         pass 
 
                 # ── SIZE_GATE: Never exceed available cash ──────────
@@ -7638,21 +7655,51 @@ class MultiAssetChunkedEnv(gym.Env):
                                 )
                             continue  # probabilistic HOLD
                     else:
-                        # Truly cannot afford — hard HOLD
-                        self.invalid_trade_attempts += 1
+                        # ============================================================
+                        # ACM CASH_FLOOR — Distinguish Cas A vs Cas B:
+                        #
+                        # Cas A: Cash insufficient AND the agent did NOT cause it
+                        #        (no open positions, or positions opened before this
+                        #        episode). -> NEUTRAL HOLD (zero penalty).
+                        #
+                        # Cas B: Cash insufficient BECAUSE the agent spent it on
+                        #        positions. The agent destroyed its own arsenal.
+                        #        -> LIGHT management penalty (not strategic fault,
+                        #        but poor resource allocation). The ACM Capability
+                        #        Vector [27] signals this state to the policy.
+                        #
+                        # The real fix is NOT "reward=0 for all impossible BUYs".
+                        # The real fix is: reduce illegal BUYs via Capability Vector
+                        # in the observation, so the agent SEES its arsenal.
+                        # ============================================================
                         self.rejection_reasons["min_notional"] += 1
-                        # DIAGNOSTIC-V5: cash-blocked BUY escalated by streak.
-                        _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5('min_notional')
-                        self._step_invalid_penalty += -_pv5
-                        try: self._invalid_window.append(1)
-                        except Exception: pass
-                        if self.current_step % 50 == 0:
-                            self.logger.info(
-                                f"[CASH_FLOOR] {asset} cash=${available_cash_for_sizing:.2f} "
-                                f"< min_order=${min_order_value:.2f} | streak={_sk5} "
-                                f"acc={_ac5:.2f} mult={_mu5:.1f} pen=-{_pv5:.5f} — forced HOLD"
-                            )
-                        continue  # skip this asset, force HOLD
+                        # Cas B detection: agent has open positions -> it caused the
+                        # cash deficit by buying. Light management penalty.
+                        _open_pos_count = len([
+                            p for p in self.portfolio_manager.positions.values()
+                            if p.is_open
+                        ]) if hasattr(self, 'portfolio_manager') else 0
+                        _is_self_caused = _open_pos_count > 0
+                        if _is_self_caused:
+                            # Cas B: light penalty — bad arsenal management
+                            _mgmt_pen = 0.002 * min(_open_pos_count, 3)
+                            self._step_invalid_penalty += _mgmt_pen
+                            if self.current_step % 100 == 0:
+                                self.logger.info(
+                                    f"[CASH_FLOOR_B] {asset} cash=${available_cash_for_sizing:.2f} "
+                                    f"< min_order=${min_order_value:.2f} | "
+                                    f"open_pos={_open_pos_count} -> HOLD + mgmt_pen={_mgmt_pen:.4f} "
+                                    f"(agent caused cash deficit)"
+                                )
+                        else:
+                            # Cas A: neutral — impossible action, not a fault
+                            if self.current_step % 100 == 0:
+                                self.logger.info(
+                                    f"[CASH_FLOOR_A] {asset} cash=${available_cash_for_sizing:.2f} "
+                                    f"< min_order=${min_order_value:.2f} -> HOLD NEUTRAL "
+                                    f"(no open positions, not agent fault)"
+                                )
+                        continue  # force HOLD in both cases
 
                 if discrete_action == 1:
                     if self.current_step % 100 == 0:
@@ -7702,23 +7749,21 @@ class MultiAssetChunkedEnv(gym.Env):
             #   intraday: SL 0.5-2.0%  TP 0.8-4.0%
             #   swing   : SL 1.0-3.5%  TP 1.5-7.0%
             #   position: SL 2.0-6.0%  TP 3.0-12.0%
-            # DIAGNOSTIC-V6: recalibrated for the REAL 0.50% round-trip fee.
-            # Old scalper SL floor 0.3% was TIGHTER than fees -> SL hit on noise
-            # while TP (0.6% floor) netted only ~0.1% after fees => 1 TP : 6.7 SL
-            # (FACTS: TP_HIT 40, SL_HIT 204). New floors guarantee a winning trade
-            # clears fees with margin AND SL is never tighter than the TP can profit.
+            #   scalper : SL 0.3-1.2%  TP 0.5-2.0%
+            #   intraday: SL 0.5-2.0%  TP 0.8-4.0%
+            #   swing   : SL 1.0-3.5%  TP 1.5-7.0%
+            #   position: SL 2.0-6.0%  TP 3.0-12.0%
             _BOUNDS = {
-                "scalper":  {"sl": (0.008, 0.020), "tp": (0.012, 0.030)},
-                "intraday": {"sl": (0.010, 0.025), "tp": (0.016, 0.045)},
-                "swing":    {"sl": (0.015, 0.035), "tp": (0.025, 0.070)},
-                "position": {"sl": (0.020, 0.060), "tp": (0.035, 0.120)},
+                "scalper":  {"sl": (0.003, 0.012), "tp": (0.005, 0.020)},
+                "intraday": {"sl": (0.005, 0.020), "tp": (0.008, 0.040)},
+                "swing":    {"sl": (0.010, 0.035), "tp": (0.015, 0.070)},
+                "position": {"sl": (0.020, 0.060), "tp": (0.030, 0.120)},
             }
             _b = _BOUNDS.get(_prof, _BOUNDS["intraday"])
             sl_lo, sl_hi = _b["sl"]
             tp_lo, tp_hi = _b["tp"]
-            # fee gate (real 0.50% A/R): TP_min must clear round-trip + margin.
-            # 1.2% TP - 0.5% fees = 0.7% net profit floor (vs old 0.1%).
-            tp_lo = max(tp_lo, 0.012)
+            # fee gate (real 0.50% A/R): TP_min >= 1.2x round-trip fees = 0.6%
+            tp_lo = max(tp_lo, 0.006)
 
             normalized_sl = (sl_raw + 1.0) / 2.0
             sl_pct = float(np.clip(sl_lo + normalized_sl * (sl_hi - sl_lo), sl_lo, sl_hi))

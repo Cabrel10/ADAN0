@@ -317,7 +317,7 @@ class LiveStateBuilder:
                 "5m":  np.ndarray shape (20, 21),
                 "1h":  np.ndarray shape (20, 21),
                 "4h":  np.ndarray shape (20, 21),
-                "portfolio_state": np.ndarray shape (20,),
+                "portfolio_state": np.ndarray shape (28,),  # 20 base + 8 ACM
                 "context_vector":  np.ndarray shape (17,),
             }
         """
@@ -356,7 +356,7 @@ class LiveStateBuilder:
         if portfolio_state is not None:
             obs["portfolio_state"] = portfolio_state.astype(np.float32)
         elif "portfolio_state" not in obs:
-            obs["portfolio_state"] = np.zeros(20, dtype=np.float32)
+            obs["portfolio_state"] = np.zeros(28, dtype=np.float32)  # 20 base + 8 ACM
 
         if context_vector is not None:
             obs["context_vector"] = context_vector.astype(np.float32)
