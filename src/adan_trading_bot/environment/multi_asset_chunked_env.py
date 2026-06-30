@@ -562,6 +562,15 @@ class MultiAssetChunkedEnv(gym.Env):
             "daily_limit": 0,   # Daily trade count exceeded
             "pm_rejected": 0,   # Portfolio manager rejected the open
         }
+        # ============================================================
+        # DIAGNOSTIC-V5: streak-based sterile penalty state
+        # Persistence-indexed (NOT capital-tier). Keyed on rejection
+        # reason. acc = decay*acc + severity ; reset on legal action.
+        # ============================================================
+        self._sterile_streak: Dict[str, int] = {}
+        self._sterile_acc: Dict[str, float] = {}
+        from collections import deque as _deque_v5
+        self._invalid_window = _deque_v5(maxlen=200)  # 1=invalid step,0=legal
         # Accumulate invalid_trade_penalty per step (reset each step)
         self._step_invalid_penalty = 0.0
         # Track requested vs executed action per step
@@ -2385,8 +2394,15 @@ class MultiAssetChunkedEnv(gym.Env):
             "fee_gate": 0, "risk_gate": 0, "cooldown_wait": 0,
             "cooldown_hold_min": 0, "cooldown_omega4e": 0,
             "min_notional": 0, "hysteresis": 0, "anti_spam_hold": 0,
-            "daily_limit": 0, "pm_rejected": 0,
+            "daily_limit": 0, "pm_rejected": 0, "sell_no_position": 0,
         }
+        # DIAGNOSTIC-V5: clear streak/accumulator state at each episode reset.
+        if hasattr(self, "_sterile_streak"):
+            self._sterile_streak.clear()
+        if hasattr(self, "_sterile_acc"):
+            self._sterile_acc.clear()
+        if hasattr(self, "_invalid_window"):
+            self._invalid_window.clear()
         self.trade_attempts = 0
         self.invalid_trade_attempts = 0
         self._step_invalid_penalty = 0.0
@@ -7284,22 +7300,62 @@ class MultiAssetChunkedEnv(gym.Env):
         # agent saturated on BUY. This closure returns the SAME geometric
         # penalty for ANY invalid intent, making BUY/SELL symmetric. It reads
         # the same reward_shaping knobs; fees are not involved.
+        # ============================================================
+        # DIAGNOSTIC-V5 sterile penalty — escalated by PERSISTENCE.
+        # ============================================================
+        def _sterile_severity_v5(reason):
+            # Per-family gravity. SELL-no-position is the worst (it is the
+            # collapse attractor); cash-blocked BUY is milder.
+            _sev = {
+                "sell_no_position": 1.5,
+                "anti_spam_hold": 1.2,   # BUY while already open
+                "min_notional": 0.8,     # BUY blocked by cash
+                "hysteresis": 0.7,
+                "cooldown_wait": 0.6,
+                "cooldown_hold_min": 0.6,
+            }
+            return float(_sev.get(reason, 1.0))
+
+        def _invalid_ratio_mult_v5():
+            # Sliding-window invalid ratio -> multiplier (collapse detector).
+            _w = getattr(self, '_invalid_window', None)
+            if not _w or len(_w) < 20:
+                return 1.0
+            _r = sum(_w) / float(len(_w))
+            if _r > 0.7:
+                return 3.0
+            if _r > 0.4:
+                return 2.0
+            if _r > 0.1:
+                return 1.5
+            return 1.0
+
+        def _sterile_penalty_v5(reason):
+            # Adaptive bounded accumulator, keyed on rejection reason.
+            #   acc_t = decay*acc_{t-1} + severity
+            #   pen   = base * min(cap, 1 + alpha*acc_t) * window_mult
+            # Reset (decay-to-zero) happens via _reset_sterile_streak() on
+            # ANY legal action. fees are NOT involved.
+            _rs = self.config.get('reward_shaping', {})
+            _base = float(_rs.get('invalid_trade_penalty_weight', 0.02))
+            _cap = float(_rs.get('sterile_action_penalty_cap', 0.30))
+            _decay = float(_rs.get('sterile_acc_decay', 0.97))
+            _alpha = float(_rs.get('sterile_acc_alpha', 0.45))
+            _sev = _sterile_severity_v5(reason)
+            self._sterile_streak[reason] = self._sterile_streak.get(reason, 0) + 1
+            _acc = self._sterile_acc.get(reason, 0.0) * _decay + _sev
+            self._sterile_acc[reason] = _acc
+            _mult = _invalid_ratio_mult_v5()
+            _pen = _base * min(_cap / _base if _base > 0 else _cap,
+                               1.0 + _alpha * _acc) * _mult
+            _pen = min(_pen, _cap)
+            return _pen, self._sterile_streak[reason], _acc, _mult
+
         def _sterile_penalty_for_tier():
-            _tier_order = {"micro": 0, "small": 1, "medium": 2,
-                           "high": 3, "enterprise": 4}
-            _tname = "micro"
-            try:
-                _ct = self.portfolio_manager.get_current_tier()
-                if isinstance(_ct, dict):
-                    _tname = str(_ct.get("name", "Micro")).split()[0].lower()
-            except Exception:
-                pass
-            _k = _tier_order.get(_tname, 0)
-            _rs = self.config.get("reward_shaping", {})
-            _base = float(_rs.get("invalid_trade_penalty_weight", 0.005))
-            _r = float(_rs.get("sterile_action_geom_ratio", 1.6))
-            _cap = float(_rs.get("sterile_action_penalty_cap", 0.05))
-            return min(_cap, _base * (_r ** _k))
+            # LEGACY shim kept for compatibility; now routes through V5
+            # generic reason so old call paths still escalate by streak.
+            _p, _, _, _ = _sterile_penalty_v5('generic_invalid')
+            return _p
 
         # 🔧 CRITICAL FIX: Use ONLY the pre-captured SL/TP receipts from step()
         # NO SECOND update_market_price() call — that was causing double updates!
@@ -7528,9 +7584,15 @@ class MultiAssetChunkedEnv(gym.Env):
                     if exposure_diff < 0.10:  # Within 10% -> no action needed (OMEGA-4E)
                         discrete_action = 0  # Override to HOLD
                         self.rejection_reasons["anti_spam_hold"] += 1
-                        # DIAGNOSTIC-V4: BUY-while-open is invalid intent. It is
-                        # converted to HOLD but must NOT be free (root-cause fix).
-                        self._step_invalid_penalty += -_sterile_penalty_for_tier()
+                        # DIAGNOSTIC-V5: BUY-while-open escalated by streak.
+                        _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5('anti_spam_hold')
+                        self._step_invalid_penalty += -_pv5
+                        try: self._invalid_window.append(1)
+                        except Exception: pass
+                        if self.current_step % 50 == 0:
+                            self.logger.warning(
+                                f'[BUY_WHILE_OPEN] {asset} | streak={_sk5} '
+                                f'acc={_ac5:.2f} mult={_mu5:.1f} pen=-{_pv5:.5f}')
                         if self.current_step % 100 == 0:
                             self.logger.info(
                                 f"[ANTI_SPAM] {asset} exposure={current_exposure:.2%} ~ "
@@ -7569,13 +7631,16 @@ class MultiAssetChunkedEnv(gym.Env):
                         # Truly cannot afford — hard HOLD
                         self.invalid_trade_attempts += 1
                         self.rejection_reasons["min_notional"] += 1
-                        # DIAGNOSTIC-V4: spamming BUY with no cash was the main
-                        # collapse exploit (5000+ free rejections). Now penalized.
-                        self._step_invalid_penalty += -_sterile_penalty_for_tier()
+                        # DIAGNOSTIC-V5: cash-blocked BUY escalated by streak.
+                        _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5('min_notional')
+                        self._step_invalid_penalty += -_pv5
+                        try: self._invalid_window.append(1)
+                        except Exception: pass
                         if self.current_step % 50 == 0:
                             self.logger.info(
                                 f"[CASH_FLOOR] {asset} cash=${available_cash_for_sizing:.2f} "
-                                f"< min_order=${min_order_value:.2f} — forced HOLD"
+                                f"< min_order=${min_order_value:.2f} | streak={_sk5} "
+                                f"acc={_ac5:.2f} mult={_mu5:.1f} pen=-{_pv5:.5f} — forced HOLD"
                             )
                         continue  # skip this asset, force HOLD
 
@@ -7905,6 +7970,11 @@ class MultiAssetChunkedEnv(gym.Env):
                                 self._apply_trade_results_safely(
                                     pnl_value=float(val), fees=float(fees))
                                 trade_executed_this_step = True
+                                # DIAGNOSTIC-V5: legal SELL -> relax sterile pressure
+                                self._sterile_streak.clear()
+                                self._sterile_acc.clear()
+                                try: self._invalid_window.append(0)
+                                except Exception: pass
                                 # FIX (2026-06-25): comptabilise cet AGENT_CLOSE
                                 # dans le quota quotidien + serie consecutive +
                                 # DEBIT du decision budget (V3) + last-step gap.
@@ -7977,37 +8047,16 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.rejection_reasons["sell_no_position"] += 1
                 except Exception:
                     self.rejection_reasons["sell_no_position"] = 1
-                # --- penalite geometrique par palier ---
-                # index palier: Micro=0, Small=1, Medium=2, High=3, Enterprise=4
-                _tier_order = {"micro": 0, "small": 1, "medium": 2,
-                               "high": 3, "enterprise": 4}
-                _tname = "micro"
-                try:
-                    _ct = self.portfolio_manager.get_current_tier()
-                    if isinstance(_ct, dict):
-                        _tname = str(_ct.get("name", "Micro")).split()[0].lower()
-                except Exception:
-                    pass
-                _k = _tier_order.get(_tname, 0)
-                # DIAGNOSTIC-V4: use the shared helper so SELL & BUY sterile
-                # penalties stay symmetric. Numeric behavior identical to before.
-                _sterile_pen = _sterile_penalty_for_tier()
-                self._step_invalid_penalty += -_sterile_pen
+                # --- DIAGNOSTIC-V5: streak-escalated sterile penalty ---
+                _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5('sell_no_position')
+                self._step_invalid_penalty += -_pv5
+                try: self._invalid_window.append(1)
+                except Exception: pass
                 if self.current_step % 50 == 0:
-                    # DIAGNOSTIC-V4: log components re-read from config
-                    # because _base/_r/_cap now live in the helper.
-                    _rs_log = self.config.get("reward_shaping", {})
-                    _base_log = float(
-                        _rs_log.get("invalid_trade_penalty_weight", 0.005))
-                    _r_log = float(
-                        _rs_log.get("sterile_action_geom_ratio", 1.6))
-                    _cap_log = float(
-                        _rs_log.get("sterile_action_penalty_cap", 0.05))
                     self.logger.warning(
-                        f"[STERILE_SELL] {asset} | SELL sans position | "
-                        f"tier={_tname}(k={_k}) | pen=-{_sterile_pen:.5f} "
-                        f"(base={_base_log:.4f} r={_r_log} cap={_cap_log})"
-                    )
+                        f'[STERILE_SELL] {asset} | SELL sans position | '
+                        f'streak={_sk5} acc={_ac5:.2f} mult={_mu5:.1f} '
+                        f'pen=-{_pv5:.5f}')
                 # action reste HOLD (rien a fermer), mais elle n'est plus gratuite.
 
             # ================================================================
@@ -8189,6 +8238,11 @@ class MultiAssetChunkedEnv(gym.Env):
                             0.0, float(self.decision_budget) - float(self.decision_cost_buy)
                         )
                     trade_executed_this_step = True
+                    # DIAGNOSTIC-V5: legal BUY -> relax sterile pressure
+                    self._sterile_streak.clear()
+                    self._sterile_acc.clear()
+                    try: self._invalid_window.append(0)
+                    except Exception: pass
                     # Update frequency counters
                     if not force_trade:
                         tf = self.current_timeframe_for_trade

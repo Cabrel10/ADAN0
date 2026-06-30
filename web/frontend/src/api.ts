@@ -245,4 +245,81 @@ export const api = {
       req
     ),
   stop: () => post<{ ok: boolean; message?: string }>("/api/control/stop", {}),
+  // reliable metrics engine
+  metricsPerformance: () => get<PerfBlock>("/api/metrics/performance"),
+  metricsRL: () => get<RLBlock>("/api/metrics/rl"),
+  metricsValidate: () => get<ValidationResult>("/api/metrics/validate"),
+  metricsMarkers: (tf = "5m") =>
+    get<MarkerValidation>(`/api/metrics/markers?timeframe=${tf}`),
+  metricsEquityDrawdown: () =>
+    get<{ source: string; start: number; points: EqDDPoint[] }>(
+      "/api/metrics/equity_drawdown"
+    ),
+  agentSnapshot: () => get<AgentSnapshot>("/api/agent/snapshot"),
 };
+
+// ---- Reliable metrics types (with provenance) ----
+export interface Provenance<T = number | null> {
+  value: T;
+  computed_at: string;
+  source: string;
+  window?: number;
+  note?: string;
+}
+export type PerfBlock = Record<string, Provenance | string>;
+export type RLBlock = Record<string, Provenance | string>;
+
+export interface ValidationCheck {
+  dashboard: number | null;
+  recomputed: number | null;
+  match: boolean;
+}
+export interface ValidationResult {
+  source: string;
+  computed_at: string;
+  all_match: boolean;
+  checks: Record<string, ValidationCheck>;
+}
+
+export interface MarkerSample {
+  idx: number;
+  side?: string;
+  reason?: string;
+  price?: number;
+  in_market_range: boolean;
+  mapped_candle_time?: number;
+  status: string;
+}
+export interface MarkerValidation {
+  timeframe?: string;
+  market_range?: { low: number; high: number };
+  checked: number;
+  valid: number;
+  invalid: number;
+  markers: MarkerSample[];
+  note?: string;
+}
+
+export interface EqDDPoint {
+  i: number;
+  equity: number;
+  drawdown: number;
+}
+
+export interface AgentSnapshot {
+  service: string;
+  generated_at: string;
+  schema: string;
+  training: TrainingStatus;
+  collapse: CollapseVerdict;
+  metrics_reliable: { performance: PerfBlock; rl: RLBlock };
+  validation: ValidationResult;
+  fees_locked: {
+    commission: number | null;
+    round_trip_fees: number | null;
+    editable: boolean;
+  };
+  system: SystemStats;
+  checkpoints_count: number;
+  notes: string[];
+}

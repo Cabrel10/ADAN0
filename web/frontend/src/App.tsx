@@ -3,6 +3,7 @@ import Dashboard from "./tabs/Dashboard";
 import Training from "./tabs/Training";
 import TradeViz from "./tabs/TradeViz";
 import Metrics from "./tabs/Metrics";
+import Reliability from "./tabs/Reliability";
 import Models from "./tabs/Models";
 import HyperLab from "./tabs/HyperLab";
 import Backtest from "./tabs/Backtest";
@@ -16,6 +17,7 @@ const TABS = [
   "Training",
   "Trades",
   "Metrics",
+  "Validator",
   "Models",
   "Hyper Lab",
   "Backtest",

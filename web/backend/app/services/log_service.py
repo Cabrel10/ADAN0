@@ -26,8 +26,33 @@ def tail_lines(n: int = 200) -> list[str]:
     return list(dq)
 
 
+# How many bytes from the end of the log to scan. Training logs can reach
+# 80+ MB; reading the whole file on every poll took ~25 s. The latest
+# total_timesteps and any recent error live near the tail, so we seek there.
+_TAIL_BYTES = 2 * 1024 * 1024  # 2 MiB
+
+
+def _read_tail_bytes(path, n: int) -> str:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            if size > n:
+                f.seek(size - n)
+                # drop the partial first line
+                f.readline()
+            data = f.read()
+        return data.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 def parse_progress() -> dict[str, Any]:
-    """Scan the log for the latest total_timesteps and error state."""
+    """Latest total_timesteps + error state, scanning only the log TAIL.
+
+    Bounded to the last few MiB so it stays O(1) regardless of total log size
+    (logs can be 80+ MB). The latest progress line and recent errors are always
+    at the end of the file.
+    """
     path = settings.TRAIN_LOG
     info: dict[str, Any] = {
         "last_timestep": None,
@@ -41,19 +66,17 @@ def parse_progress() -> dict[str, Any]:
     last_ts = None
     err_count = 0
     last_err = None
-    try:
-        with path.open("r", errors="replace") as f:
-            for line in f:
-                m = _TS_RE.search(line)
-                if m:
-                    last_ts = int(m.group(1))
-                if _ERR_RE.search(line):
-                    err_count += 1
-                    last_err = line.strip()[:300]
-    except Exception:
-        pass
+    tail = _read_tail_bytes(path, _TAIL_BYTES)
+    for line in tail.splitlines():
+        m = _TS_RE.search(line)
+        if m:
+            last_ts = int(m.group(1))
+        if _ERR_RE.search(line):
+            err_count += 1
+            last_err = line.strip()[:300]
     info["last_timestep"] = last_ts
     info["error_count"] = err_count
     info["has_errors"] = err_count > 0
     info["last_error"] = last_err
+    info["scan"] = "tail"
     return info
