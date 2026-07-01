@@ -1405,6 +1405,12 @@ reward_shaping:
   #   N env steps so PPO can explore BEFORE being punished (user: penalty
   #   was "trop agressive trop tot"). After N steps full penalty applies.
   sterile_warmup_steps: 50000
+  # DIAGNOSTIC-C1 (2026-07-01): warmup PLUS COURT pour la faute auto-infligée
+  # (Cas B min_notional_self_caused = sur-exposition = chemin de collapse prouvé).
+  # Le calcul C1 montre qu'à 50k le frein ne bat le carburant latent MAX qu'à ~50k
+  # steps, laissant une fenêtre de biais BUY. À 15k le frein est plein bien avant
+  # 128k. On ne touche NI aux frais NI au reward, juste à la rampe temporelle.
+  sterile_warmup_steps_self_caused: 15000
   logging:
     disable_existing_loggers: false
     formatters:
