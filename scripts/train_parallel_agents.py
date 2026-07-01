@@ -500,6 +500,15 @@ class DiagnosticCollapseCallback(BaseCallback):
         self._prev_rej_total = None
         self._header_written = False
         self._next_flush = self.log_every  # first flush at exactly log_every steps
+        # DIAGNOSTIC-V8 circuit-breaker state. Auto-stop training the moment a
+        # policy collapse is detected (proven pattern from v8 500k run: pct_buy
+        # -> 1.0 and a0_mean -> +inf at ~124k-128k). Stops wasting compute on a
+        # dead policy and preserves the last healthy checkpoint.
+        self._collapse_tripped = False
+        # need N consecutive collapsed windows to avoid a false positive on a
+        # transient spike (2 windows = 2*log_every steps of sustained collapse).
+        self._collapse_streak = 0
+        self._collapse_needed = 2
 
     def _reset_window(self):
         self._a0 = []                 # continuous action0 seen this window
@@ -595,6 +604,13 @@ class DiagnosticCollapseCallback(BaseCallback):
                     self._next_flush += self.log_every
         except Exception:
             pass
+        # DIAGNOSTIC-V8: hard stop if collapse confirmed over consecutive windows.
+        if self._collapse_tripped:
+            logging.getLogger(__name__).critical(
+                "[COLLAPSE-BREAKER] Training STOPPED at %d timesteps — policy "
+                "collapse confirmed. Inspect the diagnostic CSV; resume from the "
+                "last healthy checkpoint, NOT this one.", int(self.num_timesteps))
+            return False  # SB3 stops learning when a callback returns False
         return True
 
     def _flush(self):
@@ -621,6 +637,35 @@ class DiagnosticCollapseCallback(BaseCallback):
                 "policy_entropy": round(float(np.mean(self._ent)), 4) if self._ent else 0.0,
                 "a0_histo": "|".join(str(int(x)) for x in histo),
             }
+            # DIAGNOSTIC-V8 collapse detection (measure -> decide, no reward touch).
+            # Trip if ANY of the proven collapse signatures holds for this window:
+            #   - a0_pct_buy >= 0.97  (near-total BUY, histo degenerate)
+            #   - a0_pct_sell >= 0.97 (symmetric guard for the SELL attractor)
+            #   - |a0_mean| >= 5.0    (continuous output diverging to +/-inf)
+            # Require self._collapse_needed consecutive windows before stopping.
+            try:
+                _pb = row["a0_pct_buy"]; _ps = row["a0_pct_sell"]
+                _am = abs(row["a0_mean"])
+                _collapsed = (_pb >= 0.97) or (_ps >= 0.97) or (_am >= 5.0)
+                if _collapsed:
+                    self._collapse_streak += 1
+                else:
+                    self._collapse_streak = 0
+                if self._collapse_streak >= self._collapse_needed:
+                    self._collapse_tripped = True
+                    logging.getLogger(__name__).critical(
+                        "[COLLAPSE-DETECT %d] pct_buy=%.3f pct_sell=%.3f "
+                        "a0_mean=%.3f streak=%d -> BREAKER ARMED",
+                        row["timesteps"], _pb, _ps, row["a0_mean"],
+                        self._collapse_streak)
+                elif _collapsed:
+                    logging.getLogger(__name__).warning(
+                        "[COLLAPSE-WARN %d] pct_buy=%.3f a0_mean=%.3f streak=%d/%d",
+                        row["timesteps"], _pb, row["a0_mean"],
+                        self._collapse_streak, self._collapse_needed)
+            except Exception:
+                pass
+
             os.makedirs(os.path.dirname(self.csv_path), exist_ok=True)
             write_header = not self._header_written and not os.path.exists(self.csv_path)
             with open(self.csv_path, "a", newline="") as fh:
