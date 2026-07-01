@@ -7329,7 +7329,14 @@ class MultiAssetChunkedEnv(gym.Env):
             _sev = {
                 "sell_no_position": 1.2,
                 "anti_spam_hold": 0.8,   # BUY while already open (controllable)
-                "min_notional": 0.05,    # BUY blocked by cash (NOT a fault)
+                "min_notional": 0.05,    # BUY blocked by cash - Cas A (NOT a fault)
+                # DIAGNOSTIC-V9: Cas B = agent BUYs while already holding a
+                # position and thereby drained its own cash below min_order.
+                # This IS controllable (over-exposure) and is the PROVEN
+                # collapse path, so it needs a real (moderate) severity - not
+                # the near-zero Cas-A value. Sits between hysteresis (0.4) and
+                # anti_spam_hold (0.8). Must beat the per-step latent_pnl reward.
+                "min_notional_self_caused": 0.55,
                 "hysteresis": 0.4,
                 "cooldown_wait": 0.4,
                 "cooldown_hold_min": 0.4,
@@ -7699,15 +7706,38 @@ class MultiAssetChunkedEnv(gym.Env):
                         ]) if hasattr(self, 'portfolio_manager') else 0
                         _is_self_caused = _open_pos_count > 0
                         if _is_self_caused:
-                            # Cas B: light penalty — bad arsenal management
-                            _mgmt_pen = 0.002 * min(_open_pos_count, 3)
-                            self._step_invalid_penalty += _mgmt_pen
+                            # ============================================================
+                            # DIAGNOSTIC-V9 (2026-07-01) — REAL COLLAPSE ROOT-CAUSE.
+                            # PROVEN by the v9 500k run: this Cas-B branch (BUY while
+                            # already in position, cash < min_order because the agent
+                            # spent it) is the path ACTUALLY taken (min_notional rejects
+                            # 380+/window), NOT the exposure_diff<0.10 anti_spam_hold
+                            # branch (which stayed at 0). The old code added a POSITIVE
+                            # +0.002 mgmt "penalty" -> it REWARDED the illegal BUY. The
+                            # market (position held) also pays a positive latent_pnl each
+                            # step. PPO credits the SAMPLED illegal BUY with both -> the
+                            # 100%-BUY runaway. FIX: sign was WRONG (+ instead of -) and
+                            # magnitude was negligible. Route through the streak-escalated
+                            # sterile penalty V5 (same machinery as sell_no_position /
+                            # anti_spam_hold) and SUBTRACT it (-_pv5). Fees NOT involved.
+                            # ============================================================
+                            try:
+                                _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5("min_notional_self_caused")
+                                self._step_invalid_penalty += -_pv5
+                                _mgmt_pen = -_pv5
+                                if hasattr(self, "_invalid_window") and self._invalid_window is not None:
+                                    self._invalid_window.append(1)
+                            except Exception:
+                                # Fallback: fixed NEGATIVE penalty (must beat the per-step
+                                # latent_pnl micro-reward that fuels the runaway).
+                                _mgmt_pen = -0.05 * min(_open_pos_count, 3)
+                                self._step_invalid_penalty += _mgmt_pen
                             if self.current_step % 100 == 0:
                                 self.logger.info(
                                     f"[CASH_FLOOR_B] {asset} cash=${available_cash_for_sizing:.2f} "
                                     f"< min_order=${min_order_value:.2f} | "
-                                    f"open_pos={_open_pos_count} -> HOLD + mgmt_pen={_mgmt_pen:.4f} "
-                                    f"(agent caused cash deficit)"
+                                    f"open_pos={_open_pos_count} -> HOLD + sterile_pen={_mgmt_pen:.4f} "
+                                    f"(V9 anti-runaway: agent caused cash deficit)"
                                 )
                         else:
                             # Cas A: neutral — impossible action, not a fault
