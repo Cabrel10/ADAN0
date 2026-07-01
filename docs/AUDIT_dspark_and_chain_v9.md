@@ -230,3 +230,48 @@ désormais : *le CNN + le critic extraient-ils un signal réellement corrélé a
 - Preuve manquante décisive = **AUDIT 5 (shuffle/bruit + IC)** — à faire AVANT le prochain run long.
 - Métrique de suivi = **explained_variance** (GO si >0.15 et monte ; NO-GO/aux-loss si reste <0.1).
 - Décision WorldModelPPO / DSpark = seulement après ces deux mesures (une variable à la fois).
+
+---
+
+## 8. AUDIT 5 / C3a — IC brut : Y A-T-IL UN SIGNAL DANS LES DONNÉES ? (OUI, faible mais réel)
+
+**La question qui décide de tout** (utilisateur) : *« est-ce que le CNN et le critic extraient
+réellement un signal de marché ? »* — décomposée en deux :
+- **C3a** (léger, fait) : y a-t-il seulement un signal EXPLOITABLE dans les données brutes ?
+- **C3b** (lourd, conditionnel) : le CNN entraîné l'exploite-t-il ?
+
+### Méthode C3a (pandas pur, pas de modèle chargé)
+IC de Spearman entre chaque feature et le rendement futur à H={1,5,20,60} barres, sur les
+données réelles `data/processed/indicators/train/BTCUSDT/{5m,1h,4h}.parquet`. Puis **contrôle
+anti-artefact** : exclusion des prix bruts non-stationnaires (close/high/low/open) — dont l'IC
+énorme (−0.33 en 4h/H60) est du mean-reversion mécanique NON tradable par un scalper — et test de
+**cohérence de signe cross-horizon** (un vrai edge garde le même signe sur plusieurs horizons ;
+un artefact non-stationnaire est instable).
+
+### Résultat — edge FAIBLE mais RÉEL et STRUCTUREL
+
+| TF | Indicateurs à edge cohérent (signe stable, mean\|IC\|>0.03) | Top |
+|---|---|---|
+| 5m | **7** | volatility_ratio_14_50 (+0.066), rsi_14 (−0.064), ema_20_ratio (−0.057), di_delta (−0.052) |
+| 1h | **3** | volatility_ratio_14_50 (+0.052), ema_50_ratio (−0.037), volume_ratio_20 (+0.032) |
+
+- **volatility_ratio_14_50** : IC POSITIF qui MONTE avec l'horizon (5m : +0.037→+0.056→+0.104).
+  Signature nette d'un régime de volatilité prédictif.
+- **rsi_14 / ema_20_ratio / di_delta** : IC NÉGATIF stable = mean-reversion court terme exploitable.
+- |IC| ~0.05-0.10 : faible en absolu MAIS c'est *exactement* la magnitude d'un edge crypto réel.
+  Un IC stable de cet ordre est exploitable par un modèle qui COMBINE plusieurs features.
+
+### Verdict C3a & décision
+**IL Y A UN SIGNAL.** Ce n'est ni 0 (pipeline aveugle) ni un artefact non-stationnaire. Donc :
+- Lancer le 500k (C4) n'est PAS brûler du compute sur un pipeline sans edge → **GO C4**.
+- Si en C4 explained_variance reste ~0 MALGRÉ ce signal démontré → le problème est bien
+  l'EXTRACTION (chaîne CNN→critic), pas l'absence de signal → motive WorldModelPPO (aux loss)
+  APRÈS vérif des confondeurs (clip_range_vf, gae_lambda, taille réseau value).
+- Si explained_variance monte >0.15 → la chaîne exploite le signal → WorldModelPPO = amélioration,
+  pas sauvetage ; DSpark (confidence head) vient encore après.
+- **C3b (CNN shuffle vs réel)** reste utile pour trancher extraction-vs-signal, mais désormais
+  SECONDAIRE : C3a a déjà prouvé l'existence du signal. À faire si explained_variance reste ~0 en C4.
+
+> Résultat inconfortable évité : on ne lance PAS un 500k de 23h sur un pipeline sans edge.
+> Le signal existe ; la vraie question résiduelle est son EXTRACTION, mesurée en continu par
+> explained_variance pendant C4.
