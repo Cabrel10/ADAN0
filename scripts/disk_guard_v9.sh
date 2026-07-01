@@ -24,8 +24,9 @@ while true; do
       [ -f "$f" ] && : > "$f"
     done
     # Also cap the verbose training log if it grows huge (keep last ~50MB).
-    TLOG="$ROOT/logs/train_v9_500k.log"
-    if [ -f "$TLOG" ]; then
+    # Pick the most-recently-modified train log (v9, v10, timestamped...).
+    TLOG=$(ls -t "$ROOT"/logs/training/train_v*_500k_*.log "$ROOT"/logs/train_v*_500k.log 2>/dev/null | head -1)
+    if [ -n "${TLOG:-}" ] && [ -f "$TLOG" ]; then
       SZ=$(stat -c%s "$TLOG" 2>/dev/null || echo 0)
       if [ "$SZ" -gt $((300 * 1024 * 1024)) ]; then
         tail -c $((50 * 1024 * 1024)) "$TLOG" > "$TLOG.tmp" && mv "$TLOG.tmp" "$TLOG"
