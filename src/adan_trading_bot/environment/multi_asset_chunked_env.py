@@ -7376,7 +7376,17 @@ class MultiAssetChunkedEnv(gym.Env):
             # DIAGNOSTIC-V6: WARMUP ramp. Penalty scales 0->1 over the first
             # sterile_warmup_steps env steps so PPO can explore/learn BEFORE
             # being punished (user: 'trop agressive trop tot').
-            _warm = float(_rs.get('sterile_warmup_steps', 50000))
+            # DIAGNOSTIC-C1 (2026-07-01): warmup PAR RAISON. Le warmup ne doit
+            # protéger l'exploration QUE des fautes NON contrôlables. Le Cas B
+            # (min_notional_self_caused = sur-exposition auto-infligée = chemin de
+            # collapse PROUVÉ) ne mérite pas 50k steps de quasi-impunité : le calcul
+            # C1 montre qu'avec warmup=50k le frein ne dépasse le carburant latent MAX
+            # qu'à ~50k steps (mult=1), laissant une fenêtre de biais BUY. Warmup court
+            # (15k) pour cette famille -> frein plein bien avant 128k. Frais/reward
+            # INTACTS (on ne touche qu'à la RAMPE temporelle de la pénalité).
+            _warm_default = float(_rs.get('sterile_warmup_steps', 50000))
+            _warm_self_caused = float(_rs.get('sterile_warmup_steps_self_caused', 15000))
+            _warm = _warm_self_caused if reason == 'min_notional_self_caused' else _warm_default
             _cur = float(getattr(self, 'current_step', 0) or 0)
             _ramp = 1.0 if _warm <= 0 else min(1.0, _cur / _warm)
             _pen = _base * min(_cap / _base if _base > 0 else _cap,
