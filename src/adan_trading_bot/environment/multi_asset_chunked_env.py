@@ -7771,6 +7771,14 @@ class MultiAssetChunkedEnv(gym.Env):
             normalized_tp = (tp_raw + 1.0) / 2.0
             tp_pct = float(np.clip(tp_lo + normalized_tp * (tp_hi - tp_lo), tp_lo, tp_hi))
 
+            # CLAMP VISIBILITY (revue utilisateur) : capture du SL/TP demande
+            # par le DBE (mapping brut dans la bande, AVANT RR-enforcement et
+            # plancher ATR) pour logger tout ecart FINAL vs DBE. Le clamp ne
+            # doit plus etre silencieux : on mesure combien de trades sont
+            # reellement modifies par les garde-fous _BOUNDS / RR>=1.5 / ATR.
+            _sl_dbe = float(sl_pct)
+            _tp_dbe = float(tp_pct)
+
             # SATURATION FEED (V4): 1 si le raw pousse hors-bande (colle a un bord)
             # -> alimente la penalite de saturation (log, plafonnee) du reward.
             try:
@@ -7858,6 +7866,32 @@ class MultiAssetChunkedEnv(gym.Env):
                             f"[ATR_SL] {asset} scalper SL raised to {sl_pct:.4f} "
                             f"(3x ATR={atr_pct_estimate:.4f})"
                         )
+
+            # ---- CLAMP VISIBILITY : log FINAL vs DBE (revue utilisateur) ----
+            # Rend le clamp non silencieux. Compte + trace tout ecart entre le
+            # SL/TP demande par le DBE (_sl_dbe/_tp_dbe) et le SL/TP FINAL apres
+            # RR>=1.5 et plancher ATR. Signal faible non-nul pour le reward.
+            try:
+                _sl_moved = abs(float(sl_pct) - _sl_dbe) > 1e-6
+                _tp_moved = abs(float(tp_pct) - _tp_dbe) > 1e-6
+                if _sl_moved or _tp_moved:
+                    if not hasattr(self, "_clamp_n"):
+                        self._clamp_n = 0
+                        self._clamp_total = 0
+                    self._clamp_n += 1
+                    self._clamp_total += 1
+                    # signal faible mais non-nul : mauvaise GESTION de l arsenal
+                    self._step_invalid_penalty = getattr(
+                        self, "_step_invalid_penalty", 0.0) - 0.01
+                    if self._clamp_n % 50 == 0:
+                        self.logger.warning(
+                            f"[SL_TP_CLAMPED] {asset} | "
+                            f"sl_dbe={_sl_dbe:.4f} -> sl_final={float(sl_pct):.4f} | "
+                            f"tp_dbe={_tp_dbe:.4f} -> tp_final={float(tp_pct):.4f} | "
+                            f"n_clamped={self._clamp_total}"
+                        )
+            except Exception:
+                pass
 
             # ---- Anti-spam HOLD was moved up to prevent min_notional fake penalties ----
 
