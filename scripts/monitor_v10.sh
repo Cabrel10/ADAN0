@@ -34,8 +34,8 @@ while true; do
   # latest step from diag CSV (col 1 assumed = step) — robust: last numeric first field
   STEP=0; PCTBUY=""; PCTSELL=""; A0MEAN=""; A0STD=""; EV=""; ILLEGAL=""
   if [ -f "$CSV" ]; then
-    HEADER=$(head -1 "$CSV")
-    LASTROW=$(tail -1 "$CSV")
+    # Skip header: only consider data rows (first field numeric).
+    LASTROW=$(awk -F, 'NR>1 && $1 ~ /^[0-9]+$/ {row=$0} END{print row}' "$CSV")
     STEP=$(echo "$LASTROW" | awk -F, '{print $1}' | tr -dc '0-9')
     [ -z "$STEP" ] && STEP=0
   fi
