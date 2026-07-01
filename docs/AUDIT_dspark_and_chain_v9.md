@@ -192,3 +192,41 @@ avec l'utilisateur :
 **Décision retenue pour le prochain run** : garder PPO standard pour isoler l'effet du fix V9
 (anti-collapse) SANS changer l'architecture en même temps (une variable à la fois). MESURER
 explained_variance sur la durée. Si elle reste ~0 → prochaine itération = activer WorldModelPPO.
+
+---
+
+## 6. AUDIT 6 — Fuite de données du scaler (anti-lookahead) : PROPRE
+
+Vérifié à la source (`src/adan_trading_bot/data_processing/state_builder.py`), pas supposé.
+
+- **L.772-784** : `_fit_ratio = 0.70`. Le scaler est ajusté (`fit`) UNIQUEMENT sur les
+  premiers 70 % chronologiques de chaque chunk, puis figé pour transformer le reste.
+- **L.657** : garde `SKIPPING fit_scalers()` — empêche un re-fit involontaire sur des données
+  futures pendant l'inférence/rollout.
+- `prod_scalers/scalers_manifest.json` ne varie que par son timestamp entre deux runs (aucune
+  redéfinition des bornes) — cohérent avec un scaler figé.
+
+**Verdict : PROPRE.** Pas de lookahead via le scaler. Le critic à explained_variance ~0 n'est
+donc PAS expliqué par une fuite de normalisation qui aurait "aplati" le signal. Le problème (si
+problème il y a) est bien dans l'extraction/exploitation du signal, pas dans une contamination
+train→futur.
+
+---
+
+## 7. Tableau récapitulatif — état de la chaîne IA (post-audit)
+
+| Brique | Chargée / active ? | Signal prouvé corrélé ? | Note |
+|---|---|---|---|
+| CNN `ContextualTemporalFusionExtractor` | ✅ chargé (log sandbox) | ❓ non prouvé (AUDIT 5 à faire) | aux head existe mais loss non back-prop |
+| Cross-attention + FiLM | ✅ dans le CNN | ❓ non prouvé | idem |
+| `forward_predictor` (aux) | ✅ existe | ❌ loss jamais optimisée en sandbox | code "mort" en sandbox |
+| WorldModelPPO / aux_loss | ❌ NON en sandbox (PPO standard L.2099) | — | actif seulement path `main` |
+| Critic (value net) | ✅ actif | ❌ explained_variance ~0 (souvent négatif) | métrique reine = alarme |
+| Scaler anti-lookahead | ✅ fit 70 % chrono, figé | ✅ propre (AUDIT 6) | pas de fuite |
+| Reward shaping (signes) | ✅ audité | ✅ tous négatifs sauf bug `+0.002` corrigé (V9) | AUDIT 1 |
+
+**Synthèse** : après le fix V9, le collapse n'est plus l'inconnue principale. L'inconnue #1 est
+désormais : *le CNN + le critic extraient-ils un signal réellement corrélé au marché ?*
+- Preuve manquante décisive = **AUDIT 5 (shuffle/bruit + IC)** — à faire AVANT le prochain run long.
+- Métrique de suivi = **explained_variance** (GO si >0.15 et monte ; NO-GO/aux-loss si reste <0.1).
+- Décision WorldModelPPO / DSpark = seulement après ces deux mesures (une variable à la fois).
