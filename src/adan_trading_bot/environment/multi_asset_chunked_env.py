@@ -7611,20 +7611,38 @@ class MultiAssetChunkedEnv(gym.Env):
                         discrete_action = 0  # Override to HOLD
                         self.rejection_reasons["anti_spam_hold"] += 1
                         # ============================================================
-                        # ACM: BUY_WHILE_OPEN is a SYMPTOM of missing information,
-                        # not a strategic error. The agent should KNOW:
-                        #   - position open? (ACM [21] can_close = 1)
-                        #   - exposure already near target? (ACM [25] max_size_remaining)
-                        # With the Capability Vector, illegal BUYs become rare.
-                        # NO escalating penalty. Just telemetry + minimal signal.
-                        # The Capability Vector teaches legality; the penalty only
-                        # signals poor arsenal MANAGEMENT (not blindness).
+                        # DIAGNOSTIC-V8 (2026-07-01) — COLLAPSE ROOT-CAUSE FIX.
+                        # PROVEN by diagnostic_collapse_v8_500k.csv: at 124k-128k the
+                        # policy ran away to 100% BUY (a0_mean -> 476). Mechanism:
+                        #   agent-in-position -> BUY (illegal) -> forced HOLD here
+                        #   -> market rises -> positive reward -> PPO credits the
+                        #      SAMPLED action (raw BUY) -> P(BUY) grows -> runaway.
+                        # The old design bet "ACM observation teaches legality, no
+                        # penalty needed" FAILED: an observation feature cannot beat
+                        # a reward gradient that pays the illegal action.
+                        # FIX: apply a REAL, symmetric, escalating sterile penalty on
+                        # BUY-while-open (same machinery as sell_no_position) so the
+                        # market reward mis-credited to BUY is neutralised. The ACM
+                        # stays in the observation (still teaches legality); the
+                        # penalty removes the runaway fuel. Fees are NOT involved.
                         # ============================================================
+                        try:
+                            # V5 returns a tuple (pen, streak, acc, mult); the
+                            # penalty is SUBTRACTED from reward (same sign
+                            # convention as sell_no_position at L.8162).
+                            _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5("anti_spam_hold")
+                            self._step_invalid_penalty += -_pv5
+                            if hasattr(self, "_invalid_window") and self._invalid_window is not None:
+                                self._invalid_window.append(1)
+                        except Exception:
+                            # Fallback: fixed non-zero penalty if the V5 helper is
+                            # unavailable. Must stay > market micro-reward per step.
+                            self._step_invalid_penalty += -0.05
                         if self.current_step % 100 == 0:
                             self.logger.info(
                                 f"[BUY_WHILE_OPEN] {asset} exposure={current_exposure:.2%} ~ "
                                 f"target={target_exposure_pct:.2%} -> OVERRIDE TO HOLD "
-                                f"(ACM: agent should read can_open signal)"
+                                f"+ sterile_pen (V8 anti-runaway)"
                             )
                         pass 
 
