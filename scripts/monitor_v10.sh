@@ -18,10 +18,32 @@ CHECK_EVERY=60
 MILESTONE=25000
 mkdir -p "$ROOT/logs/training"
 : > "$ALERTS"
-echo "[monitor] started $(date)" >> "$ALERTS"
+echo "[monitor] started $(date) self_pid=$$" >> "$ALERTS"
 last_milestone=0
+
+# Match ONLY the real python trainer; exclude our own PID/parent (see disk_guard §4).
+TRAIN_PAT="python.*train_parallel_agents\.py.*--steps[= ]500000"
+train_alive() {
+  pgrep -f "$TRAIN_PAT" 2>/dev/null | grep -vx -e "$$" -e "$PPID" | grep -q .
+}
+
+# BUGFIX (premature exit): if launched a few seconds before the trainer registers
+# its cmdline, the old loop saw no match on iteration 1 and declared RUN ENDED.
+# Wait for the trainer to APPEAR first (bounded grace ~5min); only then arm the
+# exit loop. If it never appears, say so instead of pretending the run ended.
+STARTUP_GRACE=300  # seconds to wait for the trainer to show up
+waited=0
+until train_alive; do
+  if [ "$waited" -ge "$STARTUP_GRACE" ]; then
+    echo "[monitor] trainer never appeared within ${STARTUP_GRACE}s @ $(date) — exiting (was it launched?)" >> "$ALERTS"
+    exit 0
+  fi
+  sleep 5; waited=$((waited + 5))
+done
+echo "[monitor] trainer detected after ${waited}s @ $(date) — arming watch loop" >> "$ALERTS"
+
 while true; do
-  if ! pgrep -f "train_parallel_agents.*500000" >/dev/null 2>&1; then
+  if ! train_alive; then
     echo "[monitor] RUN ENDED (process gone) @ $(date)" >> "$ALERTS"
     # capture final EV/step from log
     TLOG=$(ls -t "$ROOT"/logs/training/train_v10_500k_*.log 2>/dev/null | head -1)
