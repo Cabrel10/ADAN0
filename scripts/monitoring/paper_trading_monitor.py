@@ -536,6 +536,11 @@ class PaperTradingMonitor:
 
     def load_model(self, model_path=None):
         """Load the PPO model for inference."""
+        # If a model was already explicitly loaded (e.g. via --model before run()),
+        # a no-arg re-load call from run() must NOT clobber it with the default
+        # search. Return success and keep the already-loaded model.
+        if model_path is None and getattr(self, "model", None) is not None:
+            return True
         if model_path is None:
             candidates = [
                 PROJECT_ROOT / "models" / "rl_agents" / "production" / "model.zip",
