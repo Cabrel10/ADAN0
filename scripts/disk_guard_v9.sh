@@ -9,10 +9,21 @@ ROOT="/home/ubuntu/webapp/MORNINGSTAR/ADAN0"
 THRESHOLD_KB=$((2 * 1024 * 1024))   # 2 GiB
 LOGF="$ROOT/logs/disk_guard_v9.log"
 mkdir -p "$ROOT/logs"
-echo "[disk_guard] started $(date) threshold=${THRESHOLD_KB}KB" >> "$LOGF"
+# Match ONLY the real Python training process, and never our own PID/children.
+# Rationale (§4): `pgrep -f "train_parallel_agents.*500000"` also matches any
+# shell/launcher/echo whose cmdline merely CONTAINS that substring (verified: an
+# interactive shell referencing the pattern was matched). We therefore (a) anchor
+# on a `python ... train_parallel_agents.py ... --steps 500000` invocation that a
+# wrapper shell cannot satisfy, and (b) exclude our own PID and parent via -v.
+TRAIN_PAT="python.*train_parallel_agents\.py.*--steps[= ]500000"
+train_alive() {
+  # -v excludes our own PID ($$) and parent ($PPID) so the guard never self-matches.
+  pgrep -f "$TRAIN_PAT" 2>/dev/null | grep -vx -e "$$" -e "$PPID" | grep -q .
+}
+echo "[disk_guard] started $(date) threshold=${THRESHOLD_KB}KB pat='$TRAIN_PAT' self_pid=$$" >> "$LOGF"
 while true; do
   # Stop if the 500k training is no longer running.
-  if ! pgrep -f "train_parallel_agents.*500000" >/dev/null 2>&1; then
+  if ! train_alive; then
     echo "[disk_guard] training gone, exiting $(date)" >> "$LOGF"
     break
   fi
