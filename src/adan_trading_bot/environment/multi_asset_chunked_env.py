@@ -6772,7 +6772,74 @@ class MultiAssetChunkedEnv(gym.Env):
             "future_contrib":   future_contrib,
             "raw":              raw_reward,
             "final_reward":     final_reward,
+            # V11 telemetry: components not previously exported
+            "symmetry_penalty": symmetry_penalty,
+            "action_entropy_penalty": action_entropy_penalty,
+            "latent_pnl":       latent_pnl_contrib,
+            "saturation_penalty": saturation_penalty,
         }
+
+        # ──────────────────────────────────────────────────────────────────
+        # V11 REWARD-COMPONENT TELEMETRY (Phase 2) — NON-INVASIVE.
+        # Sampled writer (default 1/100 steps) to prove which term drives the
+        # reward per position-state, instead of inferring. Gated by env var so
+        # it is ZERO cost when disabled. Never alters final_reward.
+        #   ADAN_REWARD_TELEM=1              -> enable
+        #   ADAN_REWARD_TELEM_EVERY=100      -> sample period (steps)
+        #   ADAN_REWARD_TELEM_CSV=logs/training/reward_components.csv
+        # ──────────────────────────────────────────────────────────────────
+        try:
+            if os.environ.get("ADAN_REWARD_TELEM", "0") == "1":
+                _every_t = int(os.environ.get("ADAN_REWARD_TELEM_EVERY", "100") or 100)
+                if _every_t <= 0:
+                    _every_t = 100
+                if int(self.current_step) % _every_t == 0:
+                    # position state (flat / long) — SPOT long-only, any open pos => long
+                    _pos_state = "flat"
+                    try:
+                        for _p in self.portfolio_manager.positions.values():
+                            if getattr(_p, "is_open", False):
+                                _pos_state = "long"
+                                break
+                    except Exception:
+                        _pos_state = "unknown"
+                    # decode action[0] -> BUY/SELL/HOLD
+                    try:
+                        _a0 = float(action[0]) if action is not None and len(action) > 0 else 0.0
+                    except Exception:
+                        _a0 = 0.0
+                    if _a0 > 0.10:
+                        _act = "BUY"
+                    elif _a0 < -0.10:
+                        _act = "SELL"
+                    else:
+                        _act = "HOLD"
+                    try:
+                        _pv = float(self.portfolio_manager.get_portfolio_value())
+                    except Exception:
+                        _pv = float("nan")
+                    _csvp = os.environ.get("ADAN_REWARD_TELEM_CSV", "logs/training/reward_components.csv")
+                    try:
+                        os.makedirs(os.path.dirname(_csvp), exist_ok=True)
+                    except Exception:
+                        pass
+                    _need_hdr = not os.path.exists(_csvp)
+                    with open(_csvp, "a") as _fh:
+                        if _need_hdr:
+                            _fh.write("step,worker,raw_reward,final_reward,pnl_base,latent_pnl,"
+                                      "future_contrib,promotion_bonus,demotion_penalty,closure_bonus,"
+                                      "drawdown_penalty,symmetry_penalty,action_entropy_penalty,"
+                                      "saturation_penalty,position_state,action,a0,portfolio\n")
+                        _fh.write(
+                            f"{int(self.current_step)},{int(getattr(self,'worker_id',0))},"
+                            f"{raw_reward:.6f},{final_reward:.6f},{pnl_base_reward:.6f},"
+                            f"{latent_pnl_contrib:.6f},{future_contrib:.6f},{promotion_bonus:.6f},"
+                            f"{demotion_penalty:.6f},{closure_bonus:.6f},{drawdown_penalty:.6f},"
+                            f"{symmetry_penalty:.6f},{action_entropy_penalty:.6f},"
+                            f"{saturation_penalty:.6f},{_pos_state},{_act},{_a0:.4f},{_pv:.4f}\n"
+                        )
+        except Exception:
+            pass
 
         return float(final_reward)
 
