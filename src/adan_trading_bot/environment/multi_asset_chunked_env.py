@@ -26,6 +26,7 @@ from collections import deque
 from ..exchange_api.websocket_manager import WebSocketManager
 from ..exchange_api.connector import get_exchange_client
 from ..common.utils import get_logger
+from .action_routing import route_action_by_state as _route_action_by_state  # v12 state-conditioned routing
 from ..common.logging_utils import create_smart_logger, configure_smart_logger
 
 logger = get_logger(__name__)
@@ -7621,14 +7622,37 @@ class MultiAssetChunkedEnv(gym.Env):
 
             main_decision = action_raw
 
-            # Discrete action
-            discrete_action = 0
-            if main_decision < -action_threshold:
-                discrete_action = 2  # Sell
-            elif main_decision > action_threshold:
-                discrete_action = 1  # Buy
-            else:
-                discrete_action = 0  # Hold — no signal strong enough
+            # ================================================================
+            # V12 — STATE-CONDITIONED ACTION ROUTING (docs/ARCHITECTURE_ACTION_ROUTING_v12.md)
+            # Replaces the symmetric BUY/HOLD/SELL decode which forced the agent
+            # to experience direction-illegal actions (SELL-while-flat,
+            # BUY-while-open) and collapsed the policy to always-BUY (V10@70k,
+            # V11@78k). Routing per asset slot, by portfolio state:
+            #   FLAT : a0 > +thr -> BUY  ; else -> HOLD (neutral, even a0=-1)
+            #   LONG : a0 < -thr -> SELL ; else -> HOLD (neutral, even a0=+1)
+            #   FLAT & slot beyond tier quota -> HOLD (NOOP, neutral)
+            # Only action[0] is routed; dims 1-4 (Size/TF/SL/TP) untouched.
+            # ================================================================
+            _pos_for_route = self.portfolio_manager.positions.get(asset)
+            _in_pos_route = bool(_pos_for_route is not None and getattr(_pos_for_route, "is_open", False))
+            try:
+                _lt = getattr(self, "_locked_tier", None)
+                _max_slots = int(_lt.get("max_concurrent_positions", 1)) if isinstance(_lt, dict) else 1
+            except Exception:
+                _max_slots = 1
+            try:
+                _n_open = len([pp for pp in self.portfolio_manager.positions.values()
+                               if getattr(pp, "is_open", False)])
+            except Exception:
+                _n_open = 1 if _in_pos_route else 0
+            _slot_available = _n_open < max(1, _max_slots)
+
+            discrete_action = _route_action_by_state(
+                main_decision,
+                in_position=_in_pos_route,
+                slot_available=_slot_available,
+                threshold=action_threshold,
+            )
 
             if i == 0:
                 first_discrete_action_requested = discrete_action  # before gates
@@ -7692,43 +7716,17 @@ class MultiAssetChunkedEnv(gym.Env):
                         pass
                     exposure_diff = abs(target_exposure_pct - current_exposure)
                     if exposure_diff < 0.10:  # Within 10% -> no action needed (OMEGA-4E)
-                        discrete_action = 0  # Override to HOLD
-                        self.rejection_reasons["anti_spam_hold"] += 1
                         # ============================================================
-                        # DIAGNOSTIC-V8 (2026-07-01) — COLLAPSE ROOT-CAUSE FIX.
-                        # PROVEN by diagnostic_collapse_v8_500k.csv: at 124k-128k the
-                        # policy ran away to 100% BUY (a0_mean -> 476). Mechanism:
-                        #   agent-in-position -> BUY (illegal) -> forced HOLD here
-                        #   -> market rises -> positive reward -> PPO credits the
-                        #      SAMPLED action (raw BUY) -> P(BUY) grows -> runaway.
-                        # The old design bet "ACM observation teaches legality, no
-                        # penalty needed" FAILED: an observation feature cannot beat
-                        # a reward gradient that pays the illegal action.
-                        # FIX: apply a REAL, symmetric, escalating sterile penalty on
-                        # BUY-while-open (same machinery as sell_no_position) so the
-                        # market reward mis-credited to BUY is neutralised. The ACM
-                        # stays in the observation (still teaches legality); the
-                        # penalty removes the runaway fuel. Fees are NOT involved.
+                        # V12 — DEAD BRANCH under state-conditioned routing.
+                        # route_action_by_state() never returns BUY (discrete=1)
+                        # when in_position, so BUY-while-open is structurally
+                        # unreachable. Neutral HOLD, ZERO penalty. The old V8
+                        # anti-runaway sterile penalty is REMOVED: it existed only
+                        # to counter the reward mis-credited to the illegal BUY the
+                        # agent could sample — that action no longer exists.
                         # ============================================================
-                        try:
-                            # V5 returns a tuple (pen, streak, acc, mult); the
-                            # penalty is SUBTRACTED from reward (same sign
-                            # convention as sell_no_position at L.8162).
-                            _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5("anti_spam_hold")
-                            self._step_invalid_penalty += -_pv5
-                            if hasattr(self, "_invalid_window") and self._invalid_window is not None:
-                                self._invalid_window.append(1)
-                        except Exception:
-                            # Fallback: fixed non-zero penalty if the V5 helper is
-                            # unavailable. Must stay > market micro-reward per step.
-                            self._step_invalid_penalty += -0.05
-                        if self.current_step % 100 == 0:
-                            self.logger.info(
-                                f"[BUY_WHILE_OPEN] {asset} exposure={current_exposure:.2%} ~ "
-                                f"target={target_exposure_pct:.2%} -> OVERRIDE TO HOLD "
-                                f"+ sterile_pen (V8 anti-runaway)"
-                            )
-                        pass 
+                        # v12: neutral HOLD, no counter bump (not an illegal action).
+                        discrete_action = 0  # Override to HOLD (neutral, no penalty) 
 
                 # ── SIZE_GATE: Never exceed available cash ──────────
                 # This prevents virtual debt when capital drops below
@@ -7784,37 +7782,22 @@ class MultiAssetChunkedEnv(gym.Env):
                         _is_self_caused = _open_pos_count > 0
                         if _is_self_caused:
                             # ============================================================
-                            # DIAGNOSTIC-V9 (2026-07-01) — REAL COLLAPSE ROOT-CAUSE.
-                            # PROVEN by the v9 500k run: this Cas-B branch (BUY while
-                            # already in position, cash < min_order because the agent
-                            # spent it) is the path ACTUALLY taken (min_notional rejects
-                            # 380+/window), NOT the exposure_diff<0.10 anti_spam_hold
-                            # branch (which stayed at 0). The old code added a POSITIVE
-                            # +0.002 mgmt "penalty" -> it REWARDED the illegal BUY. The
-                            # market (position held) also pays a positive latent_pnl each
-                            # step. PPO credits the SAMPLED illegal BUY with both -> the
-                            # 100%-BUY runaway. FIX: sign was WRONG (+ instead of -) and
-                            # magnitude was negligible. Route through the streak-escalated
-                            # sterile penalty V5 (same machinery as sell_no_position /
-                            # anti_spam_hold) and SUBTRACT it (-_pv5). Fees NOT involved.
+                            # V12 — NEUTRALIZED under state-conditioned routing.
+                            # A BUY is now only ROUTED when the agent is flat on THIS
+                            # asset (route_action_by_state). Insufficient cash to open
+                            # is a pure sizing constraint, NOT an illegal action and NOT
+                            # a fault -> NEUTRAL HOLD, ZERO penalty (matches the v12 spec:
+                            # "si manque de cash -> HOLD neutre"). The old V9 sterile
+                            # penalty existed only to neutralise the reward mis-credited
+                            # to the illegal BUY-while-open the agent could sample; that
+                            # action no longer exists. Re-adding it would re-introduce
+                            # the gradient pollution v12 removes. Fees NOT involved.
                             # ============================================================
-                            try:
-                                _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5("min_notional_self_caused")
-                                self._step_invalid_penalty += -_pv5
-                                _mgmt_pen = -_pv5
-                                if hasattr(self, "_invalid_window") and self._invalid_window is not None:
-                                    self._invalid_window.append(1)
-                            except Exception:
-                                # Fallback: fixed NEGATIVE penalty (must beat the per-step
-                                # latent_pnl micro-reward that fuels the runaway).
-                                _mgmt_pen = -0.05 * min(_open_pos_count, 3)
-                                self._step_invalid_penalty += _mgmt_pen
                             if self.current_step % 100 == 0:
                                 self.logger.info(
                                     f"[CASH_FLOOR_B] {asset} cash=${available_cash_for_sizing:.2f} "
                                     f"< min_order=${min_order_value:.2f} | "
-                                    f"open_pos={_open_pos_count} -> HOLD + sterile_pen={_mgmt_pen:.4f} "
-                                    f"(V9 anti-runaway: agent caused cash deficit)"
+                                    f"open_pos={_open_pos_count} -> HOLD NEUTRAL (v12: no penalty)"
                                 )
                         else:
                             # Cas A: neutral — impossible action, not a fault
@@ -8262,22 +8245,20 @@ class MultiAssetChunkedEnv(gym.Env):
             #   bornee par un cap (jamais exponentiel non maitrise).
             # ================================================================
             if discrete_action == 2 and not is_open:
-                self.invalid_trade_attempts += 1
-                try:
-                    self.rejection_reasons["sell_no_position"] += 1
-                except Exception:
-                    self.rejection_reasons["sell_no_position"] = 1
-                # --- DIAGNOSTIC-V5: streak-escalated sterile penalty ---
-                _pv5, _sk5, _ac5, _mu5 = _sterile_penalty_v5('sell_no_position')
-                self._step_invalid_penalty += -_pv5
-                try: self._invalid_window.append(1)
-                except Exception: pass
-                if self.current_step % 50 == 0:
-                    self.logger.warning(
-                        f'[STERILE_SELL] {asset} | SELL sans position | '
-                        f'streak={_sk5} acc={_ac5:.2f} mult={_mu5:.1f} '
-                        f'pen=-{_pv5:.5f}')
-                # action reste HOLD (rien a fermer), mais elle n'est plus gratuite.
+                # ============================================================
+                # V12 — DEAD BRANCH under state-conditioned routing.
+                # route_action_by_state() can NEVER return SELL when flat, so
+                # this is structurally unreachable in normal training. We keep a
+                # NEUTRAL telemetry-only guard (zero penalty, zero gradient) as a
+                # defensive net in case an external caller forces discrete=2
+                # while flat. The old sterile penalty (V5) is REMOVED: SELL-while-
+                # flat is no longer an "illegal action" the agent can sample — it
+                # is simply routed to HOLD upstream. Re-adding a penalty here
+                # would re-introduce the gradient pollution v12 was built to kill.
+                # ============================================================
+                # v12: do NOT bump any rejection counter here — a routed HOLD is
+                # not an illegal action; counting it would pollute illegal_ratio.
+                discrete_action = 0  # force neutral HOLD, no penalty
 
             # ================================================================
             # B. BUY — ouvre une position (USDT → crypto)
