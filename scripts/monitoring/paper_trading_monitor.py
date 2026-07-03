@@ -66,6 +66,10 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from adan_trading_bot.common.config_loader import ConfigLoader
 from adan_trading_bot.data_processing.data_loader import ChunkedDataLoader
 from adan_trading_bot.environment.multi_asset_chunked_env import MultiAssetChunkedEnv
+from adan_trading_bot.environment.action_routing import (
+    route_action_by_state as _route_action_by_state,
+    HOLD as _RT_HOLD, BUY as _RT_BUY, SELL as _RT_SELL,
+)  # v12 shared state-conditioned routing (single source of truth)
 
 try:
     from adan_trading_bot.agent.feature_extractors import (
@@ -362,8 +366,19 @@ def get_capital_tier(balance: float, tiers: list) -> dict:
 
 
 # ── Action interpreter ─────────────────────────────────────────────────────
-def interpret_target_weight_action(action_raw, has_position: bool) -> dict:
+def interpret_target_weight_action(action_raw, has_position: bool,
+                                   slot_available: bool = True,
+                                   threshold: float = 0.10) -> dict:
     """Interpret the continuous Target-Weight action vector.
+
+    v12: delegates the DIRECTION decision to the SHARED state-conditioned
+    router (adan_trading_bot.environment.action_routing.route_action_by_state)
+    so the paper/live decode is byte-identical to the training env. Single
+    source of truth for how action[0] maps to BUY/HOLD/SELL:
+
+      * FLAT : a0 > +thr -> BUY  ; else -> HOLD (even a0 = -1, no penalty)
+      * LONG : a0 < -thr -> SELL ; else -> HOLD (even a0 = +1)
+      * FLAT & slot beyond quota -> HOLD (NOOP)
 
     Returns dict with keys: signal, size_raw, confidence.
     """
@@ -375,18 +390,19 @@ def interpret_target_weight_action(action_raw, has_position: bool) -> dict:
         signal_raw = 0.0
         size_raw = 0.0
 
-    # Dynamic exit: agent signals negative while already long
-    if has_position and signal_raw < -0.1:
-        return {"signal": "DYNAMIC_EXIT", "size_raw": size_raw,
-                "confidence": abs(signal_raw)}
-
-    if signal_raw > 0.33:
+    discrete = _route_action_by_state(
+        signal_raw,
+        in_position=bool(has_position),
+        slot_available=bool(slot_available),
+        threshold=threshold,
+    )
+    if discrete == _RT_BUY:
         return {"signal": "BUY", "size_raw": size_raw,
-                "confidence": min(signal_raw, 1.0)}
-    elif signal_raw < -0.33:
+                "confidence": min(abs(signal_raw), 1.0)}
+    if discrete == _RT_SELL:
+        # Label kept as SELL; caller's execute_signal closes the position.
         return {"signal": "SELL", "size_raw": size_raw,
                 "confidence": min(abs(signal_raw), 1.0)}
-
     return {"signal": "HOLD", "size_raw": size_raw,
             "confidence": 1.0 - abs(signal_raw) * 2}
 
