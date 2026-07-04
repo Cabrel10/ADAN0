@@ -13,7 +13,7 @@ mkdir -p "$ROOT/logs"
 
 # Anchor patterns on real python invocations a wrapper shell cannot satisfy,
 # and exclude our own PID/parent via -vx so the guard never self-matches.
-TRAIN_PAT="python.*train_parallel_agents\.py.*--steps[= ]500000"
+TRAIN_PAT="python.*train_parallel_agents\.py.*--steps[= ][0-9]\{6,\}"
 PAPER_PAT="python.*paper_trading_monitor\.py"
 
 proc_alive() {
