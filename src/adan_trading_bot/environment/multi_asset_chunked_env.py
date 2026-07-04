@@ -6798,10 +6798,45 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             smart_flat_reward = 0.0
 
+        # ------------------------------------------------------------------
+        # TIME DECAY (v13.1 — TERME RESTAURÉ de la version du 6 juin 2026).
+        # Archeologie git (docs/COLLAPSE_VERDICT_1M_v13.md §3): la reward du 6 juin
+        # (commit 7405039) avait `time_decay: -0.01` appliqué À CHAQUE STEP
+        # (commentaire d'origine: "makes HOLD cost 5 steps worth of reward, forcing
+        # the agent to trade"). C'était la SEULE pression per-step toujours active,
+        # équilibrée contre capacity_weight (+0.1). La réécriture V3/V4 (tier-based +
+        # Future Arena) a SILENCIEUSEMENT abandonné ce terme (config le déclare
+        # encore mais l'env ne le lit plus) -> plus aucun coût per-step structurel
+        # pour contrer la dérive BUY -> a0_mean diverge à +4.34 @88k.
+        # Ici on le RÉTABLIT: coût fixe NEGATIF à CHAQUE step (flat ET en position).
+        # PILOTABLE UNIQUEMENT par ADAN_TIME_DECAY (défaut OFF = 0.0). On NE lit PAS
+        # la config auto: §3 "une variable à la fois", rien ne doit s'activer en douce.
+        # ARCHEOLOGIE 6-juin (reward_calculator.py L.316-321, commit 7405039):
+        #   * valeur validee = -1e-3 (-0.001), PAS -0.01 (la config declare -0.01 mais
+        #     l'env ne l'a jamais lue). r += time_decay, SYMETRIQUE, inconditionnel.
+        #   * capacity_weight/position_bonus avaient ete REVERT (Run#8 ev=-5.11 ->
+        #     Run#9 ev=-9.29 REGRESSION) -> il ne restait QUE time_decay + realized PnL.
+        #   -> restaurer time_decay SEUL (symetrique) est bien la direction anti-derive
+        #      qui marchait; l'inquietude "time_decay+capacity recompense le holding"
+        #      est LEVEE car capacity etait deja retire le 6-juin.
+        # Frais 0.5% et dims 1-4 INTACTS (terme additif pur).
+        # ------------------------------------------------------------------
+        time_decay_cost = 0.0
+        try:
+            import os as _os_td
+            _td_env = _os_td.environ.get("ADAN_TIME_DECAY")
+            if _td_env is not None:
+                _td = float(_td_env or 0.0)  # negatif = cout par step
+                if _td != 0.0:
+                    time_decay_cost = _td
+        except Exception:
+            time_decay_cost = 0.0
+
         raw_reward = (
             pnl_base_reward  # PnL signal (terme structurant)
             + holding_cost  # v13: coût de détention (anti disposition-effect)
             + smart_flat_reward  # v13: signal POSITIF pour HOLD-flat intelligent
+            + time_decay_cost  # v13.1: coût per-step RESTAURÉ (6 juin) anti-dérive
             + promotion_bonus  # Tier promotion (gros incitatif)
             + demotion_penalty  # Tier demotion (grosse penalite)
             + closure_bonus  # Bonus de cloture active / penalite MaxDuration
