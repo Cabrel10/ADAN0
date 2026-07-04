@@ -179,3 +179,78 @@ ailleurs : le reward.
 - `logs/training/diag_v12_500k.csv` — diag du collapse V12 (preuve §3).
 - `logs/training/reward_components_v12.csv` — composantes reward (preuve §4, échantillon faible).
 - `checkpoints/*.zip` — voir `docs/CHECKPOINTS_INVENTORY.md`.
+
+---
+
+## 11. CORRECTIONS V13 (2026-07-04) — révision méthodologique (analyse user)
+
+> Cette section **corrige** les conclusions des §3–§9 ci-dessus. En cas de conflit,
+> **la §11 fait foi.**
+
+### 11.1 — "flat est puni" : confusion état/étape (CORRECTION MAJEURE)
+La lecture "future_contrib = −0.112 punit l'état flat" est **fausse**. Dans
+`reward_components_v12.csv`, `position_state="flat"` est enregistré **au moment de la
+fermeture** d'un trade (le SELL vient de s'exécuter, `is_open→False`). Donc ce −0.112
+punit la **qualité de la sortie** (TP/SL sous-optimal vs candles futures), **pas** le
+fait d'être flat. Le moteur n'est pas "fuir l'état flat" mais **"éviter de fermer une
+position mal placée"**.
+
+### 11.2 — future_contrib : disculpé AVEC RÉSERVE (conclusion précédente prématurée)
+L'ablation `future_contrib=0` n'a de points qu'à @2k/@4k (10k max) — **phase
+d'initialisation** où baseline et ablation sont encore équilibrés. La dérive V12
+n'apparaît qu'après @10k. **On ne peut donc PAS conclure** que future_contrib n'est
+pas le moteur sur cette base. Il faut @8k–@10k minimum, idéalement le run 500k complet.
+future_contrib est **partiellement disculpé, non blanchi**.
+
+### 11.3 — 7 méthodes math = théâtre statistique à cette échelle
+PCA/LDA/SVD/moyennes h·g/t-test sur 5–6 points ne prouvent rien de plus qu'un coup
+d'œil sur la trajectoire (PC1 explique 70–90% par artefact géométrique ; rang SVD≈1
+automatique ; t-test n=5 sous-puissant → "non significatif" = "on ne peut conclure",
+PAS "pentes identiques"). **Règle : <30 points → comparaison de trajectoires + régression
+linéaire simple avec IC 95% honnête. PAS de PCA/LDA/SVD.** `scripts/analysis/collapse_math_analysis.py`
+est conservé pour l'historique mais NE DOIT PAS être réutilisé à cette échelle.
+
+### 11.4 — holding_cost h=0.001 : mal calibré, CONFIRMÉ PAR MESURE
+Run complet récupéré (5 points @2k–10k) : pct_buy 0.485→0.623, drift **NON cassé**.
+Cause : h=0.001 comparé à `closure_bonus` (0.5, événement rare) au lieu des composantes
+per-step. **Mesure (docs/CALIBRATION_AUDIT.md §2, n=52 steps long)** : symmetry_penalty
+|mean|=0.00404, somme per-step 0.00426 (std 0.00256). **h=0.001 est ~4× sous le bruit
+d'une seule pénalité active** → noyé. h à re-dériver ∈ [0.004, 0.012], test en bracket.
+
+### 11.5 — Le VRAI moteur : asymétrie de VARIANCE (nouvelle hypothèse principale)
+Les données prouvent que l'asymétrie réelle est entre **HOLD-flat (reward=0, variance
+nulle)** et **BUY-flat (reward≠0, variance non nulle sur trades gagnants)**. PPO, face à
+une action toujours neutre et une action parfois positive, **converge vers la seconde
+même si son espérance est négative**. Le fix n'est PAS d'ablater Future Arena mais
+d'ajouter un **signal POSITIF pour le HOLD intelligent** : récompenser les steps flat où
+le marché AURAIT baissé si on avait acheté.
+→ **Implémenté : `ADAN_SMART_FLAT`** (hook anti-oracle, lookahead chunk-futur).
+Calibré par mesure (smoke test sur 5m réel) : k=0.05 → mean-active 0.0275 ≈ somme
+per-step 0.0043 ; actif ~13.9% des steps flat. Bracket à tester : k ∈ {0.02,0.05,0.10,0.20}.
+
+### 11.6 — Routage : nécessaire mais pas suffisant (accélération ≠ invalidation)
+Supprimer les gradients illégaux (routage) rend l'apprentissage plus propre → accélère
+AUSSI la convergence vers le minimum dégénéré si le reward y pousse encore. Le routage
+est une **condition nécessaire non suffisante** ; dire qu'il "invalide l'hypothèse" est
+excessif.
+
+### 11.7 — Couverture 1h/4h dégénérée (réserve sur TOUT "signal exploité")
+Mesuré : **1h ne couvre que 14.6%** de la fenêtre 5m (fin @2025-08-15 vs 5m @2026-05-12,
+~9 mois manquants) ; 4h couvre 70.6%. Pendant ~85% du run, le canal 1h est figé (ffill).
+**Toute conclusion sur "le modèle exploite un signal temporel" doit porter cette réserve.**
+Motive le test C3b (shuffle temporel).
+
+### 11.8 — Bug "doublons" reward_components_v12.csv : RÉSOLU (pas un bug de données)
+74 lignes / 7 steps uniques, **worker 0 seul, 0 doublon exact** → 74 évaluations reward
+RÉELLEMENT distinctes. C'est un artefact de **libellé** (step diag grossier), pas une
+corruption. CSV **fiable pour la mesure de magnitude**. Fix libellé = priorité basse.
+
+### 11.9 — Collapse-breaker rendu OPT-IN
+Le "tueur de script" (DiagnosticCollapseCallback, return False @pct_buy≥0.97×2) tuerait
+un 500k vers ~40–70k, détruisant la plage visuelle voulue. Désormais **OPT-IN via
+`ADAN_COLLAPSE_BREAKER=1`** (défaut OFF = télémétrie seule, le run va au bout).
+
+### 11.10 — Run : 500k, PAS 10k
+~5h entre sessions → les runs 10k ne servent à rien. Lancer **500k** (breaker OFF,
+DIAG_EVERY=500) pour donner à la prochaine session une plage visuelle large, **tout en
+analysant pendant l'entraînement**.
