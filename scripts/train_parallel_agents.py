@@ -2281,7 +2281,13 @@ if __name__ == "__main__":
     parser.add_argument("--envs-per-worker", type=int, default=2, help="Sub-envs per worker (SubprocVecEnv)")
     parser.add_argument("--use-subproc", action="store_true", default=False, help="Use SubprocVecEnv (default: off)")
     parser.add_argument("--no-subproc", action="store_true", help="Use DummyVecEnv (default behaviour)")
-    parser.add_argument("--steps", type=int, default=1_000_000, help="Total training timesteps")
+    parser.add_argument("--steps", type=int, default=None,
+                        help="Total training timesteps. In sandbox mode, if omitted "
+                             "falls back to config [sandbox.max_training_steps]. "
+                             "In heavy mode, defaults to 1_000_000. An explicit value "
+                             "(incl. 1000000) is ALWAYS honored (bugfix v13: the old "
+                             "default 1_000_000 collided with the 'use config' sentinel, "
+                             "silently truncating explicit 1M runs to 10k).")
     parser.add_argument("--steps-per-iter", type=int, default=10_000, help="Timesteps per PBT iteration")
     parser.add_argument("--log-level", type=str, default="INFO", help="Logging level")
     parser.add_argument("--checkpoint-dir", type=str, default=None, help="Override checkpoint dir")
@@ -2306,9 +2312,12 @@ if __name__ == "__main__":
     if args.mode == "sandbox":
         # ─── SANDBOX MODE ───
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-        # steps=None means "read from config.yaml [sandbox.max_training_steps]"
+        # steps=None means "read from config.yaml [sandbox.max_training_steps]".
+        # v13 bugfix: pass args.steps VERBATIM. --steps default is now None (not
+        # 1_000_000), so an explicit --steps 1000000 is honored instead of being
+        # silently reinterpreted as "unspecified -> use config (10000)".
         result = sandbox_train(
-            steps=args.steps if args.steps != 1_000_000 else None,
+            steps=args.steps,
             config_path=args.config if args.config != "config/config.yaml" else None,
             resume_ckpt=args.resume_from,
             checkpoint_out=args.checkpoint_out,
@@ -2326,7 +2335,7 @@ if __name__ == "__main__":
             num_samples=args.num_samples,
             envs_per_worker=args.envs_per_worker,
             use_subproc=not args.no_subproc,
-            total_steps=args.steps,
+            total_steps=(args.steps if args.steps is not None else 1_000_000),
             interval_timesteps=args.steps_per_iter,
             log_level=args.log_level,
             checkpoint_dir=args.checkpoint_dir,
