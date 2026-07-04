@@ -509,6 +509,14 @@ class DiagnosticCollapseCallback(BaseCallback):
         # transient spike (2 windows = 2*log_every steps of sustained collapse).
         self._collapse_streak = 0
         self._collapse_needed = 2
+        # DIAGNOSTIC-V13 (2026-07-04): the hard-stop breaker is now OPT-IN.
+        # Rationale (user): killing a 500k run at first collapse (~40-70k) destroys
+        # the wide visual range needed to study the FULL collapse trajectory across
+        # sessions. Default OFF = telemetry-only ("measure -> observe, never kill").
+        # Set ADAN_COLLAPSE_BREAKER=1 to re-arm the hard stop (e.g. cost-saving runs).
+        self._breaker_enabled = (
+            os.environ.get("ADAN_COLLAPSE_BREAKER", "0").strip() in ("1", "true", "True")
+        )
 
     def _reset_window(self):
         self._a0 = []                 # continuous action0 seen this window
@@ -605,7 +613,10 @@ class DiagnosticCollapseCallback(BaseCallback):
         except Exception:
             pass
         # DIAGNOSTIC-V8: hard stop if collapse confirmed over consecutive windows.
-        if self._collapse_tripped:
+        # V13: only stops when the breaker is explicitly enabled (opt-in). Otherwise
+        # the collapse is logged but training continues so the FULL trajectory is
+        # captured for cross-session analysis.
+        if self._collapse_tripped and self._breaker_enabled:
             logging.getLogger(__name__).critical(
                 "[COLLAPSE-BREAKER] Training STOPPED at %d timesteps — policy "
                 "collapse confirmed. Inspect the diagnostic CSV; resume from the "
