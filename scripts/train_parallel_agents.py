@@ -508,7 +508,9 @@ class DiagnosticCollapseCallback(BaseCallback):
         # need N consecutive collapsed windows to avoid a false positive on a
         # transient spike (2 windows = 2*log_every steps of sustained collapse).
         self._collapse_streak = 0
-        self._collapse_needed = 2
+        # V13: require more consecutive windows (env-configurable, default 4 instead
+        # of 2) so a transient degenerate window never trips the (opt-in) breaker.
+        self._collapse_needed = int(os.environ.get("ADAN_COLLAPSE_WINDOWS", "4") or 4)
         # DIAGNOSTIC-V13 (2026-07-04): the hard-stop breaker is now OPT-IN.
         # Rationale (user): killing a 500k run at first collapse (~40-70k) destroys
         # the wide visual range needed to study the FULL collapse trajectory across
@@ -657,7 +659,13 @@ class DiagnosticCollapseCallback(BaseCallback):
             try:
                 _pb = row["a0_pct_buy"]; _ps = row["a0_pct_sell"]
                 _am = abs(row["a0_mean"])
-                _collapsed = (_pb >= 0.97) or (_ps >= 0.97) or (_am >= 5.0)
+                # V13: detector relaxed (user). Thresholds env-configurable and set
+                # to NEAR-TOTAL degeneracy so a merely-drifting policy is NOT flagged;
+                # only a truly dead one is. Combined with the opt-in breaker (default
+                # OFF), the run is never killed prematurely.
+                _thr_pb = float(os.environ.get("ADAN_COLLAPSE_PCT", "0.99") or 0.99)
+                _thr_am = float(os.environ.get("ADAN_COLLAPSE_A0", "8.0") or 8.0)
+                _collapsed = (_pb >= _thr_pb) or (_ps >= _thr_pb) or (_am >= _thr_am)
                 if _collapsed:
                     self._collapse_streak += 1
                 else:
