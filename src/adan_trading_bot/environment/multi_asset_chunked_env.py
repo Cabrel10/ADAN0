@@ -6629,6 +6629,16 @@ class MultiAssetChunkedEnv(gym.Env):
             future_contrib = float(self._future_contrib_from_receipts())
         except Exception:
             future_contrib = 0.0
+        # --- ABLATION HOOK (v13 causal test, non-invasive) -------------------
+        # ADAN_ABLATE_FUTURE_CONTRIB=1 -> neutralise le TERME de reward
+        # future_contrib (le module Future Arena / dims 1-4 restent intacts;
+        # on teste seulement si ce terme est le moteur du biais anti-SELL).
+        try:
+            import os as _os_ablate
+            if _os_ablate.environ.get("ADAN_ABLATE_FUTURE_CONTRIB", "0") == "1":
+                future_contrib = 0.0
+        except Exception:
+            pass
 
         # ------------------------------------------------------------------
         # LATENT PnL SHAPING (V4, 2026-06-27) — la "ligne imaginaire".
