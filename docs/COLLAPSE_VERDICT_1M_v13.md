@@ -94,3 +94,37 @@ matching the 6-June `reward_calculator.py` semantics. Test protocol (§3):
 
 This is NOT a new hypothesis — it restores a term the working 6-June version had, at the
 magnitude that version actually used.
+
+## 5. §1 PROOF — time_decay hook is ACTIVE (residual test)
+
+Run `launch_timedecay_isolated.sh` with `ADAN_TIME_DECAY=-0.001`, smart_flat=0,
+holding_cost=0. On `reward_components_td_iso.csv` (n=51), residual =
+`raw_reward - Σ(known components)`:
+
+```
+residual mean = -1.00002e-03,  std = 1.4e-07  (min -1.001e-03, max -1.000e-03)
+```
+
+Residual is a **rock-constant -0.001** in BOTH `flat` and `long` states → the symmetric
+per-step time_decay is applied exactly as the 6-June `reward_calculator.py` did, and no
+other shaping term leaks in. Hook activation CONFIRMED.
+
+## 6. CONFOUNDER FOUND — `ADAN_LOG_STD_INIT` was never isolated
+
+First isolated run (`td_iso` std=-1.0) showed pct_buy 0.46→0.74 over 5000 steps
+(slope a0_mean +5.6e-05), **STEEPER** than the V13-holdcost reference (+2.8e-05).
+Counter-intuitive — investigation revealed a **confounding variable**:
+
+| run | ADAN_LOG_STD_INIT | a0_std | policy_entropy |
+|---|---|---|---|
+| v13_holdcost / nofuture (baselines) | default **-2.0** (std0≈0.135) | ~0.13 | ~-0.58 |
+| td_iso (my launcher) | forced **-1.0** (std0≈0.37) | ~0.36 | ~+0.42 |
+
+The `td_iso` launcher inherited `ADAN_LOG_STD_INIT=-1.0` from the v5 template — a
+**2.7× wider initial action std**. A wider std explores action-space faster, so a0_mean
+drifts faster — this is a std effect, NOT a time_decay effect. The comparison was
+**two variables off** (time_decay AND log_std_init), violating the one-variable rule.
+
+**Fix:** relaunched `td_iso` at the code default `ADAN_LOG_STD_INIT=-2.0` (std≈0.135),
+10k steps, to compare against v13_holdcost/nofuture at ONE variable of difference
+(time_decay only). The std=-1.0 run is preserved as `*_stdneg1_5k.csv`.
