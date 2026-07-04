@@ -128,3 +128,31 @@ drifts faster — this is a std effect, NOT a time_decay effect. The comparison 
 **Fix:** relaunched `td_iso` at the code default `ADAN_LOG_STD_INIT=-2.0` (std≈0.135),
 10k steps, to compare against v13_holdcost/nofuture at ONE variable of difference
 (time_decay only). The std=-1.0 run is preserved as `*_stdneg1_5k.csv`.
+
+## 7. VERDICT (Cas C) — time_decay SYMMETRIC is the WRONG lever; holding_cost wins
+
+Clean one-variable comparison (all: `ADAN_LOG_STD_INIT=-2.0` default, profile intraday,
+window [2000,10000] steps, OLS slope on `a0_pct_buy`):
+
+| lever (isolated) | pct_buy slope | pct_buy @10k | interpretation |
+|---|---|---|---|
+| **holding_cost=0.006** | **+1.8e-05** | **0.65** | asymmetric (position-only) |
+| time_decay=-0.001 (6-June) | +6.0e-05 | 0.90 | **symmetric** → weak vs runaway |
+
+**`holding_cost=0.006` is 3.3× more effective than `time_decay=-0.001` alone.**
+
+**Mechanistic reason (not intuition):** `time_decay` is SYMMETRIC — it penalises `flat`
+and `long` steps identically (residual test §5 proved -0.001 in BOTH states). It exerts
+**zero differential pressure** against *staying in position*, which is the core of the
+BUY-runaway. `holding_cost` is ASYMMETRIC (fires only when a position is open) → it
+directly attacks the mechanism.
+
+This REFINES the 6-June archaeology: the 6-June symmetric time_decay worked in a reward
+world of *realized-PnL-only* (no future_contrib / closure_bonus). Today's variance
+asymmetry needs an ASYMMETRIC lever. **Conclusion: pursue `holding_cost` (recalibrated),
+NOT symmetric time_decay.** time_decay hook stays in the code (opt-in, default OFF) as a
+proven-inert tool, but is NOT the fix.
+
+**Next (measured, isolated):** bracket `holding_cost` ∈ {0.006, 0.012, 0.02} at 15k
+steps, std=-2.0, intraday, everything else OFF, to find the magnitude that flattens the
+pct_buy slope toward ~0 without over-correcting into pct_sell runaway.
