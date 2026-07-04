@@ -6728,9 +6728,80 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             holding_cost = 0.0
 
+        # ------------------------------------------------------------------
+        # SMART-FLAT REWARD (v13 — la vraie asymétrie, corrigée par l'analyse user).
+        # Le collapse ne vient PAS de "flat est puni" (confusion état/étape) mais de:
+        #   HOLD-flat -> reward = 0, VARIANCE NULLE ; BUY-flat -> reward != 0,
+        #   variance non nulle sur les trades gagnants. PPO, face à une action
+        #   toujours neutre (0) et une action parfois positive, converge vers la
+        #   seconde MÊME si son espérance est négative. Il manque un signal POSITIF
+        #   pour le HOLD intelligent.
+        # Contre-mesure (anti-oracle: le futur du chunk est en RAM, JAMAIS dans
+        #   l'observation): quand l'agent est FLAT et a demandé HOLD, on regarde les
+        #   `horizon` bougies futures. Si le marché AURAIT BAISSÉ (acheter maintenant
+        #   aurait perdu au-delà des frais A/R), on RÉCOMPENSE l'abstention correcte.
+        #   -> HOLD-flat acquiert sa propre variance positive, symétrisant le choix.
+        # Calibrage (discipline C1): k et cap contrôlés par env (test en bracket).
+        #   Magnitude de référence = ordre des composantes per-step (~0.004-0.05).
+        #   Frais 0.5% et dims 1-4 INTACTS (terme additif, hors PnL/SL/TP).
+        # ------------------------------------------------------------------
+        smart_flat_reward = 0.0
+        try:
+            import os as _os_sf
+            _k_sf = float(_os_sf.environ.get("ADAN_SMART_FLAT", "0.0") or 0.0)
+            if _k_sf > 0.0:
+                _cap_sf = float(_os_sf.environ.get("ADAN_SMART_FLAT_CAP", "0.10") or 0.10)
+                _hz_sf = int(float(_os_sf.environ.get("ADAN_SMART_FLAT_HORIZON", "12") or 12))
+                _miss_sf = float(_os_sf.environ.get("ADAN_SMART_FLAT_MISS", "0.0") or 0.0)
+                _rtf_sf = float(getattr(self, "round_trip_fees", 0.005) or 0.005)
+                # État FLAT ? (aucune position ouverte)
+                _n_open_sf = 0
+                if hasattr(self, "portfolio_manager"):
+                    _n_open_sf = sum(
+                        1 for _p in self.portfolio_manager.positions.values()
+                        if getattr(_p, "is_open", False)
+                    )
+                # Action DEMANDÉE = HOLD (a0 dans la bande neutre)
+                _a0_sf = float(action[0]) if action is not None and len(action) > 0 else 0.0
+                _thr_sf = float(getattr(self, "route_threshold", 0.10) or 0.10)
+                _is_hold = abs(_a0_sf) <= _thr_sf
+                if _n_open_sf == 0 and _is_hold:
+                    _asset_sf = None
+                    try:
+                        _asset_sf = self.assets[0] if getattr(self, "assets", None) else None
+                    except Exception:
+                        _asset_sf = None
+                    _df_sf, _ = self._get_chunk_df_for_asset(_asset_sf, preferred_tf="5m")
+                    if _df_sf is not None and len(_df_sf) > 0:
+                        _i = int(getattr(self, "step_in_chunk", 0))
+                        if 0 <= _i < len(_df_sf) - 1:
+                            _p_now = float(_df_sf["close"].iloc[_i])
+                            _j = min(_i + max(1, _hz_sf), len(_df_sf) - 1)
+                            _win = _df_sf["close"].iloc[_i + 1:_j + 1]
+                            if _p_now > 0 and len(_win) > 0:
+                                # Scénario "si on avait acheté maintenant":
+                                # pire drawdown futur (min) = ce qu'on évite en restant flat.
+                                _fwd_min = float(_win.min())
+                                _downside = (_p_now - _fwd_min) / _p_now  # >0 si baisse
+                                # net des frais A/R: on ne récompense que si la baisse
+                                # dépasse ce que le trade aurait coûté en frais.
+                                _net_avoided = _downside - _rtf_sf
+                                if _net_avoided > 0.0:
+                                    smart_flat_reward = min(_cap_sf, _k_sf * _net_avoided * 100.0)
+                                elif _miss_sf > 0.0:
+                                    # opportunité manquée (optionnel, OFF par défaut):
+                                    _fwd_max = float(_win.max())
+                                    _upside = (_fwd_max - _p_now) / _p_now - _rtf_sf
+                                    if _upside > 0.0:
+                                        smart_flat_reward = -min(
+                                            _cap_sf, _miss_sf * _upside * 100.0)
+        except Exception:
+            smart_flat_reward = 0.0
+
         raw_reward = (
             pnl_base_reward  # PnL signal (terme structurant)
             + holding_cost  # v13: coût de détention (anti disposition-effect)
+            + smart_flat_reward  # v13: signal POSITIF pour HOLD-flat intelligent
             + promotion_bonus  # Tier promotion (gros incitatif)
             + demotion_penalty  # Tier demotion (grosse penalite)
             + closure_bonus  # Bonus de cloture active / penalite MaxDuration
