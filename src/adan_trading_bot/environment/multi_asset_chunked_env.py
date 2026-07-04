@@ -6699,8 +6699,38 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             saturation_penalty = 0.0
 
+        # ------------------------------------------------------------------
+        # HOLDING COST (v13 fix — anti disposition-effect / anti BUY-runaway).
+        # PROUVÉ (docs/ABLATION_RESULTS_v13.md + analyse structurelle): le collapse
+        # vient du reward asymétrique en ÉTAT — fermer une position perdante donne
+        # pnl_base<0 + closure_bonus=0 (puni), tandis que rester LONG ne réalise
+        # jamais la perte (reward 0). L'agent apprend à NE JAMAIS vendre -> reste
+        # LONG -> BUY systématique. Preuve empirique V12: 8/9 fermetures perdantes,
+        # pnl_base moyen -0.129 par fermeture.
+        # Contre-mesure: petite pénalité PAR STEP tant qu'une position est ouverte,
+        # créant une pression à sortir (symétrise l'espérance flat vs long).
+        # Sizing (discipline C1): h=0.001/step -> sur 72 steps (max intraday)=0.072,
+        # << closure_bonus 0.5, ne swamp pas un trade normal, mais rend le HOLD
+        # infini structurellement coûteux. Contrôlé par env var (défaut 0.0).
+        # Frais 0.5% et dims 1-4 INTACTS (ce terme est additif, hors PnL/SL/TP).
+        # ------------------------------------------------------------------
+        holding_cost = 0.0
+        try:
+            import os as _os_hc
+            _h = float(_os_hc.environ.get("ADAN_HOLDING_COST", "0.0") or 0.0)
+            if _h > 0.0 and hasattr(self, "portfolio_manager"):
+                _n_open_hc = sum(
+                    1 for _p in self.portfolio_manager.positions.values()
+                    if getattr(_p, "is_open", False)
+                )
+                if _n_open_hc > 0:
+                    holding_cost = -_h  # coût fixe par step si AU MOINS une position ouverte
+        except Exception:
+            holding_cost = 0.0
+
         raw_reward = (
             pnl_base_reward  # PnL signal (terme structurant)
+            + holding_cost  # v13: coût de détention (anti disposition-effect)
             + promotion_bonus  # Tier promotion (gros incitatif)
             + demotion_penalty  # Tier demotion (grosse penalite)
             + closure_bonus  # Bonus de cloture active / penalite MaxDuration
