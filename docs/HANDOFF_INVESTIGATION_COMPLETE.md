@@ -331,3 +331,30 @@ Backward compatible (sell_threshold=None = legacy), unit-testé.
    naissant (a0_mean 0->+0.015) mais SELL soutenu (pas d'effondrement vers 0).
    Angle mort #2 (sur-trading/frais): illegal_ratio ~0.29-0.30 à surveiller.
    PROCHAINE ÉTAPE: horizon long (>50k) pour voir si l'équilibre tient ou dérive.
+
+## 14. SESSION 2026-07-05 (suite) — AUTOPSIE SELFIX @92k = COLLAPSE (verdict A)
+
+VERDICT: collapse INCHANGE dans sa nature (retarde de ~5k au mieux, voire pire).
+Run vivant a 92k, mais pct_buy=1.000 et reqSELL=0.000 depuis 22k.
+
+Trajectoire (mesuree):
+  phase 1 (1k-8k): reqSELL=0.220 -> FIX D MARCHE (vs archfix 0.08). L'agent VEND.
+  onset:  reqSELL<0.10 des 9k ; pct_buy>=0.99 des 16k ; pct_buy=1.000 des 20k.
+  phase 2 (>=25k): reqSELL=0.000, pct_sell=0.000, pct_buy=1.000.
+  a0_mean: -0.004@1k -> +0.507@25k -> +1.229@50k -> +2.437@90k.
+  pente a0_mean = +2.76e-05/step, DIVERGE lineairement, AUCUN plateau.
+
+PREUVE que la cause est le GRADIENT, pas le routing:
+  a0_mean diverge sans limite. Meme avec sell_threshold=-0.02, PLUS AUCUN a0 ne
+  descend sous -0.02 car TOUTE la distribution a migre vers le positif. FIX D
+  (routing) est CONTOURNE par la derive de la policy. Le reward pousse
+  activement a0 -> +inf. BUY est inconditionnellement plus payant que SELL/HOLD.
+
+Angle mort #2 (over-trading) REFUTE:
+  AGENT_CLOSE=42 vs SL/TP auto=7654 (0.5%). Pas de churn -> paralysie de sortie.
+  Portfolio: 20.46 -> 16.13@50k -> 13.98@150k -> 18.11 fin (perte ~30% au creux).
+
+CE QUI EST ACQUIS:
+  FIX D cree une fenetre saine de ~8k steps (1ere fois que l'agent vend autant).
+  Preuve que rendre la sortie facile AIDE transitoirement. Mais insuffisant seul:
+  la cause racine est dans le REWARD (BUY paye tjrs plus). PROCHAINE CIBLE = reward.
