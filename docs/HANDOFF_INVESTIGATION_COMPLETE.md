@@ -302,3 +302,32 @@ au-delà de l'horizon de collapse historique (~70k).
    final : vérifier qu'il est RENTABLE, pas seulement stable. (Jamais fait — étape logique suivante.)
 4. Curriculum via MASQUE (pas via changement d'espace d'action = MDP non-stationnaire que
    PPO déteste) si besoin : verrouiller SELL/tailles au début puis déverrouiller.
+
+## 13. SESSION 2026-07-05 — Vision clarifiée + cause racine MESURÉE
+
+### Critique méthodologique acceptée
+FIX A+C avaient été lancés ensemble (confondant). Corrigé : FIX D lancé isolé
+(FIX A=information pure ON, FIX C=gates legacy OFF, FIX D=seuil SELL asymétrique).
+
+### Angle mort #1 MESURÉ (plus de raisonnement-sur-code)
+diag archfix (PID 256463, logs réels):
+  a0_pct_sell @2k = 0.471 (VEUT vendre 47%) mais req_SELL = 0.081 (8% routés).
+  Borne haute si a0<0 en LONG -> SELL = 0.316. Manque 23.5 pts.
+  => l'intention de sortie (a0 négatif faible -0.10..0) meurt dans la ZONE MORTE
+     |a0|<=threshold(0.10) et est routée HOLD. req_SELL est capté AVANT les 3
+     gardes -> la perte est dans le ROUTING, PAS les gardes budget/gap/barrier.
+     L'agent apprend "SELL ne se déclenche presque jamais" -> arrête -> BUY runaway.
+
+### FIX D (correction de conception, ciblée sur la mesure)
+Seuil asymétrique: ENTRÉE=engagement (buy thr 0.10), SORTIE=protection (sell 0.02).
+Backward compatible (sell_threshold=None = legacy), unit-testé.
+
+### Résultat SELFIX (FIX A+D, FIX C off) — premières fenêtres
+  step  pct_buy pct_sell reqSELL   (vs archfix reqSELL~0.08 au même horizon)
+  1000  0.453   0.486    0.261
+  2000  0.479   0.464    0.292
+  3000  0.511   0.432    0.272
+=> req_SELL x3.5 vs archfix. L'agent ferme ENFIN ses positions. Léger BUY-lean
+   naissant (a0_mean 0->+0.015) mais SELL soutenu (pas d'effondrement vers 0).
+   Angle mort #2 (sur-trading/frais): illegal_ratio ~0.29-0.30 à surveiller.
+   PROCHAINE ÉTAPE: horizon long (>50k) pour voir si l'équilibre tient ou dérive.
