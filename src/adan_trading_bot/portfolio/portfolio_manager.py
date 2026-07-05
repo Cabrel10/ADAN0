@@ -1407,8 +1407,15 @@ class PortfolioManager:
                 _cash_ok = float(np.clip(_cash_margin, 0.0, 1.0))
                 cap_can_open = _slot_ok * _cash_ok
 
-                # [21] can_close: at least one position to close
-                cap_can_close = _has_position
+                # [21] can_close: at least one position to close, WEIGHTED by
+                # REAL close-readiness (energy/decision_budget + cooldown gap).
+                # FIX-A (POMDP): the agent was blind to whether a CLOSE would be
+                # allowed by the decision_budget/gap gates -> it saw can_close=1,
+                # tried to SELL, got silently blocked -> learned "SELL never works"
+                # -> BUY collapse. Now [21] = has_position * close_energy_ready so
+                # the hidden constraint becomes observable (POMDP -> MDP).
+                _energy_ready = float(getattr(self, '_close_energy_ready', 1.0))
+                cap_can_close = _has_position * float(np.clip(_energy_ready, 0.0, 1.0))
 
                 # [22] free_slots_ratio
                 cap_free_slots = float(_free_slots) / float(_max_pos)

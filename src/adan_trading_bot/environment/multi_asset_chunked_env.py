@@ -383,6 +383,16 @@ class MultiAssetChunkedEnv(gym.Env):
         self.agent_close_max_per_day = int(_ac_cfg.get('max_per_day', 7))
         self.agent_close_max_consecutive = int(_ac_cfg.get('max_consecutive', 3))
         self.agent_close_min_gap_steps = int(_ac_cfg.get('min_gap_steps', 12))
+        try:
+            import os as _os_gap
+            _ov_gap = _os_gap.environ.get("ADAN_CLOSE_MIN_GAP")
+            if _ov_gap is not None:
+                self.agent_close_min_gap_steps = int(float(_ov_gap))
+            _ov_maxd = _os_gap.environ.get("ADAN_CLOSE_MAX_PER_DAY")
+            if _ov_maxd is not None:
+                self.agent_close_max_per_day = int(float(_ov_maxd))
+        except Exception:
+            pass
         self.agent_close_count_today = 0
         self.agent_close_consecutive = 0
         self._last_agent_close_step = -10**9
@@ -399,6 +409,22 @@ class MultiAssetChunkedEnv(gym.Env):
         self.decision_cost_buy = float(_db_cfg.get('cost_buy', 0.15))
         self.decision_cost_close = float(_db_cfg.get('cost_close', 0.30))
         self.decision_recharge_hold = float(_db_cfg.get('recharge_hold', 0.02))
+        # FIX-C (unblock the EXIT): the architecture audit proved the CLOSE path
+        # was strangled by THREE simultaneous gates (budget<cost_close, gap<12,
+        # pnl<1.5x fees). Combined, they made SELL almost impossible -> agent
+        # learned "SELL never works" -> BUY collapse. We expose the three exit
+        # knobs as env vars so we can loosen the throttle WITHOUT touching config
+        # (one design variable at a time). Defaults keep legacy behaviour.
+        try:
+            import os as _os_ec
+            _ov_cc = _os_ec.environ.get("ADAN_CLOSE_COST")
+            if _ov_cc is not None:
+                self.decision_cost_close = float(_ov_cc)
+            _ov_rh = _os_ec.environ.get("ADAN_CLOSE_RECHARGE")
+            if _ov_rh is not None:
+                self.decision_recharge_hold = float(_ov_rh)
+        except Exception:
+            pass
         self.decision_budget = self.decision_budget_max
         # SYMMETRY & VOLATILITY ENFORCEMENT (V3): penalite latente contre la
         # triche SL/TP (RR asymetrique + SL trop large vs ATR = "lachete").
@@ -5670,6 +5696,29 @@ class MultiAssetChunkedEnv(gym.Env):
                 self.portfolio._cooldown_active = 1.0 if _any_cooldown else 0.0
             except Exception:
                 pass
+            # FIX-A (POMDP): expose the ENERGY (decision_budget) to the agent.
+            # Root cause found in architecture audit: decision_budget BLOCKED
+            # CLOSE actions but was NEVER in the observation -> hidden constraint
+            # -> POMDP -> agent could not learn to manage it -> BUY collapse.
+            # We push a normalized "close-readiness" gauge in [0,1] so slot [21]
+            # (can_close) reflects REAL capacity, not just "has a position".
+            # Activable/desactivable proprement (defaut ON via ADAN_ENERGY_OBS).
+            try:
+                import os as _os_eo
+                if _os_eo.environ.get("ADAN_ENERGY_OBS", "1") == "1":
+                    _bud = float(getattr(self, "decision_budget", 1.0))
+                    _cc = float(getattr(self, "decision_cost_close", 0.30)) or 0.30
+                    _min_gap = int(getattr(self, "agent_close_min_gap_steps", 12))
+                    _last_ac = int(getattr(self, "_last_agent_close_step", -10**9))
+                    _gap_ready = min(1.0, max(0.0, (self.current_step - _last_ac) / max(_min_gap, 1)))
+                    _bud_ready = min(1.0, max(0.0, _bud / _cc))
+                    # readiness = product (both energy AND cooldown must be ready)
+                    self.portfolio._close_energy_ready = float(_bud_ready * _gap_ready)
+                else:
+                    self.portfolio._close_energy_ready = 1.0
+            except Exception:
+                try: self.portfolio._close_energy_ready = 1.0
+                except Exception: pass
             # Récupérer le vecteur d'état du portefeuille
             if hasattr(self.portfolio, "get_state_vector"):
                 portfolio_state = self.portfolio.get_state_vector()
