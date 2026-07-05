@@ -156,3 +156,22 @@ proven-inert tool, but is NOT the fix.
 **Next (measured, isolated):** bracket `holding_cost` ∈ {0.006, 0.012, 0.02} at 15k
 steps, std=-2.0, intraday, everything else OFF, to find the magnitude that flattens the
 pct_buy slope toward ~0 without over-correcting into pct_sell runaway.
+
+## 8. RUN LONG hc=0.012 — trajectoire @10k (EVERY=2000, std=-2.0, intraday, breaker OFF)
+
+| step | a0_mean | pct_buy | pct_sell | entropy |
+|---|---|---|---|---|
+| 2000 | +0.002 | 0.477 | 0.459 | -0.581 |
+| 4000 | +0.012 | 0.496 | 0.434 | -0.581 |
+| 6000 | +0.024 | 0.537 | 0.405 | -0.581 |
+| 8000 | +0.035 | 0.576 | 0.368 | -0.580 |
+| 10000 | +0.045 | 0.599 | 0.342 | -0.580 |
+
+Pente OLS [2000,10000]: pct_buy **+1.62e-05/step** (CI95 [1.26,1.98]e-05),
+a0_mean +5.5e-06. explained_variance mesurée ~0.44 (value function apprend).
+
+**Verdict intermédiaire:** 0.012 penche encore côté BUY (pente ≈ celle de 0.006 =
++1.8e-05). Δ=pct_buy-pct_sell=0.257 @10k (>0.10). **0.012 sous-corrige légèrement** —
+l'équilibre vrai est entre 0.012 (BUY) et 0.020 (SELL fort), estimé **~0.015-0.016**.
+Run laissé actif pour capturer l'horizon complet (plateau vs collapse lent) comme
+demandé. NB: pente 9× plus lente que le V13 original (std=-1.0, +6e-05 sur a0_mean).
