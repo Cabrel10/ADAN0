@@ -358,3 +358,73 @@ CE QUI EST ACQUIS:
   FIX D cree une fenetre saine de ~8k steps (1ere fois que l'agent vend autant).
   Preuve que rendre la sortie facile AIDE transitoirement. Mais insuffisant seul:
   la cause racine est dans le REWARD (BUY paye tjrs plus). PROCHAINE CIBLE = reward.
+
+## 15. SESSION 2026-07-05 (autopsie confirmatoire @94k) — GRADIENT MESURÉ, ZÉRO PATCH
+
+RÈGLE RESPECTÉE : aucune modification de code. Observation pure. On mesure, on
+comprend, on décide ensuite.
+
+### 15.1 Recon
+  PID 269201 ALIVE (ETIME cumul CPU 762min, 310% CPU, 1.86 GB RAM).
+  diag_selfix_500k.csv = 94 fenêtres (@94k steps). Disk 65G libre (56%).
+  Commit autopsie 2c36523 présent en local — PAS ENCORE poussé (origin @ eb2f328).
+
+### 15.2 Trajectoire (94 fenêtres, OLS + IC95%)
+  a0_mean     : -0.0044@1k -> +2.5483@94k. pente globale +2.77e-05±3.7e-07/step.
+                pente 20 DERNIÈRES fenêtres = +3.75e-05±1.7e-06/step => S'ACCÉLÈRE.
+                AUCUN plateau. Divergence monotone non bornée.
+  pct_buy     : 0.453@1k -> 1.000@24k (et reste 1.000). pente[10k+]=+2.9e-07.
+  pct_sell    : 0.486@1k -> 0.000@24k. 
+  req_SELL    : 0.261@1k (FIX D marche) -> <0.10@9k -> 0.000@23k.
+  policy_entropy: -0.581 -> -0.476 (monte vers 0 = exploration s'effondre lentement).
+  ONSET: reqSELL<0.10@9k | pct_buy>=0.99@16k | pct_buy=1.000@24k | pct_sell=0@24k.
+  TRANSITOIRE FIX D: reqSELL>=0.20 uniquement fenêtres 1k-5k (durée ~5k steps).
+
+### 15.3 Angle mort #2 (over-trading) — RÉFUTÉ DÉFINITIVEMENT
+  AGENT_CLOSE (fermetures volontaires) = 42.
+  SL/TP auto (pre-captured)            = 7840.  Ratio agent/auto = 0.54%.
+  DECISION_BUDGET blocks               = 0 (pas de churn).
+  Portfolio: oscille bande [12.4 ; 20.5], fin 20.08, delta net -0.38 sur 189k épisodes.
+  => PAS d'over-trading. C'est une PARALYSIE DE SORTIE, pas un churn.
+     L'excès inverse redouté (frais 0.5% érodant le capital) N'EXISTE PAS ici.
+
+### 15.4 LE GRADIENT DOMINANT — MESURÉ (reward_components_selfix_500k.csv, n=30)
+  Agrégation par (état, action) sur les composantes de reward RÉELLES :
+
+    état LONG + BUY  (a0>0, routé no-op HOLD) : n=29  raw_mean = -0.0038  pnl_base=0.0000
+    état LONG + HOLD (a0<0, réalise position) : n= 1  raw_mean = -0.3041  pnl_base=-0.3004
+
+  RAPPORT = 0.3041 / 0.0038 ≈ 80×.
+
+  Sortir un a0 POSITIF quand LONG => route_action_by_state ne peut PAS renvoyer
+  BUY en position -> tombe dans la branche morte L.7934-7939
+  ("discrete_action = 0  # Override to HOLD (neutral, no penalty)") -> pnl_base=0,
+  seule la micro symmetry_penalty s'applique (~-0.004). GRATUIT.
+  Sortir un a0 NÉGATIF => SELL/réalisation -> pnl_base=-0.30 RÉALISÉ -> PUNI 80×.
+
+  CONCLUSION GRADIENT : le reward enseigne littéralement "a0 positif = sûr/gratuit,
+  a0 négatif = risque d'être puni". PPO maximise donc a0 -> +inf (disposition effect :
+  "ne jamais réaliser la perte"). FIX D (routing) est CONTOURNÉ car TOUTE la
+  distribution a0 migre au-dessus de +0.02 ; plus aucun échantillon ne franchit le
+  seuil SELL. Le problème n'est PAS le routage, c'est la STRUCTURE du reward.
+
+### 15.5 VERDICT (grille des 4 catégories)
+  A - collapse inchangé  <=== VERDICT
+  B - collapse retardé   (retardé ~5k au mieux vs archfix, mais pas supprimé)
+  C - comportement nouveau  NON
+  D - début d'apprentissage réel  NON
+
+  Q1 pct_sell remonte ?      NON (0.486 -> 0.000).
+  Q2 collapse retardé/supprimé ? RETARDÉ (~5k), pas supprimé.
+  Q3 budget utilisé ?         N/A (0 blocks, mode silencieux ; sorties inexistantes).
+  Q4 ventes réussissent ?     NON (42 AGENT_CLOSE en 94k steps).
+  Q5 cycles BUY/SELL/BUY ?    NON — BUY BUY BUY (a0 sature, position figée LONG).
+
+### 15.6 DÉCISION (règle absolue respectée)
+  Verdict = A => on identifie le gradient dominant (fait : asymétrie reward 80×).
+  ❌ PAS de nouveau patch. ❌ PAS de nouveau holding_cost. ❌ PAS de nouveau reward
+  appliqué dans cette session. Le prochain axe de conception (à décider par l'humain)
+  vise la SYMÉTRIE DU REWARD : rendre "rester LONG" (a0 no-op) NON gratuit, ou
+  créditer explicitement le coût d'opportunité de la position non réalisée, de sorte
+  que a0 positif ne soit plus un puits de gradient sans fond. Aucune action tant que
+  la décision de design n'est pas validée.
