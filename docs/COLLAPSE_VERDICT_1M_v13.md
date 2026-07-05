@@ -175,3 +175,23 @@ a0_mean +5.5e-06. explained_variance mesurée ~0.44 (value function apprend).
 l'équilibre vrai est entre 0.012 (BUY) et 0.020 (SELL fort), estimé **~0.015-0.016**.
 Run laissé actif pour capturer l'horizon complet (plateau vs collapse lent) comme
 demandé. NB: pente 9× plus lente que le V13 original (std=-1.0, +6e-05 sur a0_mean).
+
+## 9. RUN LONG hc=0.012 — VERDICT FINAL @110k : COLLAPSE (0.012 sous-corrige)
+
+Full horizon reached (110k, run was alive). Answers to the 5 questions:
+- Q1 passed 70k? **YES** (110k).
+- Q2 pct_buy slope? **RISING then saturated**: 0.477(2k)→0.599(10k)→0.922(20k)→1.0(34k+).
+- Q3 delta pct_buy-pct_sell? **RISING to 1.0** (saturated from 34k).
+- Q4 explained_variance? **POSITIVE ~0.65-0.75** (critic stays useful even in collapse).
+- Q5 collapse? **YES.** pct_buy=1.0/pct_sell=0.0 from ~34k; a0_mean diverges unbounded
+  to +1.33 @110k; portfolio 20.5→14.04 (**-31%**).
+
+Onset: pct_buy≥0.90 @20k, =1.0 @34k. So hc=0.012 only **DELAYED** collapse
+(vs ~11k for V13-std-1.0) but did not prevent it. **A positive pct_buy slope, however
+small (+1.6e-05), leads to full collapse at long horizon.** 0.012 under-corrects.
+
+**Decision (user: relaunch >=500k after correction):** the equilibrium must produce a
+pct_buy slope ~0 or slightly negative, durably. Bracket bounds: 0.012=BUY collapse,
+0.020=SELL over-correction (at 15k). Relaunch at **hc=0.016** (nearer the correcting
+side), 500k, same isolation (std=-2.0, intraday, time_decay/smart_flat OFF), breaker
+OFF, diag EVERY=2000.
