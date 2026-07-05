@@ -7844,11 +7844,24 @@ class MultiAssetChunkedEnv(gym.Env):
                 _n_open = 1 if _in_pos_route else 0
             _slot_available = _n_open < max(1, _max_slots)
 
+            # FIX-D: asymmetric SELL threshold. Exit should be EASIER than entry.
+            # ADAN_SELL_THRESHOLD (env, default = same as buy = symmetric legacy).
+            # A smaller sell threshold lets the agent's exit intent (negative a0
+            # near zero) actually route to SELL instead of dying in the dead-zone.
+            _sell_thr = None
+            try:
+                import os as _os_st
+                _st_env = _os_st.environ.get("ADAN_SELL_THRESHOLD")
+                if _st_env is not None:
+                    _sell_thr = float(_st_env)
+            except Exception:
+                _sell_thr = None
             discrete_action = _route_action_by_state(
                 main_decision,
                 in_position=_in_pos_route,
                 slot_available=_slot_available,
                 threshold=action_threshold,
+                sell_threshold=_sell_thr,
             )
 
             if i == 0:

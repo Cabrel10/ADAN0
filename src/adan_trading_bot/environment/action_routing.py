@@ -50,6 +50,7 @@ def route_action_by_state(
     in_position: bool,
     slot_available: bool = True,
     threshold: float = 0.10,
+    sell_threshold: float | None = None,
 ) -> int:
     """Map the continuous ``action[0]`` to a discrete decision by state.
 
@@ -80,10 +81,19 @@ def route_action_by_state(
     """
     a0 = float(a0)
     thr = abs(float(threshold))
+    # FIX-D (ASYMMETRIC THRESHOLD, measured root cause 2026-07-05):
+    # Diag archfix proved reqSELL (8%) << a0<0*open% (31.6%): a large mass of
+    # negative a0 emitted WHILE LONG falls in the dead-zone |a0|<=thr and is
+    # routed to HOLD -> the agent's exit intent is silently swallowed -> it
+    # learns "SELL rarely fires" -> stops trying -> BUY runaway. Design fix:
+    # ENTRY is a commitment (fees, risk) -> require conviction (buy thr).
+    # EXIT is protection -> should be EASY (smaller sell thr). Backward
+    # compatible: sell_threshold=None -> symmetric legacy behaviour.
+    sthr = abs(float(sell_threshold)) if sell_threshold is not None else thr
 
     if in_position:
         # LONG state: only CLOSE or HOLD_POS are legal.
-        if a0 < -thr:
+        if a0 < -sthr:
             return SELL
         return HOLD
 
