@@ -254,3 +254,51 @@ un 500k vers ~40–70k, détruisant la plage visuelle voulue. Désormais **OPT-I
 ~5h entre sessions → les runs 10k ne servent à rien. Lancer **500k** (breaker OFF,
 DIAG_EVERY=500) pour donner à la prochaine session une plage visuelle large, **tout en
 analysant pendant l'entraînement**.
+
+---
+
+## 12 — V13.1 SYNTHÈSE : cause confirmée = calibration du coût de portage asymétrique
+
+Session T+3h (2026-07-05). Investigation à une variable près, chaque verdict chiffré.
+
+### 12.1 — Causes ÉLIMINÉES par mesure (pas par intuition)
+| hypothèse | statut | preuve |
+|---|---|---|
+| Espace d'action (BUY/SELL/HOLD, FSM) | disculpé (sessions préc.) | FSM déjà actif en training, collapse persiste |
+| `latent_pnl` "purge du PnL latent" | **disculpé** | contribution 0.0-0.6% sur config V13 (n=18,20), 3-4 nonzero |
+| `time_decay` symétrique (levier 6-juin) | **disculpé comme FIX** | isolé -0.001: pct_buy@10k=0.90, slope +6e-05 (3.3× pire que holding) |
+
+### 12.2 — Cause CONFIRMÉE
+**Mauvaise calibration du coût de portage ASYMÉTRIQUE (`holding_cost`).** Le collapse BUY
+vient de l'asymétrie de variance (HOLD-flat reward=0 variance nulle vs position
+reward≠0). Le seul levier qui l'attaque directement est un coût **qui ne frappe QUE la
+position** (asymétrique). Bracket isolé (std=-2.0, intraday) :
+
+| holding_cost | comportement @10-15k | pct_buy slope [2000,10000] |
+|---|---|---|
+| 0.006 | dérive BUY lente | +1.8e-05 |
+| **0.012** | **testé en run long (équilibre visé)** | — |
+| 0.020 | **sur-correction SELL** (pct_buy→0.05, pct_sell→0.94, a0_mean→-0.24) | inversé |
+
+Le fait que 0.02 **inverse** le runaway (BUY→SELL) prouve que le modèle n'est PAS cassé :
+il est parfaitement contrôlable, il manquait juste le bon point d'équilibre de portage.
+
+### 12.3 — Facteur confondant MAJEUR découvert : `ADAN_LOG_STD_INIT`
+Les lanceurs `launch_500k_v5`/`launch_1M_v13` forçaient `ADAN_LOG_STD_INIT=-1.0`
+(std0≈0.37), vs défaut code **-2.0** (std0≈0.135). La std 2.7× plus large accélère la
+dérive de a0_mean → une partie du "collapse" observé était de l'**exploration excessive**,
+pas seulement du reward. **Tous les runs de validation doivent utiliser -2.0** (défaut).
+
+### 12.4 — Run long en cours (validation horizon complet)
+`launch_long_hc012.sh` : **500k steps, holding_cost=0.012, intraday, std=-2.0**,
+time_decay/smart_flat OFF, breaker OFF (capture crash complet si collapse @~70k),
+diag EVERY=2000, ckpt par step /50k. Objectif : voir si l'équilibre 0.012 tient
+au-delà de l'horizon de collapse historique (~70k).
+
+### 12.5 — Prochaines étapes (ordre, si 0.012 tient)
+1. Si dérive résiduelle : bracket fin {0.010, 0.012, 0.014}, critère |pct_buy-pct_sell|<0.1 sur 15-20k.
+2. Réintégrer `future_contrib` puis `smart_flat` UN PAR UN, vérifier que l'équilibre tient.
+3. **Backtest déterministe** (`scripts/backtest/deterministic_backtest.py`) du checkpoint
+   final : vérifier qu'il est RENTABLE, pas seulement stable. (Jamais fait — étape logique suivante.)
+4. Curriculum via MASQUE (pas via changement d'espace d'action = MDP non-stationnaire que
+   PPO déteste) si besoin : verrouiller SELL/tailles au début puis déverrouiller.
