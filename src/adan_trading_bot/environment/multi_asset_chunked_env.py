@@ -6976,14 +6976,16 @@ class MultiAssetChunkedEnv(gym.Env):
                             _fh.write("step,worker,raw_reward,final_reward,pnl_base,latent_pnl,"
                                       "future_contrib,promotion_bonus,demotion_penalty,closure_bonus,"
                                       "drawdown_penalty,symmetry_penalty,action_entropy_penalty,"
-                                      "saturation_penalty,position_state,action,a0,portfolio\n")
+                                      "saturation_penalty,holding_cost,smart_flat,time_decay,"
+                                      "position_state,action,a0,portfolio\n")
                         _fh.write(
                             f"{int(self.current_step)},{int(getattr(self,'worker_id',0))},"
                             f"{raw_reward:.6f},{final_reward:.6f},{pnl_base_reward:.6f},"
                             f"{latent_pnl_contrib:.6f},{future_contrib:.6f},{promotion_bonus:.6f},"
                             f"{demotion_penalty:.6f},{closure_bonus:.6f},{drawdown_penalty:.6f},"
                             f"{symmetry_penalty:.6f},{action_entropy_penalty:.6f},"
-                            f"{saturation_penalty:.6f},{_pos_state},{_act},{_a0:.4f},{_pv:.4f}\n"
+                            f"{saturation_penalty:.6f},{holding_cost:.6f},{smart_flat_reward:.6f},"
+                            f"{time_decay_cost:.6f},{_pos_state},{_act},{_a0:.4f},{_pv:.4f}\n"
                         )
         except Exception:
             pass
