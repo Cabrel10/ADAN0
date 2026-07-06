@@ -500,6 +500,40 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.latent_pnl_cap, self.latent_pnl_every_n)
             except Exception:
                 pass
+        # ------------------------------------------------------------------
+        # ACTION ANCHOR (2026-07-06) — restoring force on the RAW a0 head.
+        # MEASURED root cause (docs/EMPIRICAL_BEHAVIOR_ANALYSIS.md): on no-op
+        # steps (long+BUY -> HOLD override, or any HOLD) the reward is
+        # INDEPENDENT of a0 magnitude (grad d(reward)/d(a0) ~= 0). a0=+0.25 and
+        # a0=+1.0 both get ~+0.0007. So a0_mean drifts freely under noise ->
+        # directional collapse (pct_buy->1.0). This adds a SYMMETRIC quadratic
+        # pull toward a0=0, applied ONLY when NO trade executed (pure no-op), so
+        # it NEVER penalises a real BUY/SELL decision and NEVER biases direction
+        # (symmetric => cannot cause the hc020 inverse-excess SELL-runaway).
+        # Opt-in via ADAN_ANCHOR_LAMBDA>0. Default 0.0 = OFF (backward compat).
+        #   contribution = -lambda * min(cap, (max(0,|a0|-dead))**2)
+        # dead-zone lets the healthy natural spread (a0_std~0.14) breathe.
+        try:
+            self.anchor_lambda = float(os.environ.get('ADAN_ANCHOR_LAMBDA', '0.0') or 0.0)
+        except Exception:
+            self.anchor_lambda = 0.0
+        try:
+            self.anchor_deadzone = float(os.environ.get('ADAN_ANCHOR_DEADZONE', '0.30') or 0.30)
+        except Exception:
+            self.anchor_deadzone = 0.30
+        try:
+            self.anchor_cap = float(os.environ.get('ADAN_ANCHOR_CAP', '0.02') or 0.02)
+        except Exception:
+            self.anchor_cap = 0.02
+        if self.anchor_lambda > 0.0:
+            try:
+                logger.warning(
+                    "[ANCHOR] action anchor ON: lambda=%.4f deadzone=%.3f cap=%.4f "
+                    "(no-op only, symmetric)",
+                    self.anchor_lambda, self.anchor_deadzone, self.anchor_cap)
+            except Exception:
+                pass
+
         # SATURATION PENALTY (V4, 2026-06-27): penalise (log, plafonnee) le fait
         # que SL/TP saturent les bornes du profil sur une fenetre glissante.
         # Avant: seulement LOGGE (ACTION-SATURATION TRACKER), jamais penalise.
@@ -6916,8 +6950,27 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             time_decay_cost = 0.0
 
+        # ── ACTION ANCHOR (2026-07-06) — no-op-only symmetric restoring force ──
+        # Gives the flat-gradient no-op region a gradient toward a0=0 so a0_mean
+        # cannot drift freely. Applied ONLY when this step executed NO trade
+        # (pure no-op). Symmetric in a0 => zero directional bias. Quadratic
+        # beyond a dead-zone, capped. lambda=0 (default) => term is exactly 0.
+        action_anchor_penalty = 0.0
+        try:
+            _al = float(getattr(self, "anchor_lambda", 0.0))
+            if _al > 0.0 and not bool(getattr(self, "_last_trade_executed", False)):
+                _a0v = float(action[0]) if action is not None and len(action) > 0 else 0.0
+                _dz = float(getattr(self, "anchor_deadzone", 0.30))
+                _excess = abs(_a0v) - _dz
+                if _excess > 0.0:
+                    _acap = float(getattr(self, "anchor_cap", 0.02))
+                    action_anchor_penalty = -min(_acap, _al * (_excess * _excess))
+        except Exception:
+            action_anchor_penalty = 0.0
+
         raw_reward = (
             pnl_base_reward  # PnL signal (terme structurant)
+            + action_anchor_penalty  # 2026-07-06: anti-drift a0 anchor (no-op only)
             + holding_cost  # v13: coût de détention (anti disposition-effect)
             + smart_flat_reward  # v13: signal POSITIF pour HOLD-flat intelligent
             + time_decay_cost  # v13.1: coût per-step RESTAURÉ (6 juin) anti-dérive
@@ -7008,6 +7061,7 @@ class MultiAssetChunkedEnv(gym.Env):
             "action_entropy_penalty": action_entropy_penalty,
             "latent_pnl":       latent_pnl_contrib,
             "saturation_penalty": saturation_penalty,
+            "action_anchor_penalty": action_anchor_penalty,
         }
 
         # ──────────────────────────────────────────────────────────────────
@@ -8741,6 +8795,14 @@ class MultiAssetChunkedEnv(gym.Env):
                 first_discrete_action = 1  # BUY executed
         else:
             first_discrete_action = 0  # No trade = HOLD
+
+        # ANCHOR (2026-07-06): persist executed-action facts so _calculate_reward
+        # (called AFTER execution) can apply a symmetric restoring force on the
+        # RAW a0 head ONLY on no-ops. Measured root cause: on long+BUY no-ops the
+        # reward is a0-INDEPENDENT (grad~=0), so a0_mean drifts freely ->
+        # directional collapse. See docs/EMPIRICAL_BEHAVIOR_ANALYSIS.md.
+        self._last_trade_executed = bool(trade_executed_this_step)
+        self._last_executed_discrete = int(first_discrete_action)
 
         # ================================================================
         # DECISION BUDGET (V3, 2026-06-25) — RECHARGE sur HOLD.
