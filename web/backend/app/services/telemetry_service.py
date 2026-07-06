@@ -40,7 +40,7 @@ def _parse_row(row: dict[str, str]) -> dict[str, Any]:
 
 def read_telemetry(since: int = 0, limit: int = 5000) -> list[dict[str, Any]]:
     """Return parsed telemetry rows with timesteps > `since`."""
-    path = settings.TELEMETRY_CSV
+    path = settings.resolve_telemetry_csv()
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -78,22 +78,57 @@ def collapse_verdict() -> dict[str, Any]:
     level = "ok"
 
     a0_std = last.get("a0_std")
+    a0_mean = last.get("a0_mean")
     hold = last.get("req_HOLD_pct")
     illegal = last.get("illegal_ratio")
+    pct_buy = last.get("a0_pct_buy")
+    pct_sell = last.get("a0_pct_sell")
 
+    def _bump(new_level: str) -> None:
+        nonlocal level
+        order = {"ok": 0, "warning": 1, "critical": 2}
+        if order[new_level] > order[level]:
+            level = new_level
+
+    # ---- Mode 1: BIMODAL saturation (a0_std explodes) ----
     if a0_std is not None and a0_std >= settings.COLLAPSE_A0_STD_CRIT:
-        level = "critical"
+        _bump("critical")
         reasons.append(f"a0_std={a0_std:.2f} >= {settings.COLLAPSE_A0_STD_CRIT} (bimodal saturation)")
     elif a0_std is not None and a0_std >= settings.COLLAPSE_A0_STD_WARN:
-        level = "warning" if level == "ok" else level
+        _bump("warning")
         reasons.append(f"a0_std={a0_std:.2f} >= {settings.COLLAPSE_A0_STD_WARN}")
 
+    # ---- Mode 2: DIRECTIONAL runaway (a0_mean drifts, one side saturates) ----
+    # This is the selfix/manifesto BUY-runaway that the old verdict missed.
+    if a0_mean is not None and abs(a0_mean) >= settings.COLLAPSE_A0_MEAN_CRIT:
+        _bump("critical")
+        side = "BUY" if a0_mean > 0 else "SELL"
+        reasons.append(
+            f"a0_mean={a0_mean:+.2f} (|.|>= {settings.COLLAPSE_A0_MEAN_CRIT}) "
+            f"= directional {side} runaway collapse")
+    elif a0_mean is not None and abs(a0_mean) >= settings.COLLAPSE_A0_MEAN_WARN:
+        _bump("warning")
+        side = "BUY" if a0_mean > 0 else "SELL"
+        reasons.append(f"a0_mean={a0_mean:+.2f} drifting toward {side} (|.|>= {settings.COLLAPSE_A0_MEAN_WARN})")
+
+    _one_sided = max(pct_buy or 0.0, pct_sell or 0.0)
+    if _one_sided >= settings.COLLAPSE_PCT_SIDE_CRIT:
+        _bump("critical")
+        dom = "BUY" if (pct_buy or 0) >= (pct_sell or 0) else "SELL"
+        reasons.append(
+            f"pct_{dom.lower()}={_one_sided:.3f} >= {settings.COLLAPSE_PCT_SIDE_CRIT} "
+            f"(one-sided {dom} saturation, pct_sell={pct_sell})")
+    elif _one_sided >= settings.COLLAPSE_PCT_SIDE_WARN:
+        _bump("warning")
+        dom = "BUY" if (pct_buy or 0) >= (pct_sell or 0) else "SELL"
+        reasons.append(f"pct_{dom.lower()}={_one_sided:.3f} >= {settings.COLLAPSE_PCT_SIDE_WARN} (one-sided)")
+
     if hold is not None and hold <= settings.COLLAPSE_HOLD_PCT_WARN:
-        level = "warning" if level == "ok" else level
+        _bump("warning")
         reasons.append(f"req_HOLD_pct={hold:.3f} <= {settings.COLLAPSE_HOLD_PCT_WARN}")
 
     if illegal is not None and illegal >= settings.COLLAPSE_ILLEGAL_WARN:
-        level = "warning" if level == "ok" else level
+        _bump("warning")
         reasons.append(f"illegal_ratio={illegal:.3f} >= {settings.COLLAPSE_ILLEGAL_WARN}")
 
     # Trend: is a0_std rising over the last samples?
