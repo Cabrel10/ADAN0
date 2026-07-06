@@ -13,7 +13,7 @@ _CKPT_RE = re.compile(r"checkpoint.*?(\d+)_steps", re.IGNORECASE)
 
 
 def tail_lines(n: int = 200) -> list[str]:
-    path = settings.TRAIN_LOG
+    path = settings.resolve_train_log()
     if not path.exists():
         return []
     dq: deque[str] = deque(maxlen=n)
@@ -53,7 +53,7 @@ def parse_progress() -> dict[str, Any]:
     (logs can be 80+ MB). The latest progress line and recent errors are always
     at the end of the file.
     """
-    path = settings.TRAIN_LOG
+    path = settings.resolve_train_log()
     info: dict[str, Any] = {
         "last_timestep": None,
         "has_errors": False,

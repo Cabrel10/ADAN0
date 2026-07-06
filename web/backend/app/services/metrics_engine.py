@@ -25,7 +25,7 @@ from typing import Any, Callable
 
 from . import analytics_service as A
 from . import telemetry_service as T
-from ..settings import TELEMETRY_CSV
+from .. import settings
 
 
 # --------------------------------------------------------------------------- #
@@ -173,7 +173,7 @@ def performance_block(limit: int = 5000) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 def rl_block() -> dict[str, Any]:
     rows = T.read_telemetry(since=0)
-    src = str(TELEMETRY_CSV.name)
+    src = str(settings.resolve_telemetry_csv().name)
     if not rows:
         return {"source": src, "note": metric(None, src, 0, "no telemetry yet")}
     last = rows[-1]
@@ -187,6 +187,11 @@ def rl_block() -> dict[str, Any]:
         "timesteps": metric(w, src, len(rows)),
         "a0_mean": metric(last.get("a0_mean"), src, w),
         "a0_std": metric(last.get("a0_std"), src, w),
+        # Realised action distribution — THE directional-collapse indicators.
+        # pct_buy->1.0 with pct_sell->0.0 is the selfix/manifesto BUY runaway.
+        "a0_pct_buy": metric(last.get("a0_pct_buy"), src, w),
+        "a0_pct_sell": metric(last.get("a0_pct_sell"), src, w),
+        "a0_pct_hold_band": metric(last.get("a0_pct_hold_band"), src, w),
         "policy_entropy": metric(last.get("policy_entropy"), src, w),
         "illegal_ratio": metric(last.get("illegal_ratio"), src, w),
         "req_BUY_pct": metric(last.get("req_BUY_pct"), src, w),

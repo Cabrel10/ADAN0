@@ -169,8 +169,8 @@ def schema() -> dict:
                           "max_size_remaining", "cooldown_active",
                           "capital_self_caused"],
         },
-        "active_telemetry_csv": settings.TELEMETRY_CSV.name,
-        "active_train_log": settings.TRAIN_LOG.name,
+        "active_telemetry_csv": settings.resolve_telemetry_csv().name,
+        "active_train_log": settings.resolve_train_log().name,
         "active_checkpoints": active_ckpts,
     }
 

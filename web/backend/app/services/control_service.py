@@ -114,7 +114,12 @@ def launch(steps: int, worker: str, hyperparams: dict[str, Any],
     if diag:
         env["ADAN_DIAG_COLLAPSE"] = "1"
         env.setdefault("ADAN_DIAG_EVERY", "5000")
-        env["ADAN_DIAG_CSV"] = str(settings.TELEMETRY_CSV)
+        # Write to a fresh timestamped diag file so a web-launched run does NOT
+        # clobber the currently-displayed telemetry; the dashboard auto-tracks
+        # the newest file via settings.resolve_telemetry_csv().
+        env["ADAN_DIAG_CSV"] = str(
+            settings.LOGS_DIR / f"diag_web_{worker}_{int(time.time())}_500k.csv"
+        )
     env.setdefault("ADAN_CKPT_FREQ", "10000")
 
     log_path = settings.LOGS_DIR / f"train_web_{worker}_{int(time.time())}.log"

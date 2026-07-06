@@ -77,6 +77,11 @@ export default function Dashboard() {
           </ul>
           {collapse?.latest && (
             <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              {/* a0_mean + pct_buy expose the DIRECTIONAL runaway collapse,
+                  which a0_std alone hides (a0_std stays low during it). */}
+              <MiniStat label="a0_mean" v={collapse.latest.a0_mean} />
+              <MiniStat label="pct_buy" v={collapse.latest.a0_pct_buy} />
+              <MiniStat label="pct_sell" v={collapse.latest.a0_pct_sell} />
               <MiniStat label="a0_std" v={collapse.latest.a0_std} />
               <MiniStat label="HOLD%" v={collapse.latest.req_HOLD_pct} />
               <MiniStat label="illegal" v={collapse.latest.illegal_ratio} />
