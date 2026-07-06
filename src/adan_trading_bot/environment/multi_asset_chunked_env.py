@@ -474,6 +474,32 @@ class MultiAssetChunkedEnv(gym.Env):
         self.latent_pnl_lambda_gain = float(_lps.get('lambda_gain', 0.10))
         self.latent_pnl_lambda_loss = float(_lps.get('lambda_loss', 0.15))
         self.latent_pnl_cap = float(_lps.get('cap', 0.30))
+        # ------------------------------------------------------------------
+        # MANIFESTO v1 (2026-07-06) — DELTA LATENT PnL en mode LINEAIRE.
+        # Cause racine MESUREE: le latent log1p(u*10)/10 est ~200x trop faible
+        # (perte -2%/20pas cumule -0.0164 vs -0.30 pour vendre) => tenir la perte
+        # est 18x moins cher que la couper => disposition effect => a0->+inf.
+        # Mode 'linear' (opt-in via ADAN_LATENT_MODE=linear): contribution
+        # PROPORTIONNELLE au PnL latent, CHAQUE pas (override every_n=1),
+        # asymetrique (loss>gain), plafonnee par cap. Rend le no-op non-gratuit
+        # quand la position saigne. Defaut = 'log' (legacy, retro-compatible).
+        self.latent_pnl_mode = str(os.environ.get('ADAN_LATENT_MODE', 'log')).strip().lower()
+        _lin_lg = os.environ.get('ADAN_LATENT_LGAIN')
+        _lin_ll = os.environ.get('ADAN_LATENT_LLOSS')
+        _lin_cap = os.environ.get('ADAN_LATENT_CAP')
+        _lin_every = os.environ.get('ADAN_LATENT_EVERY')
+        if _lin_lg is not None:  self.latent_pnl_lambda_gain = float(_lin_lg)
+        if _lin_ll is not None:  self.latent_pnl_lambda_loss = float(_lin_ll)
+        if _lin_cap is not None: self.latent_pnl_cap = float(_lin_cap)
+        if _lin_every is not None: self.latent_pnl_every_n = max(1, int(_lin_every))
+        if self.latent_pnl_mode == 'linear':
+            try:
+                logger.warning(
+                    "[MANIFESTO] latent_pnl LINEAR mode ON: lg=%.3f ll=%.3f cap=%.3f every=%d",
+                    self.latent_pnl_lambda_gain, self.latent_pnl_lambda_loss,
+                    self.latent_pnl_cap, self.latent_pnl_every_n)
+            except Exception:
+                pass
         # SATURATION PENALTY (V4, 2026-06-27): penalise (log, plafonnee) le fait
         # que SL/TP saturent les bornes du profil sur une fenetre glissante.
         # Avant: seulement LOGGE (ACTION-SATURATION TRACKER), jamais penalise.
@@ -6715,12 +6741,21 @@ class MultiAssetChunkedEnv(gym.Env):
                     if _ep <= 0 or _cp <= 0 or _held <= 0 or (_held % _every) != 0:
                         continue
                     _u = (_cp - _ep) / _ep  # PnL latent fractionnaire (SPOT long)
-                    if _u >= 0:
-                        # gain: log1p attenue, poids gain, plafonne
+                    if getattr(self, "latent_pnl_mode", "log") == "linear":
+                        # MANIFESTO v1: contribution PROPORTIONNELLE (pas de log
+                        # ecrasant). |contrib| = lambda * |u|, plafonnee par cap.
+                        # lg/ll ici sont des multiplicateurs directs (ex lg=0.5,
+                        # ll=1.0). Rend le maintien d'une perte reellement couteux.
+                        if _u >= 0:
+                            latent_pnl_contrib += min(_lcap, _lg * _u)
+                        else:
+                            latent_pnl_contrib -= min(_lcap, _ll * abs(_u))
+                    elif _u >= 0:
+                        # gain: log1p attenue, poids gain, plafonne (legacy)
                         _c = _lg * float(_np.log1p(_u * 10.0)) / 10.0
                         latent_pnl_contrib += min(_lcap, _c)
                     else:
-                        # perte: asymetrique (poids loss > gain), plafonne
+                        # perte: asymetrique (poids loss > gain), plafonne (legacy)
                         _c = _ll * float(_np.log1p(abs(_u) * 10.0)) / 10.0
                         latent_pnl_contrib -= min(_lcap, _c)
         except Exception:
