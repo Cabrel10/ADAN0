@@ -428,3 +428,58 @@ comprend, on décide ensuite.
   créditer explicitement le coût d'opportunité de la position non réalisée, de sorte
   que a0 positif ne soit plus un puits de gradient sans fond. Aucune action tant que
   la décision de design n'est pas validée.
+
+## 16. SESSION 2026-07-06 — MANIFESTO run 6h = COLLAPSE (Cas B), 1/6 tests
+
+**Steps atteints :** 242k (run tue apres verdict). Débit ~1000 steps/7min wall.
+
+### 16.1 Les 3 verifications techniques (protocole)
+- V1.1 every=1 : OK. L.6728 lit self.latent_pnl_every_n (surchargé=1 par env),
+  L.6741 `_held % _every`. Pas de bug de gating. Applique CHAQUE pas.
+- V1.2 vrai cout de vente : cout_vente(u,w=0.5)=u*0.5. steps_pour_egaler ~0.83
+  => la calib "conservateur" etait deja AGRESSIVE (vendre rationnel des le 1er pas
+  d'une perte). Mais ININFLUENT (voir 16.3).
+- V1.3 sur-trading : AGENT_CLOSE=46 vs SL/TP=20124 sur 242k (0.23%). PAS de churn.
+  Portfolio 20.5 -> 13.01 (recul, mais par erosion SL/TP en collapse, pas par churn).
+
+### 16.2 Tests S1-S6 (binaires)
+  S1 req_SELL>0.10  : 0.000  FAIL
+  S2 slope buy<5e-6 : +4e-22 PASS (FAUX POSITIF: pct_buy deja sature=1.0)
+  S3 collapse >50k  : @17000 FAIL (identique selfix @16k)
+  S4 a0_mean<+1.0   : +2.392 FAIL
+  S5 pct_sell>0.05  : 0.000  FAIL
+  S6 pct_buy<0.85   : 1.000  FAIL
+  => 1/6 (S2 faux positif) => COLLAPSE. Onset @17k, IDENTIQUE a selfix.
+
+### 16.3 POURQUOI le latent lineaire a echoue (MESURE, telemetrie n=80)
+  Latent ACTIF (65/80 non-nul) MAIS magnitude ridicule:
+    latent_pnl mean=+0.00018 min=-0.00027 max=+0.00127
+    long+BUY (no-op, n=65): latent MOYEN = +0.000205 (POSITIF!)
+    long+HOLD (realise, n=1): raw=-0.247
+  DEUX causes cumulees:
+   (1) Les positions sont majoritairement en LEGER GAIN latent (les SL/TP dims 1-4
+       coupent les pertes AVANT accumulation) => le latent est POSITIF => il
+       RECOMPENSE le maintien au lieu de le punir.
+   (2) Une position ne saigne jamais assez LONGTEMPS pour que le latent negatif
+       cumule atteigne -0.30 : SL/TP ferment en quelques pas.
+  => Le "battement de coeur" ne bat jamais dans le rouge assez fort/longtemps.
+
+### 16.4 CONCLUSION STRATEGIQUE (elimination d'une classe entiere de fixes)
+  Tout fix "reward PAR PAS en position" (holding_cost, time_decay, latent log,
+  latent lineaire) est STRUCTURELLEMENT VAIN tant que:
+   - les SL/TP (Oracle, dims 1-4, INTOUCHABLES) gerent le risque a la place de
+     l'agent => rester LONG est objectivement neutre/rentable a court terme;
+   - "rester LONG" = sortir un a0 positif = TOUJOURS SUR (le no-op est absorbe).
+  L'agent n'apprend pas le disposition effect: il apprend la VERITE de son
+  environnement — dans un monde ou un oracle coupe tes pertes, ne jamais vendre
+  soi-meme est optimal. Le collapse est RATIONNEL etant donne l'architecture.
+
+  => Le vrai manque, comme dit par l'utilisateur et les critiques: on n'a JAMAIS
+     defini "bon trade / mauvais trade / comportement sain / deviation". Le
+     prochain chantier n'est PAS un nouveau terme de reward par-pas, mais une
+     COUCHE DE COMPORTEMENT (Trader Constitution / Behavior Reward) qui juge le
+     CYCLE de trade complet vs un trader de reference, PAS l'action a l'instant t.
+
+**Verdict :** FAIL (1/6). Latent lineaire elimine. **Prochaine etape :**
+definir formellement le comportement (module TradeBehaviorAnalyzer + deviation vs
+oracle), UNE variable a la fois, avec test S1-S6 prealable — pas un patch de plus.
