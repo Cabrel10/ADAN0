@@ -1221,6 +1221,10 @@ try:
             anchor_losses = []
             a0_mean_batch = []
             a0_std_batch = []
+            # ---- Critic/Advantage probe accumulators (Q1 & Q2) ----
+            adv_buy_batch, adv_sell_batch, adv_hold_batch = [], [], []
+            v_buy_batch, v_sell_batch = [], []
+            n_buy_batch = n_sell_batch = n_hold_batch = 0
             continue_training = True
 
             for epoch in range(self.n_epochs):
@@ -1242,6 +1246,33 @@ try:
                     advantages = rollout_data.advantages
                     if self.normalize_advantage and len(advantages) > 1:
                         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+                    # ===== CRITIC/ADVANTAGE PROBE (Q1 & Q2) =====
+                    # The behavioral collapse (pct_buy>0.85 @15k) precedes the
+                    # numeric one. If adv_BUY >> adv_SELL systematically, the
+                    # root cause is Reward/Critic, NOT the actor. We slice the
+                    # rollout by the executed a0 direction and accumulate the
+                    # advantage / value per direction. Uses UN-normalized values
+                    # and the (post-norm) advantages actually fed to PPO.
+                    with _torch.no_grad():
+                        _raw_act = rollout_data.actions
+                        _a0_dir = _raw_act[:, 0] if _raw_act.dim() > 1 else _raw_act
+                        _a0_dir = _a0_dir.flatten()
+                        _is_buy = _a0_dir > 0.1
+                        _is_sell = _a0_dir < -0.1
+                        _is_hold = (~_is_buy) & (~_is_sell)
+                        if _is_buy.any():
+                            adv_buy_batch.append(float(advantages[_is_buy].mean().item()))
+                            v_buy_batch.append(float(values[_is_buy].mean().item()))
+                            n_buy_batch += int(_is_buy.sum().item())
+                        if _is_sell.any():
+                            adv_sell_batch.append(float(advantages[_is_sell].mean().item()))
+                            v_sell_batch.append(float(values[_is_sell].mean().item()))
+                            n_sell_batch += int(_is_sell.sum().item())
+                        if _is_hold.any():
+                            adv_hold_batch.append(float(advantages[_is_hold].mean().item()))
+                            n_hold_batch += int(_is_hold.sum().item())
+                    # ============================================
 
                     ratio = _torch.exp(log_prob - rollout_data.old_log_prob)
                     policy_loss_1 = advantages * ratio
@@ -1326,17 +1357,54 @@ try:
                 self.logger.record("train/std", _torch.exp(self.policy.log_std).mean().item())
             self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
             self.logger.record("train/clip_range", clip_range)
-            # ---- V15 anchor telemetry ----
+            # ---- V15 anchor telemetry (fires even on early KL stop, since
+            #      accumulators are filled BEFORE the KL break in the loop) ----
+            _a0m = float(_np.mean(a0_mean_batch)) if a0_mean_batch else float("nan")
+            _a0s = float(_np.mean(a0_std_batch)) if a0_std_batch else float("nan")
+            _anc = float(_np.mean(anchor_losses)) if anchor_losses else float("nan")
             if a0_mean_batch:
-                _a0m = float(_np.mean(a0_mean_batch))
                 self._a0_mean_hist.append(_a0m)
                 self.logger.record("train/a0_mean_raw", _a0m)
             if a0_std_batch:
-                _a0s = float(_np.mean(a0_std_batch))
                 self._a0_std_hist.append(_a0s)
                 self.logger.record("train/a0_std_raw", _a0s)
             if anchor_losses:
-                self.logger.record("train/anchor_loss", float(_np.mean(anchor_losses)))
+                self.logger.record("train/anchor_loss", _anc)
+
+            # ---- Critic/Advantage probe telemetry (Q1 & Q2) ----
+            _adv_buy = float(_np.mean(adv_buy_batch)) if adv_buy_batch else float("nan")
+            _adv_sell = float(_np.mean(adv_sell_batch)) if adv_sell_batch else float("nan")
+            _adv_hold = float(_np.mean(adv_hold_batch)) if adv_hold_batch else float("nan")
+            _v_buy = float(_np.mean(v_buy_batch)) if v_buy_batch else float("nan")
+            _v_sell = float(_np.mean(v_sell_batch)) if v_sell_batch else float("nan")
+            if adv_buy_batch:
+                self.logger.record("diag/adv_BUY", _adv_buy)
+                self.logger.record("diag/v_BUY", _v_buy)
+            if adv_sell_batch:
+                self.logger.record("diag/adv_SELL", _adv_sell)
+                self.logger.record("diag/v_SELL", _v_sell)
+            if adv_hold_batch:
+                self.logger.record("diag/adv_HOLD", _adv_hold)
+            self.logger.record("diag/n_BUY", n_buy_batch)
+            self.logger.record("diag/n_SELL", n_sell_batch)
+            self.logger.record("diag/n_HOLD", n_hold_batch)
+
+            # ---- BRUTAL DEBUG PRINT (bypasses SB3 dump-table filtering) ----
+            # Guarantees we SEE the anchor + critic probes even when the KL
+            # early-stop truncates the update before a full progress dump.
+            print(
+                "[ANCHOR_DEBUG] upd=%d n_upd=%d a0_mean=%.4f a0_std=%.4f "
+                "anchor=%.4f | adv_BUY=%.4f adv_SELL=%.4f adv_HOLD=%.4f | "
+                "v_BUY=%.4f v_SELL=%.4f | nB=%d nS=%d nH=%d"
+                % (
+                    getattr(self, "_n_updates", -1), self._n_updates,
+                    _a0m, _a0s, _anc,
+                    _adv_buy, _adv_sell, _adv_hold,
+                    _v_buy, _v_sell,
+                    n_buy_batch, n_sell_batch, n_hold_batch,
+                ),
+                flush=True,
+            )
 
             # ---- 2. Auxiliary next-return MSE gradient step (unchanged) -----
             try:
