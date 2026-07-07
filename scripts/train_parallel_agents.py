@@ -2115,7 +2115,26 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
             return _lr_target
         logger.info(f"[SANDBOX] LR warmup schedule: target={_lr_target:.2e}, "
                     f"warmup_frac={_warmup_frac} (start={_lr_target*0.10:.2e})")
-        model = PPO(
+        # V15 (2026-07-07): when the L2 action anchor is requested
+        # (ADAN_L2_ANCHOR_LAMBDA>0), the sandbox path MUST instantiate
+        # WorldModelPPO — its overridden train() is the ONLY place the anchor
+        # loss + Critic probes live. Vanilla PPO silently ignores the anchor.
+        # aux_loss_coef defaults to 0.0 here so the diagnosis isolates the
+        # anchor effect (no forward-prediction MSE confounding a0_mean).
+        _anchor_lambda_env = float(os.environ.get("ADAN_L2_ANCHOR_LAMBDA", "0.0") or 0.0)
+        _use_wmppo = (_anchor_lambda_env > 0.0) and (WorldModelPPO is not None)
+        _SandboxPPOClass = WorldModelPPO if _use_wmppo else PPO
+        _extra_ppo_kwargs = {}
+        if _use_wmppo:
+            _aux_coef = float(os.environ.get("ADAN_AUX_LOSS_COEF", "0.0") or 0.0)
+            _extra_ppo_kwargs["aux_loss_coef"] = _aux_coef
+            logger.warning(
+                "[SANDBOX][V15] Using WorldModelPPO (anchor lambda=%.4f, "
+                "aux_loss_coef=%.3f) — L2 action anchor + Critic probes ACTIVE.",
+                _anchor_lambda_env, _aux_coef)
+        else:
+            logger.info("[SANDBOX] Using vanilla PPO (no L2 anchor requested).")
+        model = _SandboxPPOClass(
             "MultiInputPolicy",
             vec_env,
             learning_rate=_lr_schedule,
@@ -2146,6 +2165,7 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
             verbose=1,
             device="cpu",
             policy_kwargs=policy_kwargs,
+            **_extra_ppo_kwargs,
         )
         reset_num_timesteps = True
         prior_steps = 0
