@@ -1407,6 +1407,10 @@ try:
             )
 
             # ---- 2. Auxiliary next-return MSE gradient step (unchanged) -----
+            # V15: skip entirely when coef==0 so the anchor diagnosis is not
+            # confounded by a zero-scaled (but still executed) aux optimiser step.
+            if getattr(self, "aux_loss_coef", 0.0) == 0.0:
+                return
             try:
                 fe = self.policy.features_extractor
                 if not hasattr(fe, 'forward_predictor') or not hasattr(fe, '_last_aux_prediction'):
