@@ -122,6 +122,9 @@ def main():
             diag_csv.unlink()
         env = dict(os.environ)
         env["ADAN_L2_ANCHOR_LAMBDA"] = str(args.lambda_anchor)
+        # Isolate the anchor: no forward-prediction MSE confound during the
+        # diagnostic (aux_loss_coef=0 -> WorldModelPPO skips the aux step).
+        env.setdefault("ADAN_AUX_LOSS_COEF", "0.0")
         env["ADAN_DIAG_COLLAPSE"] = "1"
         env["ADAN_DIAG_EVERY"] = str(args.diag_every)
         env["ADAN_DIAG_CSV"] = str(diag_csv)
