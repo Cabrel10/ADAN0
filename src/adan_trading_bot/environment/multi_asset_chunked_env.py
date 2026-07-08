@@ -534,6 +534,36 @@ class MultiAssetChunkedEnv(gym.Env):
             except Exception:
                 pass
 
+        # V16 (2026-07-08): MARK-TO-MARKET REWARD (delta-equity per step).
+        # Root cause proven by V15 50k run: realized_pnl crystallises the whole
+        # position loss on the SELL step -> temporal credit-assignment bias
+        # (SELL punished 4.7x more than BUY). Fix: reward the step-wise change
+        # in total equity (cash + unrealised) so pain is spread over HOLD and a
+        # SELL that stops the bleeding earns a POSITIVE advantage. Opt-in via
+        # ADAN_MTM_REWARD=1 (default OFF = backward compatible).
+        try:
+            self.mtm_reward = (os.environ.get('ADAN_MTM_REWARD', '0') == '1')
+        except Exception:
+            self.mtm_reward = False
+        try:
+            self.mtm_scale = float(os.environ.get('ADAN_MTM_SCALE', '1.0') or 1.0)
+        except Exception:
+            self.mtm_scale = 1.0
+        try:
+            self.mtm_trade_cost = float(os.environ.get('ADAN_MTM_TRADE_COST', '0.0') or 0.0)
+        except Exception:
+            self.mtm_trade_cost = 0.0
+        self._mtm_prev_equity = None
+        if self.mtm_reward:
+            try:
+                logger.warning(
+                    "[V16_MTM] Mark-to-Market reward ON: scale=%.3f trade_cost=%.4f "
+                    "(reward=symlog(delta_equity_pct); realized-PnL/tier/closure "
+                    "NEUTRALISED to remove SELL credit-assignment bias)",
+                    self.mtm_scale, self.mtm_trade_cost)
+            except Exception:
+                pass
+
         # SATURATION PENALTY (V4, 2026-06-27): penalise (log, plafonnee) le fait
         # que SL/TP saturent les bornes du profil sur une fenetre glissante.
         # Avant: seulement LOGGE (ACTION-SATURATION TRACKER), jamais penalise.
@@ -2434,6 +2464,7 @@ class MultiAssetChunkedEnv(gym.Env):
         self.current_step = 0
         self.done = False
         self.episode_reward = 0.0
+        self._mtm_prev_equity = None  # V16: reset mark-to-market baseline
         self.step_in_chunk = 0
 
         # Reset frequency tracking counters
@@ -6986,6 +7017,37 @@ class MultiAssetChunkedEnv(gym.Env):
             # A4: patience_bonus_val retire (= 0.0, mecanisme d'attente unique)
             # A6: survival_bonus retire (recompensait l'inaction)
         )
+
+        # ══════════════════════════════════════════════════════════════
+        # V16 MARK-TO-MARKET OVERRIDE (opt-in via ADAN_MTM_REWARD=1)
+        # ══════════════════════════════════════════════════════════════
+        # Replaces the crystallised realized-PnL raw_reward with the STEP-WISE
+        # change in total equity (cash + unrealised). This removes the SELL
+        # credit-assignment bias proven in the V15 50k autopsy: the loss is
+        # now charged during every HOLD step it accrues, and the closing SELL
+        # no longer receives a punishment spike. delta_equity is expressed as
+        # a percentage of initial capital so the scale matches pnl_pct.
+        if getattr(self, 'mtm_reward', False):
+            _prev = getattr(self, '_mtm_prev_equity', None)
+            if _prev is None or not (_prev > 0):
+                # First step of the episode: no baseline yet -> neutral reward.
+                delta_equity_pct = 0.0
+            else:
+                _ic_mtm = float(self.portfolio_manager.initial_capital or 20.5)
+                delta_equity_pct = ((current_capital - _prev) * 100.0) / max(_ic_mtm, 1.0)
+            self._mtm_prev_equity = float(current_capital)
+            # Light per-step action friction (default 0.0 -> pure MTM). Charged
+            # only when a trade actually executed this step; symmetric BUY/SELL.
+            _mtm_cost = 0.0
+            try:
+                if float(getattr(self, 'mtm_trade_cost', 0.0)) > 0.0 and bool(getattr(self, '_last_trade_executed', False)):
+                    _mtm_cost = -float(self.mtm_trade_cost)
+            except Exception:
+                _mtm_cost = 0.0
+            raw_reward = float(self.mtm_scale) * delta_equity_pct + _mtm_cost
+            # Keep drawdown risk-management pressure (survival first) but drop
+            # the asymmetric realized-PnL / tier / closure terms entirely.
+            raw_reward += drawdown_penalty
 
         # Use symlog to compress large rewards while preserving small signal
         final_reward = float(_np.sign(raw_reward) * _np.log1p(_np.abs(raw_reward)))
