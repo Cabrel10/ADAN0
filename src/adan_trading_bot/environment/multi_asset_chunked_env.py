@@ -607,6 +607,34 @@ class MultiAssetChunkedEnv(gym.Env):
             logger.warning("[FUTURE_ARENA] RewardBridge non initialise: %r", _e)
             self._reward_bridge = None
 
+        # ============================================================
+        # V18 — Arena Bayesien Predictif (present-only, live-safe).
+        # Estimator: remplace la barriere/profils fixes par un modele appris.
+        # Collector: enregistre (present -> params optimaux ex-post) en JSONL.
+        # Tout est best-effort: jamais casser l'env si torch/modele absent.
+        # Actives par env-vars ADAN_ARENA_PREDICT=1 / ADAN_ARENA_COLLECT=1.
+        # ============================================================
+        self._arena_estimator = None
+        self._arena_collector = None
+        try:
+            from adan_trading_bot.arena_predictor import ArenaEstimator, ArenaCollector
+            _rtf_arena = 0.004
+            try:
+                _rtf_arena = 2.0 * float(getattr(self.portfolio_manager, "fee_pct", 0.002))
+            except Exception:
+                _rtf_arena = 0.004
+            self._arena_estimator = ArenaEstimator(round_trip_fees=_rtf_arena)
+            self._arena_collector = ArenaCollector()
+            if self._arena_estimator.enabled:
+                logger.info("[ARENA_V18] Estimator init (active=%s, path=%s)",
+                            self._arena_estimator.is_active, self._arena_estimator.model_path)
+            if self._arena_collector.enabled:
+                logger.info("[ARENA_V18] Collector ACTIVE -> %s", self._arena_collector.out_path)
+        except Exception as _e_arena:  # pragma: no cover
+            logger.warning("[ARENA_V18] init non disponible: %r", _e_arena)
+            self._arena_estimator = None
+            self._arena_collector = None
+
         self.last_trade_timestamps = {"5m": None, "1h": None, "4h": None}
         self.receipts: deque = deque(maxlen=100)
 
@@ -6468,6 +6496,26 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             return None, None
 
+    def _v19_barrier_cap(self) -> float:
+        """V19: dynamic MFE-percentile cap (remplace le plafond arbitraire 2%).
+
+        Retourne le percentile-95 des MFE reellement observees si assez
+        d'echantillons (>=30), sinon le repli 0.02. Borne dans [0.008, 0.05]
+        pour rester sain. Active par ADAN_V19_DYNAMIC_CAP (def 1).
+        """
+        import os as _os_cap
+        if _os_cap.environ.get("ADAN_V19_DYNAMIC_CAP", "1") != "1":
+            return 0.02
+        buf = getattr(self, "_mfe_observed", None)
+        if not buf or len(buf) < 30:
+            return 0.02
+        try:
+            import numpy as _np_cap
+            p95 = float(_np_cap.percentile(_np_cap.asarray(buf, dtype=float), 95))
+            return float(max(0.008, min(0.05, p95)))
+        except Exception:
+            return 0.02
+
     def _future_contrib_from_receipts(self) -> float:
         """Somme des contributions guidees par le futur (FINDING #4).
 
@@ -6536,6 +6584,15 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
                 # duree en steps
                 steps_held = max(0, cur_global - open_step)
+                # V19: alimente le buffer MFE observe (calibration du cap).
+                try:
+                    if not hasattr(self, "_mfe_observed"):
+                        from collections import deque as _dq_v19
+                        self._mfe_observed = _dq_v19(maxlen=2000)
+                    if mfe is not None and float(mfe) >= 0.0:
+                        self._mfe_observed.append(float(mfe))
+                except Exception:
+                    pass
                 # V17-Fix B: mfe_residual = MFE over the horizon AFTER the exit
                 # index. Feeds Arena.lost_potential_penalty (Scenario B: "sold too
                 # early, market kept rising -> opportunity-cost malus"). OFFLINE
@@ -6566,6 +6623,55 @@ class MultiAssetChunkedEnv(gym.Env):
                     mfe_residual=mfe_residual,
                 )
                 total += float(contrib)
+                # ============================================================
+                # V18-FINAL: collecte reelle sur cloture de trade.
+                # Le Collector transforme (etat present A L'ENTREE -> params
+                # optimaux ex-post) en echantillon supervise. REGLE D'OR: on
+                # capture l'etat AU MOMENT DE L'ENTREE (df.iloc[entry_idx]),
+                # pas a la sortie -> le Predictor apprend a anticiper depuis
+                # l'entree. Best-effort: ne casse jamais l'entrainement.
+                # ============================================================
+                try:
+                    _col = getattr(self, "_arena_collector", None)
+                    if _col is not None and getattr(_col, "enabled", False):
+                        from adan_trading_bot.arena_predictor import (
+                            PresentState as _PS_col, ArenaCollector as _AC_col,
+                        )
+                        _entry_row = {}
+                        try:
+                            _entry_row = df.iloc[int(entry_idx)].to_dict()
+                        except Exception:
+                            _entry_row = {}
+                        _entry_price = float(_entry_row.get("close", receipt.get("entry_price", 0.0)) or 0.0)
+                        _st_col = _PS_col.from_market_row(_entry_row, timeframe=str(tf or "5m"))
+                        _rtf_col = 0.008
+                        try:
+                            _rtf_col = 2.0 * float(getattr(self.portfolio_manager, "fee_pct", 0.002))
+                        except Exception:
+                            _rtf_col = 0.008
+                        _pnl_net_col = float(
+                            receipt.get("pnl_net", receipt.get("pnl", receipt.get("pnl_gross", 0.0))) or 0.0
+                        )
+                        _params_col = _AC_col.optimal_params_from_future(
+                            entry_price=_entry_price,
+                            mfe=float(mfe),
+                            mae=float(mae),
+                            steps_held=int(steps_held),
+                            mfe_residual=mfe_residual,
+                            round_trip_fees=_rtf_col,
+                            pnl_net=_pnl_net_col,
+                        )
+                        _col.record(_st_col, _params_col, meta={
+                            "asset": str(asset),
+                            "tf": str(tf or "5m"),
+                            "open_step": int(receipt.get("open_step", -1)),
+                            "steps_held": int(steps_held),
+                            "reason": str(receipt.get("reason", receipt.get("close_reason", "")) or ""),
+                            "pnl_net": _pnl_net_col,
+                            "global_step": int(cur_global),
+                        })
+                except Exception:
+                    pass
             except Exception:
                 continue
         return float(total)
@@ -8539,7 +8645,41 @@ class MultiAssetChunkedEnv(gym.Env):
                         if _atr_pct_bar > 1e-9:
                             _atr_scale = min(2.0, max(0.5, _atr_pct_bar / 0.004))
                         _barrier = _barrier_mult * _rt_fees * _atr_scale
-                        _barrier = max(_rt_fees, min(_barrier, 0.02))
+                        # V19: dynamic MFE-percentile cap (remplace le 2% arbitraire).
+                        _cap_v19 = 0.02
+                        try:
+                            _cap_v19 = float(self._v19_barrier_cap())
+                        except Exception:
+                            _cap_v19 = 0.02
+                        _barrier = max(_rt_fees, min(_barrier, _cap_v19))
+                        # V18: si l'Arena predictif est actif, la barriere
+                        # devient la break-even ADAPTATIVE (mean + k*std) issue
+                        # du modele appris sur l'etat PRESENT. Repli sur la
+                        # barriere V17 (ATR-scale) si modele indisponible.
+                        try:
+                            _arena = getattr(self, "_arena_estimator", None)
+                            if _arena is not None and getattr(_arena, "is_active", False):
+                                from adan_trading_bot.arena_predictor import PresentState as _PS_v18
+                                _row_v18 = {}
+                                _tf_v18 = "5m"
+                                try:
+                                    _df_v18, _tf_got = self._get_chunk_df_for_asset(asset, "5m")
+                                    if _df_v18 is not None and hasattr(_df_v18, "iloc") and len(_df_v18) > 0:
+                                        _row_v18 = _df_v18.iloc[-1].to_dict()
+                                        _tf_v18 = _tf_got or "5m"
+                                except Exception:
+                                    _row_v18 = {}
+                                _st_v18 = _PS_v18.from_market_row(_row_v18, timeframe=_tf_v18)
+                                _be_arena = _arena.estimate_break_even(_st_v18)
+                                if _be_arena and _be_arena > 0:
+                                    try:
+                                        _cap_a19 = float(self._v19_barrier_cap())
+                                    except Exception:
+                                        _cap_a19 = 0.02
+                                    _barrier = max(_rt_fees, min(float(_be_arena), _cap_a19))
+                                    self._last_arena_barrier = _barrier
+                        except Exception:
+                            pass
                         # Log every 500 steps to trace the dynamic barrier.
                         try:
                             if int(getattr(self, "current_step", 0)) % 500 == 0:
@@ -8575,10 +8715,15 @@ class MultiAssetChunkedEnv(gym.Env):
                                 self.sell_lifecycle["rej_budget"] += 1
                             except Exception:
                                 pass
-                            # Penalite douce proportionnelle au deficit de budget
-                            # (gradient, pas no-op) — l'agent apprend a economiser.
+                            # V19: reject hygiene — un SELL refuse par le BUDGET est
+                            # un signal STRUCTUREL informatif (cooldown/quota), pas une
+                            # faute morale. Par defaut AUCUNE penalite (l'agent n'a pas
+                            # "mal choisi": il a voulu sortir, la friction l'en empeche).
+                            # ADAN_V19_REJECT_HYGIENE=0 restaure l'ancien comportement.
+                            import os as _os_v19b
+                            _hygiene_b = _os_v19b.environ.get("ADAN_V19_REJECT_HYGIENE", "1") == "1"
                             _deficit_b = max(0.0, (_cost_close - _budget) / max(_cost_close, 1e-9))
-                            _q_pen = -0.10 - 0.10 * min(1.0, _deficit_b)
+                            _q_pen = 0.0 if _hygiene_b else (-0.10 - 0.10 * min(1.0, _deficit_b))
                             self._step_invalid_penalty += _q_pen
                             self.logger.debug(
                                 f"[DECISION_BUDGET] {asset}: AGENT_CLOSE bloque "
@@ -8593,10 +8738,17 @@ class MultiAssetChunkedEnv(gym.Env):
                                 self.sell_lifecycle["rej_barrier"] += 1
                             except Exception:
                                 pass
-                            # Penalite GRADIENT (cf. reward_service.agent_close_barrier):
-                            # proportionnelle au manque de rentabilite, bornee, negative.
+                            # V19: reject hygiene — un SELL refuse par la BARRIERE
+                            # (PnL < break-even) NE DOIT PAS etre puni. L'agent a
+                            # tente la bonne action (sortir), mais le trade n'est pas
+                            # encore rentable. Le punir = re-emprisonner l'agent =
+                            # cause racine du collapse V16. Par defaut AUCUNE penalite.
+                            # Seuls les SELL EXECUTES sont juges par le Future Arena.
+                            # ADAN_V19_REJECT_HYGIENE=0 restaure l'ancien comportement.
+                            import os as _os_v19a
+                            _hygiene_a = _os_v19a.environ.get("ADAN_V19_REJECT_HYGIENE", "1") == "1"
                             _deficit = (_barrier - unrealized_pnl_pct) / max(_barrier, 1e-9)
-                            _ac_pen = -0.15 * min(1.0, max(0.0, _deficit))
+                            _ac_pen = 0.0 if _hygiene_a else (-0.15 * min(1.0, max(0.0, _deficit)))
                             self._step_invalid_penalty += _ac_pen
                             self.logger.debug(
                                 f"[AGENT_CLOSE BLOCKED] {asset}: PnL {unrealized_pnl_pct:.4%} < "
