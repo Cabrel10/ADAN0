@@ -20,7 +20,7 @@ from pathlib import Path
 
 # Ensure src/ is in path
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_SRC_DIR = _SCRIPT_DIR.parent / "src"
+_SRC_DIR = _SCRIPT_DIR.parent.parent / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
@@ -30,7 +30,7 @@ import pandas as pd
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = _SCRIPT_DIR.parent
+PROJECT_ROOT = _SCRIPT_DIR.parent.parent
 
 # Import StateBuilder
 from adan_trading_bot.data_processing.state_builder import StateBuilder
