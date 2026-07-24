@@ -642,10 +642,14 @@ environment:
   # to choose between BUY/SELL with no safe HOLD zone.
   # Agent learned to output negative values (SELL) to avoid trading costs.
   # New thresholds give 20% of action space to HOLD (safe zone).
+  # V17-Fix D (deadband): lowered so deterministic mu (kept near 0 by L2 anchor)
+  # can cross the threshold and trigger real BUY/SELL at inference. 0.05 is a
+  # compromise: demands a genuine directional impulse but stays reachable by the
+  # anchor (NOT near-zero, to avoid over-trading noise). Was {1h:0.15,4h:0.20,5m:0.10}.
   action_thresholds:
-    1h: 0.15
-    4h: 0.20
-    5m: 0.10
+    1h: 0.08
+    4h: 0.10
+    5m: 0.05
   assets:
   - btcusdt
   base_currency: USDT
@@ -655,7 +659,12 @@ environment:
   # Decision utilisateur: le 0.80% gonflait artificiellement le TP_min, forcant
   # des TP 8-12% impossibles (mouvement reel ~1-2% / 30 steps). 0.50% permet des
   # TP serres et donc 15-20 trades/jour capturables.
-  commission: 0.0025
+  # V17-Fix B (fees, NON-NEGOTIABLE user decision): 0.0025 -> 0.0020.
+  # 0.20% per side => 0.40% round-trip (was 0.50%). With the old 0.5% R/T the
+  # static break-even wall sat at 0.75% (1.5x), unreachable in a scalper window
+  # (20 candles) => 95% of SELLs rejected. At 0.40% R/T a ~2-candle BTC move
+  # nets a profit and the dynamic barrier (Fix A) becomes crossable.
+  commission: 0.0020
   features_config:
     indicators:
     - rsi_14
@@ -1257,7 +1266,7 @@ reward_shaping:
   future_reward:
     enabled: true
     mode: future_guided
-    round_trip_fees: 0.005
+    round_trip_fees: 0.004   # V17-Fix B: aligned with commission 0.0020 (0.40% R/T)
     max_future_contrib: 0.60
     # ── PHILOSOPHIE (revue utilisateur 2026-06-26) ──────────────────────────
     # Le Future Arena juge le TP/SL contre le POTENTIEL REELLEMENT OBSERVE
@@ -1373,14 +1382,44 @@ reward_shaping:
       drawdown_penalty_factor: 0.1
       promotion_bonus: 0.0  # No higher tier
   # At 0.005, a 5-step HOLD_MIN violation costs -0.025 reward.
-  invalid_trade_penalty_weight: 0.005
+  # DIAGNOSTIC-V4 (2026-06-30): 0.005 -> 0.02. This is now the BASE of the
+  # SYMMETRIC sterile penalty applied to BOTH SELL-flat AND BUY-illegal
+  # (anti_spam / min_notional). At Micro tier (k=0) the penalty is 0.02,
+  # capped at 0.10. The 28k diagnostic proved that with a near-zero penalty
+  # the agent saturated BUY (illegal_ratio 97%). 0.02 makes the invalid
+  # intent clearly visible to the PPO gradient without dominating real PnL.
+  invalid_trade_penalty_weight: 0.02
   # ── FIX A+B (2026-06-27): coût GEOMETRIQUE de l'action stérile ──
   # SELL-sans-position était GRATUIT (aucune branche) → PPO a collapsé sur
   # action[0]=-1 (point fixe sans douleur). La pénalité croît géométriquement
   # avec le palier (Micro=0..High=3): pen = invalid_trade_penalty_weight * r^k,
   # bornée par cap. Neutralise le gain géométrique de la lâcheté aux paliers hauts.
+  # DIAGNOSTIC-V3 (2026-06-29): cap 0.05 -> 0.10. The forensic confusion matrix
+  # showed sterile/illegal action requests at ~0.5/step that the env mostly
+  # neutralises to HOLD at ZERO cost (so saturation at action0=+-1 was free).
+  # Doubling the cap makes the agent FEEL the cost of sterile SELL-no-position
+  # without exploding the reward (kept well below the +-1.2% SL magnitude).
   sterile_action_geom_ratio: 1.6     # r > 1 : friction croissante par palier
-  sterile_action_penalty_cap: 0.05   # borne dure (jamais exponentiel non maîtrisé)
+  sterile_action_penalty_cap: 0.30   # DIAGNOSTIC-V5: was 0.10. Streak-escalated
+                                     #   penalty now reaches ~15x base on a
+                                     #   persistent collapse -> PPO feels it.
+  # DIAGNOSTIC-V5 (2026-06-30): persistence-indexed sterile penalty.
+  #   acc_t = sterile_acc_decay*acc_{t-1} + severity(reason)
+  #   pen   = invalid_trade_penalty_weight * min(cap/base, 1 + alpha*acc) * window_mult
+  #   Replaces capital-tier indexing (flat at Micro k=0). Keyed on rejection
+  #   reason so any collapse mode (SELL-flat, BUY-open) escalates automatically.
+  sterile_acc_decay: 0.97            # relaxation per legal action / decay
+  sterile_acc_alpha: 0.45            # accumulator -> penalty multiplier slope
+  # DIAGNOSTIC-V6: warmup ramp. Sterile penalty scales 0->1 over the first
+  #   N env steps so PPO can explore BEFORE being punished (user: penalty
+  #   was "trop agressive trop tot"). After N steps full penalty applies.
+  sterile_warmup_steps: 50000
+  # DIAGNOSTIC-C1 (2026-07-01): warmup PLUS COURT pour la faute auto-infligée
+  # (Cas B min_notional_self_caused = sur-exposition = chemin de collapse prouvé).
+  # Le calcul C1 montre qu'à 50k le frein ne bat le carburant latent MAX qu'à ~50k
+  # steps, laissant une fenêtre de biais BUY. À 15k le frein est plein bien avant
+  # 128k. On ne touche NI aux frais NI au reward, juste à la rampe temporelle.
+  sterile_warmup_steps_self_caused: 15000
   logging:
     disable_existing_loggers: false
     formatters:
@@ -1532,8 +1571,8 @@ risk_parameters:
   weekly_loss_limit: 0.2
   winrate_tp_factor: 1.1
 trading_rules:
-  # FINDING #4: aligne sur environment.commission (0.50 % A/R, applique par cote).
-  commission_pct: 0.0025
+  # FINDING #4: aligne sur environment.commission. V17-Fix B: 0.40 % A/R.
+  commission_pct: 0.0020
   # 🔴 CRITICAL FIX (2026-06-25): enforce the per-tier exposure cap on EVERY
   # open (was only enforced at hour==4). Without this, the agent ignored
   # max_position_size_pct / exposure_range and sized positions arbitrarily.
@@ -1647,7 +1686,9 @@ trading_rules:
     # WAIT post-SELL: minimum steps between SELL and next BUY.
     # SELL at step N -> BUY allowed from step N + wait_steps_post_sell.
     wait_steps_post_sell:
-      5m: 2    # 10 min wait after SELL (~2 x 5min candles) - REDUCED from 6
+      5m: 5    # DIAGNOSTIC-V3 (2026-06-29): was 2. Forces ~25min FLAT after SELL to
+               #   test whether steps_flat rises above 5% (collapse: flat=0.3%). One
+               #   variable at a time; not aggressive (15+) so exploration survives.
       1h: 3    # 3h wait after SELL - REDUCED from 10
       4h: 4    # ~16h wait after SELL - REDUCED from 20
     # Anti-spam cooldown between consecutive BUY signals per worker profile.
@@ -1827,11 +1868,27 @@ sandbox:
   # 10000 steps / 512 = ~19 PPO updates × 10 epochs = 190 gradient passes.
   n_steps: 512                # Safe for 7GB CI (512 × obs ≈ 2.5 MB)
   batch_size: 64              # 512/64 = 8 minibatches per epoch
-  n_epochs: 20                # Standard PPO
+  n_epochs: 4                 # DIAGNOSTIC-V6: was 10. KL exploded on the FIRST
+                              #   minibatch ("Early stopping at step 0" x68) =>
+                              #   even 10 passes was too many. 4 passes lets a
+                              #   real (small) update land before KL early-stop.
   max_training_steps: 10000   # CI: ~4 min on 2-CPU runner
   ci_training_steps: 10000    # Relay segment size
-  learning_rate: 0.0003       # Standard
-  ent_coef: 0.01              # Standard PPO for continuous control
+  learning_rate: 0.00008      # DIAGNOSTIC-V6: was 1.5e-4. approx_kl 0.12-0.17 per
+                              #   update => step size still too large. Halved again.
+  clip_range: 0.12            # DIAGNOSTIC-V6: tighter trust region (was 0.15)
+  target_kl: 0.04             # DIAGNOSTIC-V6: was 0.02. 0.02 tripped early-stop at
+                              #   step 0 (1.5*0.02=0.03 < first-batch KL). 0.04 lets
+                              #   a small update complete before stopping.
+  max_grad_norm: 0.3          # DIAGNOSTIC-V6: was 0.5. Tighter gradient clip to
+                              #   prevent the violent first-batch KL jump.
+  ent_coef: 0.03              # DIAGNOSTIC-V3 (2026-06-29): was 0.01. The sandbox
+                              #   path reads ent_coef from sandbox_cfg (NOT
+                              #   WORKER_PROFILES), so this is the value that
+                              #   reaches the 50k diagnostic. Tripled to fight the
+                              #   measured entropy collapse (action0 bimodal at +-1,
+                              #   HOLD=0%, 99.7% in-position). Can be overridden at
+                              #   launch via ADAN_ENT_COEF. Fees held at 0.5%.
   # Session 6 fixes:
   # A8 FIX: Reward is now scaled by 100/initial_capital (percentage-based).
   #   On $20.50 capital, a $0.05 PnL → 0.244% → symlog(0.244) = 0.219

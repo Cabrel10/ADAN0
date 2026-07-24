@@ -26,6 +26,7 @@ from collections import deque
 from ..exchange_api.websocket_manager import WebSocketManager
 from ..exchange_api.connector import get_exchange_client
 from ..common.utils import get_logger
+from .action_routing import route_action_by_state as _route_action_by_state  # v12 state-conditioned routing
 from ..common.logging_utils import create_smart_logger, configure_smart_logger
 
 logger = get_logger(__name__)
@@ -40,7 +41,7 @@ if _TRAINING_SILENT:
     logger.setLevel(logging.WARNING)
 
 # Standard portfolio state vector dimension
-DEFAULT_PORTFOLIO_STATE_SIZE = 20
+DEFAULT_PORTFOLIO_STATE_SIZE = 28
 # Maximum attempts to reload a data chunk
 MAX_RELOAD_ATTEMPTS = 3
 # Fallback chunk index when primary fails
@@ -382,6 +383,16 @@ class MultiAssetChunkedEnv(gym.Env):
         self.agent_close_max_per_day = int(_ac_cfg.get('max_per_day', 7))
         self.agent_close_max_consecutive = int(_ac_cfg.get('max_consecutive', 3))
         self.agent_close_min_gap_steps = int(_ac_cfg.get('min_gap_steps', 12))
+        try:
+            import os as _os_gap
+            _ov_gap = _os_gap.environ.get("ADAN_CLOSE_MIN_GAP")
+            if _ov_gap is not None:
+                self.agent_close_min_gap_steps = int(float(_ov_gap))
+            _ov_maxd = _os_gap.environ.get("ADAN_CLOSE_MAX_PER_DAY")
+            if _ov_maxd is not None:
+                self.agent_close_max_per_day = int(float(_ov_maxd))
+        except Exception:
+            pass
         self.agent_close_count_today = 0
         self.agent_close_consecutive = 0
         self._last_agent_close_step = -10**9
@@ -398,6 +409,22 @@ class MultiAssetChunkedEnv(gym.Env):
         self.decision_cost_buy = float(_db_cfg.get('cost_buy', 0.15))
         self.decision_cost_close = float(_db_cfg.get('cost_close', 0.30))
         self.decision_recharge_hold = float(_db_cfg.get('recharge_hold', 0.02))
+        # FIX-C (unblock the EXIT): the architecture audit proved the CLOSE path
+        # was strangled by THREE simultaneous gates (budget<cost_close, gap<12,
+        # pnl<1.5x fees). Combined, they made SELL almost impossible -> agent
+        # learned "SELL never works" -> BUY collapse. We expose the three exit
+        # knobs as env vars so we can loosen the throttle WITHOUT touching config
+        # (one design variable at a time). Defaults keep legacy behaviour.
+        try:
+            import os as _os_ec
+            _ov_cc = _os_ec.environ.get("ADAN_CLOSE_COST")
+            if _ov_cc is not None:
+                self.decision_cost_close = float(_ov_cc)
+            _ov_rh = _os_ec.environ.get("ADAN_CLOSE_RECHARGE")
+            if _ov_rh is not None:
+                self.decision_recharge_hold = float(_ov_rh)
+        except Exception:
+            pass
         self.decision_budget = self.decision_budget_max
         # SYMMETRY & VOLATILITY ENFORCEMENT (V3): penalite latente contre la
         # triche SL/TP (RR asymetrique + SL trop large vs ATR = "lachete").
@@ -447,6 +474,96 @@ class MultiAssetChunkedEnv(gym.Env):
         self.latent_pnl_lambda_gain = float(_lps.get('lambda_gain', 0.10))
         self.latent_pnl_lambda_loss = float(_lps.get('lambda_loss', 0.15))
         self.latent_pnl_cap = float(_lps.get('cap', 0.30))
+        # ------------------------------------------------------------------
+        # MANIFESTO v1 (2026-07-06) — DELTA LATENT PnL en mode LINEAIRE.
+        # Cause racine MESUREE: le latent log1p(u*10)/10 est ~200x trop faible
+        # (perte -2%/20pas cumule -0.0164 vs -0.30 pour vendre) => tenir la perte
+        # est 18x moins cher que la couper => disposition effect => a0->+inf.
+        # Mode 'linear' (opt-in via ADAN_LATENT_MODE=linear): contribution
+        # PROPORTIONNELLE au PnL latent, CHAQUE pas (override every_n=1),
+        # asymetrique (loss>gain), plafonnee par cap. Rend le no-op non-gratuit
+        # quand la position saigne. Defaut = 'log' (legacy, retro-compatible).
+        self.latent_pnl_mode = str(os.environ.get('ADAN_LATENT_MODE', 'log')).strip().lower()
+        _lin_lg = os.environ.get('ADAN_LATENT_LGAIN')
+        _lin_ll = os.environ.get('ADAN_LATENT_LLOSS')
+        _lin_cap = os.environ.get('ADAN_LATENT_CAP')
+        _lin_every = os.environ.get('ADAN_LATENT_EVERY')
+        if _lin_lg is not None:  self.latent_pnl_lambda_gain = float(_lin_lg)
+        if _lin_ll is not None:  self.latent_pnl_lambda_loss = float(_lin_ll)
+        if _lin_cap is not None: self.latent_pnl_cap = float(_lin_cap)
+        if _lin_every is not None: self.latent_pnl_every_n = max(1, int(_lin_every))
+        if self.latent_pnl_mode == 'linear':
+            try:
+                logger.warning(
+                    "[MANIFESTO] latent_pnl LINEAR mode ON: lg=%.3f ll=%.3f cap=%.3f every=%d",
+                    self.latent_pnl_lambda_gain, self.latent_pnl_lambda_loss,
+                    self.latent_pnl_cap, self.latent_pnl_every_n)
+            except Exception:
+                pass
+        # ------------------------------------------------------------------
+        # ACTION ANCHOR (2026-07-06) — restoring force on the RAW a0 head.
+        # MEASURED root cause (docs/EMPIRICAL_BEHAVIOR_ANALYSIS.md): on no-op
+        # steps (long+BUY -> HOLD override, or any HOLD) the reward is
+        # INDEPENDENT of a0 magnitude (grad d(reward)/d(a0) ~= 0). a0=+0.25 and
+        # a0=+1.0 both get ~+0.0007. So a0_mean drifts freely under noise ->
+        # directional collapse (pct_buy->1.0). This adds a SYMMETRIC quadratic
+        # pull toward a0=0, applied ONLY when NO trade executed (pure no-op), so
+        # it NEVER penalises a real BUY/SELL decision and NEVER biases direction
+        # (symmetric => cannot cause the hc020 inverse-excess SELL-runaway).
+        # Opt-in via ADAN_ANCHOR_LAMBDA>0. Default 0.0 = OFF (backward compat).
+        #   contribution = -lambda * min(cap, (max(0,|a0|-dead))**2)
+        # dead-zone lets the healthy natural spread (a0_std~0.14) breathe.
+        try:
+            self.anchor_lambda = float(os.environ.get('ADAN_ANCHOR_LAMBDA', '0.0') or 0.0)
+        except Exception:
+            self.anchor_lambda = 0.0
+        try:
+            self.anchor_deadzone = float(os.environ.get('ADAN_ANCHOR_DEADZONE', '0.30') or 0.30)
+        except Exception:
+            self.anchor_deadzone = 0.30
+        try:
+            self.anchor_cap = float(os.environ.get('ADAN_ANCHOR_CAP', '0.02') or 0.02)
+        except Exception:
+            self.anchor_cap = 0.02
+        if self.anchor_lambda > 0.0:
+            try:
+                logger.warning(
+                    "[ANCHOR] action anchor ON: lambda=%.4f deadzone=%.3f cap=%.4f "
+                    "(no-op only, symmetric)",
+                    self.anchor_lambda, self.anchor_deadzone, self.anchor_cap)
+            except Exception:
+                pass
+
+        # V16 (2026-07-08): MARK-TO-MARKET REWARD (delta-equity per step).
+        # Root cause proven by V15 50k run: realized_pnl crystallises the whole
+        # position loss on the SELL step -> temporal credit-assignment bias
+        # (SELL punished 4.7x more than BUY). Fix: reward the step-wise change
+        # in total equity (cash + unrealised) so pain is spread over HOLD and a
+        # SELL that stops the bleeding earns a POSITIVE advantage. Opt-in via
+        # ADAN_MTM_REWARD=1 (default OFF = backward compatible).
+        try:
+            self.mtm_reward = (os.environ.get('ADAN_MTM_REWARD', '0') == '1')
+        except Exception:
+            self.mtm_reward = False
+        try:
+            self.mtm_scale = float(os.environ.get('ADAN_MTM_SCALE', '1.0') or 1.0)
+        except Exception:
+            self.mtm_scale = 1.0
+        try:
+            self.mtm_trade_cost = float(os.environ.get('ADAN_MTM_TRADE_COST', '0.0') or 0.0)
+        except Exception:
+            self.mtm_trade_cost = 0.0
+        self._mtm_prev_equity = None
+        if self.mtm_reward:
+            try:
+                logger.warning(
+                    "[V16_MTM] Mark-to-Market reward ON: scale=%.3f trade_cost=%.4f "
+                    "(reward=symlog(delta_equity_pct); realized-PnL/tier/closure "
+                    "NEUTRALISED to remove SELL credit-assignment bias)",
+                    self.mtm_scale, self.mtm_trade_cost)
+            except Exception:
+                pass
+
         # SATURATION PENALTY (V4, 2026-06-27): penalise (log, plafonnee) le fait
         # que SL/TP saturent les bornes du profil sur une fenetre glissante.
         # Avant: seulement LOGGE (ACTION-SATURATION TRACKER), jamais penalise.
@@ -489,6 +606,34 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception as _e:  # pragma: no cover - robustesse: jamais crasher l'env
             logger.warning("[FUTURE_ARENA] RewardBridge non initialise: %r", _e)
             self._reward_bridge = None
+
+        # ============================================================
+        # V18 — Arena Bayesien Predictif (present-only, live-safe).
+        # Estimator: remplace la barriere/profils fixes par un modele appris.
+        # Collector: enregistre (present -> params optimaux ex-post) en JSONL.
+        # Tout est best-effort: jamais casser l'env si torch/modele absent.
+        # Actives par env-vars ADAN_ARENA_PREDICT=1 / ADAN_ARENA_COLLECT=1.
+        # ============================================================
+        self._arena_estimator = None
+        self._arena_collector = None
+        try:
+            from adan_trading_bot.arena_predictor import ArenaEstimator, ArenaCollector
+            _rtf_arena = 0.004
+            try:
+                _rtf_arena = 2.0 * float(getattr(self.portfolio_manager, "fee_pct", 0.002))
+            except Exception:
+                _rtf_arena = 0.004
+            self._arena_estimator = ArenaEstimator(round_trip_fees=_rtf_arena)
+            self._arena_collector = ArenaCollector()
+            if self._arena_estimator.enabled:
+                logger.info("[ARENA_V18] Estimator init (active=%s, path=%s)",
+                            self._arena_estimator.is_active, self._arena_estimator.model_path)
+            if self._arena_collector.enabled:
+                logger.info("[ARENA_V18] Collector ACTIVE -> %s", self._arena_collector.out_path)
+        except Exception as _e_arena:  # pragma: no cover
+            logger.warning("[ARENA_V18] init non disponible: %r", _e_arena)
+            self._arena_estimator = None
+            self._arena_collector = None
 
         self.last_trade_timestamps = {"5m": None, "1h": None, "4h": None}
         self.receipts: deque = deque(maxlen=100)
@@ -562,6 +707,15 @@ class MultiAssetChunkedEnv(gym.Env):
             "daily_limit": 0,   # Daily trade count exceeded
             "pm_rejected": 0,   # Portfolio manager rejected the open
         }
+        # ============================================================
+        # DIAGNOSTIC-V5: streak-based sterile penalty state
+        # Persistence-indexed (NOT capital-tier). Keyed on rejection
+        # reason. acc = decay*acc + severity ; reset on legal action.
+        # ============================================================
+        self._sterile_streak: Dict[str, int] = {}
+        self._sterile_acc: Dict[str, float] = {}
+        from collections import deque as _deque_v5
+        self._invalid_window = _deque_v5(maxlen=200)  # 1=invalid step,0=legal
         # Accumulate invalid_trade_penalty per step (reset each step)
         self._step_invalid_penalty = 0.0
         # Track requested vs executed action per step
@@ -2338,6 +2492,7 @@ class MultiAssetChunkedEnv(gym.Env):
         self.current_step = 0
         self.done = False
         self.episode_reward = 0.0
+        self._mtm_prev_equity = None  # V16: reset mark-to-market baseline
         self.step_in_chunk = 0
 
         # Reset frequency tracking counters
@@ -2381,12 +2536,42 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"trade_attempts={getattr(self, 'trade_attempts', 0)} "
                 f"invalid={getattr(self, 'invalid_trade_attempts', 0)}"
             )
+        # V17-Audit: log the SELL funnel of the episode that just ended, then reset.
+        _prev_sl = getattr(self, "sell_lifecycle", None)
+        if isinstance(_prev_sl, dict) and _prev_sl.get("requested_open", 0) > 0:
+            _req = max(1, int(_prev_sl.get("requested_open", 0)))
+            _rejb = int(_prev_sl.get("rej_barrier", 0))
+            try:
+                self.logger.info(
+                    "[SELL_LIFECYCLE] requested_open=%d rej_hold_min=%d rej_budget=%d "
+                    "rej_barrier=%d (%.1f%%) executed=%d exec_profit=%d" % (
+                        int(_prev_sl.get("requested_open", 0)),
+                        int(_prev_sl.get("rej_hold_min", 0)),
+                        int(_prev_sl.get("rej_budget", 0)),
+                        _rejb, 100.0 * _rejb / _req,
+                        int(_prev_sl.get("executed", 0)),
+                        int(_prev_sl.get("exec_profit", 0)),
+                    )
+                )
+            except Exception:
+                pass
+        self.sell_lifecycle = {
+            "requested_open": 0, "rej_hold_min": 0, "rej_budget": 0,
+            "rej_barrier": 0, "executed": 0, "exec_profit": 0,
+        }
         self.rejection_reasons = {
             "fee_gate": 0, "risk_gate": 0, "cooldown_wait": 0,
             "cooldown_hold_min": 0, "cooldown_omega4e": 0,
             "min_notional": 0, "hysteresis": 0, "anti_spam_hold": 0,
-            "daily_limit": 0, "pm_rejected": 0,
+            "daily_limit": 0, "pm_rejected": 0, "sell_no_position": 0,
         }
+        # DIAGNOSTIC-V5: clear streak/accumulator state at each episode reset.
+        if hasattr(self, "_sterile_streak"):
+            self._sterile_streak.clear()
+        if hasattr(self, "_sterile_acc"):
+            self._sterile_acc.clear()
+        if hasattr(self, "_invalid_window"):
+            self._invalid_window.clear()
         self.trade_attempts = 0
         self.invalid_trade_attempts = 0
         self._step_invalid_penalty = 0.0
@@ -5637,6 +5822,45 @@ class MultiAssetChunkedEnv(gym.Env):
             )
             # Sync le step courant sur le portfolio pour steps_in_position
             self.portfolio.current_step = self.current_step
+
+            # ACM: Sync cooldown state to portfolio for Capability Vector [26]
+            try:
+                _any_cooldown = False
+                for _tf in getattr(self, 'timeframes', []):
+                    _cd_wait = getattr(self, '_last_sell_step_by_asset', {})
+                    _cd_buy = getattr(self, '_buy_step_by_asset', {})
+                    for _asset in getattr(self, 'assets', []):
+                        if _asset in _cd_wait or _asset in _cd_buy:
+                            _any_cooldown = True
+                            break
+                    if _any_cooldown:
+                        break
+                self.portfolio._cooldown_active = 1.0 if _any_cooldown else 0.0
+            except Exception:
+                pass
+            # FIX-A (POMDP): expose the ENERGY (decision_budget) to the agent.
+            # Root cause found in architecture audit: decision_budget BLOCKED
+            # CLOSE actions but was NEVER in the observation -> hidden constraint
+            # -> POMDP -> agent could not learn to manage it -> BUY collapse.
+            # We push a normalized "close-readiness" gauge in [0,1] so slot [21]
+            # (can_close) reflects REAL capacity, not just "has a position".
+            # Activable/desactivable proprement (defaut ON via ADAN_ENERGY_OBS).
+            try:
+                import os as _os_eo
+                if _os_eo.environ.get("ADAN_ENERGY_OBS", "1") == "1":
+                    _bud = float(getattr(self, "decision_budget", 1.0))
+                    _cc = float(getattr(self, "decision_cost_close", 0.30)) or 0.30
+                    _min_gap = int(getattr(self, "agent_close_min_gap_steps", 12))
+                    _last_ac = int(getattr(self, "_last_agent_close_step", -10**9))
+                    _gap_ready = min(1.0, max(0.0, (self.current_step - _last_ac) / max(_min_gap, 1)))
+                    _bud_ready = min(1.0, max(0.0, _bud / _cc))
+                    # readiness = product (both energy AND cooldown must be ready)
+                    self.portfolio._close_energy_ready = float(_bud_ready * _gap_ready)
+                else:
+                    self.portfolio._close_energy_ready = 1.0
+            except Exception:
+                try: self.portfolio._close_energy_ready = 1.0
+                except Exception: pass
             # Récupérer le vecteur d'état du portefeuille
             if hasattr(self.portfolio, "get_state_vector"):
                 portfolio_state = self.portfolio.get_state_vector()
@@ -6272,6 +6496,26 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             return None, None
 
+    def _v19_barrier_cap(self) -> float:
+        """V19: dynamic MFE-percentile cap (remplace le plafond arbitraire 2%).
+
+        Retourne le percentile-95 des MFE reellement observees si assez
+        d'echantillons (>=30), sinon le repli 0.02. Borne dans [0.008, 0.05]
+        pour rester sain. Active par ADAN_V19_DYNAMIC_CAP (def 1).
+        """
+        import os as _os_cap
+        if _os_cap.environ.get("ADAN_V19_DYNAMIC_CAP", "1") != "1":
+            return 0.02
+        buf = getattr(self, "_mfe_observed", None)
+        if not buf or len(buf) < 30:
+            return 0.02
+        try:
+            import numpy as _np_cap
+            p95 = float(_np_cap.percentile(_np_cap.asarray(buf, dtype=float), 95))
+            return float(max(0.008, min(0.05, p95)))
+        except Exception:
+            return 0.02
+
     def _future_contrib_from_receipts(self) -> float:
         """Somme des contributions guidees par le futur (FINDING #4).
 
@@ -6340,6 +6584,29 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
                 # duree en steps
                 steps_held = max(0, cur_global - open_step)
+                # V19: alimente le buffer MFE observe (calibration du cap).
+                try:
+                    if not hasattr(self, "_mfe_observed"):
+                        from collections import deque as _dq_v19
+                        self._mfe_observed = _dq_v19(maxlen=2000)
+                    if mfe is not None and float(mfe) >= 0.0:
+                        self._mfe_observed.append(float(mfe))
+                except Exception:
+                    pass
+                # V17-Fix B: mfe_residual = MFE over the horizon AFTER the exit
+                # index. Feeds Arena.lost_potential_penalty (Scenario B: "sold too
+                # early, market kept rising -> opportunity-cost malus"). OFFLINE
+                # only; never injected into the observation -> live-safe.
+                mfe_residual = None
+                try:
+                    exit_idx = entry_idx + int(steps_held)
+                    if 0 <= exit_idx < len(df):
+                        _mfe_r, _ = compute_mfe_mae(
+                            df, exit_idx, PivotDirection.LOW, horizon, mae_floor=mae_floor
+                        )
+                        mfe_residual = float(_mfe_r)
+                except Exception:
+                    mfe_residual = None
                 contrib = bridge.contribution(
                     profile=profile,
                     timeframe=str(tf or "5m"),
@@ -6353,8 +6620,58 @@ class MultiAssetChunkedEnv(gym.Env):
                     tp_chosen=float(receipt.get("take_profit_pct", 0.0) or 0.0),
                     mfe=float(mfe),
                     mae=float(mae),
+                    mfe_residual=mfe_residual,
                 )
                 total += float(contrib)
+                # ============================================================
+                # V18-FINAL: collecte reelle sur cloture de trade.
+                # Le Collector transforme (etat present A L'ENTREE -> params
+                # optimaux ex-post) en echantillon supervise. REGLE D'OR: on
+                # capture l'etat AU MOMENT DE L'ENTREE (df.iloc[entry_idx]),
+                # pas a la sortie -> le Predictor apprend a anticiper depuis
+                # l'entree. Best-effort: ne casse jamais l'entrainement.
+                # ============================================================
+                try:
+                    _col = getattr(self, "_arena_collector", None)
+                    if _col is not None and getattr(_col, "enabled", False):
+                        from adan_trading_bot.arena_predictor import (
+                            PresentState as _PS_col, ArenaCollector as _AC_col,
+                        )
+                        _entry_row = {}
+                        try:
+                            _entry_row = df.iloc[int(entry_idx)].to_dict()
+                        except Exception:
+                            _entry_row = {}
+                        _entry_price = float(_entry_row.get("close", receipt.get("entry_price", 0.0)) or 0.0)
+                        _st_col = _PS_col.from_market_row(_entry_row, timeframe=str(tf or "5m"))
+                        _rtf_col = 0.008
+                        try:
+                            _rtf_col = 2.0 * float(getattr(self.portfolio_manager, "fee_pct", 0.002))
+                        except Exception:
+                            _rtf_col = 0.008
+                        _pnl_net_col = float(
+                            receipt.get("pnl_net", receipt.get("pnl", receipt.get("pnl_gross", 0.0))) or 0.0
+                        )
+                        _params_col = _AC_col.optimal_params_from_future(
+                            entry_price=_entry_price,
+                            mfe=float(mfe),
+                            mae=float(mae),
+                            steps_held=int(steps_held),
+                            mfe_residual=mfe_residual,
+                            round_trip_fees=_rtf_col,
+                            pnl_net=_pnl_net_col,
+                        )
+                        _col.record(_st_col, _params_col, meta={
+                            "asset": str(asset),
+                            "tf": str(tf or "5m"),
+                            "open_step": int(receipt.get("open_step", -1)),
+                            "steps_held": int(steps_held),
+                            "reason": str(receipt.get("reason", receipt.get("close_reason", "")) or ""),
+                            "pnl_net": _pnl_net_col,
+                            "global_step": int(cur_global),
+                        })
+                except Exception:
+                    pass
             except Exception:
                 continue
         return float(total)
@@ -6596,6 +6913,16 @@ class MultiAssetChunkedEnv(gym.Env):
             future_contrib = float(self._future_contrib_from_receipts())
         except Exception:
             future_contrib = 0.0
+        # --- ABLATION HOOK (v13 causal test, non-invasive) -------------------
+        # ADAN_ABLATE_FUTURE_CONTRIB=1 -> neutralise le TERME de reward
+        # future_contrib (le module Future Arena / dims 1-4 restent intacts;
+        # on teste seulement si ce terme est le moteur du biais anti-SELL).
+        try:
+            import os as _os_ablate
+            if _os_ablate.environ.get("ADAN_ABLATE_FUTURE_CONTRIB", "0") == "1":
+                future_contrib = 0.0
+        except Exception:
+            pass
 
         # ------------------------------------------------------------------
         # LATENT PnL SHAPING (V4, 2026-06-27) — la "ligne imaginaire".
@@ -6623,12 +6950,21 @@ class MultiAssetChunkedEnv(gym.Env):
                     if _ep <= 0 or _cp <= 0 or _held <= 0 or (_held % _every) != 0:
                         continue
                     _u = (_cp - _ep) / _ep  # PnL latent fractionnaire (SPOT long)
-                    if _u >= 0:
-                        # gain: log1p attenue, poids gain, plafonne
+                    if getattr(self, "latent_pnl_mode", "log") == "linear":
+                        # MANIFESTO v1: contribution PROPORTIONNELLE (pas de log
+                        # ecrasant). |contrib| = lambda * |u|, plafonnee par cap.
+                        # lg/ll ici sont des multiplicateurs directs (ex lg=0.5,
+                        # ll=1.0). Rend le maintien d'une perte reellement couteux.
+                        if _u >= 0:
+                            latent_pnl_contrib += min(_lcap, _lg * _u)
+                        else:
+                            latent_pnl_contrib -= min(_lcap, _ll * abs(_u))
+                    elif _u >= 0:
+                        # gain: log1p attenue, poids gain, plafonne (legacy)
                         _c = _lg * float(_np.log1p(_u * 10.0)) / 10.0
                         latent_pnl_contrib += min(_lcap, _c)
                     else:
-                        # perte: asymetrique (poids loss > gain), plafonne
+                        # perte: asymetrique (poids loss > gain), plafonne (legacy)
                         _c = _ll * float(_np.log1p(abs(_u) * 10.0)) / 10.0
                         latent_pnl_contrib -= min(_lcap, _c)
         except Exception:
@@ -6656,8 +6992,163 @@ class MultiAssetChunkedEnv(gym.Env):
         except Exception:
             saturation_penalty = 0.0
 
+        # ------------------------------------------------------------------
+        # HOLDING COST (v13 fix — anti disposition-effect / anti BUY-runaway).
+        # PROUVÉ (docs/ABLATION_RESULTS_v13.md + analyse structurelle): le collapse
+        # vient du reward asymétrique en ÉTAT — fermer une position perdante donne
+        # pnl_base<0 + closure_bonus=0 (puni), tandis que rester LONG ne réalise
+        # jamais la perte (reward 0). L'agent apprend à NE JAMAIS vendre -> reste
+        # LONG -> BUY systématique. Preuve empirique V12: 8/9 fermetures perdantes,
+        # pnl_base moyen -0.129 par fermeture.
+        # Contre-mesure: petite pénalité PAR STEP tant qu'une position est ouverte,
+        # créant une pression à sortir (symétrise l'espérance flat vs long).
+        # Sizing (discipline C1): h=0.001/step -> sur 72 steps (max intraday)=0.072,
+        # << closure_bonus 0.5, ne swamp pas un trade normal, mais rend le HOLD
+        # infini structurellement coûteux. Contrôlé par env var (défaut 0.0).
+        # Frais 0.5% et dims 1-4 INTACTS (ce terme est additif, hors PnL/SL/TP).
+        # ------------------------------------------------------------------
+        holding_cost = 0.0
+        try:
+            import os as _os_hc
+            _h = float(_os_hc.environ.get("ADAN_HOLDING_COST", "0.0") or 0.0)
+            if _h > 0.0 and hasattr(self, "portfolio_manager"):
+                _n_open_hc = sum(
+                    1 for _p in self.portfolio_manager.positions.values()
+                    if getattr(_p, "is_open", False)
+                )
+                if _n_open_hc > 0:
+                    holding_cost = -_h  # coût fixe par step si AU MOINS une position ouverte
+        except Exception:
+            holding_cost = 0.0
+
+        # ------------------------------------------------------------------
+        # SMART-FLAT REWARD (v13 — la vraie asymétrie, corrigée par l'analyse user).
+        # Le collapse ne vient PAS de "flat est puni" (confusion état/étape) mais de:
+        #   HOLD-flat -> reward = 0, VARIANCE NULLE ; BUY-flat -> reward != 0,
+        #   variance non nulle sur les trades gagnants. PPO, face à une action
+        #   toujours neutre (0) et une action parfois positive, converge vers la
+        #   seconde MÊME si son espérance est négative. Il manque un signal POSITIF
+        #   pour le HOLD intelligent.
+        # Contre-mesure (anti-oracle: le futur du chunk est en RAM, JAMAIS dans
+        #   l'observation): quand l'agent est FLAT et a demandé HOLD, on regarde les
+        #   `horizon` bougies futures. Si le marché AURAIT BAISSÉ (acheter maintenant
+        #   aurait perdu au-delà des frais A/R), on RÉCOMPENSE l'abstention correcte.
+        #   -> HOLD-flat acquiert sa propre variance positive, symétrisant le choix.
+        # Calibrage (discipline C1): k et cap contrôlés par env (test en bracket).
+        #   Magnitude de référence = ordre des composantes per-step (~0.004-0.05).
+        #   Frais 0.5% et dims 1-4 INTACTS (terme additif, hors PnL/SL/TP).
+        # ------------------------------------------------------------------
+        smart_flat_reward = 0.0
+        try:
+            import os as _os_sf
+            _k_sf = float(_os_sf.environ.get("ADAN_SMART_FLAT", "0.0") or 0.0)
+            if _k_sf > 0.0:
+                _cap_sf = float(_os_sf.environ.get("ADAN_SMART_FLAT_CAP", "0.10") or 0.10)
+                _hz_sf = int(float(_os_sf.environ.get("ADAN_SMART_FLAT_HORIZON", "12") or 12))
+                _miss_sf = float(_os_sf.environ.get("ADAN_SMART_FLAT_MISS", "0.0") or 0.0)
+                _rtf_sf = float(getattr(self, "round_trip_fees", 0.005) or 0.005)
+                # État FLAT ? (aucune position ouverte)
+                _n_open_sf = 0
+                if hasattr(self, "portfolio_manager"):
+                    _n_open_sf = sum(
+                        1 for _p in self.portfolio_manager.positions.values()
+                        if getattr(_p, "is_open", False)
+                    )
+                # Action DEMANDÉE = HOLD (a0 dans la bande neutre)
+                _a0_sf = float(action[0]) if action is not None and len(action) > 0 else 0.0
+                _thr_sf = float(getattr(self, "route_threshold", 0.10) or 0.10)
+                _is_hold = abs(_a0_sf) <= _thr_sf
+                if _n_open_sf == 0 and _is_hold:
+                    _asset_sf = None
+                    try:
+                        _asset_sf = self.assets[0] if getattr(self, "assets", None) else None
+                    except Exception:
+                        _asset_sf = None
+                    _df_sf, _ = self._get_chunk_df_for_asset(_asset_sf, preferred_tf="5m")
+                    if _df_sf is not None and len(_df_sf) > 0:
+                        _i = int(getattr(self, "step_in_chunk", 0))
+                        if 0 <= _i < len(_df_sf) - 1:
+                            _p_now = float(_df_sf["close"].iloc[_i])
+                            _j = min(_i + max(1, _hz_sf), len(_df_sf) - 1)
+                            _win = _df_sf["close"].iloc[_i + 1:_j + 1]
+                            if _p_now > 0 and len(_win) > 0:
+                                # Scénario "si on avait acheté maintenant":
+                                # pire drawdown futur (min) = ce qu'on évite en restant flat.
+                                _fwd_min = float(_win.min())
+                                _downside = (_p_now - _fwd_min) / _p_now  # >0 si baisse
+                                # net des frais A/R: on ne récompense que si la baisse
+                                # dépasse ce que le trade aurait coûté en frais.
+                                _net_avoided = _downside - _rtf_sf
+                                if _net_avoided > 0.0:
+                                    smart_flat_reward = min(_cap_sf, _k_sf * _net_avoided * 100.0)
+                                elif _miss_sf > 0.0:
+                                    # opportunité manquée (optionnel, OFF par défaut):
+                                    _fwd_max = float(_win.max())
+                                    _upside = (_fwd_max - _p_now) / _p_now - _rtf_sf
+                                    if _upside > 0.0:
+                                        smart_flat_reward = -min(
+                                            _cap_sf, _miss_sf * _upside * 100.0)
+        except Exception:
+            smart_flat_reward = 0.0
+
+        # ------------------------------------------------------------------
+        # TIME DECAY (v13.1 — TERME RESTAURÉ de la version du 6 juin 2026).
+        # Archeologie git (docs/COLLAPSE_VERDICT_1M_v13.md §3): la reward du 6 juin
+        # (commit 7405039) avait `time_decay: -0.01` appliqué À CHAQUE STEP
+        # (commentaire d'origine: "makes HOLD cost 5 steps worth of reward, forcing
+        # the agent to trade"). C'était la SEULE pression per-step toujours active,
+        # équilibrée contre capacity_weight (+0.1). La réécriture V3/V4 (tier-based +
+        # Future Arena) a SILENCIEUSEMENT abandonné ce terme (config le déclare
+        # encore mais l'env ne le lit plus) -> plus aucun coût per-step structurel
+        # pour contrer la dérive BUY -> a0_mean diverge à +4.34 @88k.
+        # Ici on le RÉTABLIT: coût fixe NEGATIF à CHAQUE step (flat ET en position).
+        # PILOTABLE UNIQUEMENT par ADAN_TIME_DECAY (défaut OFF = 0.0). On NE lit PAS
+        # la config auto: §3 "une variable à la fois", rien ne doit s'activer en douce.
+        # ARCHEOLOGIE 6-juin (reward_calculator.py L.316-321, commit 7405039):
+        #   * valeur validee = -1e-3 (-0.001), PAS -0.01 (la config declare -0.01 mais
+        #     l'env ne l'a jamais lue). r += time_decay, SYMETRIQUE, inconditionnel.
+        #   * capacity_weight/position_bonus avaient ete REVERT (Run#8 ev=-5.11 ->
+        #     Run#9 ev=-9.29 REGRESSION) -> il ne restait QUE time_decay + realized PnL.
+        #   -> restaurer time_decay SEUL (symetrique) est bien la direction anti-derive
+        #      qui marchait; l'inquietude "time_decay+capacity recompense le holding"
+        #      est LEVEE car capacity etait deja retire le 6-juin.
+        # Frais 0.5% et dims 1-4 INTACTS (terme additif pur).
+        # ------------------------------------------------------------------
+        time_decay_cost = 0.0
+        try:
+            import os as _os_td
+            _td_env = _os_td.environ.get("ADAN_TIME_DECAY")
+            if _td_env is not None:
+                _td = float(_td_env or 0.0)  # negatif = cout par step
+                if _td != 0.0:
+                    time_decay_cost = _td
+        except Exception:
+            time_decay_cost = 0.0
+
+        # ── ACTION ANCHOR (2026-07-06) — no-op-only symmetric restoring force ──
+        # Gives the flat-gradient no-op region a gradient toward a0=0 so a0_mean
+        # cannot drift freely. Applied ONLY when this step executed NO trade
+        # (pure no-op). Symmetric in a0 => zero directional bias. Quadratic
+        # beyond a dead-zone, capped. lambda=0 (default) => term is exactly 0.
+        action_anchor_penalty = 0.0
+        try:
+            _al = float(getattr(self, "anchor_lambda", 0.0))
+            if _al > 0.0 and not bool(getattr(self, "_last_trade_executed", False)):
+                _a0v = float(action[0]) if action is not None and len(action) > 0 else 0.0
+                _dz = float(getattr(self, "anchor_deadzone", 0.30))
+                _excess = abs(_a0v) - _dz
+                if _excess > 0.0:
+                    _acap = float(getattr(self, "anchor_cap", 0.02))
+                    action_anchor_penalty = -min(_acap, _al * (_excess * _excess))
+        except Exception:
+            action_anchor_penalty = 0.0
+
         raw_reward = (
             pnl_base_reward  # PnL signal (terme structurant)
+            + action_anchor_penalty  # 2026-07-06: anti-drift a0 anchor (no-op only)
+            + holding_cost  # v13: coût de détention (anti disposition-effect)
+            + smart_flat_reward  # v13: signal POSITIF pour HOLD-flat intelligent
+            + time_decay_cost  # v13.1: coût per-step RESTAURÉ (6 juin) anti-dérive
             + promotion_bonus  # Tier promotion (gros incitatif)
             + demotion_penalty  # Tier demotion (grosse penalite)
             + closure_bonus  # Bonus de cloture active / penalite MaxDuration
@@ -6670,6 +7161,37 @@ class MultiAssetChunkedEnv(gym.Env):
             # A4: patience_bonus_val retire (= 0.0, mecanisme d'attente unique)
             # A6: survival_bonus retire (recompensait l'inaction)
         )
+
+        # ══════════════════════════════════════════════════════════════
+        # V16 MARK-TO-MARKET OVERRIDE (opt-in via ADAN_MTM_REWARD=1)
+        # ══════════════════════════════════════════════════════════════
+        # Replaces the crystallised realized-PnL raw_reward with the STEP-WISE
+        # change in total equity (cash + unrealised). This removes the SELL
+        # credit-assignment bias proven in the V15 50k autopsy: the loss is
+        # now charged during every HOLD step it accrues, and the closing SELL
+        # no longer receives a punishment spike. delta_equity is expressed as
+        # a percentage of initial capital so the scale matches pnl_pct.
+        if getattr(self, 'mtm_reward', False):
+            _prev = getattr(self, '_mtm_prev_equity', None)
+            if _prev is None or not (_prev > 0):
+                # First step of the episode: no baseline yet -> neutral reward.
+                delta_equity_pct = 0.0
+            else:
+                _ic_mtm = float(self.portfolio_manager.initial_capital or 20.5)
+                delta_equity_pct = ((current_capital - _prev) * 100.0) / max(_ic_mtm, 1.0)
+            self._mtm_prev_equity = float(current_capital)
+            # Light per-step action friction (default 0.0 -> pure MTM). Charged
+            # only when a trade actually executed this step; symmetric BUY/SELL.
+            _mtm_cost = 0.0
+            try:
+                if float(getattr(self, 'mtm_trade_cost', 0.0)) > 0.0 and bool(getattr(self, '_last_trade_executed', False)):
+                    _mtm_cost = -float(self.mtm_trade_cost)
+            except Exception:
+                _mtm_cost = 0.0
+            raw_reward = float(self.mtm_scale) * delta_equity_pct + _mtm_cost
+            # Keep drawdown risk-management pressure (survival first) but drop
+            # the asymmetric realized-PnL / tier / closure terms entirely.
+            raw_reward += drawdown_penalty
 
         # Use symlog to compress large rewards while preserving small signal
         final_reward = float(_np.sign(raw_reward) * _np.log1p(_np.abs(raw_reward)))
@@ -6740,7 +7262,77 @@ class MultiAssetChunkedEnv(gym.Env):
             "future_contrib":   future_contrib,
             "raw":              raw_reward,
             "final_reward":     final_reward,
+            # V11 telemetry: components not previously exported
+            "symmetry_penalty": symmetry_penalty,
+            "action_entropy_penalty": action_entropy_penalty,
+            "latent_pnl":       latent_pnl_contrib,
+            "saturation_penalty": saturation_penalty,
+            "action_anchor_penalty": action_anchor_penalty,
         }
+
+        # ──────────────────────────────────────────────────────────────────
+        # V11 REWARD-COMPONENT TELEMETRY (Phase 2) — NON-INVASIVE.
+        # Sampled writer (default 1/100 steps) to prove which term drives the
+        # reward per position-state, instead of inferring. Gated by env var so
+        # it is ZERO cost when disabled. Never alters final_reward.
+        #   ADAN_REWARD_TELEM=1              -> enable
+        #   ADAN_REWARD_TELEM_EVERY=100      -> sample period (steps)
+        #   ADAN_REWARD_TELEM_CSV=logs/training/reward_components.csv
+        # ──────────────────────────────────────────────────────────────────
+        try:
+            if os.environ.get("ADAN_REWARD_TELEM", "0") == "1":
+                _every_t = int(os.environ.get("ADAN_REWARD_TELEM_EVERY", "100") or 100)
+                if _every_t <= 0:
+                    _every_t = 100
+                if int(self.current_step) % _every_t == 0:
+                    # position state (flat / long) — SPOT long-only, any open pos => long
+                    _pos_state = "flat"
+                    try:
+                        for _p in self.portfolio_manager.positions.values():
+                            if getattr(_p, "is_open", False):
+                                _pos_state = "long"
+                                break
+                    except Exception:
+                        _pos_state = "unknown"
+                    # decode action[0] -> BUY/SELL/HOLD
+                    try:
+                        _a0 = float(action[0]) if action is not None and len(action) > 0 else 0.0
+                    except Exception:
+                        _a0 = 0.0
+                    if _a0 > 0.10:
+                        _act = "BUY"
+                    elif _a0 < -0.10:
+                        _act = "SELL"
+                    else:
+                        _act = "HOLD"
+                    try:
+                        _pv = float(self.portfolio_manager.get_portfolio_value())
+                    except Exception:
+                        _pv = float("nan")
+                    _csvp = os.environ.get("ADAN_REWARD_TELEM_CSV", "logs/training/reward_components.csv")
+                    try:
+                        os.makedirs(os.path.dirname(_csvp), exist_ok=True)
+                    except Exception:
+                        pass
+                    _need_hdr = not os.path.exists(_csvp)
+                    with open(_csvp, "a") as _fh:
+                        if _need_hdr:
+                            _fh.write("step,worker,raw_reward,final_reward,pnl_base,latent_pnl,"
+                                      "future_contrib,promotion_bonus,demotion_penalty,closure_bonus,"
+                                      "drawdown_penalty,symmetry_penalty,action_entropy_penalty,"
+                                      "saturation_penalty,holding_cost,smart_flat,time_decay,"
+                                      "position_state,action,a0,portfolio\n")
+                        _fh.write(
+                            f"{int(self.current_step)},{int(getattr(self,'worker_id',0))},"
+                            f"{raw_reward:.6f},{final_reward:.6f},{pnl_base_reward:.6f},"
+                            f"{latent_pnl_contrib:.6f},{future_contrib:.6f},{promotion_bonus:.6f},"
+                            f"{demotion_penalty:.6f},{closure_bonus:.6f},{drawdown_penalty:.6f},"
+                            f"{symmetry_penalty:.6f},{action_entropy_penalty:.6f},"
+                            f"{saturation_penalty:.6f},{holding_cost:.6f},{smart_flat_reward:.6f},"
+                            f"{time_decay_cost:.6f},{_pos_state},{_act},{_a0:.4f},{_pv:.4f}\n"
+                        )
+        except Exception:
+            pass
 
         return float(final_reward)
 
@@ -7278,6 +7870,96 @@ class MultiAssetChunkedEnv(gym.Env):
         # agent actively chose to violate a known timing constraint.
         _inv_pen_weight = 0.0  # was 0.005 — C6 fix (all gate rejections = 0 reward)
 
+        # DIAGNOSTIC-V4 (2026-06-30): symmetric sterile penalty helper.
+        # Root cause of the entropy collapse = asymmetry. SELL-while-flat is
+        # penalized (geometric sterile pen) but BUY-illegal was FREE, so the
+        # agent saturated on BUY. This closure returns the SAME geometric
+        # penalty for ANY invalid intent, making BUY/SELL symmetric. It reads
+        # the same reward_shaping knobs; fees are not involved.
+        # ============================================================
+        # DIAGNOSTIC-V5 sterile penalty — escalated by PERSISTENCE.
+        # ============================================================
+        def _sterile_severity_v5(reason):
+            # Per-family gravity. SELL-no-position is the worst (it is the
+            # collapse attractor); cash-blocked BUY is milder.
+            # DIAGNOSTIC-V6: severities recalibrated. min_notional is an
+            # UNCONTROLLABLE state (no cash) -> near-zero so we do not teach
+            # 'BUY = pain'. The controllable mistake (BUY while open) keeps
+            # a real but moderate severity. SELL-no-position stays the worst.
+            _sev = {
+                "sell_no_position": 1.2,
+                "anti_spam_hold": 0.8,   # BUY while already open (controllable)
+                "min_notional": 0.05,    # BUY blocked by cash - Cas A (NOT a fault)
+                # DIAGNOSTIC-V9: Cas B = agent BUYs while already holding a
+                # position and thereby drained its own cash below min_order.
+                # This IS controllable (over-exposure) and is the PROVEN
+                # collapse path, so it needs a real (moderate) severity - not
+                # the near-zero Cas-A value. Sits between hysteresis (0.4) and
+                # anti_spam_hold (0.8). Must beat the per-step latent_pnl reward.
+                "min_notional_self_caused": 0.55,
+                "hysteresis": 0.4,
+                "cooldown_wait": 0.4,
+                "cooldown_hold_min": 0.4,
+            }
+            return float(_sev.get(reason, 0.8))
+
+        def _invalid_ratio_mult_v5():
+            # Sliding-window invalid ratio -> multiplier (collapse detector).
+            _w = getattr(self, '_invalid_window', None)
+            if not _w or len(_w) < 20:
+                return 1.0
+            _r = sum(_w) / float(len(_w))
+            if _r > 0.7:
+                return 3.0
+            if _r > 0.4:
+                return 2.0
+            if _r > 0.1:
+                return 1.5
+            return 1.0
+
+        def _sterile_penalty_v5(reason):
+            # Adaptive bounded accumulator, keyed on rejection reason.
+            #   acc_t = decay*acc_{t-1} + severity
+            #   pen   = base * min(cap, 1 + alpha*acc_t) * window_mult
+            # Reset (decay-to-zero) happens via _reset_sterile_streak() on
+            # ANY legal action. fees are NOT involved.
+            _rs = self.config.get('reward_shaping', {})
+            _base = float(_rs.get('invalid_trade_penalty_weight', 0.02))
+            _cap = float(_rs.get('sterile_action_penalty_cap', 0.30))
+            _decay = float(_rs.get('sterile_acc_decay', 0.97))
+            _alpha = float(_rs.get('sterile_acc_alpha', 0.45))
+            _sev = _sterile_severity_v5(reason)
+            self._sterile_streak[reason] = self._sterile_streak.get(reason, 0) + 1
+            _acc = self._sterile_acc.get(reason, 0.0) * _decay + _sev
+            self._sterile_acc[reason] = _acc
+            _mult = _invalid_ratio_mult_v5()
+            # DIAGNOSTIC-V6: WARMUP ramp. Penalty scales 0->1 over the first
+            # sterile_warmup_steps env steps so PPO can explore/learn BEFORE
+            # being punished (user: 'trop agressive trop tot').
+            # DIAGNOSTIC-C1 (2026-07-01): warmup PAR RAISON. Le warmup ne doit
+            # protéger l'exploration QUE des fautes NON contrôlables. Le Cas B
+            # (min_notional_self_caused = sur-exposition auto-infligée = chemin de
+            # collapse PROUVÉ) ne mérite pas 50k steps de quasi-impunité : le calcul
+            # C1 montre qu'avec warmup=50k le frein ne dépasse le carburant latent MAX
+            # qu'à ~50k steps (mult=1), laissant une fenêtre de biais BUY. Warmup court
+            # (15k) pour cette famille -> frein plein bien avant 128k. Frais/reward
+            # INTACTS (on ne touche qu'à la RAMPE temporelle de la pénalité).
+            _warm_default = float(_rs.get('sterile_warmup_steps', 50000))
+            _warm_self_caused = float(_rs.get('sterile_warmup_steps_self_caused', 15000))
+            _warm = _warm_self_caused if reason == 'min_notional_self_caused' else _warm_default
+            _cur = float(getattr(self, 'current_step', 0) or 0)
+            _ramp = 1.0 if _warm <= 0 else min(1.0, _cur / _warm)
+            _pen = _base * min(_cap / _base if _base > 0 else _cap,
+                               1.0 + _alpha * _acc) * _mult * _ramp
+            _pen = min(_pen, _cap)
+            return _pen, self._sterile_streak[reason], _acc, _mult
+
+        def _sterile_penalty_for_tier():
+            # LEGACY shim kept for compatibility; now routes through V5
+            # generic reason so old call paths still escalate by streak.
+            _p, _, _, _ = _sterile_penalty_v5('generic_invalid')
+            return _p
+
         # 🔧 CRITICAL FIX: Use ONLY the pre-captured SL/TP receipts from step()
         # NO SECOND update_market_price() call — that was causing double updates!
         # The early update in step() (line ~2950) already checked SL/TP and captured receipts.
@@ -7432,14 +8114,50 @@ class MultiAssetChunkedEnv(gym.Env):
 
             main_decision = action_raw
 
-            # Discrete action
-            discrete_action = 0
-            if main_decision < -action_threshold:
-                discrete_action = 2  # Sell
-            elif main_decision > action_threshold:
-                discrete_action = 1  # Buy
-            else:
-                discrete_action = 0  # Hold — no signal strong enough
+            # ================================================================
+            # V12 — STATE-CONDITIONED ACTION ROUTING (docs/ARCHITECTURE_ACTION_ROUTING_v12.md)
+            # Replaces the symmetric BUY/HOLD/SELL decode which forced the agent
+            # to experience direction-illegal actions (SELL-while-flat,
+            # BUY-while-open) and collapsed the policy to always-BUY (V10@70k,
+            # V11@78k). Routing per asset slot, by portfolio state:
+            #   FLAT : a0 > +thr -> BUY  ; else -> HOLD (neutral, even a0=-1)
+            #   LONG : a0 < -thr -> SELL ; else -> HOLD (neutral, even a0=+1)
+            #   FLAT & slot beyond tier quota -> HOLD (NOOP, neutral)
+            # Only action[0] is routed; dims 1-4 (Size/TF/SL/TP) untouched.
+            # ================================================================
+            _pos_for_route = self.portfolio_manager.positions.get(asset)
+            _in_pos_route = bool(_pos_for_route is not None and getattr(_pos_for_route, "is_open", False))
+            try:
+                _lt = getattr(self, "_locked_tier", None)
+                _max_slots = int(_lt.get("max_concurrent_positions", 1)) if isinstance(_lt, dict) else 1
+            except Exception:
+                _max_slots = 1
+            try:
+                _n_open = len([pp for pp in self.portfolio_manager.positions.values()
+                               if getattr(pp, "is_open", False)])
+            except Exception:
+                _n_open = 1 if _in_pos_route else 0
+            _slot_available = _n_open < max(1, _max_slots)
+
+            # FIX-D: asymmetric SELL threshold. Exit should be EASIER than entry.
+            # ADAN_SELL_THRESHOLD (env, default = same as buy = symmetric legacy).
+            # A smaller sell threshold lets the agent's exit intent (negative a0
+            # near zero) actually route to SELL instead of dying in the dead-zone.
+            _sell_thr = None
+            try:
+                import os as _os_st
+                _st_env = _os_st.environ.get("ADAN_SELL_THRESHOLD")
+                if _st_env is not None:
+                    _sell_thr = float(_st_env)
+            except Exception:
+                _sell_thr = None
+            discrete_action = _route_action_by_state(
+                main_decision,
+                in_position=_in_pos_route,
+                slot_available=_slot_available,
+                threshold=action_threshold,
+                sell_threshold=_sell_thr,
+            )
 
             if i == 0:
                 first_discrete_action_requested = discrete_action  # before gates
@@ -7503,15 +8221,17 @@ class MultiAssetChunkedEnv(gym.Env):
                         pass
                     exposure_diff = abs(target_exposure_pct - current_exposure)
                     if exposure_diff < 0.10:  # Within 10% -> no action needed (OMEGA-4E)
-                        discrete_action = 0  # Override to HOLD
-                        self.rejection_reasons["anti_spam_hold"] += 1
-                        if self.current_step % 100 == 0:
-                            self.logger.info(
-                                f"[ANTI_SPAM] {asset} exposure={current_exposure:.2%} ~ "
-                                f"target={target_exposure_pct:.2%} -> OVERRIDE TO HOLD"
-                            )
-                        # We jump straight to action processing (which does nothing for HOLD)
-                        pass 
+                        # ============================================================
+                        # V12 — DEAD BRANCH under state-conditioned routing.
+                        # route_action_by_state() never returns BUY (discrete=1)
+                        # when in_position, so BUY-while-open is structurally
+                        # unreachable. Neutral HOLD, ZERO penalty. The old V8
+                        # anti-runaway sterile penalty is REMOVED: it existed only
+                        # to counter the reward mis-credited to the illegal BUY the
+                        # agent could sample — that action no longer exists.
+                        # ============================================================
+                        # v12: neutral HOLD, no counter bump (not an illegal action).
+                        discrete_action = 0  # Override to HOLD (neutral, no penalty) 
 
                 # ── SIZE_GATE: Never exceed available cash ──────────
                 # This prevents virtual debt when capital drops below
@@ -7540,15 +8260,59 @@ class MultiAssetChunkedEnv(gym.Env):
                                 )
                             continue  # probabilistic HOLD
                     else:
-                        # Truly cannot afford — hard HOLD
-                        self.invalid_trade_attempts += 1
+                        # ============================================================
+                        # ACM CASH_FLOOR — Distinguish Cas A vs Cas B:
+                        #
+                        # Cas A: Cash insufficient AND the agent did NOT cause it
+                        #        (no open positions, or positions opened before this
+                        #        episode). -> NEUTRAL HOLD (zero penalty).
+                        #
+                        # Cas B: Cash insufficient BECAUSE the agent spent it on
+                        #        positions. The agent destroyed its own arsenal.
+                        #        -> LIGHT management penalty (not strategic fault,
+                        #        but poor resource allocation). The ACM Capability
+                        #        Vector [27] signals this state to the policy.
+                        #
+                        # The real fix is NOT "reward=0 for all impossible BUYs".
+                        # The real fix is: reduce illegal BUYs via Capability Vector
+                        # in the observation, so the agent SEES its arsenal.
+                        # ============================================================
                         self.rejection_reasons["min_notional"] += 1
-                        if self.current_step % 50 == 0:
-                            self.logger.info(
-                                f"[CASH_FLOOR] {asset} cash=${available_cash_for_sizing:.2f} "
-                                f"< min_order=${min_order_value:.2f} — forced HOLD"
-                            )
-                        continue  # skip this asset, force HOLD
+                        # Cas B detection: agent has open positions -> it caused the
+                        # cash deficit by buying. Light management penalty.
+                        _open_pos_count = len([
+                            p for p in self.portfolio_manager.positions.values()
+                            if p.is_open
+                        ]) if hasattr(self, 'portfolio_manager') else 0
+                        _is_self_caused = _open_pos_count > 0
+                        if _is_self_caused:
+                            # ============================================================
+                            # V12 — NEUTRALIZED under state-conditioned routing.
+                            # A BUY is now only ROUTED when the agent is flat on THIS
+                            # asset (route_action_by_state). Insufficient cash to open
+                            # is a pure sizing constraint, NOT an illegal action and NOT
+                            # a fault -> NEUTRAL HOLD, ZERO penalty (matches the v12 spec:
+                            # "si manque de cash -> HOLD neutre"). The old V9 sterile
+                            # penalty existed only to neutralise the reward mis-credited
+                            # to the illegal BUY-while-open the agent could sample; that
+                            # action no longer exists. Re-adding it would re-introduce
+                            # the gradient pollution v12 removes. Fees NOT involved.
+                            # ============================================================
+                            if self.current_step % 100 == 0:
+                                self.logger.info(
+                                    f"[CASH_FLOOR_B] {asset} cash=${available_cash_for_sizing:.2f} "
+                                    f"< min_order=${min_order_value:.2f} | "
+                                    f"open_pos={_open_pos_count} -> HOLD NEUTRAL (v12: no penalty)"
+                                )
+                        else:
+                            # Cas A: neutral — impossible action, not a fault
+                            if self.current_step % 100 == 0:
+                                self.logger.info(
+                                    f"[CASH_FLOOR_A] {asset} cash=${available_cash_for_sizing:.2f} "
+                                    f"< min_order=${min_order_value:.2f} -> HOLD NEUTRAL "
+                                    f"(no open positions, not agent fault)"
+                                )
+                        continue  # force HOLD in both cases
 
                 if discrete_action == 1:
                     if self.current_step % 100 == 0:
@@ -7598,6 +8362,10 @@ class MultiAssetChunkedEnv(gym.Env):
             #   intraday: SL 0.5-2.0%  TP 0.8-4.0%
             #   swing   : SL 1.0-3.5%  TP 1.5-7.0%
             #   position: SL 2.0-6.0%  TP 3.0-12.0%
+            #   scalper : SL 0.3-1.2%  TP 0.5-2.0%
+            #   intraday: SL 0.5-2.0%  TP 0.8-4.0%
+            #   swing   : SL 1.0-3.5%  TP 1.5-7.0%
+            #   position: SL 2.0-6.0%  TP 3.0-12.0%
             _BOUNDS = {
                 "scalper":  {"sl": (0.003, 0.012), "tp": (0.005, 0.020)},
                 "intraday": {"sl": (0.005, 0.020), "tp": (0.008, 0.040)},
@@ -7615,6 +8383,14 @@ class MultiAssetChunkedEnv(gym.Env):
 
             normalized_tp = (tp_raw + 1.0) / 2.0
             tp_pct = float(np.clip(tp_lo + normalized_tp * (tp_hi - tp_lo), tp_lo, tp_hi))
+
+            # CLAMP VISIBILITY (revue utilisateur) : capture du SL/TP demande
+            # par le DBE (mapping brut dans la bande, AVANT RR-enforcement et
+            # plancher ATR) pour logger tout ecart FINAL vs DBE. Le clamp ne
+            # doit plus etre silencieux : on mesure combien de trades sont
+            # reellement modifies par les garde-fous _BOUNDS / RR>=1.5 / ATR.
+            _sl_dbe = float(sl_pct)
+            _tp_dbe = float(tp_pct)
 
             # SATURATION FEED (V4): 1 si le raw pousse hors-bande (colle a un bord)
             # -> alimente la penalite de saturation (log, plafonnee) du reward.
@@ -7704,6 +8480,32 @@ class MultiAssetChunkedEnv(gym.Env):
                             f"(3x ATR={atr_pct_estimate:.4f})"
                         )
 
+            # ---- CLAMP VISIBILITY : log FINAL vs DBE (revue utilisateur) ----
+            # Rend le clamp non silencieux. Compte + trace tout ecart entre le
+            # SL/TP demande par le DBE (_sl_dbe/_tp_dbe) et le SL/TP FINAL apres
+            # RR>=1.5 et plancher ATR. Signal faible non-nul pour le reward.
+            try:
+                _sl_moved = abs(float(sl_pct) - _sl_dbe) > 1e-6
+                _tp_moved = abs(float(tp_pct) - _tp_dbe) > 1e-6
+                if _sl_moved or _tp_moved:
+                    if not hasattr(self, "_clamp_n"):
+                        self._clamp_n = 0
+                        self._clamp_total = 0
+                    self._clamp_n += 1
+                    self._clamp_total += 1
+                    # signal faible mais non-nul : mauvaise GESTION de l arsenal
+                    self._step_invalid_penalty = getattr(
+                        self, "_step_invalid_penalty", 0.0) - 0.01
+                    if self._clamp_n % 50 == 0:
+                        self.logger.warning(
+                            f"[SL_TP_CLAMPED] {asset} | "
+                            f"sl_dbe={_sl_dbe:.4f} -> sl_final={float(sl_pct):.4f} | "
+                            f"tp_dbe={_tp_dbe:.4f} -> tp_final={float(tp_pct):.4f} | "
+                            f"n_clamped={self._clamp_total}"
+                        )
+            except Exception:
+                pass
+
             # ---- Anti-spam HOLD was moved up to prevent min_notional fake penalties ----
 
 
@@ -7757,6 +8559,11 @@ class MultiAssetChunkedEnv(gym.Env):
             #    Après SELL réussi → déclenche WAIT post-SELL (M steps)
             # ================================================================
             if discrete_action == 2 and is_open:
+                # V17-Audit: SELL requested on an open position.
+                try:
+                    self.sell_lifecycle["requested_open"] += 1
+                except Exception:
+                    pass
                 # Cooldown post-BUY par timeframe (HOLD_MIN)
                 # Durée lue depuis trading_rules.cooldown.hold_min_steps
                 _hold_min_cfg = self.config.get("trading_rules", {}).get(
@@ -7770,6 +8577,10 @@ class MultiAssetChunkedEnv(gym.Env):
                     # SELL trop tôt — pénalité proportionnelle au manque
                     self.invalid_trade_attempts += 1
                     self.rejection_reasons["cooldown_hold_min"] += 1
+                    try:
+                        self.sell_lifecycle["rej_hold_min"] += 1
+                    except Exception:
+                        pass
                     _early_pen = -_inv_pen_weight * (_hold_min - _steps_held)
                     self._step_invalid_penalty += _early_pen
                     if self.current_step % 50 == 0:
@@ -7814,7 +8625,71 @@ class MultiAssetChunkedEnv(gym.Env):
                             _rt_fees = 2.0 * float(getattr(self.portfolio_manager, "fee_pct", 0.004))
                         except Exception:
                             _rt_fees = 0.008
-                        _barrier = 1.5 * _rt_fees  # ex: 1.5 x 0.8% = 1.2%
+                        # V17-Fix A: DYNAMIC break-even barrier (present-only).
+                        # Was static `1.5 * _rt_fees` (~1.2% @ 0.5% R/T) which
+                        # blocked 95-99% of SELLs (measured, 4 episodes). Now the
+                        # barrier scales with ATR% (volatility) and is tunable via
+                        # ADAN_BARRIER_MULT (default 1.0). ATR is PRESENT info ->
+                        # no future leak -> live-compatible. Floored at fees (never
+                        # below break-even), capped at 2%. Premature exits are now
+                        # judged by the Arena (Scenario B), not physically walled.
+                        import os as _os_v17
+                        _barrier_mult = float(_os_v17.environ.get("ADAN_BARRIER_MULT", "1.0"))
+                        _atr_pct_bar = 0.0
+                        try:
+                            _atr_pct_bar = float(self._get_atr_pct_for_asset(asset)) or 0.0
+                        except Exception:
+                            _atr_pct_bar = 0.0
+                        # atr_scale in [0.5, 2.0]; reference volatility 0.4% (~1 R/T unit)
+                        _atr_scale = 1.0
+                        if _atr_pct_bar > 1e-9:
+                            _atr_scale = min(2.0, max(0.5, _atr_pct_bar / 0.004))
+                        _barrier = _barrier_mult * _rt_fees * _atr_scale
+                        # V19: dynamic MFE-percentile cap (remplace le 2% arbitraire).
+                        _cap_v19 = 0.02
+                        try:
+                            _cap_v19 = float(self._v19_barrier_cap())
+                        except Exception:
+                            _cap_v19 = 0.02
+                        _barrier = max(_rt_fees, min(_barrier, _cap_v19))
+                        # V18: si l'Arena predictif est actif, la barriere
+                        # devient la break-even ADAPTATIVE (mean + k*std) issue
+                        # du modele appris sur l'etat PRESENT. Repli sur la
+                        # barriere V17 (ATR-scale) si modele indisponible.
+                        try:
+                            _arena = getattr(self, "_arena_estimator", None)
+                            if _arena is not None and getattr(_arena, "is_active", False):
+                                from adan_trading_bot.arena_predictor import PresentState as _PS_v18
+                                _row_v18 = {}
+                                _tf_v18 = "5m"
+                                try:
+                                    _df_v18, _tf_got = self._get_chunk_df_for_asset(asset, "5m")
+                                    if _df_v18 is not None and hasattr(_df_v18, "iloc") and len(_df_v18) > 0:
+                                        _row_v18 = _df_v18.iloc[-1].to_dict()
+                                        _tf_v18 = _tf_got or "5m"
+                                except Exception:
+                                    _row_v18 = {}
+                                _st_v18 = _PS_v18.from_market_row(_row_v18, timeframe=_tf_v18)
+                                _be_arena = _arena.estimate_break_even(_st_v18)
+                                if _be_arena and _be_arena > 0:
+                                    try:
+                                        _cap_a19 = float(self._v19_barrier_cap())
+                                    except Exception:
+                                        _cap_a19 = 0.02
+                                    _barrier = max(_rt_fees, min(float(_be_arena), _cap_a19))
+                                    self._last_arena_barrier = _barrier
+                        except Exception:
+                            pass
+                        # Log every 500 steps to trace the dynamic barrier.
+                        try:
+                            if int(getattr(self, "current_step", 0)) % 500 == 0:
+                                self.logger.info(
+                                    f"[BREAK_EVEN_DYN] {asset}: barrier={_barrier:.4%} "
+                                    f"(mult={_barrier_mult}, atr%={_atr_pct_bar:.4%}, "
+                                    f"scale={_atr_scale:.2f}, rt_fees={_rt_fees:.4%})"
+                                )
+                        except Exception:
+                            pass
                         # ============================================================
                         # DECISION BUDGET (2026-06-25, V3) — friction structurelle.
                         # L'AGENT_CLOSE consomme decision_budget_close (def 0.30).
@@ -7836,10 +8711,19 @@ class MultiAssetChunkedEnv(gym.Env):
                         if _budget_blocked:
                             discrete_action = 0
                             self.rejection_reasons["hysteresis"] += 1
-                            # Penalite douce proportionnelle au deficit de budget
-                            # (gradient, pas no-op) — l'agent apprend a economiser.
+                            try:
+                                self.sell_lifecycle["rej_budget"] += 1
+                            except Exception:
+                                pass
+                            # V19: reject hygiene — un SELL refuse par le BUDGET est
+                            # un signal STRUCTUREL informatif (cooldown/quota), pas une
+                            # faute morale. Par defaut AUCUNE penalite (l'agent n'a pas
+                            # "mal choisi": il a voulu sortir, la friction l'en empeche).
+                            # ADAN_V19_REJECT_HYGIENE=0 restaure l'ancien comportement.
+                            import os as _os_v19b
+                            _hygiene_b = _os_v19b.environ.get("ADAN_V19_REJECT_HYGIENE", "1") == "1"
                             _deficit_b = max(0.0, (_cost_close - _budget) / max(_cost_close, 1e-9))
-                            _q_pen = -0.10 - 0.10 * min(1.0, _deficit_b)
+                            _q_pen = 0.0 if _hygiene_b else (-0.10 - 0.10 * min(1.0, _deficit_b))
                             self._step_invalid_penalty += _q_pen
                             self.logger.debug(
                                 f"[DECISION_BUDGET] {asset}: AGENT_CLOSE bloque "
@@ -7850,10 +8734,21 @@ class MultiAssetChunkedEnv(gym.Env):
                             # Reject AGENT_CLOSE - rentabilite insuffisante vs frais.
                             discrete_action = 0
                             self.rejection_reasons["hysteresis"] += 1
-                            # Penalite GRADIENT (cf. reward_service.agent_close_barrier):
-                            # proportionnelle au manque de rentabilite, bornee, negative.
+                            try:
+                                self.sell_lifecycle["rej_barrier"] += 1
+                            except Exception:
+                                pass
+                            # V19: reject hygiene — un SELL refuse par la BARRIERE
+                            # (PnL < break-even) NE DOIT PAS etre puni. L'agent a
+                            # tente la bonne action (sortir), mais le trade n'est pas
+                            # encore rentable. Le punir = re-emprisonner l'agent =
+                            # cause racine du collapse V16. Par defaut AUCUNE penalite.
+                            # Seuls les SELL EXECUTES sont juges par le Future Arena.
+                            # ADAN_V19_REJECT_HYGIENE=0 restaure l'ancien comportement.
+                            import os as _os_v19a
+                            _hygiene_a = _os_v19a.environ.get("ADAN_V19_REJECT_HYGIENE", "1") == "1"
                             _deficit = (_barrier - unrealized_pnl_pct) / max(_barrier, 1e-9)
-                            _ac_pen = -0.15 * min(1.0, max(0.0, _deficit))
+                            _ac_pen = 0.0 if _hygiene_a else (-0.15 * min(1.0, max(0.0, _deficit)))
                             self._step_invalid_penalty += _ac_pen
                             self.logger.debug(
                                 f"[AGENT_CLOSE BLOCKED] {asset}: PnL {unrealized_pnl_pct:.4%} < "
@@ -7876,6 +8771,17 @@ class MultiAssetChunkedEnv(gym.Env):
                                 self._apply_trade_results_safely(
                                     pnl_value=float(val), fees=float(fees))
                                 trade_executed_this_step = True
+                                try:
+                                    self.sell_lifecycle["executed"] += 1
+                                    if float(val) > 0.0:
+                                        self.sell_lifecycle["exec_profit"] += 1
+                                except Exception:
+                                    pass
+                                # DIAGNOSTIC-V5: legal SELL -> relax sterile pressure
+                                self._sterile_streak.clear()
+                                self._sterile_acc.clear()
+                                try: self._invalid_window.append(0)
+                                except Exception: pass
                                 # FIX (2026-06-25): comptabilise cet AGENT_CLOSE
                                 # dans le quota quotidien + serie consecutive +
                                 # DEBIT du decision budget (V3) + last-step gap.
@@ -7943,38 +8849,20 @@ class MultiAssetChunkedEnv(gym.Env):
             #   bornee par un cap (jamais exponentiel non maitrise).
             # ================================================================
             if discrete_action == 2 and not is_open:
-                self.invalid_trade_attempts += 1
-                try:
-                    self.rejection_reasons["sell_no_position"] += 1
-                except Exception:
-                    self.rejection_reasons["sell_no_position"] = 1
-                # --- penalite geometrique par palier ---
-                # index palier: Micro=0, Small=1, Medium=2, High=3, Enterprise=4
-                _tier_order = {"micro": 0, "small": 1, "medium": 2,
-                               "high": 3, "enterprise": 4}
-                _tname = "micro"
-                try:
-                    _ct = self.portfolio_manager.get_current_tier()
-                    if isinstance(_ct, dict):
-                        _tname = str(_ct.get("name", "Micro")).split()[0].lower()
-                except Exception:
-                    pass
-                _k = _tier_order.get(_tname, 0)
-                # base = invalid_trade_penalty_weight (config), ratio r>1, cap borne.
-                # NB: ces clefs sont sous reward_shaping (cf. structure config.yaml).
-                _rs_cfg = self.config.get("reward_shaping", {})
-                _base = float(_rs_cfg.get("invalid_trade_penalty_weight", 0.005))
-                _r = float(_rs_cfg.get("sterile_action_geom_ratio", 1.6))
-                _cap = float(_rs_cfg.get("sterile_action_penalty_cap", 0.05))
-                _sterile_pen = min(_cap, _base * (_r ** _k))
-                self._step_invalid_penalty += -_sterile_pen
-                if self.current_step % 50 == 0:
-                    self.logger.warning(
-                        f"[STERILE_SELL] {asset} | SELL sans position | "
-                        f"tier={_tname}(k={_k}) | pen=-{_sterile_pen:.5f} "
-                        f"(base={_base:.4f} r={_r} cap={_cap})"
-                    )
-                # action reste HOLD (rien a fermer), mais elle n'est plus gratuite.
+                # ============================================================
+                # V12 — DEAD BRANCH under state-conditioned routing.
+                # route_action_by_state() can NEVER return SELL when flat, so
+                # this is structurally unreachable in normal training. We keep a
+                # NEUTRAL telemetry-only guard (zero penalty, zero gradient) as a
+                # defensive net in case an external caller forces discrete=2
+                # while flat. The old sterile penalty (V5) is REMOVED: SELL-while-
+                # flat is no longer an "illegal action" the agent can sample — it
+                # is simply routed to HOLD upstream. Re-adding a penalty here
+                # would re-introduce the gradient pollution v12 was built to kill.
+                # ============================================================
+                # v12: do NOT bump any rejection counter here — a routed HOLD is
+                # not an illegal action; counting it would pollute illegal_ratio.
+                discrete_action = 0  # force neutral HOLD, no penalty
 
             # ================================================================
             # B. BUY — ouvre une position (USDT → crypto)
@@ -8155,6 +9043,11 @@ class MultiAssetChunkedEnv(gym.Env):
                             0.0, float(self.decision_budget) - float(self.decision_cost_buy)
                         )
                     trade_executed_this_step = True
+                    # DIAGNOSTIC-V5: legal BUY -> relax sterile pressure
+                    self._sterile_streak.clear()
+                    self._sterile_acc.clear()
+                    try: self._invalid_window.append(0)
+                    except Exception: pass
                     # Update frequency counters
                     if not force_trade:
                         tf = self.current_timeframe_for_trade
@@ -8207,6 +9100,14 @@ class MultiAssetChunkedEnv(gym.Env):
                 first_discrete_action = 1  # BUY executed
         else:
             first_discrete_action = 0  # No trade = HOLD
+
+        # ANCHOR (2026-07-06): persist executed-action facts so _calculate_reward
+        # (called AFTER execution) can apply a symmetric restoring force on the
+        # RAW a0 head ONLY on no-ops. Measured root cause: on long+BUY no-ops the
+        # reward is a0-INDEPENDENT (grad~=0), so a0_mean drifts freely ->
+        # directional collapse. See docs/EMPIRICAL_BEHAVIOR_ANALYSIS.md.
+        self._last_trade_executed = bool(trade_executed_this_step)
+        self._last_executed_discrete = int(first_discrete_action)
 
         # ================================================================
         # DECISION BUDGET (V3, 2026-06-25) — RECHARGE sur HOLD.

@@ -1263,7 +1263,7 @@ class PortfolioManager:
         des informations exploitables, pas des nombres bruts passés dans un
         scaler calibré sur des prix à 5 chiffres.
         
-        Layout (20 dims):
+        Layout (28 dims):
           [0]  cash_ratio           = cash / initial_capital              (~1.0 au départ)
           [1]  value_ratio          = total_value / initial_capital       (~1.0 au départ)
           [2]  trading_pnl_pct      = PnL trading / capital ajusté       (ratio)
@@ -1273,7 +1273,7 @@ class PortfolioManager:
           [6]  open_positions_norm  = nb positions / max_positions        ([0, 1])
           [7]  win_rate             = trades gagnants / total trades      ([0, 1])
           [8]  profit_factor_norm   = profit_factor clipé / 5.0           ([0, 1])
-          [9]  reserved             = 0.0 (slot libre)
+          [9]  can_buy_now          = soft capability signal              ([0, 1])
         
         Position 1 (features [10-14]):
           [10] unrealized_pnl_pct   = (current - entry) / entry * sign   (ratio, ~[-0.1, 0.1])
@@ -1284,6 +1284,19 @@ class PortfolioManager:
         
         Position 2 (features [15-19]):
           Même layout — zéros si pas de 2ème position ouverte.
+        
+        Capability Vector (ACM) [20-27]:
+          Le modèle doit connaitre son ARSENAL COMPLET avant de décider.
+          Policy -> Capability Layer -> Legal Actions -> Execution.
+          NOT: Policy -> Execution -> Punition.
+          [20] can_open             = free_slot AND cash_ok              ([0, 1])
+          [21] can_close            = has_open_position                  (0 or 1)
+          [22] free_slots_ratio     = free_slots / max_positions         ([0, 1])
+          [23] cash_ratio_for_trade = (cash - min_notional) / cash      ([0, 1])
+          [24] risk_budget_remaining= 1.0 - drawdown/max_dd             ([0, 1])
+          [25] max_size_remaining   = max(0, max_pos_pct - exposure)    ([0, 1])
+          [26] cooldown_active      = any cooldown blocking trades      (0 or 1)
+          [27] capital_self_caused  = cash deficit due to own BUYs      ([0, 1])
         """
         try:
             metrics = self.get_metrics()
@@ -1320,8 +1333,25 @@ class PortfolioManager:
                 min(open_count / max(max_positions, 1), 1.0),                    # [6] positions_norm
                 np.clip(win_rate, 0.0, 1.0),                                     # [7] win_rate
                 np.clip(profit_factor, 0.0, 1.0),                                # [8] profit_factor_norm
-                0.0,                                                              # [9] reserved
+                0.0,  # [9] PLACEHOLDER -> overwritten below by can_buy_now
             ]
+            # ----------------------------------------------------------------
+            # DIAGNOSTIC-V6: slot [9] = can_buy_now (action-capacity signal).
+            # The agent was BLIND to whether a BUY is even legal -> it kept
+            # requesting BUY while fully invested and got punished (CASH_FLOOR).
+            # Now it SEES its legal arsenal. etat reel -> capacites legales.
+            # ----------------------------------------------------------------
+            try:
+                _min_notional = float(getattr(self, 'min_trade_value', 11.0))
+                _max_pos = max(int(getattr(self, 'max_concurrent_positions', 1)), 1)
+                _free_slot = 1.0 if int(open_count) < _max_pos else 0.0
+                # soft cash margin: 0 at exactly min_notional, ->1 at 2x min_notional
+                _cash_margin = (cash - _min_notional) / max(_min_notional, 1e-8)
+                _cash_ok = float(np.clip(_cash_margin, 0.0, 1.0))
+                can_buy_now = _free_slot * _cash_ok
+            except Exception:
+                can_buy_now = 0.0
+            state[9] = float(np.clip(can_buy_now, 0.0, 1.0))
 
             # ---- Positions (2 slots × 5 features = 10 dims) ----
             open_positions = [
@@ -1353,7 +1383,95 @@ class PortfolioManager:
                 else:
                     state.extend([0.0, 0.0, 0.0, 0.0, 0.0])
 
-            assert len(state) == 20, f"portfolio_state must be 20 dims, got {len(state)}"
+            # ================================================================
+            # CAPABILITY VECTOR (ACM) — dims [20-27]
+            # L'agent doit connaitre son ARSENAL COMPLET avant de décider.
+            #   Policy -> Capability Layer -> Legal Actions -> Execution
+            # et NON:
+            #   Policy -> Execution -> Punition
+            #
+            # Les actions illegales doivent devenir extremement rares.
+            # La penalite ne sert plus a enseigner la legalite mais
+            # uniquement a signaler une mauvaise GESTION de l'arsenal.
+            # ================================================================
+            try:
+                _min_notional = float(getattr(self, 'min_trade_value', 11.0))
+                _max_pos = max(int(getattr(self, 'max_positions', 5)), 1)
+                _open_count = len([p for p in self.positions.values() if p.is_open])
+                _free_slots = max(0, _max_pos - _open_count)
+                _has_position = 1.0 if _open_count > 0 else 0.0
+
+                # [20] can_open: free slot AND cash available
+                _slot_ok = 1.0 if _free_slots > 0 else 0.0
+                _cash_margin = (cash - _min_notional) / max(_min_notional, 1e-8)
+                _cash_ok = float(np.clip(_cash_margin, 0.0, 1.0))
+                cap_can_open = _slot_ok * _cash_ok
+
+                # [21] can_close: at least one position to close, WEIGHTED by
+                # REAL close-readiness (energy/decision_budget + cooldown gap).
+                # FIX-A (POMDP): the agent was blind to whether a CLOSE would be
+                # allowed by the decision_budget/gap gates -> it saw can_close=1,
+                # tried to SELL, got silently blocked -> learned "SELL never works"
+                # -> BUY collapse. Now [21] = has_position * close_energy_ready so
+                # the hidden constraint becomes observable (POMDP -> MDP).
+                _energy_ready = float(getattr(self, '_close_energy_ready', 1.0))
+                cap_can_close = _has_position * float(np.clip(_energy_ready, 0.0, 1.0))
+
+                # [22] free_slots_ratio
+                cap_free_slots = float(_free_slots) / float(_max_pos)
+
+                # [23] cash_ratio_for_trade: how much cash is tradable
+                cap_cash_trade = float(np.clip(
+                    (cash - _min_notional) / max(cash, 1e-8), 0.0, 1.0
+                )) if cash > _min_notional else 0.0
+
+                # [24] risk_budget_remaining: 1 - drawdown/max_dd
+                _max_dd_pct = float(getattr(self, 'max_drawdown_pct', 25.0))
+                _dd_ratio = drawdown / max(_max_dd_pct / 100.0, 1e-8)
+                cap_risk_budget = float(np.clip(1.0 - _dd_ratio, 0.0, 1.0))
+
+                # [25] max_size_remaining: room for exposure
+                _exposure = (total_value - cash) / total_value if total_value > 0 else 0.0
+                _max_exp = float(getattr(self, 'max_position_size_pct', 20.0)) / 100.0
+                _total_max_exp = _max_exp * _max_pos  # total allowed exposure
+                cap_size_remaining = float(np.clip(
+                    _total_max_exp - _exposure, 0.0, 1.0
+                ))
+
+                # [26] cooldown_active: flagged by env via set_cooldown_state()
+                cap_cooldown = float(getattr(self, '_cooldown_active', 0.0))
+
+                # [27] capital_self_caused: measures how much cash deficit
+                # is caused by the agent's own open positions (Cas B).
+                # If cash < min_notional AND positions are open, the agent
+                # created this state itself -> signal for management penalty.
+                _notional_in_positions = sum(
+                    abs(p.size * p.current_price)
+                    for p in self.positions.values() if p.is_open
+                )
+                if cash < _min_notional and _notional_in_positions > 0:
+                    # Ratio: how much of initial capital is locked in positions
+                    cap_self_caused = float(np.clip(
+                        _notional_in_positions / max(total_value, 1e-8), 0.0, 1.0
+                    ))
+                else:
+                    cap_self_caused = 0.0
+
+                state.extend([
+                    float(np.clip(cap_can_open, 0.0, 1.0)),       # [20]
+                    float(np.clip(cap_can_close, 0.0, 1.0)),      # [21]
+                    float(np.clip(cap_free_slots, 0.0, 1.0)),     # [22]
+                    float(np.clip(cap_cash_trade, 0.0, 1.0)),     # [23]
+                    float(np.clip(cap_risk_budget, 0.0, 1.0)),    # [24]
+                    float(np.clip(cap_size_remaining, 0.0, 1.0)), # [25]
+                    float(np.clip(cap_cooldown, 0.0, 1.0)),       # [26]
+                    float(np.clip(cap_self_caused, 0.0, 1.0)),    # [27]
+                ])
+            except Exception as _acm_err:
+                logger.warning(f"[ACM] Capability vector error: {_acm_err}")
+                state.extend([0.0] * 8)
+
+            assert len(state) == 28, f"portfolio_state must be 28 dims, got {len(state)}"
             return np.array(state, dtype=np.float32)
 
         except Exception as e:
@@ -1361,7 +1479,7 @@ class PortfolioManager:
                 f"Erreur lors de la construction du vecteur d'état du portefeuille: {e}",
                 exc_info=True,
             )
-            return np.zeros(20, dtype=np.float32)
+            return np.zeros(28, dtype=np.float32)
 
     def _update_equity(self, current_prices: Optional[Dict[str, float]] = None):
         """

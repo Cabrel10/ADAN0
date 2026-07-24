@@ -11,7 +11,7 @@ import yaml
 from pathlib import Path
 
 # Resolve project root relative to this script (scripts/ -> project root)
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # --- Direct import of FeatureEngineer (bypass __init__.py chain) ---
 import importlib.util

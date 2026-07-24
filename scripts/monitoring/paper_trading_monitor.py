@@ -66,6 +66,10 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from adan_trading_bot.common.config_loader import ConfigLoader
 from adan_trading_bot.data_processing.data_loader import ChunkedDataLoader
 from adan_trading_bot.environment.multi_asset_chunked_env import MultiAssetChunkedEnv
+from adan_trading_bot.environment.action_routing import (
+    route_action_by_state as _route_action_by_state,
+    HOLD as _RT_HOLD, BUY as _RT_BUY, SELL as _RT_SELL,
+)  # v12 shared state-conditioned routing (single source of truth)
 
 try:
     from adan_trading_bot.agent.feature_extractors import (
@@ -362,8 +366,19 @@ def get_capital_tier(balance: float, tiers: list) -> dict:
 
 
 # ── Action interpreter ─────────────────────────────────────────────────────
-def interpret_target_weight_action(action_raw, has_position: bool) -> dict:
+def interpret_target_weight_action(action_raw, has_position: bool,
+                                   slot_available: bool = True,
+                                   threshold: float = 0.10) -> dict:
     """Interpret the continuous Target-Weight action vector.
+
+    v12: delegates the DIRECTION decision to the SHARED state-conditioned
+    router (adan_trading_bot.environment.action_routing.route_action_by_state)
+    so the paper/live decode is byte-identical to the training env. Single
+    source of truth for how action[0] maps to BUY/HOLD/SELL:
+
+      * FLAT : a0 > +thr -> BUY  ; else -> HOLD (even a0 = -1, no penalty)
+      * LONG : a0 < -thr -> SELL ; else -> HOLD (even a0 = +1)
+      * FLAT & slot beyond quota -> HOLD (NOOP)
 
     Returns dict with keys: signal, size_raw, confidence.
     """
@@ -375,18 +390,19 @@ def interpret_target_weight_action(action_raw, has_position: bool) -> dict:
         signal_raw = 0.0
         size_raw = 0.0
 
-    # Dynamic exit: agent signals negative while already long
-    if has_position and signal_raw < -0.1:
-        return {"signal": "DYNAMIC_EXIT", "size_raw": size_raw,
-                "confidence": abs(signal_raw)}
-
-    if signal_raw > 0.33:
+    discrete = _route_action_by_state(
+        signal_raw,
+        in_position=bool(has_position),
+        slot_available=bool(slot_available),
+        threshold=threshold,
+    )
+    if discrete == _RT_BUY:
         return {"signal": "BUY", "size_raw": size_raw,
-                "confidence": min(signal_raw, 1.0)}
-    elif signal_raw < -0.33:
+                "confidence": min(abs(signal_raw), 1.0)}
+    if discrete == _RT_SELL:
+        # Label kept as SELL; caller's execute_signal closes the position.
         return {"signal": "SELL", "size_raw": size_raw,
                 "confidence": min(abs(signal_raw), 1.0)}
-
     return {"signal": "HOLD", "size_raw": size_raw,
             "confidence": 1.0 - abs(signal_raw) * 2}
 
@@ -536,6 +552,11 @@ class PaperTradingMonitor:
 
     def load_model(self, model_path=None):
         """Load the PPO model for inference."""
+        # If a model was already explicitly loaded (e.g. via --model before run()),
+        # a no-arg re-load call from run() must NOT clobber it with the default
+        # search. Return success and keep the already-loaded model.
+        if model_path is None and getattr(self, "model", None) is not None:
+            return True
         if model_path is None:
             candidates = [
                 PROJECT_ROOT / "models" / "rl_agents" / "production" / "model.zip",
@@ -555,6 +576,33 @@ class PaperTradingMonitor:
         PPOClass = WorldModelPPO if WorldModelPPO is not None else PPO
         self.model = PPOClass.load(model_path, device="cpu")
         logger.info(f"Model loaded: {model_path} ({type(self.model).__name__})")
+
+        # ----------------------------------------------------------------
+        # obs_schema_v2 GUARD: the policy was trained on a fixed portfolio
+        # input dim. ADAN0 migrated 20 -> 28 (ACM Capability Vector). A model
+        # whose portfolio_proj expects 20 is INCOMPATIBLE with the current
+        # 28-dim env and MUST be refused loudly (never crash mid-inference).
+        # ----------------------------------------------------------------
+        try:
+            EXPECTED_PORTFOLIO_DIM = 28
+            sd = self.model.policy.state_dict()
+            proj_in = None
+            for k, v in sd.items():
+                if k.endswith("portfolio_proj.0.weight") and hasattr(v, "shape"):
+                    proj_in = int(v.shape[1])
+                    break
+            if proj_in is not None and proj_in != EXPECTED_PORTFOLIO_DIM:
+                logger.error(
+                    f"[SCHEMA MISMATCH] Model {model_path} expects portfolio_state "
+                    f"dim={proj_in} but env emits obs_schema_v2 dim={EXPECTED_PORTFOLIO_DIM}. "
+                    f"This model predates the ACM migration (20->28) and CANNOT be used. "
+                    f"Retrain on the 28-dim schema before paper trading."
+                )
+                self.model = None
+                return False
+            logger.info(f"[SCHEMA OK] Model portfolio_proj input dim = {proj_in} (obs_schema_v2)")
+        except Exception as _guard_err:
+            logger.warning(f"[SCHEMA GUARD] could not verify portfolio dim: {_guard_err}")
         return True
 
     def fetch_live_data(self) -> dict:

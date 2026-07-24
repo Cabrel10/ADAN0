@@ -477,6 +477,240 @@ class MetricsMonitor(BaseCallback):
 
 
 # ===========================================================================
+# DIAGNOSTIC-V3 (2026-06-29) — Entropy-collapse instrumentation
+# ===========================================================================
+# Measure-only callback. Reads, never writes, the env/policy state. Logs the
+# four numbers the decision tree needs, every `log_every` steps, to a CSV:
+#   - action0 histogram + mean/std (collapse signature = bimodal at +-1)
+#   - HOLD/BUY/SELL share of REQUESTED discrete actions
+#   - steps_flat / steps_open share (collapse = 99.7% open)
+#   - illegal_ratio (rejected actions / steps)
+#   - policy entropy (mean of policy distribution entropy on the rollout batch)
+# Activated by env ADAN_DIAG_COLLAPSE=1 so it never perturbs normal CI runs.
+# It is purely additive: failures are swallowed so training can never break.
+class DiagnosticCollapseCallback(BaseCallback):
+    """Per-window collapse telemetry (action0 histo, HOLD%, flat/open, illegal,
+    entropy). Measure-only — does NOT touch reward, gradient or env state."""
+
+    def __init__(self, csv_path: str, log_every: int = 10000, verbose: int = 1):
+        super().__init__(verbose)
+        self.csv_path = csv_path
+        self.log_every = max(500, int(log_every))
+        self._reset_window()
+        self._prev_rej_total = None
+        self._header_written = False
+        self._next_flush = self.log_every  # first flush at exactly log_every steps
+        # DIAGNOSTIC-V8 circuit-breaker state. Auto-stop training the moment a
+        # policy collapse is detected (proven pattern from v8 500k run: pct_buy
+        # -> 1.0 and a0_mean -> +inf at ~124k-128k). Stops wasting compute on a
+        # dead policy and preserves the last healthy checkpoint.
+        self._collapse_tripped = False
+        # need N consecutive collapsed windows to avoid a false positive on a
+        # transient spike (2 windows = 2*log_every steps of sustained collapse).
+        self._collapse_streak = 0
+        # V13: require more consecutive windows (env-configurable, default 4 instead
+        # of 2) so a transient degenerate window never trips the (opt-in) breaker.
+        self._collapse_needed = int(os.environ.get("ADAN_COLLAPSE_WINDOWS", "4") or 4)
+        # DIAGNOSTIC-V13 (2026-07-04): the hard-stop breaker is now OPT-IN.
+        # Rationale (user): killing a 500k run at first collapse (~40-70k) destroys
+        # the wide visual range needed to study the FULL collapse trajectory across
+        # sessions. Default OFF = telemetry-only ("measure -> observe, never kill").
+        # Set ADAN_COLLAPSE_BREAKER=1 to re-arm the hard stop (e.g. cost-saving runs).
+        self._breaker_enabled = (
+            os.environ.get("ADAN_COLLAPSE_BREAKER", "0").strip() in ("1", "true", "True")
+        )
+
+    def _reset_window(self):
+        self._a0 = []                 # continuous action0 seen this window
+        self._req = {0: 0, 1: 0, 2: 0}  # HOLD / BUY / SELL requested
+        self._flat = 0
+        self._open = 0
+        self._ent = []                # entropy samples this window
+        self._rej_delta = 0           # rejections accumulated this window
+
+    @staticmethod
+    def _is_open(env) -> bool:
+        try:
+            pm = getattr(env, "portfolio_manager", None)
+            positions = getattr(pm, "positions", None)
+            if isinstance(positions, dict):
+                for p in positions.values():
+                    if bool(getattr(p, "is_open", False)):
+                        return True
+            elif isinstance(positions, (list, tuple)):
+                for p in positions:
+                    if bool(getattr(p, "is_open", False)):
+                        return True
+        except Exception:
+            pass
+        return False
+
+    def _on_step(self) -> bool:
+        try:
+            # 1) continuous action0 from the rollout (already sampled by PPO)
+            acts = self.locals.get("actions", None)
+            if acts is not None:
+                arr = np.asarray(acts, dtype=np.float32).reshape(len(acts), -1) \
+                    if hasattr(acts, "__len__") else None
+                if arr is not None and arr.shape[1] >= 1:
+                    for v in arr[:, 0]:
+                        self._a0.append(float(v))
+
+            # 2) per-env requested discrete action + position state + rejections
+            try:
+                reqs = self.training_env.get_attr("_last_discrete_action_requested")
+            except Exception:
+                reqs = []
+            try:
+                envs = self.training_env.get_attr("rejection_reasons")
+            except Exception:
+                envs = []
+            # position state via env_method is unsafe (pickling); read per-env attr
+            for i in range(len(reqs)):
+                r = int(reqs[i] or 0)
+                if r in self._req:
+                    self._req[r] += 1
+                # in-position flag — read via get_attr on the unwrapped env
+                try:
+                    pm_list = self.training_env.get_attr("portfolio_manager")
+                    is_open = False
+                    if i < len(pm_list):
+                        positions = getattr(pm_list[i], "positions", None)
+                        if isinstance(positions, dict):
+                            is_open = any(bool(getattr(p, "is_open", False))
+                                          for p in positions.values())
+                    if is_open:
+                        self._open += 1
+                    else:
+                        self._flat += 1
+                except Exception:
+                    pass
+
+            # 3) rejection delta (illegal actions) summed across envs
+            cur_total = 0
+            for rd in envs:
+                if isinstance(rd, dict):
+                    cur_total += sum(int(v) for v in rd.values())
+            if self._prev_rej_total is not None and cur_total >= self._prev_rej_total:
+                self._rej_delta += (cur_total - self._prev_rej_total)
+            self._prev_rej_total = cur_total
+
+            # 4) policy entropy estimate (cheap: from log_std of the policy)
+            try:
+                pol = self.model.policy
+                if hasattr(pol, "log_std"):
+                    log_std = pol.log_std.detach().cpu().numpy().reshape(-1)
+                    # diagonal-Gaussian differential entropy per dim
+                    ent = float(np.mean(0.5 * np.log(2 * np.pi * np.e) + log_std))
+                    self._ent.append(ent)
+            except Exception:
+                pass
+
+            # window flush — fires once each time we cross the next multiple of
+            # log_every (robust to multi-env step increments; no spurious step-1 row).
+            if self.num_timesteps >= self._next_flush:
+                self._flush()
+                while self._next_flush <= self.num_timesteps:
+                    self._next_flush += self.log_every
+        except Exception:
+            pass
+        # DIAGNOSTIC-V8: hard stop if collapse confirmed over consecutive windows.
+        # V13: only stops when the breaker is explicitly enabled (opt-in). Otherwise
+        # the collapse is logged but training continues so the FULL trajectory is
+        # captured for cross-session analysis.
+        if self._collapse_tripped and self._breaker_enabled:
+            logging.getLogger(__name__).critical(
+                "[COLLAPSE-BREAKER] Training STOPPED at %d timesteps — policy "
+                "collapse confirmed. Inspect the diagnostic CSV; resume from the "
+                "last healthy checkpoint, NOT this one.", int(self.num_timesteps))
+            return False  # SB3 stops learning when a callback returns False
+        return True
+
+    def _flush(self):
+        try:
+            import csv
+            a0 = np.asarray(self._a0, dtype=np.float32) if self._a0 else np.zeros(1)
+            total_req = sum(self._req.values()) or 1
+            total_state = (self._flat + self._open) or 1
+            bins = np.linspace(-1.0, 1.0, 11)
+            histo, _ = np.histogram(np.clip(a0, -1, 1), bins=bins)
+            row = {
+                "timesteps": int(self.num_timesteps),
+                "a0_mean": round(float(a0.mean()), 4),
+                "a0_std": round(float(a0.std()), 4),
+                "a0_pct_buy": round(float((a0 > 0.01).mean()), 4),
+                "a0_pct_sell": round(float((a0 < -0.01).mean()), 4),
+                "a0_pct_hold_band": round(float((np.abs(a0) <= 0.01).mean()), 4),
+                "req_HOLD_pct": round(self._req[0] / total_req, 4),
+                "req_BUY_pct": round(self._req[1] / total_req, 4),
+                "req_SELL_pct": round(self._req[2] / total_req, 4),
+                "steps_flat_pct": round(self._flat / total_state, 4),
+                "steps_open_pct": round(self._open / total_state, 4),
+                "illegal_ratio": round(self._rej_delta / total_state, 4),
+                "policy_entropy": round(float(np.mean(self._ent)), 4) if self._ent else 0.0,
+                "a0_histo": "|".join(str(int(x)) for x in histo),
+            }
+            # DIAGNOSTIC-V8 collapse detection (measure -> decide, no reward touch).
+            # Trip if ANY of the proven collapse signatures holds for this window:
+            #   - a0_pct_buy >= 0.97  (near-total BUY, histo degenerate)
+            #   - a0_pct_sell >= 0.97 (symmetric guard for the SELL attractor)
+            #   - |a0_mean| >= 5.0    (continuous output diverging to +/-inf)
+            # Require self._collapse_needed consecutive windows before stopping.
+            try:
+                _pb = row["a0_pct_buy"]; _ps = row["a0_pct_sell"]
+                _am = abs(row["a0_mean"])
+                # V13: detector relaxed (user). Thresholds env-configurable and set
+                # to NEAR-TOTAL degeneracy so a merely-drifting policy is NOT flagged;
+                # only a truly dead one is. Combined with the opt-in breaker (default
+                # OFF), the run is never killed prematurely.
+                _thr_pb = float(os.environ.get("ADAN_COLLAPSE_PCT", "0.99") or 0.99)
+                _thr_am = float(os.environ.get("ADAN_COLLAPSE_A0", "8.0") or 8.0)
+                _collapsed = (_pb >= _thr_pb) or (_ps >= _thr_pb) or (_am >= _thr_am)
+                if _collapsed:
+                    self._collapse_streak += 1
+                else:
+                    self._collapse_streak = 0
+                if self._collapse_streak >= self._collapse_needed:
+                    self._collapse_tripped = True
+                    logging.getLogger(__name__).critical(
+                        "[COLLAPSE-DETECT %d] pct_buy=%.3f pct_sell=%.3f "
+                        "a0_mean=%.3f streak=%d -> BREAKER ARMED",
+                        row["timesteps"], _pb, _ps, row["a0_mean"],
+                        self._collapse_streak)
+                elif _collapsed:
+                    logging.getLogger(__name__).warning(
+                        "[COLLAPSE-WARN %d] pct_buy=%.3f a0_mean=%.3f streak=%d/%d",
+                        row["timesteps"], _pb, row["a0_mean"],
+                        self._collapse_streak, self._collapse_needed)
+            except Exception:
+                pass
+
+            os.makedirs(os.path.dirname(self.csv_path), exist_ok=True)
+            write_header = not self._header_written and not os.path.exists(self.csv_path)
+            with open(self.csv_path, "a", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=list(row.keys()))
+                if write_header:
+                    w.writeheader()
+                w.writerow(row)
+            self._header_written = True
+            if self.verbose:
+                logging.getLogger(__name__).info(
+                    "[DIAG-V3 %d] HOLD=%.1f%% BUY=%.1f%% SELL=%.1f%% | "
+                    "flat=%.1f%% open=%.1f%% | illegal=%.3f | a0 mu=%.3f sd=%.3f | "
+                    "ent=%.3f | histo=%s",
+                    row["timesteps"], row["req_HOLD_pct"] * 100,
+                    row["req_BUY_pct"] * 100, row["req_SELL_pct"] * 100,
+                    row["steps_flat_pct"] * 100, row["steps_open_pct"] * 100,
+                    row["illegal_ratio"], row["a0_mean"], row["a0_std"],
+                    row["policy_entropy"], row["a0_histo"],
+                )
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[DIAG-V3] flush failed: {e}")
+        finally:
+            self._reset_window()
+
+
+# ===========================================================================
 # OMEGA Worker Profiles
 # ===========================================================================
 
@@ -484,14 +718,19 @@ WORKER_PROFILES: Dict[str, Dict[str, Any]] = {
     # ── W0 Scalper 5m ────────────────────────────────────────────────────────
     # Horizon: gamma=0.95 -> ~20 steps = ~1.7h of 5m candles
     # n_steps=512: small rollout, fast learning on noisy 5m signal
-    # ent_coef=0.01: moderate exploration, enough to escape local optima
+    # ent_coef=0.03 (DIAGNOSTIC-V3 2026-06-29): was 0.01. Forensic confusion
+    # matrix (430k/480k/500k) proved ENTROPY COLLAPSE: action0 is bimodal at
+    # +-1 (std=0.995), HOLD=0%, agent in-position 99.7% of steps. 0.01 was too
+    # low to keep exploration alive once the policy found the "always max long"
+    # attractor. Tripling ent_coef is the #1 anti-collapse lever (fees held at
+    # 0.5% by user decision, so entropy + sterile penalty must carry the fix).
     "scalper": {
         "name": "Scalper",
         "specialization": {"timeframe": "5m"},
         "n_steps": 512,
         "batch_size": 64,
         "learning_rate": 3e-5,
-        "ent_coef": 0.01,
+        "ent_coef": 0.03,
         "gamma": 0.95,
         "clip_range": 0.15,
     },
@@ -1859,22 +2098,66 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         prior_steps = int(getattr(model, "num_timesteps", 0))
         logger.info(f"[SANDBOX] Prior cumulative timesteps: {prior_steps}")
     else:
-        model = PPO(
+        # DIAGNOSTIC-V6.1: learning-rate WARMUP schedule. The FIRST PPO updates on
+        # random init produced approx_kl 0.17 (>1.5*target_kl) -> "Early stopping
+        # at step 0", almost no gradient applied. A warmup ramps lr from 10% ->
+        # 100% of target over the first 20% of training, so the violent first
+        # updates are tiny and KL stays under control; full lr afterwards.
+        _lr_target = float(sandbox_cfg.get("learning_rate",
+                           agent_cfg.get("learning_rate", 3e-4)))
+        _warmup_frac = float(sandbox_cfg.get("lr_warmup_frac", 0.20))
+        def _lr_schedule(progress_remaining: float) -> float:
+            # SB3 passes progress_remaining: 1.0 at start -> 0.0 at end.
+            done = 1.0 - float(progress_remaining)
+            if _warmup_frac > 0 and done < _warmup_frac:
+                ramp = 0.10 + 0.90 * (done / _warmup_frac)  # 0.10 -> 1.0
+                return _lr_target * ramp
+            return _lr_target
+        logger.info(f"[SANDBOX] LR warmup schedule: target={_lr_target:.2e}, "
+                    f"warmup_frac={_warmup_frac} (start={_lr_target*0.10:.2e})")
+        # V15 (2026-07-07): when the L2 action anchor is requested
+        # (ADAN_L2_ANCHOR_LAMBDA>0), the sandbox path MUST instantiate
+        # WorldModelPPO — its overridden train() is the ONLY place the anchor
+        # loss + Critic probes live. Vanilla PPO silently ignores the anchor.
+        # aux_loss_coef defaults to 0.0 here so the diagnosis isolates the
+        # anchor effect (no forward-prediction MSE confounding a0_mean).
+        _anchor_lambda_env = float(os.environ.get("ADAN_L2_ANCHOR_LAMBDA", "0.0") or 0.0)
+        _use_wmppo = (_anchor_lambda_env > 0.0) and (WorldModelPPO is not None)
+        _SandboxPPOClass = WorldModelPPO if _use_wmppo else PPO
+        _extra_ppo_kwargs = {}
+        if _use_wmppo:
+            _aux_coef = float(os.environ.get("ADAN_AUX_LOSS_COEF", "0.0") or 0.0)
+            _extra_ppo_kwargs["aux_loss_coef"] = _aux_coef
+            logger.warning(
+                "[SANDBOX][V15] Using WorldModelPPO (anchor lambda=%.4f, "
+                "aux_loss_coef=%.3f) — L2 action anchor + Critic probes ACTIVE.",
+                _anchor_lambda_env, _aux_coef)
+        else:
+            logger.info("[SANDBOX] Using vanilla PPO (no L2 anchor requested).")
+        model = _SandboxPPOClass(
             "MultiInputPolicy",
             vec_env,
-            learning_rate=float(sandbox_cfg.get("learning_rate",
-                                agent_cfg.get("learning_rate", 3e-4))),
+            learning_rate=_lr_schedule,
             n_steps=sandbox_n_steps,
             batch_size=sandbox_batch_size,
             n_epochs=sandbox_n_epochs,
             gamma=float(agent_cfg.get("gamma", 0.99)),
             gae_lambda=float(agent_cfg.get("gae_lambda", 0.95)),
-            clip_range=float(agent_cfg.get("clip_range", 0.2)),
+            # DIAGNOSTIC-V5: read clip_range/target_kl/max_grad_norm from the
+            # sandbox block FIRST (that is the path that runs) so the PPO
+            # stabilisation knobs actually take effect. clip_fraction was 0.73
+            # and approx_kl 0.58 on the V4 run -> stricter trust region + KL
+            # early-stop are required.
+            clip_range=float(sandbox_cfg.get("clip_range",
+                             agent_cfg.get("clip_range", 0.2))),
+            target_kl=float(sandbox_cfg.get("target_kl",
+                            agent_cfg.get("target_kl", 0.035))),
             ent_coef=float(os.environ.get(
                 "ADAN_ENT_COEF",
                 sandbox_cfg.get("ent_coef", agent_cfg.get("ent_coef", 0.01)))),
             vf_coef=float(agent_cfg.get("vf_coef", 0.5)),
-            max_grad_norm=float(agent_cfg.get("max_grad_norm", 0.5)),
+            max_grad_norm=float(sandbox_cfg.get("max_grad_norm",
+                                agent_cfg.get("max_grad_norm", 0.5))),
             use_sde=_sb_use_sde,       # gSDE (set ADAN_USE_SDE=0 to fall back to
                                        # plain DiagGaussian — σ then independent of
                                        # features, cannot diverge).
@@ -1882,6 +2165,7 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
             verbose=1,
             device="cpu",
             policy_kwargs=policy_kwargs,
+            **_extra_ppo_kwargs,
         )
         reset_num_timesteps = True
         prior_steps = 0
@@ -1909,6 +2193,23 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     # V2 instrumentation (MESURE SEULE) — suit μ/σ pré-tanh par tête pour voir si
     # μ(size)=-7.2 remonte. Activé via ADAN_ACTIONDIM=1. NE MODIFIE RIEN.
     _sb_callbacks = [checkpoint_callback]
+
+    # DIAGNOSTIC-V3 (2026-06-29): entropy-collapse telemetry. Activated by
+    # ADAN_DIAG_COLLAPSE=1. Measure-only — logs action0 histo / HOLD% /
+    # flat-open / illegal_ratio / entropy every ADAN_DIAG_EVERY (default 10k)
+    # steps to a CSV. Feeds the post-50k decision tree.
+    if os.environ.get("ADAN_DIAG_COLLAPSE", "0") == "1":
+        _diag_csv = os.environ.get(
+            "ADAN_DIAG_CSV",
+            str(PROJECT_ROOT / "logs" / "training" / "diagnostic_collapse_v3.csv"),
+        )
+        _diag_every = int(os.environ.get("ADAN_DIAG_EVERY", "10000"))
+        _sb_callbacks.append(DiagnosticCollapseCallback(
+            csv_path=_diag_csv, log_every=_diag_every, verbose=1,
+        ))
+        logger.info(f"[SANDBOX] DiagnosticCollapseCallback ACTIF "
+                    f"(every={_diag_every}, csv={_diag_csv}) — mesure seule.")
+
     if ActionDimMonitor is not None and os.environ.get("ADAN_ACTIONDIM", "0") == "1":
         _sb_ad_csv = os.environ.get(
             "ADAN_ACTIONDIM_CSV",
@@ -2000,7 +2301,13 @@ if __name__ == "__main__":
     parser.add_argument("--envs-per-worker", type=int, default=2, help="Sub-envs per worker (SubprocVecEnv)")
     parser.add_argument("--use-subproc", action="store_true", default=False, help="Use SubprocVecEnv (default: off)")
     parser.add_argument("--no-subproc", action="store_true", help="Use DummyVecEnv (default behaviour)")
-    parser.add_argument("--steps", type=int, default=1_000_000, help="Total training timesteps")
+    parser.add_argument("--steps", type=int, default=None,
+                        help="Total training timesteps. In sandbox mode, if omitted "
+                             "falls back to config [sandbox.max_training_steps]. "
+                             "In heavy mode, defaults to 1_000_000. An explicit value "
+                             "(incl. 1000000) is ALWAYS honored (bugfix v13: the old "
+                             "default 1_000_000 collided with the 'use config' sentinel, "
+                             "silently truncating explicit 1M runs to 10k).")
     parser.add_argument("--steps-per-iter", type=int, default=10_000, help="Timesteps per PBT iteration")
     parser.add_argument("--log-level", type=str, default="INFO", help="Logging level")
     parser.add_argument("--checkpoint-dir", type=str, default=None, help="Override checkpoint dir")
@@ -2025,9 +2332,12 @@ if __name__ == "__main__":
     if args.mode == "sandbox":
         # ─── SANDBOX MODE ───
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-        # steps=None means "read from config.yaml [sandbox.max_training_steps]"
+        # steps=None means "read from config.yaml [sandbox.max_training_steps]".
+        # v13 bugfix: pass args.steps VERBATIM. --steps default is now None (not
+        # 1_000_000), so an explicit --steps 1000000 is honored instead of being
+        # silently reinterpreted as "unspecified -> use config (10000)".
         result = sandbox_train(
-            steps=args.steps if args.steps != 1_000_000 else None,
+            steps=args.steps,
             config_path=args.config if args.config != "config/config.yaml" else None,
             resume_ckpt=args.resume_from,
             checkpoint_out=args.checkpoint_out,
@@ -2045,7 +2355,7 @@ if __name__ == "__main__":
             num_samples=args.num_samples,
             envs_per_worker=args.envs_per_worker,
             use_subproc=not args.no_subproc,
-            total_steps=args.steps,
+            total_steps=(args.steps if args.steps is not None else 1_000_000),
             interval_timesteps=args.steps_per_iter,
             log_level=args.log_level,
             checkpoint_dir=args.checkpoint_dir,

@@ -805,7 +805,7 @@ class ExecutionEngine:
         return eq
 
     def get_portfolio_state(self, current_price: float) -> np.ndarray:
-        """Build portfolio_state vector (20,) — MUST mirror, slot-for-slot, the
+        """Build portfolio_state vector (28,) — MUST mirror, slot-for-slot, the
         training layout produced by PortfolioManager.get_state_vector(), because
         the PPO policy was trained on that exact stationary-ratio layout.
 
@@ -819,8 +819,11 @@ class ExecutionEngine:
           [2] trading_pnl_pct (clip ±5)       [3] exposure_ratio (0-1)
           [4] drawdown (0-1)                  [5] sharpe/3 (-1..1)
           [6] open_positions_norm (0-1)       [7] win_rate (0-1)
-          [8] profit_factor/5 (0-1)           [9] reserved (0)
+          [8] profit_factor/5 (0-1)           [9] can_buy_now (0-1)
           [10-14] position 1 features         [15-19] position 2 features
+          [20-27] ACM Capability Vector (can_open, can_close, free_slots_ratio,
+                  cash_ratio_for_trade, risk_budget_remaining, max_size_remaining,
+                  cooldown_active, capital_self_caused)
         """
         equity = self.get_equity(current_price)
         init_cap = max(self.initial_capital, 1e-8)
@@ -856,8 +859,18 @@ class ExecutionEngine:
             float(min(open_count / max_positions, 1.0)),          # [6] positions_norm
             win_rate,                                              # [7] win_rate
             profit_factor_norm,                                    # [8] profit_factor_norm
-            0.0,                                                   # [9] reserved
+            0.0,  # [9] PLACEHOLDER -> can_buy_now (mirrors training)
         ]
+        # DIAGNOSTIC-V7: slot [9] = can_buy_now. MUST mirror, slot-for-slot,
+        # portfolio_manager.get_state_vector() so live obs == train obs.
+        try:
+            _min_notional = float(getattr(self, "min_trade_value", 11.0))
+            _free_slot = 1.0 if open_count < max_positions else 0.0
+            _cash_margin = (cash - _min_notional) / max(_min_notional, 1e-8)
+            _cash_ok = float(np.clip(_cash_margin, 0.0, 1.0))
+            state[9] = float(np.clip(_free_slot * _cash_ok, 0.0, 1.0))
+        except Exception:
+            state[9] = 0.0
 
         # Position slots (2 × 5). The paper engine holds at most one position;
         # slot 0 = current position, slot 1 = zeros.
@@ -888,7 +901,73 @@ class ExecutionEngine:
             else:
                 state.extend([0.0, 0.0, 0.0, 0.0, 0.0])
 
-        assert len(state) == 20, f"portfolio_state must be 20 dims, got {len(state)}"
+        # ================================================================
+        # CAPABILITY VECTOR (ACM) — dims [20-27]
+        # MUST mirror, slot-for-slot, PortfolioManager.get_state_vector()
+        # so that LIVE/PAPER obs == TRAIN obs. The PPO policy was trained on
+        # the full 28-dim layout (20 base + 8 ACM). Omitting these would feed
+        # the network an out-of-distribution shape.
+        #   Policy -> Capability Layer -> Legal Actions -> Execution
+        # ================================================================
+        try:
+            _min_notional = float(getattr(self, "min_trade_value", 11.0))
+            _open_count = open_count  # paper engine holds at most 1 position
+            _free_slots = max(0, max_positions - _open_count)
+            _has_position = 1.0 if _open_count > 0 else 0.0
+
+            # [20] can_open: free slot AND cash available
+            _slot_ok = 1.0 if _free_slots > 0 else 0.0
+            _cash_margin = (cash - _min_notional) / max(_min_notional, 1e-8)
+            _cash_ok = float(np.clip(_cash_margin, 0.0, 1.0))
+            cap_can_open = _slot_ok * _cash_ok
+
+            # [21] can_close: at least one position to close
+            cap_can_close = _has_position
+
+            # [22] free_slots_ratio
+            cap_free_slots = float(_free_slots) / float(max(max_positions, 1))
+
+            # [23] cash_ratio_for_trade: how much cash is tradable
+            cap_cash_trade = float(np.clip(
+                (cash - _min_notional) / max(cash, 1e-8), 0.0, 1.0
+            )) if cash > _min_notional else 0.0
+
+            # [24] risk_budget_remaining: 1 - drawdown/max_dd
+            _max_dd_pct = float(getattr(self, "max_drawdown_pct", 25.0))
+            _dd_ratio = drawdown / max(_max_dd_pct / 100.0, 1e-8)
+            cap_risk_budget = float(np.clip(1.0 - _dd_ratio, 0.0, 1.0))
+
+            # [25] max_size_remaining: room for exposure
+            _max_exp = float(getattr(self, "max_position_size_pct", 20.0)) / 100.0
+            _total_max_exp = _max_exp * max_positions
+            cap_size_remaining = float(np.clip(_total_max_exp - exposure_ratio, 0.0, 1.0))
+
+            # [26] cooldown_active: flagged externally if any cooldown blocks trades
+            cap_cooldown = float(getattr(self, "_cooldown_active", 0.0))
+
+            # [27] capital_self_caused: cash deficit caused by own open positions
+            _notional_in_positions = abs(self.position.size_usd) if self.position is not None else 0.0
+            if cash < _min_notional and _notional_in_positions > 0:
+                cap_self_caused = float(np.clip(
+                    _notional_in_positions / max(total_value, 1e-8), 0.0, 1.0
+                ))
+            else:
+                cap_self_caused = 0.0
+
+            state.extend([
+                float(np.clip(cap_can_open, 0.0, 1.0)),       # [20]
+                float(np.clip(cap_can_close, 0.0, 1.0)),      # [21]
+                float(np.clip(cap_free_slots, 0.0, 1.0)),     # [22]
+                float(np.clip(cap_cash_trade, 0.0, 1.0)),     # [23]
+                float(np.clip(cap_risk_budget, 0.0, 1.0)),    # [24]
+                float(np.clip(cap_size_remaining, 0.0, 1.0)), # [25]
+                float(np.clip(cap_cooldown, 0.0, 1.0)),       # [26]
+                float(np.clip(cap_self_caused, 0.0, 1.0)),    # [27]
+            ])
+        except Exception:
+            state.extend([0.0] * 8)
+
+        assert len(state) == 28, f"portfolio_state must be 28 dims, got {len(state)}"
         return np.array(state, dtype=np.float32)
 
     def _portfolio_snapshot(self, price: float) -> Dict[str, Any]:
