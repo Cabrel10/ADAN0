@@ -1225,6 +1225,11 @@ try:
             adv_buy_batch, adv_sell_batch, adv_hold_batch = [], [], []
             v_buy_batch, v_sell_batch = [], []
             n_buy_batch = n_sell_batch = n_hold_batch = 0
+            # ---- V17 #4 mu-distribution probe accumulators ----
+            # mu_pre  = pre-squash Gaussian mean (a0) BEFORE noise
+            # tanh_mu = tanh(a0) = deterministic bounded equivalent
+            # sampled = actual (post-noise) sampled a0 fed to the env
+            mu_pre_batch, tanh_mu_batch, sampled_batch = [], [], []
             continue_training = True
 
             for epoch in range(self.n_epochs):
@@ -1315,6 +1320,12 @@ try:
                             if std is not None:
                                 s0 = std[:, 0] if std.dim() > 1 else std
                                 a0_std_batch.append(float(s0.mean().item()))
+                            # V17 #4: collect the mu-distribution stages.
+                            mu_pre_batch.append(a0.detach().cpu())
+                            tanh_mu_batch.append(_torch.tanh(a0).detach().cpu())
+                            _samp = rollout_data.actions
+                            _samp0 = _samp[:, 0] if _samp.dim() > 1 else _samp
+                            sampled_batch.append(_samp0.flatten().detach().cpu())
                         if self.anchor_lambda > 0.0:
                             anchor_loss = self.anchor_lambda * (mu ** 2).mean()
                             loss = loss + anchor_loss
@@ -1402,6 +1413,81 @@ try:
                     _adv_buy, _adv_sell, _adv_hold,
                     _v_buy, _v_sell,
                     n_buy_batch, n_sell_batch, n_hold_batch,
+                ),
+                flush=True,
+            )
+
+            # ================================================================
+            # V17 #2 REWARD-BY-ACTION AUDIT
+            # Slice the rollout rewards by the executed a0 direction so we can
+            # see WHICH action the reward actually pays. Answers the expert's
+            # question "is HOLD the only non-negative action?".
+            # ================================================================
+            _rew_mean = _rew_med = _rew_std = float("nan")
+            _rew_buy = _rew_sell = _rew_hold = float("nan")
+            try:
+                _rew = _np.asarray(self.rollout_buffer.rewards).flatten()
+                _act = _np.asarray(self.rollout_buffer.actions)
+                _a0 = _act[:, 0].flatten() if _act.ndim > 1 else _act.flatten()
+                _n = min(len(_rew), len(_a0))
+                _rew, _a0 = _rew[:_n], _a0[:_n]
+                if _n > 0:
+                    _rew_mean = float(_np.mean(_rew))
+                    _rew_med = float(_np.median(_rew))
+                    _rew_std = float(_np.std(_rew))
+                    _buy_m = _a0 > 0.10
+                    _sell_m = _a0 < -0.10
+                    _hold_m = ~(_buy_m | _sell_m)
+                    if _buy_m.any():
+                        _rew_buy = float(_np.mean(_rew[_buy_m]))
+                    if _sell_m.any():
+                        _rew_sell = float(_np.mean(_rew[_sell_m]))
+                    if _hold_m.any():
+                        _rew_hold = float(_np.mean(_rew[_hold_m]))
+                    self.logger.record("diag/reward_mean", _rew_mean)
+                    self.logger.record("diag/reward_median", _rew_med)
+                    self.logger.record("diag/reward_std", _rew_std)
+                    self.logger.record("diag/reward_BUY", _rew_buy)
+                    self.logger.record("diag/reward_SELL", _rew_sell)
+                    self.logger.record("diag/reward_HOLD", _rew_hold)
+            except Exception:
+                pass
+
+            # ================================================================
+            # V17 #4 MU-DISTRIBUTION STAGES
+            # mu_pre -> tanh(mu) -> sampled. det_pct_{BUY,SELL} = fraction of
+            # tanh(mu) crossing the 0.10 deadband (deterministic tradeability).
+            # ================================================================
+            _mu_pre_m = _mu_pre_s = _tanh_m = _samp_m = _samp_s = float("nan")
+            _det_buy = _det_sell = float("nan")
+            try:
+                if mu_pre_batch:
+                    _mp = _torch.cat(mu_pre_batch).numpy()
+                    _tm = _torch.cat(tanh_mu_batch).numpy()
+                    _sp = _torch.cat(sampled_batch).numpy()
+                    _mu_pre_m = float(_np.mean(_mp)); _mu_pre_s = float(_np.std(_mp))
+                    _tanh_m = float(_np.mean(_tm))
+                    _samp_m = float(_np.mean(_sp)); _samp_s = float(_np.std(_sp))
+                    _det_buy = float(_np.mean(_tm > 0.10))
+                    _det_sell = float(_np.mean(_tm < -0.10))
+                    self.logger.record("diag/mu_pre_mean", _mu_pre_m)
+                    self.logger.record("diag/mu_pre_std", _mu_pre_s)
+                    self.logger.record("diag/tanh_mu_mean", _tanh_m)
+                    self.logger.record("diag/sampled_mean", _samp_m)
+                    self.logger.record("diag/sampled_std", _samp_s)
+                    self.logger.record("diag/det_pct_BUY", _det_buy)
+                    self.logger.record("diag/det_pct_SELL", _det_sell)
+            except Exception:
+                pass
+
+            print(
+                "[V17_MEASURE] rew(m=%.4f med=%.4f s=%.4f) rBUY=%.4f rSELL=%.4f "
+                "rHOLD=%.4f | mu_pre(m=%.4f s=%.4f) tanh=%.4f samp(m=%.4f s=%.4f) "
+                "| det%%BUY=%.3f det%%SELL=%.3f"
+                % (
+                    _rew_mean, _rew_med, _rew_std, _rew_buy, _rew_sell, _rew_hold,
+                    _mu_pre_m, _mu_pre_s, _tanh_m, _samp_m, _samp_s,
+                    _det_buy, _det_sell,
                 ),
                 flush=True,
             )

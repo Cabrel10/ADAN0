@@ -642,10 +642,14 @@ environment:
   # to choose between BUY/SELL with no safe HOLD zone.
   # Agent learned to output negative values (SELL) to avoid trading costs.
   # New thresholds give 20% of action space to HOLD (safe zone).
+  # V17-Fix D (deadband): lowered so deterministic mu (kept near 0 by L2 anchor)
+  # can cross the threshold and trigger real BUY/SELL at inference. 0.05 is a
+  # compromise: demands a genuine directional impulse but stays reachable by the
+  # anchor (NOT near-zero, to avoid over-trading noise). Was {1h:0.15,4h:0.20,5m:0.10}.
   action_thresholds:
-    1h: 0.15
-    4h: 0.20
-    5m: 0.10
+    1h: 0.08
+    4h: 0.10
+    5m: 0.05
   assets:
   - btcusdt
   base_currency: USDT
@@ -655,7 +659,12 @@ environment:
   # Decision utilisateur: le 0.80% gonflait artificiellement le TP_min, forcant
   # des TP 8-12% impossibles (mouvement reel ~1-2% / 30 steps). 0.50% permet des
   # TP serres et donc 15-20 trades/jour capturables.
-  commission: 0.0025
+  # V17-Fix B (fees, NON-NEGOTIABLE user decision): 0.0025 -> 0.0020.
+  # 0.20% per side => 0.40% round-trip (was 0.50%). With the old 0.5% R/T the
+  # static break-even wall sat at 0.75% (1.5x), unreachable in a scalper window
+  # (20 candles) => 95% of SELLs rejected. At 0.40% R/T a ~2-candle BTC move
+  # nets a profit and the dynamic barrier (Fix A) becomes crossable.
+  commission: 0.0020
   features_config:
     indicators:
     - rsi_14
@@ -1257,7 +1266,7 @@ reward_shaping:
   future_reward:
     enabled: true
     mode: future_guided
-    round_trip_fees: 0.005
+    round_trip_fees: 0.004   # V17-Fix B: aligned with commission 0.0020 (0.40% R/T)
     max_future_contrib: 0.60
     # ── PHILOSOPHIE (revue utilisateur 2026-06-26) ──────────────────────────
     # Le Future Arena juge le TP/SL contre le POTENTIEL REELLEMENT OBSERVE
@@ -1562,8 +1571,8 @@ risk_parameters:
   weekly_loss_limit: 0.2
   winrate_tp_factor: 1.1
 trading_rules:
-  # FINDING #4: aligne sur environment.commission (0.50 % A/R, applique par cote).
-  commission_pct: 0.0025
+  # FINDING #4: aligne sur environment.commission. V17-Fix B: 0.40 % A/R.
+  commission_pct: 0.0020
   # 🔴 CRITICAL FIX (2026-06-25): enforce the per-tier exposure cap on EVERY
   # open (was only enforced at hour==4). Without this, the agent ignored
   # max_position_size_pct / exposure_range and sized positions arbitrarily.

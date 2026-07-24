@@ -2508,6 +2508,29 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"trade_attempts={getattr(self, 'trade_attempts', 0)} "
                 f"invalid={getattr(self, 'invalid_trade_attempts', 0)}"
             )
+        # V17-Audit: log the SELL funnel of the episode that just ended, then reset.
+        _prev_sl = getattr(self, "sell_lifecycle", None)
+        if isinstance(_prev_sl, dict) and _prev_sl.get("requested_open", 0) > 0:
+            _req = max(1, int(_prev_sl.get("requested_open", 0)))
+            _rejb = int(_prev_sl.get("rej_barrier", 0))
+            try:
+                self.logger.info(
+                    "[SELL_LIFECYCLE] requested_open=%d rej_hold_min=%d rej_budget=%d "
+                    "rej_barrier=%d (%.1f%%) executed=%d exec_profit=%d" % (
+                        int(_prev_sl.get("requested_open", 0)),
+                        int(_prev_sl.get("rej_hold_min", 0)),
+                        int(_prev_sl.get("rej_budget", 0)),
+                        _rejb, 100.0 * _rejb / _req,
+                        int(_prev_sl.get("executed", 0)),
+                        int(_prev_sl.get("exec_profit", 0)),
+                    )
+                )
+            except Exception:
+                pass
+        self.sell_lifecycle = {
+            "requested_open": 0, "rej_hold_min": 0, "rej_budget": 0,
+            "rej_barrier": 0, "executed": 0, "exec_profit": 0,
+        }
         self.rejection_reasons = {
             "fee_gate": 0, "risk_gate": 0, "cooldown_wait": 0,
             "cooldown_hold_min": 0, "cooldown_omega4e": 0,
@@ -6513,6 +6536,20 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
                 # duree en steps
                 steps_held = max(0, cur_global - open_step)
+                # V17-Fix B: mfe_residual = MFE over the horizon AFTER the exit
+                # index. Feeds Arena.lost_potential_penalty (Scenario B: "sold too
+                # early, market kept rising -> opportunity-cost malus"). OFFLINE
+                # only; never injected into the observation -> live-safe.
+                mfe_residual = None
+                try:
+                    exit_idx = entry_idx + int(steps_held)
+                    if 0 <= exit_idx < len(df):
+                        _mfe_r, _ = compute_mfe_mae(
+                            df, exit_idx, PivotDirection.LOW, horizon, mae_floor=mae_floor
+                        )
+                        mfe_residual = float(_mfe_r)
+                except Exception:
+                    mfe_residual = None
                 contrib = bridge.contribution(
                     profile=profile,
                     timeframe=str(tf or "5m"),
@@ -6526,6 +6563,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     tp_chosen=float(receipt.get("take_profit_pct", 0.0) or 0.0),
                     mfe=float(mfe),
                     mae=float(mae),
+                    mfe_residual=mfe_residual,
                 )
                 total += float(contrib)
             except Exception:
@@ -8415,6 +8453,11 @@ class MultiAssetChunkedEnv(gym.Env):
             #    Après SELL réussi → déclenche WAIT post-SELL (M steps)
             # ================================================================
             if discrete_action == 2 and is_open:
+                # V17-Audit: SELL requested on an open position.
+                try:
+                    self.sell_lifecycle["requested_open"] += 1
+                except Exception:
+                    pass
                 # Cooldown post-BUY par timeframe (HOLD_MIN)
                 # Durée lue depuis trading_rules.cooldown.hold_min_steps
                 _hold_min_cfg = self.config.get("trading_rules", {}).get(
@@ -8428,6 +8471,10 @@ class MultiAssetChunkedEnv(gym.Env):
                     # SELL trop tôt — pénalité proportionnelle au manque
                     self.invalid_trade_attempts += 1
                     self.rejection_reasons["cooldown_hold_min"] += 1
+                    try:
+                        self.sell_lifecycle["rej_hold_min"] += 1
+                    except Exception:
+                        pass
                     _early_pen = -_inv_pen_weight * (_hold_min - _steps_held)
                     self._step_invalid_penalty += _early_pen
                     if self.current_step % 50 == 0:
@@ -8472,7 +8519,37 @@ class MultiAssetChunkedEnv(gym.Env):
                             _rt_fees = 2.0 * float(getattr(self.portfolio_manager, "fee_pct", 0.004))
                         except Exception:
                             _rt_fees = 0.008
-                        _barrier = 1.5 * _rt_fees  # ex: 1.5 x 0.8% = 1.2%
+                        # V17-Fix A: DYNAMIC break-even barrier (present-only).
+                        # Was static `1.5 * _rt_fees` (~1.2% @ 0.5% R/T) which
+                        # blocked 95-99% of SELLs (measured, 4 episodes). Now the
+                        # barrier scales with ATR% (volatility) and is tunable via
+                        # ADAN_BARRIER_MULT (default 1.0). ATR is PRESENT info ->
+                        # no future leak -> live-compatible. Floored at fees (never
+                        # below break-even), capped at 2%. Premature exits are now
+                        # judged by the Arena (Scenario B), not physically walled.
+                        import os as _os_v17
+                        _barrier_mult = float(_os_v17.environ.get("ADAN_BARRIER_MULT", "1.0"))
+                        _atr_pct_bar = 0.0
+                        try:
+                            _atr_pct_bar = float(self._get_atr_pct_for_asset(asset)) or 0.0
+                        except Exception:
+                            _atr_pct_bar = 0.0
+                        # atr_scale in [0.5, 2.0]; reference volatility 0.4% (~1 R/T unit)
+                        _atr_scale = 1.0
+                        if _atr_pct_bar > 1e-9:
+                            _atr_scale = min(2.0, max(0.5, _atr_pct_bar / 0.004))
+                        _barrier = _barrier_mult * _rt_fees * _atr_scale
+                        _barrier = max(_rt_fees, min(_barrier, 0.02))
+                        # Log every 500 steps to trace the dynamic barrier.
+                        try:
+                            if int(getattr(self, "current_step", 0)) % 500 == 0:
+                                self.logger.info(
+                                    f"[BREAK_EVEN_DYN] {asset}: barrier={_barrier:.4%} "
+                                    f"(mult={_barrier_mult}, atr%={_atr_pct_bar:.4%}, "
+                                    f"scale={_atr_scale:.2f}, rt_fees={_rt_fees:.4%})"
+                                )
+                        except Exception:
+                            pass
                         # ============================================================
                         # DECISION BUDGET (2026-06-25, V3) — friction structurelle.
                         # L'AGENT_CLOSE consomme decision_budget_close (def 0.30).
@@ -8494,6 +8571,10 @@ class MultiAssetChunkedEnv(gym.Env):
                         if _budget_blocked:
                             discrete_action = 0
                             self.rejection_reasons["hysteresis"] += 1
+                            try:
+                                self.sell_lifecycle["rej_budget"] += 1
+                            except Exception:
+                                pass
                             # Penalite douce proportionnelle au deficit de budget
                             # (gradient, pas no-op) — l'agent apprend a economiser.
                             _deficit_b = max(0.0, (_cost_close - _budget) / max(_cost_close, 1e-9))
@@ -8508,6 +8589,10 @@ class MultiAssetChunkedEnv(gym.Env):
                             # Reject AGENT_CLOSE - rentabilite insuffisante vs frais.
                             discrete_action = 0
                             self.rejection_reasons["hysteresis"] += 1
+                            try:
+                                self.sell_lifecycle["rej_barrier"] += 1
+                            except Exception:
+                                pass
                             # Penalite GRADIENT (cf. reward_service.agent_close_barrier):
                             # proportionnelle au manque de rentabilite, bornee, negative.
                             _deficit = (_barrier - unrealized_pnl_pct) / max(_barrier, 1e-9)
@@ -8534,6 +8619,12 @@ class MultiAssetChunkedEnv(gym.Env):
                                 self._apply_trade_results_safely(
                                     pnl_value=float(val), fees=float(fees))
                                 trade_executed_this_step = True
+                                try:
+                                    self.sell_lifecycle["executed"] += 1
+                                    if float(val) > 0.0:
+                                        self.sell_lifecycle["exec_profit"] += 1
+                                except Exception:
+                                    pass
                                 # DIAGNOSTIC-V5: legal SELL -> relax sterile pressure
                                 self._sterile_streak.clear()
                                 self._sterile_acc.clear()
