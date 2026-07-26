@@ -1,0 +1,183 @@
+{
+  "log": "logs/training/fa_500k.log",
+  "lines_parsed": 6427875,
+  "A_RL_evolution": {
+    "approx_kl": {
+      "stats": {
+        "n": 395,
+        "first": 0.0221,
+        "last": 0.1454,
+        "min": 0.0221,
+        "max": 1.2676,
+        "mean": 0.1789
+      },
+      "trend": "STABLE (0.172->0.182)"
+    },
+    "clip_fraction": {
+      "stats": {
+        "n": 395,
+        "first": 0.156,
+        "last": 0.483,
+        "min": 0.156,
+        "max": 0.731,
+        "mean": 0.5493
+      },
+      "trend": "STABLE (0.516->0.529)"
+    },
+    "entropy_loss": {
+      "stats": {
+        "n": 395,
+        "first": -2.11,
+        "last": -6.4,
+        "min": -6.61,
+        "max": -2.11,
+        "mean": -4.3715
+      },
+      "trend": "DOWN (-2.586->-6.218, -81%)"
+    },
+    "ep_rew_mean": {
+      "stats": {
+        "n": 338,
+        "first": 1360.0,
+        "last": 3080.0,
+        "min": 1360.0,
+        "max": 3080.0,
+        "mean": 2468.8462
+      },
+      "trend": "UP (1577.612->3039.403, +85%)"
+    },
+    "explained_variance": {
+      "stats": {
+        "n": 395,
+        "first": 0.0461,
+        "last": -0.229,
+        "min": -1.69,
+        "max": 0.869,
+        "mean": -0.08
+      },
+      "trend": "STABLE (0.011->-0.116)"
+    },
+    "policy_gradient_loss": {
+      "stats": {
+        "n": 394,
+        "first": -0.0208,
+        "last": -0.019,
+        "min": -0.0481,
+        "max": 0.0171,
+        "mean": -0.0218
+      },
+      "trend": "STABLE (-0.018->-0.022)"
+    },
+    "value_loss": {
+      "stats": {
+        "n": 395,
+        "first": 0.277,
+        "last": 0.913,
+        "min": 0.0666,
+        "max": 1.48,
+        "mean": 0.5556
+      },
+      "trend": "UP (0.420->0.624, +14%)"
+    }
+  },
+  "B_trading": {
+    "totals": {
+      "SL_HIT": 10254,
+      "TP_HIT": 45384,
+      "AGENT_CLOSE": 60
+    },
+    "TP/SL_global": 4.43,
+    "evolution_thirds": [
+      {
+        "third": "early",
+        "TP%": 77.2,
+        "SL%": 22.4,
+        "AG%": 0.3,
+        "TP/SL": 3.44,
+        "n": 18566
+      },
+      {
+        "third": "mid",
+        "TP%": 86.1,
+        "SL%": 13.9,
+        "AG%": 0.0,
+        "TP/SL": 6.18,
+        "n": 18566
+      },
+      {
+        "third": "late",
+        "TP%": 81.1,
+        "SL%": 18.9,
+        "AG%": 0.0,
+        "TP/SL": 4.3,
+        "n": 18566
+      }
+    ]
+  },
+  "C_behavior": {
+    "FA_future_share_pct": {
+      "n": 2028,
+      "first": 29.6,
+      "last": 6.0,
+      "min": 5.8,
+      "max": 33.2,
+      "mean": 8.598
+    },
+    "FA_mean_abs_future": {
+      "n": 2028,
+      "first": 0.0159,
+      "last": 0.0416,
+      "min": 0.0159,
+      "max": 0.0417,
+      "mean": 0.0352
+    },
+    "FA_mean_abs_pnl": {
+      "n": 2028,
+      "first": 0.0379,
+      "last": 0.6524,
+      "min": 0.0379,
+      "max": 0.6567,
+      "mean": 0.4933
+    },
+    "ACT_tp_raw_mean": {
+      "n": 2008,
+      "first": -0.023,
+      "last": 0.325,
+      "min": -0.023,
+      "max": 0.623,
+      "mean": 0.4388
+    },
+    "ACT_sl_raw_mean": {
+      "n": 2008,
+      "first": -0.01,
+      "last": 0.565,
+      "min": -0.01,
+      "max": 0.565,
+      "mean": 0.308
+    },
+    "ACT_tp_sat_pct": {
+      "n": 2008,
+      "first": 0,
+      "last": 43,
+      "min": 0,
+      "max": 43,
+      "mean": 33.9094
+    },
+    "ACT_sl_sat_pct": {
+      "n": 2008,
+      "first": 1,
+      "last": 47,
+      "min": 1,
+      "max": 47,
+      "mean": 22.1763
+    },
+    "ACT_tp_pct_mean": {
+      "n": 2008,
+      "first": 1.28,
+      "last": 1.53,
+      "min": 1.28,
+      "max": 1.74,
+      "mean": 1.6073
+    }
+  }
+}

@@ -5,6 +5,7 @@ Module de gestion de portefeuille pour le bot de trading ADAN.
 """
 
 import logging
+import os
 from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,13 @@ from ..performance.metrics import PerformanceMetrics
 from ..utils.smart_logger import create_smart_logger
 
 logger = logging.getLogger(__name__)
+
+# ─── Fast-path logging gate (2026-06-27) ──────────────────────────────────
+# [RISK_UPDATE] est emis a chaque step (≈2780 lignes en 3 min) et plombe l'I/O.
+# Aligne ce module sur ADAN_TRAINING_SILENT (comme env + DBE) : passe en WARNING
+# pendant l'entrainement pour tuer le flood per-step. Mettre =0 pour debug.
+if os.environ.get("ADAN_TRAINING_SILENT", "0") == "1":
+    logger.setLevel(logging.WARNING)
 
 
 class Position:
@@ -97,10 +105,13 @@ class PortfolioManager:
         config: Dict[str, Any],
         worker_id: int = 0,
         performance_metrics: Optional[PerformanceMetrics] = None,
-        max_positions: int = 1
+        max_positions: int = 1,
+        profile: Optional[str] = None,
     ):
         self.worker_id = worker_id
         self.config = config
+        raw_profile = profile or self.config.get("profile", "")
+        self.profile = str(raw_profile).strip().lower()
         self.smart_logger = create_smart_logger(
             worker_id, total_workers=4, logger_name="portfolio_manager"
         )
@@ -133,6 +144,41 @@ class PortfolioManager:
         self.last_close_reason: Optional[str] = None
 
         self.reset()
+
+    def _resolve_max_duration_steps(self, timeframe: str, default: int = 144) -> int:
+        """Return the single profile-aware MaxDuration authority.
+
+        Base limits remain timeframe-specific. Optional ``profile_overrides`` only
+        replaces explicitly configured profile/timeframe pairs, avoiding any
+        worker-id-to-profile inference when Ray creates multiple sub-environments.
+        """
+        duration_config = self.config.get("trading_rules", {}).get(
+            "duration_tracking", {}
+        )
+        timeframe_key = str(timeframe or "5m")
+        base_limit = duration_config.get(timeframe_key, {}).get(
+            "max_duration_steps", default
+        )
+        profile_limit = (
+            duration_config.get("profile_overrides", {})
+            .get(self.profile, {})
+            .get(timeframe_key, {})
+            .get("max_duration_steps")
+        )
+        resolved = base_limit if profile_limit is None else profile_limit
+        try:
+            resolved_int = int(resolved)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid max_duration_steps={resolved!r} for "
+                f"profile={self.profile!r}, timeframe={timeframe_key!r}"
+            ) from exc
+        if resolved_int <= 0:
+            raise ValueError(
+                f"max_duration_steps must be positive, got {resolved_int} for "
+                f"profile={self.profile!r}, timeframe={timeframe_key!r}"
+            )
+        return resolved_int
 
     def _emergency_reset_if_exploded(self) -> bool:
         """Détecte une explosion numérique et réinitialise le portefeuille si besoin."""
@@ -306,8 +352,10 @@ class PortfolioManager:
         self.realized_equity = self.initial_equity  # cash + total_realized_pnl basis
         self.peak_realized_equity = self.initial_equity
         # Paramètres de risque courants (par défaut)
-        self.sl_pct = kwargs.get("stop_loss_pct", 0.02)
-        self.tp_pct = kwargs.get("take_profit_pct", 0.05)
+        # FINDING #4: defaults market-aware (SL 1.5% / TP 3%, RR=2) au lieu de
+        # 2%/5% qui, gonfles par le DBE, produisaient des TP ~10% impossibles.
+        self.sl_pct = kwargs.get("stop_loss_pct", 0.015)
+        self.tp_pct = kwargs.get("take_profit_pct", 0.030)
         self.pos_size_pct = kwargs.get("position_size_pct", 0.1)
 
         # Force close all open positions to avoid orphan positions missing from logs
@@ -422,8 +470,9 @@ class PortfolioManager:
             
             hard_constraints = self.config.get('environment', {}).get('hard_constraints', {})
             min_trade = hard_constraints.get('min_order_value_usdt', 11.0)
-            sl_bounds = hard_constraints.get('stop_loss_pct', {'min': 0.005, 'max': 0.20})
-            tp_bounds = hard_constraints.get('take_profit_pct', {'min': 0.01, 'max': 0.50})
+            # FINDING #4: fallback bounds market-aware (etaient 0.20 / 0.50).
+            sl_bounds = hard_constraints.get('stop_loss_pct', {'min': 0.003, 'max': 0.06})
+            tp_bounds = hard_constraints.get('take_profit_pct', {'min': 0.005, 'max': 0.12})
             
             self.log_info(
                 f"[TIER 1] Environnement: Palier={tier_name}, MaxPos={max_position_pct*100:.0f}%, MinTrade={min_trade} USDT"
@@ -435,8 +484,8 @@ class PortfolioManager:
             trading_params = worker_config.get('trading_parameters', {})
             
             base_position_pct = trading_params.get('position_size_pct', 0.1)
-            base_sl_pct = trading_params.get('stop_loss_pct', 0.02)
-            base_tp_pct = trading_params.get('take_profit_pct', 0.05)
+            base_sl_pct = trading_params.get('stop_loss_pct', 0.015)  # FINDING #4
+            base_tp_pct = trading_params.get('take_profit_pct', 0.030)  # FINDING #4
             base_risk_pct = trading_params.get('risk_per_trade_pct', 0.01)
             
             self.log_info(
@@ -473,8 +522,8 @@ class PortfolioManager:
             
             # ========== ÉTAPE 4 : APPLIQUER CONTRAINTES FINALES (ENVIRONNEMENT) ==========
             # Clamp SL/TP par hard_constraints
-            final_sl_pct = max(min(adjusted_sl_pct, sl_bounds.get('max', 0.20)), sl_bounds.get('min', 0.005))
-            final_tp_pct = max(min(adjusted_tp_pct, tp_bounds.get('max', 0.50)), tp_bounds.get('min', 0.01))
+            final_sl_pct = max(min(adjusted_sl_pct, sl_bounds.get('max', 0.06)), sl_bounds.get('min', 0.003))
+            final_tp_pct = max(min(adjusted_tp_pct, tp_bounds.get('max', 0.12)), tp_bounds.get('min', 0.005))
             
             # Clamp position par palier
             final_position_pct = min(adjusted_position_pct, max_position_pct)
@@ -740,10 +789,25 @@ class PortfolioManager:
         except Exception:
             available_cash = 0.0
         if available_cash > 0:
-            max_position_value = available_cash * 5.0  # 5x le cash disponible (DYNAMIQUE, CASH ONLY)
-            if cost > max_position_value:
+            # 🔴 CRITICAL FIX (2026-06-25): SPOT pur => le notionnel ne peut JAMAIS
+            # dépasser le cash disponible. L'ancien "* 5.0" autorisait un levier
+            # fantôme de 5x alors que config leverage=1 et futures_enabled=false,
+            # ce qui contaminait les rewards (equity 20$ -> 3792$ impossible).
+            # On lit le levier configuré (défaut 1.0) et on borne strictement à
+            # leverage * cash. Le buffer 1e-9 absorbe l'arrondi flottant.
+            try:
+                _lev = float(
+                    (self.config.get("trading_rules", {}) or {}).get("leverage", 1.0)
+                ) if isinstance(self.config, dict) else 1.0
+                if not (np.isfinite(_lev) and _lev > 0):
+                    _lev = 1.0
+            except Exception:
+                _lev = 1.0
+            # En spot (leverage<=1), le plafond dur = cash disponible.
+            max_position_value = available_cash * max(1.0, _lev) if _lev > 1.0 else available_cash
+            if cost > max_position_value + 1e-9:
                 logger.error(
-                    f"🚨 POSITION TROP GRANDE: {cost:.2f}$ > max {max_position_value:.2f}$ (cash={available_cash:.2f}$). Rejet de l'ouverture pour {asset}."
+                    f"🚨 POSITION TROP GRANDE: {cost:.2f}$ > max {max_position_value:.2f}$ (cash={available_cash:.2f}$, lev={_lev}). Rejet de l'ouverture pour {asset}."
                 )
                 try:
                     if hasattr(self, "metrics") and self.metrics:
@@ -830,15 +894,11 @@ class PortfolioManager:
         # Démarrer la traque
         if hasattr(self, "dbe") and self.dbe:
             try:
-                duration_config = self.config.get("trading_rules", {}).get(
-                    "duration_tracking", {}
-                )
-                # Utiliser l'horizon de risque pour déterminer la durée maximale
+                # Utiliser l'horizon de risque pour déterminer la durée maximale.
+                # The same profile-aware resolver feeds DBE and the close authority.
                 # Mapper risk_horizon (-1 à 1) à un facteur (ex: 0.5 à 1.5)
                 rh_factor = 1.0 + (risk_horizon * 0.5)  # -1 -> 0.5, 0 -> 1.0, 1 -> 1.5
-                base_duration = duration_config.get(timeframe, {}).get(
-                    "max_duration_steps", 48
-                )
+                base_duration = self._resolve_max_duration_steps(timeframe, default=48)
                 duration_steps = int(base_duration * rh_factor)
                 self.dbe.start_hunt(
                     self.worker_id, asset, timeframe, duration_steps, current_step
@@ -1003,6 +1063,12 @@ class PortfolioManager:
             "order_id": str(uuid.uuid4()),
             **({"reason": str(reason)} if reason else {}),
             "risk_horizon": float(position.risk_horizon),
+            # FINDING #4: expose the chosen SL/TP and entry step so the env's
+            # RewardBridge can score them against the future MFE/MAE (ex-post).
+            "stop_loss_pct": float(getattr(position, "stop_loss_pct", 0.0) or 0.0),
+            "take_profit_pct": float(getattr(position, "take_profit_pct", 0.0) or 0.0),
+            "open_step": int(getattr(position, "open_step", 0) or 0),
+            "timeframe": str(getattr(position, "timeframe", "") or ""),
         }
 
         self._update_equity(current_prices)
@@ -1158,13 +1224,8 @@ class PortfolioManager:
                 continue
 
             # Vérification de la durée maximale de la position
-            duration_config = self.config.get("trading_rules", {}).get(
-                "duration_tracking", {}
-            )
             timeframe = position.timeframe or "5m"
-            max_duration = duration_config.get(timeframe, {}).get(
-                "max_duration_steps", 144
-            )
+            max_duration = self._resolve_max_duration_steps(timeframe)
 
             current_duration = current_step - position.open_step
             is_overstay = current_duration > max_duration
@@ -1231,7 +1292,7 @@ class PortfolioManager:
         des informations exploitables, pas des nombres bruts passés dans un
         scaler calibré sur des prix à 5 chiffres.
         
-        Layout (20 dims):
+        Layout (28 dims):
           [0]  cash_ratio           = cash / initial_capital              (~1.0 au départ)
           [1]  value_ratio          = total_value / initial_capital       (~1.0 au départ)
           [2]  trading_pnl_pct      = PnL trading / capital ajusté       (ratio)
@@ -1241,7 +1302,7 @@ class PortfolioManager:
           [6]  open_positions_norm  = nb positions / max_positions        ([0, 1])
           [7]  win_rate             = trades gagnants / total trades      ([0, 1])
           [8]  profit_factor_norm   = profit_factor clipé / 5.0           ([0, 1])
-          [9]  reserved             = 0.0 (slot libre)
+          [9]  can_buy_now          = soft capability signal              ([0, 1])
         
         Position 1 (features [10-14]):
           [10] unrealized_pnl_pct   = (current - entry) / entry * sign   (ratio, ~[-0.1, 0.1])
@@ -1252,6 +1313,19 @@ class PortfolioManager:
         
         Position 2 (features [15-19]):
           Même layout — zéros si pas de 2ème position ouverte.
+        
+        Capability Vector (ACM) [20-27]:
+          Le modèle doit connaitre son ARSENAL COMPLET avant de décider.
+          Policy -> Capability Layer -> Legal Actions -> Execution.
+          NOT: Policy -> Execution -> Punition.
+          [20] can_open             = free_slot AND cash_ok              ([0, 1])
+          [21] can_close            = has_open_position                  (0 or 1)
+          [22] free_slots_ratio     = free_slots / max_positions         ([0, 1])
+          [23] cash_ratio_for_trade = (cash - min_notional) / cash      ([0, 1])
+          [24] risk_budget_remaining= 1.0 - drawdown/max_dd             ([0, 1])
+          [25] max_size_remaining   = max(0, max_pos_pct - exposure)    ([0, 1])
+          [26] cooldown_active      = any cooldown blocking trades      (0 or 1)
+          [27] capital_self_caused  = cash deficit due to own BUYs      ([0, 1])
         """
         try:
             metrics = self.get_metrics()
@@ -1288,8 +1362,25 @@ class PortfolioManager:
                 min(open_count / max(max_positions, 1), 1.0),                    # [6] positions_norm
                 np.clip(win_rate, 0.0, 1.0),                                     # [7] win_rate
                 np.clip(profit_factor, 0.0, 1.0),                                # [8] profit_factor_norm
-                0.0,                                                              # [9] reserved
+                0.0,  # [9] PLACEHOLDER -> overwritten below by can_buy_now
             ]
+            # ----------------------------------------------------------------
+            # DIAGNOSTIC-V6: slot [9] = can_buy_now (action-capacity signal).
+            # The agent was BLIND to whether a BUY is even legal -> it kept
+            # requesting BUY while fully invested and got punished (CASH_FLOOR).
+            # Now it SEES its legal arsenal. etat reel -> capacites legales.
+            # ----------------------------------------------------------------
+            try:
+                _min_notional = float(getattr(self, 'min_trade_value', 11.0))
+                _max_pos = max(int(getattr(self, 'max_concurrent_positions', 1)), 1)
+                _free_slot = 1.0 if int(open_count) < _max_pos else 0.0
+                # soft cash margin: 0 at exactly min_notional, ->1 at 2x min_notional
+                _cash_margin = (cash - _min_notional) / max(_min_notional, 1e-8)
+                _cash_ok = float(np.clip(_cash_margin, 0.0, 1.0))
+                can_buy_now = _free_slot * _cash_ok
+            except Exception:
+                can_buy_now = 0.0
+            state[9] = float(np.clip(can_buy_now, 0.0, 1.0))
 
             # ---- Positions (2 slots × 5 features = 10 dims) ----
             open_positions = [
@@ -1321,7 +1412,95 @@ class PortfolioManager:
                 else:
                     state.extend([0.0, 0.0, 0.0, 0.0, 0.0])
 
-            assert len(state) == 20, f"portfolio_state must be 20 dims, got {len(state)}"
+            # ================================================================
+            # CAPABILITY VECTOR (ACM) — dims [20-27]
+            # L'agent doit connaitre son ARSENAL COMPLET avant de décider.
+            #   Policy -> Capability Layer -> Legal Actions -> Execution
+            # et NON:
+            #   Policy -> Execution -> Punition
+            #
+            # Les actions illegales doivent devenir extremement rares.
+            # La penalite ne sert plus a enseigner la legalite mais
+            # uniquement a signaler une mauvaise GESTION de l'arsenal.
+            # ================================================================
+            try:
+                _min_notional = float(getattr(self, 'min_trade_value', 11.0))
+                _max_pos = max(int(getattr(self, 'max_positions', 5)), 1)
+                _open_count = len([p for p in self.positions.values() if p.is_open])
+                _free_slots = max(0, _max_pos - _open_count)
+                _has_position = 1.0 if _open_count > 0 else 0.0
+
+                # [20] can_open: free slot AND cash available
+                _slot_ok = 1.0 if _free_slots > 0 else 0.0
+                _cash_margin = (cash - _min_notional) / max(_min_notional, 1e-8)
+                _cash_ok = float(np.clip(_cash_margin, 0.0, 1.0))
+                cap_can_open = _slot_ok * _cash_ok
+
+                # [21] can_close: at least one position to close, WEIGHTED by
+                # REAL close-readiness (energy/decision_budget + cooldown gap).
+                # FIX-A (POMDP): the agent was blind to whether a CLOSE would be
+                # allowed by the decision_budget/gap gates -> it saw can_close=1,
+                # tried to SELL, got silently blocked -> learned "SELL never works"
+                # -> BUY collapse. Now [21] = has_position * close_energy_ready so
+                # the hidden constraint becomes observable (POMDP -> MDP).
+                _energy_ready = float(getattr(self, '_close_energy_ready', 1.0))
+                cap_can_close = _has_position * float(np.clip(_energy_ready, 0.0, 1.0))
+
+                # [22] free_slots_ratio
+                cap_free_slots = float(_free_slots) / float(_max_pos)
+
+                # [23] cash_ratio_for_trade: how much cash is tradable
+                cap_cash_trade = float(np.clip(
+                    (cash - _min_notional) / max(cash, 1e-8), 0.0, 1.0
+                )) if cash > _min_notional else 0.0
+
+                # [24] risk_budget_remaining: 1 - drawdown/max_dd
+                _max_dd_pct = float(getattr(self, 'max_drawdown_pct', 25.0))
+                _dd_ratio = drawdown / max(_max_dd_pct / 100.0, 1e-8)
+                cap_risk_budget = float(np.clip(1.0 - _dd_ratio, 0.0, 1.0))
+
+                # [25] max_size_remaining: room for exposure
+                _exposure = (total_value - cash) / total_value if total_value > 0 else 0.0
+                _max_exp = float(getattr(self, 'max_position_size_pct', 20.0)) / 100.0
+                _total_max_exp = _max_exp * _max_pos  # total allowed exposure
+                cap_size_remaining = float(np.clip(
+                    _total_max_exp - _exposure, 0.0, 1.0
+                ))
+
+                # [26] cooldown_active: flagged by env via set_cooldown_state()
+                cap_cooldown = float(getattr(self, '_cooldown_active', 0.0))
+
+                # [27] capital_self_caused: measures how much cash deficit
+                # is caused by the agent's own open positions (Cas B).
+                # If cash < min_notional AND positions are open, the agent
+                # created this state itself -> signal for management penalty.
+                _notional_in_positions = sum(
+                    abs(p.size * p.current_price)
+                    for p in self.positions.values() if p.is_open
+                )
+                if cash < _min_notional and _notional_in_positions > 0:
+                    # Ratio: how much of initial capital is locked in positions
+                    cap_self_caused = float(np.clip(
+                        _notional_in_positions / max(total_value, 1e-8), 0.0, 1.0
+                    ))
+                else:
+                    cap_self_caused = 0.0
+
+                state.extend([
+                    float(np.clip(cap_can_open, 0.0, 1.0)),       # [20]
+                    float(np.clip(cap_can_close, 0.0, 1.0)),      # [21]
+                    float(np.clip(cap_free_slots, 0.0, 1.0)),     # [22]
+                    float(np.clip(cap_cash_trade, 0.0, 1.0)),     # [23]
+                    float(np.clip(cap_risk_budget, 0.0, 1.0)),    # [24]
+                    float(np.clip(cap_size_remaining, 0.0, 1.0)), # [25]
+                    float(np.clip(cap_cooldown, 0.0, 1.0)),       # [26]
+                    float(np.clip(cap_self_caused, 0.0, 1.0)),    # [27]
+                ])
+            except Exception as _acm_err:
+                logger.warning(f"[ACM] Capability vector error: {_acm_err}")
+                state.extend([0.0] * 8)
+
+            assert len(state) == 28, f"portfolio_state must be 28 dims, got {len(state)}"
             return np.array(state, dtype=np.float32)
 
         except Exception as e:
@@ -1329,7 +1508,7 @@ class PortfolioManager:
                 f"Erreur lors de la construction du vecteur d'état du portefeuille: {e}",
                 exc_info=True,
             )
-            return np.zeros(20, dtype=np.float32)
+            return np.zeros(28, dtype=np.float32)
 
     def _update_equity(self, current_prices: Optional[Dict[str, float]] = None):
         """
@@ -1566,6 +1745,10 @@ class PortfolioManager:
         """Log un warning avec le préfixe du worker."""
         logger.warning(f"[Worker {self.worker_id}] {message}")
 
+    def log_debug(self, message: str):
+        """Log DEBUG (per-step, supprime sous seuil INFO du root)."""
+        logger.debug(f"[Worker {self.worker_id}] {message}")
+
     def update_risk_parameters(
         self, risk_params: Dict[str, Any], tier: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -1580,8 +1763,10 @@ class PortfolioManager:
             tier = self.get_current_tier()
 
         # Mise à jour des paramètres de base
-        self.sl_pct = risk_params.get("stop_loss_pct", getattr(self, "sl_pct", 0.02))
-        self.tp_pct = risk_params.get("take_profit_pct", getattr(self, "tp_pct", 0.05))
+        # FINDING #4: fallbacks market-aware (1.5% / 3%, RR=2) au lieu de 2%/5%
+        # pour rester coherent avec __init__ et les hard_constraints (SL<=6% TP<=12%).
+        self.sl_pct = risk_params.get("stop_loss_pct", getattr(self, "sl_pct", 0.015))
+        self.tp_pct = risk_params.get("take_profit_pct", getattr(self, "tp_pct", 0.030))
 
         pos_size = risk_params.get(
             "position_size_pct", getattr(self, "pos_size_pct", 0.1)
@@ -1615,7 +1800,7 @@ class PortfolioManager:
 
         self.pos_size_pct = float(clamped_by_range)
 
-        self.log_info(
+        self.log_debug(
             f"[RISK_UPDATE] Palier: {tier.get('name', 'N/A') if isinstance(tier, dict) else 'N/A'}, "
             f"PosSize: {self.pos_size_pct:.2%} (cap≤{max_pos_size_pct:.2%}{', range applied' if isinstance(tier, dict) and tier.get('exposure_range') else ''}), "
             f"SL: {self.sl_pct:.2%}, TP: {self.tp_pct:.2%}"

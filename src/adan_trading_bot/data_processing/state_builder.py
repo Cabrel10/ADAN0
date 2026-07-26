@@ -929,7 +929,7 @@ class StateBuilder:
         Returns:
             int: Dimension de l'état du portefeuille
         """
-        return 20
+        return 28
 
     def build_portfolio_state(self, portfolio_manager: Any) -> np.ndarray:
         """
@@ -942,14 +942,14 @@ class StateBuilder:
             Numpy array containing portfolio state information
         """
         if not self.include_portfolio_state or portfolio_manager is None:
-            return np.zeros(20, dtype=np.float32)  # Return zero-padded portfolio state
+            return np.zeros(28, dtype=np.float32)  # Return zero-padded portfolio state (20 base + 8 ACM)
 
         try:
             return portfolio_manager.get_state_vector()
 
         except Exception as e:
             logger.error(f"Error building portfolio state: {e}")
-            return np.zeros(20, dtype=np.float32)  # Return zero-padded portfolio state
+            return np.zeros(28, dtype=np.float32)  # Return zero-padded portfolio state (20 base + 8 ACM)
 
     # ------------------------------------------------------------------
     # SOTA 2026: Context vector dimension
@@ -1427,7 +1427,7 @@ class StateBuilder:
             )
             result["observation"] = np.zeros(self.observation_shape, dtype=np.float32)
             if self.include_portfolio_state:
-                result["portfolio_state"] = np.zeros(20, dtype=np.float32)  # CORRECTION: 20 dimensions
+                result["portfolio_state"] = np.zeros(28, dtype=np.float32)  # 20 base + 8 ACM Capability Vector
             return result
 
         # Apply timeframe weighting directly on the 3D array
@@ -1462,20 +1462,22 @@ class StateBuilder:
         if self.include_portfolio_state and portfolio_manager is not None:
             portfolio_state = self.build_portfolio_state(portfolio_manager)
 
-            # Ensure portfolio state has exactly 20 features (CORRECTION: was 17)
-            if portfolio_state.size != 20:
+            # Ensure portfolio state has exactly 28 features (20 base + 8 ACM
+            # Capability Vector). MUST match PortfolioManager.get_state_vector()
+            # and the env observation space, else the PPO sees an OOD shape.
+            if portfolio_state.size != 28:
                 logger.warning(
-                    f"Portfolio state size mismatch. Expected 20, got {portfolio_state.size}. Adjusting."
+                    f"Portfolio state size mismatch. Expected 28, got {portfolio_state.size}. Adjusting."
                 )
-                if portfolio_state.size < 20:
+                if portfolio_state.size < 28:
                     portfolio_state = np.pad(
                         portfolio_state,
-                        (0, 20 - portfolio_state.size),
+                        (0, 28 - portfolio_state.size),
                         mode="constant",
                         constant_values=0,
                     )
                 else:
-                    portfolio_state = portfolio_state[:20]
+                    portfolio_state = portfolio_state[:28]
 
             result["portfolio_state"] = portfolio_state.astype(np.float32)
 

@@ -48,3 +48,4 @@ reports/
 # OS
 .DS_Store
 Thumbs.db
+web/frontend/tsconfig.tsbuildinfo
