@@ -118,6 +118,16 @@ class RewardCollector:
                     "hold_score": float(action_hold_score),
                     "size_pct": float(action_size_pct),
                     "confidence": float(action_confidence),
+                    # A8 (cahier §13.6): semantique REELLE de l'action continue.
+                    # L'ancien buy/sell/hold etait un logging FANTOME herite d'une
+                    # version discrete. La vraie action est [direction, size, tf, sl, tp].
+                    "semantics": {
+                        "direction": float(kwargs.get("action_direction", 0.0)),
+                        "size": float(kwargs.get("action_size_raw", action_size_pct)),
+                        "tf": float(kwargs.get("action_tf", 0.0)),
+                        "sl": float(kwargs.get("action_sl", 0.0)),
+                        "tp": float(kwargs.get("action_tp", 0.0)),
+                    },
                 },
                 "triggers": {
                     "sl_triggered": bool(sl_triggered),

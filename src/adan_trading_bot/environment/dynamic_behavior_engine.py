@@ -1148,7 +1148,7 @@ class DynamicBehaviorEngine:
             adjusted_pos = max(adjusted_pos, 0.01)  # Min 1%
 
             tier_name = current_tier if isinstance(current_tier, str) else getattr(current_tier, "name", str(current_tier))
-            logger.info(
+            logger.debug(
                 f"[DBE_V2_FINAL] {worker_key} | Tier={tier_name} | Regime={regime} | Final: SL={adjusted_sl:.2%}, TP={adjusted_tp:.2%}, Pos={adjusted_pos:.2%}"
             )
 
@@ -2567,7 +2567,19 @@ class DynamicBehaviorEngine:
             state: Dictionnaire contenant l'état actuel
             mod: Dictionnaire à mettre à jour avec les nouveaux paramètres de risque
             risk_horizon: Horizon de risque choisi par l'agent (-1: court terme, 1: long terme)
+
+        DEPRECATED (FINDING #4 / revue utilisateur 2026-06-26) : CODE MORT.
+        Aucun appelant en production (verifie par grep). Le chemin runtime actif est
+        compute_dynamic_modulation() -> _get_tier_based_parameters() qui lit
+        workers.*.trading_parameters. On emet un warning LOUD si jamais cette
+        fonction est reactivee par megarde, pour eviter de reintroduire d'anciennes
+        bornes SL/TP (10-20%) via le bloc top-level risk_parameters.
         """
+        logger.warning(
+            "[DEPRECATED] _compute_risk_parameters appele alors qu'il est CODE MORT "
+            "(FINDING #4). Le chemin valide est compute_dynamic_modulation(). "
+            "Verifier l'appelant — risque de bornes SL/TP obsoletes."
+        )
         try:
             if state is None or mod is None:
                 logger.warning("State ou mod est None dans _compute_risk_parameters")
