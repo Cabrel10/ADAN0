@@ -573,3 +573,104 @@ tête directionnelle décide, tp/size collapsés mais bornés/ignorés. **Aucun 
 chaîne live ne reste à corriger en urgence.** Le seul levier d'amélioration réel est
 côté entraînement (désaturer `tp`), à décider par l'utilisateur — NE PAS réentraîner
 sans accord explicite (règle d'or).
+
+---
+
+## §14 — SOLUTION STOCHASTIQUE : séparation des responsabilités (signal vs risque)
+
+Suite au verdict §12-§13 (têtes `tp`/`size` collapsées par entropy collapse à
+l'entraînement, tête `dir` saine → 66% WR) ET à l'audit des fermetures de trades
+(3082 trades du log d'entraînement : TP=23.9%, SL=20.6%, AGENT_CLOSE=2.6%,
+MaxDuration=66% → le modèle pose un TP fonctionnel mais TOUJOURS au minimum de bande
+car `tp_raw≈-1`), on introduit un **calibrateur SL/TP stochastique** SANS réentraîner.
+
+### 14.1 Principe — découplage signal / risque
+
+```
+Modèle PPO (inchangé)      → direction (LONG/SHORT/HOLD)  [tête saine]
+                           → confidence (HMM bull_prob)    [sizing LINEAR_EXPO]
+Calibrateur stochastique   → SL_pct   (volatilité-scaled)
+   (NOUVEAU)               → TP_pct   (régime-scaled)
+```
+
+Le modèle garde ce qu'il fait bien (DÉCIDER où entrer). Le calibrateur prend le
+relais sur ce que le modèle a collapsé (DIMENSIONNER le risque). Aucun réentraînement.
+
+### 14.2 Logique du calibrateur (`execution_engine.py::_compute_stochastic_sltp`)
+
+Entrées (mêmes indices que l'env d'entraînement) :
+- `context_vector[0]` = ATR/close ratio (env:7043-7044)
+- `context_vector[3]` = bull_prob HMM (env:6901)
+
+Calcul :
+```
+SL  = clip(2.0 × ATR, sl_lo, sl_hi)          # stop proportionnel au bruit marché
+RR  = 2.5 si bull_prob ≥ 0.65   (laisser courir)
+      1.8 si neutre
+      1.5 si bull_prob ≤ 0.35   (couper vite)
+TP  = clip(SL × RR, tp_lo, tp_hi)
+puis R/R ≥ 1.5 forcé (invariant identique à l'env:7027)
+```
+
+INVARIANT DE SÉCURITÉ : SL et TP restent **clampés dans les bandes de profil
+identiques au training/backtest** (intraday : SL 4-6%, TP 8-12%). Le calibrateur ne
+peut que **re-positionner le risque DANS l'enveloppe validée**, jamais en sortir.
+
+### 14.3 Preuve (smoke test, profil intraday)
+
+```
+Régime            ATR    bull  SL_stoch  TP_stoch  RR    Modèle(collapsed)
+BULL low-vol      0.003  0.80   4.00%    10.00%   2.50   TP=8% fixe
+NEUTRAL mid-vol   0.025  0.50   5.00%     9.00%   1.80   TP=8% fixe
+BEAR high-vol     0.050  0.20   6.00%     9.00%   1.50   TP=8% fixe
+BULL high-vol     0.040  0.75   6.00%    12.00%   2.00   TP=8% fixe
+```
+→ SL suit la volatilité, TP suit le régime, tout reste borné. Le modèle seul aurait
+produit TP=8% fixe dans TOUS les cas (tp_raw=-1 → TP=tp_lo).
+
+### 14.4 Activation & non-régression
+
+- Flag CLI : `--stochastic-sltp` (défaut OFF).
+- OFF (défaut) → comportement strictement identique aux 2 bots existants
+  (`sltp_source="model"`). ZÉRO régression sur 450k/500k.
+- ON → `sltp_source="stochastic"`, et le décodage logge AUSSI `model_sl_pct` /
+  `model_tp_pct` (ce que le modèle aurait fait) pour comparaison A/B directe.
+- Le `context_vector` live est désormais transmis à `process_tick` (run_bot.py),
+  ce qui alimente le calibrateur ET active enfin le sizing HMM en live (auparavant
+  `confidence=0.5` par défaut faute de context transmis).
+
+### 14.5 Dispositif A/B : 3 paper traders en parallèle
+
+```
+Bot 1 : 450k                  (model SL/TP)        — branche main / baseline
+Bot 2 : 500k                  (model SL/TP)        — branche main / baseline
+Bot 3 : 500k + stochastique   (ATR×regime SL/TP)   — branche feat/stochastic-sltp
+```
+Objectif : mesurer si SL/TP dynamiques améliorent le taux de fermeture TP vs SL et
+réduisent la part de MaxDuration (66% en entraînement = trop passif). Comparaison sur
+fenêtre commune, même capital ($20.50), même profil (intraday), même symbole (BTC/USDT).
+
+### 14.6 Ce qui N'EST PAS fait (et pourquoi)
+
+- PAS de réentraînement (règle d'or : pas avant accord explicite ; cause training-side
+  identifiée mais le fix live est non destructif et testable immédiatement).
+- PAS de modification de l'env d'entraînement (le calibrateur vit UNIQUEMENT côté
+  exécution live/paper, point d'injection propre = `decode_action`).
+- `size` (action[1]) reste ignoré côté live au profit du sizing HMM — c'est cohérent
+  avec l'env qui, lui, l'utilise ; divergence connue, sans impact (sizing HMM validé).
+
+### 14.7 Observation runtime A/B (T+30min, marché calme)
+
+Premiers trades comparés (BTC≈$62.5k, régime neutre, ATR live bas) :
+```
+Bot 3 stochastique : SL=0.0400  TP=0.0800   (3 OPEN)
+Bot 2 500k model   : SL=0.0488  TP=0.0800   (7 OPEN)
+Bot 1 450k model   : SL=0.040-0.059 TP=0.0800 (variés)
+```
+Lecture : en régime NEUTRE + faible volatilité, le calibrateur produit SL=4%
+(plancher de bande, car 2×ATR_bas < 4%) et TP=8% (plancher, car 4%×RR1.8=7.2%
+clampé à 8%). Donc stochastique ≈ baseline DANS CE RÉGIME — c'est le comportement
+correct et attendu (conservateur). La différenciation n'apparaîtra qu'en marché
+volatil (SL monte vers 6%) ou régime franchement bull (RR 2.5 → TP vers 10-12%),
+comme prouvé par le smoke test §14.3. Le dispositif A/B est opérationnel ; il faut
+laisser tourner sur une fenêtre couvrant plusieurs régimes pour conclure.

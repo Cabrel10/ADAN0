@@ -1122,6 +1122,10 @@ try:
     from stable_baselines3 import PPO as _BasePPO
     import torch as _torch
     import torch.nn.functional as _F
+    import numpy as _np
+    import os as _os
+    from gymnasium import spaces as _spaces
+    from stable_baselines3.common.utils import explained_variance as _explained_variance
 
     class WorldModelPPO(_BasePPO):
         """PPO subclass that backpropagates an auxiliary forward-prediction
@@ -1143,56 +1147,385 @@ try:
             super().__init__(*args, **kwargs)
             self.aux_loss_coef = aux_loss_coef
             self._aux_loss_history: list = []
+            # ================= V15 L2 ACTION ANCHOR (loss-level) =================
+            # ETAPE 2 fix (2026-07-07): the directional collapse is architectural.
+            # ETAPE 1 proved the env is sane (AlwaysLong termRet -35% << Flat 0%),
+            # so a0_mean -> +6.23 is pure PPO log-prob cheating: the Gaussian mean
+            # can flee to +inf because clip([-1,1]) makes every mu>1 map to the same
+            # executed action, while the importance ratio pi/pi_old stays ~1 (both
+            # far-off Gaussians) so PPO clipping never bites and entropy (a function
+            # of sigma only) exerts NO restoring force on mu.
+            #
+            # Reward-level anchors (V14) were diluted by GAE/discount/VF. This L2
+            # term is added DIRECTLY to the actor loss (above the advantage), so no
+            # bull rally can mask it. anchor_loss = lambda * (mu**2).mean().
+            # lambda=0 (default) => term is exactly 0 => identical to vanilla PPO.
+            self.anchor_lambda = float(_os.environ.get("ADAN_L2_ANCHOR_LAMBDA", "0.0") or 0.0)
+            self._a0_mean_hist: list = []
+            self._a0_std_hist: list = []
+            if self.anchor_lambda > 0.0:
+                logger.warning(
+                    "[L2_ANCHOR] loss-level action anchor ON: lambda=%.4f "
+                    "(added to main PPO actor loss, above advantage)",
+                    self.anchor_lambda,
+                )
+
+        @staticmethod
+        def _distribution_mu_std(policy, observations):
+            """Return (mu, std) of the current action distribution for a batch.
+
+            mu is the RAW pre-squash Gaussian mean (the quantity that flees to
+            +6.23). Works for DiagGaussian and gSDE (StateDependentNoise) which
+            both expose ``.distribution`` as a torch ``Normal`` after
+            ``get_distribution``. Returns (None, None) if introspection fails so
+            the anchor degrades gracefully to a no-op rather than crashing.
+            """
+            try:
+                dist = policy.get_distribution(observations)
+                inner = getattr(dist, "distribution", None)
+                if inner is None:
+                    return None, None
+                mu = getattr(inner, "mean", None)
+                std = getattr(inner, "stddev", None)
+                if std is None:
+                    std = getattr(inner, "scale", None)
+                return mu, std
+            except Exception:
+                return None, None
 
         def train(self) -> None:
-            """Standard PPO training + auxiliary next-return MSE gradient step."""
-            # 1. Run the standard PPO training loop (policy + value loss)
-            super().train()
+            """PPO training with a loss-level L2 action anchor (V15) + aux MSE.
 
-            # 2. Extra auxiliary loss backward pass
+            This is a faithful re-implementation of SB3 2.8.0 ``PPO.train`` (so KL
+            early-stopping, clip ranges, advantage normalisation, value clipping
+            and all logging are byte-for-byte preserved) with ONE surgical
+            addition: ``anchor_loss = lambda * (mu**2).mean()`` is added to the
+            main ``loss`` BEFORE ``loss.backward()``. The gradient of this term
+            flows directly onto the action-head mean parameters, ABOVE the
+            advantage / GAE / value-function chain — which is exactly why the
+            V14 reward-level anchor failed and this one should not.
+
+            When ``anchor_lambda == 0`` the added term is identically zero, so the
+            update is bit-identical to vanilla PPO (safe default / A-B control).
+            """
+            # ---- SB3 2.8.0 PPO.train() faithful body -----------------------
+            self.policy.set_training_mode(True)
+            self._update_learning_rate(self.policy.optimizer)
+            clip_range = self.clip_range(self._current_progress_remaining)
+            if self.clip_range_vf is not None:
+                clip_range_vf = self.clip_range_vf(self._current_progress_remaining)
+
+            entropy_losses = []
+            pg_losses, value_losses = [], []
+            clip_fractions = []
+            anchor_losses = []
+            a0_mean_batch = []
+            a0_std_batch = []
+            # ---- Critic/Advantage probe accumulators (Q1 & Q2) ----
+            adv_buy_batch, adv_sell_batch, adv_hold_batch = [], [], []
+            v_buy_batch, v_sell_batch = [], []
+            n_buy_batch = n_sell_batch = n_hold_batch = 0
+            # ---- V17 #4 mu-distribution probe accumulators ----
+            # mu_pre  = pre-squash Gaussian mean (a0) BEFORE noise
+            # tanh_mu = tanh(a0) = deterministic bounded equivalent
+            # sampled = actual (post-noise) sampled a0 fed to the env
+            mu_pre_batch, tanh_mu_batch, sampled_batch = [], [], []
+            continue_training = True
+
+            for epoch in range(self.n_epochs):
+                approx_kl_divs = []
+                for rollout_data in self.rollout_buffer.get(self.batch_size):
+                    actions = rollout_data.actions
+                    if isinstance(self.action_space, _spaces.Discrete):
+                        actions = rollout_data.actions.long().flatten()
+
+                    # gSDE: resample the noise matrix each optimisation batch.
+                    if self.use_sde:
+                        self.policy.reset_noise(self.batch_size)
+
+                    values, log_prob, entropy = self.policy.evaluate_actions(
+                        rollout_data.observations, actions
+                    )
+                    values = values.flatten()
+
+                    advantages = rollout_data.advantages
+                    if self.normalize_advantage and len(advantages) > 1:
+                        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+                    # ===== CRITIC/ADVANTAGE PROBE (Q1 & Q2) =====
+                    # The behavioral collapse (pct_buy>0.85 @15k) precedes the
+                    # numeric one. If adv_BUY >> adv_SELL systematically, the
+                    # root cause is Reward/Critic, NOT the actor. We slice the
+                    # rollout by the executed a0 direction and accumulate the
+                    # advantage / value per direction. Uses UN-normalized values
+                    # and the (post-norm) advantages actually fed to PPO.
+                    with _torch.no_grad():
+                        _raw_act = rollout_data.actions
+                        _a0_dir = _raw_act[:, 0] if _raw_act.dim() > 1 else _raw_act
+                        _a0_dir = _a0_dir.flatten()
+                        _is_buy = _a0_dir > 0.1
+                        _is_sell = _a0_dir < -0.1
+                        _is_hold = (~_is_buy) & (~_is_sell)
+                        if _is_buy.any():
+                            adv_buy_batch.append(float(advantages[_is_buy].mean().item()))
+                            v_buy_batch.append(float(values[_is_buy].mean().item()))
+                            n_buy_batch += int(_is_buy.sum().item())
+                        if _is_sell.any():
+                            adv_sell_batch.append(float(advantages[_is_sell].mean().item()))
+                            v_sell_batch.append(float(values[_is_sell].mean().item()))
+                            n_sell_batch += int(_is_sell.sum().item())
+                        if _is_hold.any():
+                            adv_hold_batch.append(float(advantages[_is_hold].mean().item()))
+                            n_hold_batch += int(_is_hold.sum().item())
+                    # ============================================
+
+                    ratio = _torch.exp(log_prob - rollout_data.old_log_prob)
+                    policy_loss_1 = advantages * ratio
+                    policy_loss_2 = advantages * _torch.clamp(ratio, 1 - clip_range, 1 + clip_range)
+                    policy_loss = -_torch.min(policy_loss_1, policy_loss_2).mean()
+
+                    pg_losses.append(policy_loss.item())
+                    clip_fraction = _torch.mean((_torch.abs(ratio - 1) > clip_range).float()).item()
+                    clip_fractions.append(clip_fraction)
+
+                    if self.clip_range_vf is None:
+                        values_pred = values
+                    else:
+                        values_pred = rollout_data.old_values + _torch.clamp(
+                            values - rollout_data.old_values, -clip_range_vf, clip_range_vf
+                        )
+                    value_loss = _F.mse_loss(rollout_data.returns, values_pred)
+                    value_losses.append(value_loss.item())
+
+                    if entropy is None:
+                        entropy_loss = -_torch.mean(-log_prob)
+                    else:
+                        entropy_loss = -_torch.mean(entropy)
+                    entropy_losses.append(entropy_loss.item())
+
+                    loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
+
+                    # ============ V15 L2 ACTION ANCHOR (the surgery) ============
+                    # mu = raw pre-squash Gaussian mean for THIS mini-batch.
+                    mu, std = self._distribution_mu_std(
+                        self.policy, rollout_data.observations
+                    )
+                    if mu is not None:
+                        # a0 = first action dim (direction). Anchor on the WHOLE
+                        # action vector's mean is fine (dims 1-4 are also bounded
+                        # in [-1,1] by the env), but we log a0 specifically.
+                        with _torch.no_grad():
+                            a0 = mu[:, 0] if mu.dim() > 1 else mu
+                            a0_mean_batch.append(float(a0.mean().item()))
+                            if std is not None:
+                                s0 = std[:, 0] if std.dim() > 1 else std
+                                a0_std_batch.append(float(s0.mean().item()))
+                            # V17 #4: collect the mu-distribution stages.
+                            mu_pre_batch.append(a0.detach().cpu())
+                            tanh_mu_batch.append(_torch.tanh(a0).detach().cpu())
+                            _samp = rollout_data.actions
+                            _samp0 = _samp[:, 0] if _samp.dim() > 1 else _samp
+                            sampled_batch.append(_samp0.flatten().detach().cpu())
+                        if self.anchor_lambda > 0.0:
+                            anchor_loss = self.anchor_lambda * (mu ** 2).mean()
+                            loss = loss + anchor_loss
+                            anchor_losses.append(float(anchor_loss.item()))
+                    # ============================================================
+
+                    with _torch.no_grad():
+                        log_ratio = log_prob - rollout_data.old_log_prob
+                        approx_kl_div = _torch.mean((_torch.exp(log_ratio) - 1) - log_ratio).cpu().numpy()
+                        approx_kl_divs.append(approx_kl_div)
+
+                    if self.target_kl is not None and approx_kl_div > 1.5 * self.target_kl:
+                        continue_training = False
+                        if self.verbose >= 1:
+                            print(f"Early stopping at step {epoch} due to reaching max kl: {approx_kl_div:.2f}")
+                        break
+
+                    self.policy.optimizer.zero_grad()
+                    loss.backward()
+                    _torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                    self.policy.optimizer.step()
+
+                self._n_updates += 1
+                if not continue_training:
+                    break
+
+            explained_var = _explained_variance(
+                self.rollout_buffer.values.flatten(),
+                self.rollout_buffer.returns.flatten(),
+            )
+
+            self.logger.record("train/entropy_loss", _np.mean(entropy_losses))
+            self.logger.record("train/policy_gradient_loss", _np.mean(pg_losses))
+            self.logger.record("train/value_loss", _np.mean(value_losses))
+            self.logger.record("train/approx_kl", _np.mean(approx_kl_divs))
+            self.logger.record("train/clip_fraction", _np.mean(clip_fractions))
+            self.logger.record("train/loss", loss.item())
+            self.logger.record("train/explained_variance", explained_var)
+            if hasattr(self.policy, "log_std"):
+                self.logger.record("train/std", _torch.exp(self.policy.log_std).mean().item())
+            self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+            self.logger.record("train/clip_range", clip_range)
+            # ---- V15 anchor telemetry (fires even on early KL stop, since
+            #      accumulators are filled BEFORE the KL break in the loop) ----
+            _a0m = float(_np.mean(a0_mean_batch)) if a0_mean_batch else float("nan")
+            _a0s = float(_np.mean(a0_std_batch)) if a0_std_batch else float("nan")
+            _anc = float(_np.mean(anchor_losses)) if anchor_losses else float("nan")
+            if a0_mean_batch:
+                self._a0_mean_hist.append(_a0m)
+                self.logger.record("train/a0_mean_raw", _a0m)
+            if a0_std_batch:
+                self._a0_std_hist.append(_a0s)
+                self.logger.record("train/a0_std_raw", _a0s)
+            if anchor_losses:
+                self.logger.record("train/anchor_loss", _anc)
+
+            # ---- Critic/Advantage probe telemetry (Q1 & Q2) ----
+            _adv_buy = float(_np.mean(adv_buy_batch)) if adv_buy_batch else float("nan")
+            _adv_sell = float(_np.mean(adv_sell_batch)) if adv_sell_batch else float("nan")
+            _adv_hold = float(_np.mean(adv_hold_batch)) if adv_hold_batch else float("nan")
+            _v_buy = float(_np.mean(v_buy_batch)) if v_buy_batch else float("nan")
+            _v_sell = float(_np.mean(v_sell_batch)) if v_sell_batch else float("nan")
+            if adv_buy_batch:
+                self.logger.record("diag/adv_BUY", _adv_buy)
+                self.logger.record("diag/v_BUY", _v_buy)
+            if adv_sell_batch:
+                self.logger.record("diag/adv_SELL", _adv_sell)
+                self.logger.record("diag/v_SELL", _v_sell)
+            if adv_hold_batch:
+                self.logger.record("diag/adv_HOLD", _adv_hold)
+            self.logger.record("diag/n_BUY", n_buy_batch)
+            self.logger.record("diag/n_SELL", n_sell_batch)
+            self.logger.record("diag/n_HOLD", n_hold_batch)
+
+            # ---- BRUTAL DEBUG PRINT (bypasses SB3 dump-table filtering) ----
+            # Guarantees we SEE the anchor + critic probes even when the KL
+            # early-stop truncates the update before a full progress dump.
+            print(
+                "[ANCHOR_DEBUG] upd=%d n_upd=%d a0_mean=%.4f a0_std=%.4f "
+                "anchor=%.4f | adv_BUY=%.4f adv_SELL=%.4f adv_HOLD=%.4f | "
+                "v_BUY=%.4f v_SELL=%.4f | nB=%d nS=%d nH=%d"
+                % (
+                    getattr(self, "_n_updates", -1), self._n_updates,
+                    _a0m, _a0s, _anc,
+                    _adv_buy, _adv_sell, _adv_hold,
+                    _v_buy, _v_sell,
+                    n_buy_batch, n_sell_batch, n_hold_batch,
+                ),
+                flush=True,
+            )
+
+            # ================================================================
+            # V17 #2 REWARD-BY-ACTION AUDIT
+            # Slice the rollout rewards by the executed a0 direction so we can
+            # see WHICH action the reward actually pays. Answers the expert's
+            # question "is HOLD the only non-negative action?".
+            # ================================================================
+            _rew_mean = _rew_med = _rew_std = float("nan")
+            _rew_buy = _rew_sell = _rew_hold = float("nan")
+            try:
+                _rew = _np.asarray(self.rollout_buffer.rewards).flatten()
+                _act = _np.asarray(self.rollout_buffer.actions)
+                _a0 = _act[:, 0].flatten() if _act.ndim > 1 else _act.flatten()
+                _n = min(len(_rew), len(_a0))
+                _rew, _a0 = _rew[:_n], _a0[:_n]
+                if _n > 0:
+                    _rew_mean = float(_np.mean(_rew))
+                    _rew_med = float(_np.median(_rew))
+                    _rew_std = float(_np.std(_rew))
+                    _buy_m = _a0 > 0.10
+                    _sell_m = _a0 < -0.10
+                    _hold_m = ~(_buy_m | _sell_m)
+                    if _buy_m.any():
+                        _rew_buy = float(_np.mean(_rew[_buy_m]))
+                    if _sell_m.any():
+                        _rew_sell = float(_np.mean(_rew[_sell_m]))
+                    if _hold_m.any():
+                        _rew_hold = float(_np.mean(_rew[_hold_m]))
+                    self.logger.record("diag/reward_mean", _rew_mean)
+                    self.logger.record("diag/reward_median", _rew_med)
+                    self.logger.record("diag/reward_std", _rew_std)
+                    self.logger.record("diag/reward_BUY", _rew_buy)
+                    self.logger.record("diag/reward_SELL", _rew_sell)
+                    self.logger.record("diag/reward_HOLD", _rew_hold)
+            except Exception:
+                pass
+
+            # ================================================================
+            # V17 #4 MU-DISTRIBUTION STAGES
+            # mu_pre -> tanh(mu) -> sampled. det_pct_{BUY,SELL} = fraction of
+            # tanh(mu) crossing the 0.10 deadband (deterministic tradeability).
+            # ================================================================
+            _mu_pre_m = _mu_pre_s = _tanh_m = _samp_m = _samp_s = float("nan")
+            _det_buy = _det_sell = float("nan")
+            try:
+                if mu_pre_batch:
+                    _mp = _torch.cat(mu_pre_batch).numpy()
+                    _tm = _torch.cat(tanh_mu_batch).numpy()
+                    _sp = _torch.cat(sampled_batch).numpy()
+                    _mu_pre_m = float(_np.mean(_mp)); _mu_pre_s = float(_np.std(_mp))
+                    _tanh_m = float(_np.mean(_tm))
+                    _samp_m = float(_np.mean(_sp)); _samp_s = float(_np.std(_sp))
+                    _det_buy = float(_np.mean(_tm > 0.10))
+                    _det_sell = float(_np.mean(_tm < -0.10))
+                    self.logger.record("diag/mu_pre_mean", _mu_pre_m)
+                    self.logger.record("diag/mu_pre_std", _mu_pre_s)
+                    self.logger.record("diag/tanh_mu_mean", _tanh_m)
+                    self.logger.record("diag/sampled_mean", _samp_m)
+                    self.logger.record("diag/sampled_std", _samp_s)
+                    self.logger.record("diag/det_pct_BUY", _det_buy)
+                    self.logger.record("diag/det_pct_SELL", _det_sell)
+            except Exception:
+                pass
+
+            print(
+                "[V17_MEASURE] rew(m=%.4f med=%.4f s=%.4f) rBUY=%.4f rSELL=%.4f "
+                "rHOLD=%.4f | mu_pre(m=%.4f s=%.4f) tanh=%.4f samp(m=%.4f s=%.4f) "
+                "| det%%BUY=%.3f det%%SELL=%.3f"
+                % (
+                    _rew_mean, _rew_med, _rew_std, _rew_buy, _rew_sell, _rew_hold,
+                    _mu_pre_m, _mu_pre_s, _tanh_m, _samp_m, _samp_s,
+                    _det_buy, _det_sell,
+                ),
+                flush=True,
+            )
+
+            # ---- 2. Auxiliary next-return MSE gradient step (unchanged) -----
+            # V15: skip entirely when coef==0 so the anchor diagnosis is not
+            # confounded by a zero-scaled (but still executed) aux optimiser step.
+            if getattr(self, "aux_loss_coef", 0.0) == 0.0:
+                return
             try:
                 fe = self.policy.features_extractor
                 if not hasattr(fe, 'forward_predictor') or not hasattr(fe, '_last_aux_prediction'):
                     return  # feature extractor does not support auxiliary loss
 
-                # Sample a batch from the rollout buffer
                 rollout = self.rollout_buffer
                 batch_size = min(256, rollout.buffer_size * rollout.n_envs)
                 for batch in rollout.get(batch_size):
                     obs = batch.observations
-
-                    # Forward pass through policy to populate _last_aux_prediction
-                    # We use evaluate_actions which calls the feature extractor
                     with _torch.enable_grad():
                         _, log_prob, entropy = self.policy.evaluate_actions(
                             obs, batch.actions
                         )
-
                     if fe._last_aux_prediction is None:
                         break
-
-                    # Target: use the actual rewards as proxy for next-step returns
-                    # (rewards from the rollout buffer are the best available signal)
                     target = batch.returns[:, None] if batch.returns.dim() == 1 else batch.returns
                     target = target.to(
                         device=fe._last_aux_prediction.device,
                         dtype=fe._last_aux_prediction.dtype,
                     )
-                    # Compress targets with symlog to match reward scale
                     target_compressed = _torch.sign(target) * _torch.log1p(target.abs())
-
                     aux_loss = _F.mse_loss(fe._last_aux_prediction, target_compressed)
                     scaled_loss = aux_loss * self.aux_loss_coef
-
-                    # Backward and optimise
                     self.policy.optimizer.zero_grad()
                     scaled_loss.backward()
                     _torch.nn.utils.clip_grad_norm_(
                         self.policy.parameters(), self.max_grad_norm
                     )
                     self.policy.optimizer.step()
-
-                    # Record metrics
                     aux_val = aux_loss.item()
                     self._aux_loss_history.append(aux_val)
                     self.logger.record("train/auxiliary_loss", aux_val)
@@ -1200,10 +1533,9 @@ try:
                         "train/aux_pred_mean",
                         fe._last_aux_prediction.detach().mean().item(),
                     )
-                    break  # one mini-batch is enough per PPO epoch
+                    break
 
             except Exception as e:
-                # Log but do not crash training
                 logger.debug(f"Auxiliary loss step skipped: {e}")
 
     WORLD_MODEL_PPO_AVAILABLE = True
