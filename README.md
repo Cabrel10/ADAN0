@@ -4,39 +4,191 @@ PPO-based reinforcement learning bot for BTC/USDT trading.
 
 ---
 
-## Current Status (S16 - Tier Hysteresis + Enterprise PBT, 2026-06-06)
+## Current Status (V2 — Future-Guided Arena, 2026-06-24)
 
-**TRAINING PROGRESS**: Multi-worker PBT actively training with tier-based reward system.
+**PHASE**: Execution. The project moved from technical exploration to a focused
+diagnostic-driven execution phase. The central problem identified and being
+fixed: the agent was **exploiting the reward instead of trading**, which caused
+the policy to learn a degenerate, frozen action distribution.
 
-| Metric | Value | Status |
-|--------|-------|--------|
-| Training steps | 8,192 | ✅ Progressing (target: 500K+) |
-| Active workers | 4 | ✅ Ray distributed training |
-| Win rate (recent) | 52.99% | ✅ Above breakeven |
-| Sharpe ratio | 6.18 | ✅ Excellent |
-| Sortino ratio | 9.52 | ✅ Strong downside protection |
-| Portfolio value | $37.05 | ✅ Capital preservation |
-| Reward shaping | ZERO | ✅ Pure financial signal |
+### The decisive diagnostic (what V2 is built on)
 
-**What was done (S16)**:
-- Implemented **tier hysteresis** with 4-tier capital progression (Micro→Small→Medium→Large)
-- 10x promotion bonuses + soft stagnation penalties for realistic prop firm behavior
-- **Enterprise PBT Pipeline**: VecNormalize sync, gSDE support, checkpoint integrity
-- Profile-specific training: Scalper (5m), Intraday (1h), Swing (4h), Position (1d)
-- Fixed MaxDD double-multiplication bug
-- Corrected PnL tracking (no double-counting)
-- Tier-based risk management: dynamic SL/TP from tier + DBE
+A pre-tanh audit of the 500K checkpoint (`scripts/audit_pre_tanh.py`) proved the
+`size` head was **frozen by its mean μ, not by its std σ**:
 
-**Active development**:
-- Multi-worker PBT: 4 agents evolving hyperparams independently
-- Frequency compliance: 5m/1h/4h position limits enforced
-- AGENT_CLOSE: ~50% of trades closed by decision (improving from 40% MaxDuration)
-- Real-time metrics sync: Sharpe, Sortino, win rate, unrealized PnL tracking
+| Head signal | 500K (old reward) | Meaning |
+|-------------|-------------------|---------|
+| `μ(size)` (pre-tanh) | **-7.20** | `tanh(-7.2) ≈ -1.0000` → no gradient (`tanh'≈0`) |
+| `σ(size)` (pre-tanh) | **3.24** (largest of all heads) | exploration *wanted* to fire, but μ pinned the output |
+| `μ(size)` of a **fresh** model | **≈ 0.0** | the network is **not born broken** |
 
-**Next milestones**:
-- 50K+ steps: Tier progression + hyperparameter stabilization
-- 100K+ steps: Win rate → 55%+ target
-- 500K+ steps: Production-ready eval on OOS data
+**Key revelation**: a fresh model starts with `μ(size) ≈ 0` and explores freely.
+The `μ = -7.2` was *learned* over 500K steps of the old reward. Therefore the
+problem is the **learning signal (reward / credit assignment), not the
+architecture** (CNN, attention, gSDE and the observation pipeline all work).
+
+### Cas A vs Cas B decision framework
+
+The V2 instrumented run is designed to cleanly decide between two hypotheses:
+
+- **Cas A** — `μ(size)` becomes/stays healthy (centered, `|μ| < ~3`) → PPO
+  relearns with the new reward → **no guard needed** → redo C4/H4 with real
+  MFE/MAE, recalibrate A5, activate the reward bridge.
+- **Cas B** — `μ(size)` stays ≈ -7 despite high σ → the reward / credit-assignment
+  is still wrong → integrate `ActionSaturationGuard` (already written & tested,
+  kept in reserve).
+
+### Live V2 diagnostic run (50K steps, sandbox/CPU)
+
+### ⚠️ CRITICAL FINDING — the first 50K V2 run was architecturally invalid
+
+A first 50K instrumented run (sandbox mode) showed a healthy `μ(size)` and real
+TP/SL, which *looked* like a "Cas A" win. An **execution audit**
+(`scripts/audit_execution.py`) then proved that run did **not** use the real
+architecture:
+
+- The sandbox training path built `policy_kwargs` **without**
+  `features_extractor_class`, so SB3 silently fell back to its default
+  `CombinedExtractor` — a **0-parameter flatten** of the Dict observation.
+- Therefore the **CNN, cross-attention, FiLM context and the auxiliary
+  forward-predictor never ran**. The "V2 run" trained a **bare MLP**, not the
+  `ContextualTemporalFusionExtractor`.
+- This explained the suspicious speed (11.7 vs 4.4 steps/s) and made any
+  μ(size) / Cas A conclusion **invalid** — it wasn't even the same model.
+
+**This is exactly the failure mode to guard against**: a long run that trains
+"a different system than the one you think you are training".
+
+**Fix** (in `scripts/train_parallel_agents.py::sandbox_train`): sandbox now wires
+the same `ContextualTemporalFusionExtractor` as heavy mode. Proof via
+`scripts/audit_execution.py` on a fresh checkpoint:
+
+| Module | #params | weights changed | gradient flows |
+|--------|---------|-----------------|----------------|
+| CNN (cnn_layers) | 266,130 | 100% | ✅ 99.3 |
+| ATTENTION (cross_attention) | 398,208 | 100% | ✅ 32.2 |
+| MEMORY/CONTEXT (FiLM) | 105,984 | 100% | ✅ 5.2 |
+| FUSION | 744,192 | 100% | ✅ 28.4 |
+| AUX (forward_predictor) | 99,075 | 99.6% | (aux-loss wired in PPO update) |
+| policy/value heads + log_std | — | 100% | ✅ |
+
+Checkpoint size jumped 2.2 MB → 7.4 MB (the missing 2.5M+ params are now real).
+
+### ⚠️ CRITICAL FINDING #2 — gSDE variance explosion (the REAL root cause)
+
+Once the real architecture ran, gSDE σ **exploded** (3.4 → 13 → 41 → 110 in a
+few rollouts) and `μ(size)` collapsed to -7/-12. A measurement script
+(`scripts/diag_gsde_latent.py`) found the exact cause:
+
+```
+gSDE variance = (latent_sde²) @ (get_std(log_std)²)   [SB3 source]
+  => for ~uniform std:  σ_eff ≈ ||features||₂ · exp(log_std_init)
+```
+
+- MEASURED `||features||₂ ≈ 11.4` (real extractor, features_dim=256).
+- So the historical `log_std_init=-0.5` gives **σ_eff ≈ 6.9 AT INIT** → chaotic
+  actions → PPO drives log_std up → σ diverges.
+- **The "frozen size μ=-7" was the network's DEFENSE against this chaos**
+  (saturating tanh to stop the noise). It was a *symptom*, not the disease.
+
+**Theories tested and DISPROVED with evidence:**
+- *"observations not normalized"* → FALSE. `StateBuilder` already normalizes +
+  clips obs to [-10,10] (measured: 5m∈[0,1], 1h/4h∈[-4.4,8.4]); heavy/500K_FIXED
+  used `VecNormalize(norm_obs=False)` too. Re-adding obs normalization would
+  *double-normalize* and destroy the signal.
+- *"add LayerNorm on the features"* → makes it WORSE (||·||₂ → √256 = 16).
+
+**Fix (measured, SB3-documented, no architecture change):**
+
+| Option | Setting | Result (σ over 3k steps) | Trade-off |
+|--------|---------|--------------------------|-----------|
+| **A — bounded gSDE** | `log_std_init=-2.0` + `use_expln=True` | 0.93 → 1.7 → 1.9 → **4.3** (peaks, no divergence) | keeps state-dependent exploration; σ still creeps slowly |
+| **B — DiagGaussian (recommended for 500K)** | `ADAN_USE_SDE=0`, `log_std_init=-1.0` | **0.366 → 0.367 → 0.369** (flat) | σ mathematically decoupled from features → cannot diverge; loses state-dependence |
+
+Both keep `μ(size)` centered (no more collapse to -7) and produce real TP/SL
+(TP/SL ≈ 99% of closes, AGENT_CLOSE ≈ 1%, MAX_DURATION = 0).
+
+> **Recommended for the 500K production run: Option B** (`ADAN_USE_SDE=0`) — it is
+> provably stable for the full duration. Option A is fine for shorter
+> state-dependent-exploration experiments but must be watched.
+
+> **Status: NO scientific Cas A/B verdict yet.** Two blocking bugs were found and
+> fixed (wrong extractor, gSDE divergence). The architecture now provably runs
+> end to end AND trains stably. The Cas A / Cas B question must be answered on a
+> real 500K run with the fixes. The earlier "Cas A confirmed" claim is withdrawn.
+
+### ⚠️ CRITICAL FINDING #4 — TP/SL incoherent with the market + the Future Arena was a DEAD pipeline
+
+A 500K run launched on the VPS produced a **broken, "cowardly" model** — not impatient,
+not lazy, but mathematically doomed by the reward geometry. The trade stats are brutal:
+
+| Metric | Value | Meaning |
+|--------|-------|---------|
+| SL_HIT | **258 trades (84%)**, avg **−$0.92** | the stop is hit almost systematically |
+| TP_HIT | 42 trades (14%), avg +$1.40 | the TP is rarely reached |
+| AGENT_CLOSE | 20 trades (6%), avg +$0.06 | manual micro-scalping to escape |
+| Hold mean | **5.5 steps (~45 min)** | the model never holds |
+| **Expectancy** | **(0.84×−0.92)+(0.14×+1.40)+(0.06×+0.06) = −$0.58 / trade** | guaranteed bleed |
+
+**Root cause A — TP/SL bands are ~10–50× the achievable move.** The env clamps TP/SL
+with a hardcoded `_PROFILE_BOUNDS` table calibrated for a **fake 0.80% round-trip fee**
+(4× the real 0.10% Binance fee), forcing intraday **TP into the 8–12% range**. We measured
+the **real BTC future wicks** on the actual dataset:
+
+| Horizon | MFE p50 | MFE p75 | MFE p90 |
+|---------|---------|---------|---------|
+| 5m × 15 bars (1h15) | 0.22% | 0.45% | 0.84% |
+| 5m × 36 bars (3h) | 0.36% | 0.73% | **1.44%** |
+
+A TP of 8–12% over minutes/hours is **practically never touched** → the SL fires first →
+the model panics with AGENT_CLOSE. Exactly the user's diagnosis: *"cibler 4 à 5 % en
+quelques minutes est pratiquement impossible, normal que le model panique."*
+
+**Root cause B — the Future Arena (the heart of the project) was never connected.** The
+`future_arena/` package (1703 lines) implements the **"Arène Guidée par le Futur"
+(Privileged Oracle-Critic)** philosophy exactly:
+
+- During training the whole dataset is in RAM, so the env reads the **future** of the
+  current chunk (1 chunk ≈ 1 day) and computes, per trade:
+  - **MFE** (Maximum Favorable Excursion = future upper wick),
+  - **MAE** (Maximum Adverse Excursion = future lower wick).
+- It then **scores the TP/SL the agent chose** against those values:
+  *future max wick = +3% and the agent puts TP at +2.5% → big bonus (realistic, capturable);
+  TP at +10% → penalty (utopian, never touched).*
+- Zones **🟢/🟡/🔴** are derived per chunk from the ex-post RR = MFE/MAE
+  (🟢 RR ≥ 1.5 **and** MFE ≥ 0.6%; 🔴 RR ≤ 0.8; 🟡 in between).
+- This is **reward shaping only** (anti-oracle guard §10.10: future data NEVER enters the
+  actor's observation).
+
+But a `grep` proved **zero** `future_arena` imports/calls in the training env, and the
+config had **no `reward_shaping.future_reward` block** → the entire pipeline was dead
+code. The model was therefore a pure mirror of `_PROFILE_BOUNDS`, with no signal teaching
+it to choose a *capturable* TP/SL.
+
+**Fix (this commit):**
+1. **Market-aware `_PROFILE_BOUNDS`** — bands re-derived from the real wick distribution and
+   widened **downward** so the agent *can* pick realistic small TPs (scalper TP from ~0.5%,
+   intraday in the user-requested **3–6%** envelope) instead of being forced ≥4–8%. Fee gate
+   uses the real `commission_pct` (0.4% spot) not the fake 0.80%.
+2. **RewardBridge connected** — the env now instantiates `RewardBridge.from_config(self.config)`,
+   computes MFE/MAE **ex-post per closed trade** from the in-RAM chunk
+   (`compute_mfe_mae(chunk_df, entry_idx, LOW, horizon)`), and **adds the capped
+   `future_contrib`** (≤ 0.60, never dominates PnL) to `raw_reward`. EQS / sl_quality /
+   tp_quality now appear in the reward breakdown.
+3. **New config block** `reward_shaping.future_reward: {enabled, mode: future_guided,
+   round_trip_fees, max_future_contrib}` activates the bridge.
+
+> Philosophy (user): *"le but n'est pas que le model soit le miroir des données mais qu'il
+> arrive à mieux maîtriser son SL et son TP."* The bridge teaches **mastery of TP/SL within
+> a plausible band**, it does not hardcode the answer.
+
+**Next milestones (on the corrected, stabilized architecture)**:
+- Run the real 500K on the VPS, single profile, `ADAN_USE_SDE=0` (the VPS already
+  produced 500K_FIXED; with one profile the load is lower → no need for Kali yet).
+- Monitor `σ` stays < ~3 and `μ(size)` stays in [-2, +2] via the ActionDim CSV.
+- 100K-200K: size distribution should spread (0.1 / 0.2 / 0.35 / 0.6 / 0.8).
+- Re-run `scripts/audit_execution.py` on the 100K checkpoint to confirm all
+  modules keep training.
 
 ---
 
@@ -52,8 +204,38 @@ PPO-based reinforcement learning bot for BTC/USDT trading.
 Observation Space: Dict{5m:(20,21), 1h:(20,21), 4h:(20,21), context_vector:(17,), portfolio_state:(20,)}
 Action Space: Box(-1,1,(5,)) [direction, size_pct, tf_pref, sl_pct, tp_pct]
 Feature Extractor: ContextualTemporalFusionExtractor (CNN + Channel/Temporal Attention)
-Exploration: gSDE (State-Dependent Exploration), log_std_init=-0.5
+Exploration: gSDE (State-Dependent Exploration)
+  - heavy/default: log_std_init=-0.5
+  - V2 diagnostic:  log_std_init=0.0  (std0≈1.0) — wider exploration to break the freeze
 ```
+
+The 5 action heads are `[direction, size, tf_pref, sl, tp]`, each a squashed
+Gaussian. Because `squash_output=False` in gSDE, the *pre-tanh* μ and σ of every
+head can be read directly via `policy.get_distribution(obs).distribution.mean`
+(μ) and `.scale` (σ) — this is exactly what the audit and the monitor exploit.
+
+---
+
+## V2 adjustments and their impact
+
+Every V2 change is incremental, builds on existing code, and is measured. None
+of them touch the network architecture (the diagnostic proved that is sound).
+
+| Adjustment | Env var / flag | What it does | Why / impact |
+|-----------|----------------|--------------|--------------|
+| **Wider exploration** | `ADAN_LOG_STD_INIT=0.0` | Starts gSDE at std0≈1.0 instead of ≈0.6 | Gives the `size` head room to escape the learned `μ=-7` basin instead of collapsing again |
+| **Higher entropy** | `ADAN_ENT_COEF=0.02` | Raises PPO entropy bonus | Keeps the policy from prematurely committing to a saturated action; sustains σ |
+| **Per-head monitor** | `ADAN_ACTIONDIM=1` | Activates `ActionDimMonitor` (measure-only callback) | Logs pre-tanh μ/σ + post-tanh mean/std + saturation fraction per head to TensorBoard, console and CSV every rollout. **Never modifies the network.** |
+| **Monitor CSV** | `ADAN_ACTIONDIM_CSV=path.csv` | Writes the per-rollout metrics to CSV | Enables `analyze_actiondim.py` to emit the Cas A / Cas B verdict offline |
+| **Anti-OOM launcher** | `scripts/run_adan_v2.sh` | Auto-detects host (Kali / VPS / sandbox / GPU); forces sandbox mode when free RAM < 12 GB | Ray needs ≥12 GB; below that the object store crashes. The launcher prevents OOM by dropping to single-process PPO. |
+| **Saturation guard (reserve)** | — | `ActionSaturationGuard` callback bumps `log_std` after N saturated rollouts | **Not integrated yet.** Only used if the run shows Cas B (frozen μ despite high σ). 7/7 unit tests pass. |
+
+### Diagnostic vs production reward
+
+The reward is being redesigned to be **future-guided** (it credits actions using
+what actually happens to price afterwards — real MFE/MAE — rather than a shaped
+proxy). The current run uses the bridged reward to verify the freeze breaks
+before the full future-guided reward and the C4/H4 zones are recalibrated.
 
 ---
 

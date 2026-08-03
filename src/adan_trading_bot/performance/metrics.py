@@ -66,7 +66,9 @@ class PerformanceMetrics:
         self.executed_trades_opened = 0
 
         # Créer le répertoire des métriques si nécessaire
-        self.metrics_dir = Path(metrics_dir)
+        # Ray actors can change CWD after construction. Persist absolute paths
+        # so metric writes and pickle restores remain anchored to one directory.
+        self.metrics_dir = Path(metrics_dir).expanduser().resolve()
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
 
         # Fichier de log structuré
@@ -88,8 +90,10 @@ class PerformanceMetrics:
     def __setstate__(self, state):
         """Restaurer l'état après le unpickling et ré-initialiser les loggers."""
         if '_metrics_file_path' in state:
-            state['metrics_file'] = Path(state['_metrics_file_path'])
+            state['metrics_file'] = Path(state['_metrics_file_path']).expanduser().resolve()
             del state['_metrics_file_path']
+        if 'metrics_dir' in state:
+            state['metrics_dir'] = Path(state['metrics_dir']).expanduser().resolve()
 
         self.__dict__.update(state)
         
@@ -654,7 +658,8 @@ class PerformanceMetrics:
         """Écrit les métriques dans le fichier de log structuré en gérant la sérialisation."""
         try:
             serializable_data = json.loads(json.dumps(data, default=str))
-            with open(self.metrics_file, 'a') as f:
+            self.metrics_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.metrics_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(serializable_data) + '\n')
         except Exception as e:
             if hasattr(self, 'smart_logger'):
