@@ -2697,6 +2697,8 @@ class MultiAssetChunkedEnv(gym.Env):
         self.current_step = 0
         self.done = False
         self.episode_reward = 0.0
+        # Drawdown reward is potential-based and must restart with each Gym episode.
+        self._reward_previous_drawdown_ratio = 0.0
         self._mtm_prev_equity = None  # V16: reset mark-to-market baseline
         self.step_in_chunk = 0
 
@@ -7014,33 +7016,31 @@ class MultiAssetChunkedEnv(gym.Env):
                     closure_bonus -= 0.2
 
         # ──────────────────────────────────────────────────────────────────
-        # STEP 5: DRAWDOWN PENALTY (tier-scaled, quadratic)
+        # STEP 5: DRAWDOWN SHAPING (tier-scaled, quadratic DELTA)
         # ──────────────────────────────────────────────────────────────────
-        # PROP FIRM RULE: Lose >5% capital → severe penalty escalates quadratically
-        # -5% drawdown: -50 × 0.05² = -0.125
-        # -10% drawdown: -50 × 0.10² = -0.5
-        # -20% drawdown: -50 × 0.20² = -2.0 (catastrophic)
-        # This enforces: "Survival is the primary goal, profit is secondary"
+        # Penalising the absolute drawdown on every step made one old loss
+        # generate the same large negative reward forever. In the 2048 smoke,
+        # this term averaged -1.267/step while PnL reward averaged -0.0046, so
+        # returns were dominated by episode history rather than the action.
+        # Use the change in quadratic drawdown potential instead: worsening is
+        # penalised, recovery is rewarded, and a flat drawdown contributes zero.
         drawdown_penalty = 0.0
         drawdown_percent = 0.0
         try:
             metrics = self.portfolio_manager.get_metrics()
-            # PortfolioManager publishes a positive percentage (10.0 means 10%).
-            drawdown_percent = max(
-                0.0,
-                float(metrics.get("drawdown", 0.0) or 0.0),
-            )
+            drawdown_percent = max(0.0, float(metrics.get("drawdown", 0.0) or 0.0))
             drawdown_ratio = drawdown_percent / 100.0
-            if drawdown_ratio > 0.01:  # Penalize ANY drawdown > 1% (earlier detection)
-                dd_factor = float(current_tier_info.get("drawdown_penalty_factor", 1.0))
-                # Quadratic penalty scaled by tier factor (smaller tiers suffer more)
-                drawdown_penalty = -50.0 * (drawdown_ratio ** 2) * dd_factor
-                if self.current_step % 100 == 0 and drawdown_ratio > 0.05:
-                    self.logger.warning(
-                        f"[DRAWDOWN_PENALTY] DD={drawdown_percent:.2f}% | "
-                        f"penalty={drawdown_penalty:.4f} | "
-                        f"factor={dd_factor:.1f} (tier={current_tier})"
-                    )
+            previous_ratio = float(getattr(self, "_reward_previous_drawdown_ratio", 0.0))
+            dd_factor = float(current_tier_info.get("drawdown_penalty_factor", 1.0))
+            drawdown_penalty = -50.0 * (drawdown_ratio ** 2 - previous_ratio ** 2) * dd_factor
+            self._reward_previous_drawdown_ratio = drawdown_ratio
+            if self.current_step % 100 == 0 and abs(drawdown_penalty) > 0.05:
+                self.logger.warning(
+                    f"[DRAWDOWN_DELTA] DD={drawdown_percent:.2f}% | "
+                    f"previous={previous_ratio * 100.0:.2f}% | "
+                    f"reward={drawdown_penalty:+.4f} | "
+                    f"factor={dd_factor:.1f} (tier={current_tier})"
+                )
         except Exception:
             pass
 

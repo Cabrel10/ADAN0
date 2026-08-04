@@ -565,6 +565,56 @@ class DiagnosticCollapseCallback(BaseCallback):
             os.environ.get("ADAN_COLLAPSE_BREAKER", "0").strip() in ("1", "true", "True")
         )
 
+    @staticmethod
+    def _numeric_stats(values):
+        """Finite distribution summary used for critic health telemetry."""
+        array = np.asarray(values, dtype=np.float64).reshape(-1)
+        finite = array[np.isfinite(array)]
+        if not finite.size:
+            return {"min": 0.0, "max": 0.0, "mean": 0.0, "std": 0.0,
+                    "p01": 0.0, "p50": 0.0, "p99": 0.0,
+                    "nonfinite_frac": 1.0 if array.size else 0.0}
+        return {"min": float(finite.min()), "max": float(finite.max()),
+                "mean": float(finite.mean()), "std": float(finite.std()),
+                "p01": float(np.quantile(finite, 0.01)),
+                "p50": float(np.quantile(finite, 0.50)),
+                "p99": float(np.quantile(finite, 0.99)),
+                "nonfinite_frac": float(1.0 - finite.size / max(array.size, 1))}
+
+    def _rollout_health(self):
+        """Read completed rollout tensors without modifying PPO state."""
+        buffer = getattr(self.model, "rollout_buffer", None)
+        if buffer is None:
+            return {}
+        arrays = {name: np.asarray(getattr(buffer, name), dtype=np.float64)
+                  for name in ("rewards", "returns", "advantages", "values")}
+        returns = arrays["returns"].reshape(-1)
+        values = arrays["values"].reshape(-1)
+        variance = float(np.var(returns))
+        explained_var = (float(1.0 - np.var(returns - values) / variance)
+                         if variance > 1e-12 else float("nan"))
+        observations = getattr(buffer, "observations", {})
+        if not isinstance(observations, dict):
+            observations = {"observation": observations}
+        obs_stats = {}
+        for key, obs in sorted(observations.items()):
+            stats = self._numeric_stats(obs)
+            flat = np.asarray(obs, dtype=np.float64).reshape(-1)
+            finite = flat[np.isfinite(flat)]
+            stats["abs_ge_10_frac"] = (
+                float(np.mean(np.abs(finite) >= 9.999)) if finite.size else 0.0
+            )
+            obs_stats[str(key)] = stats
+        return {
+            "critic_explained_variance": explained_var,
+            "reward_stats": json.dumps(self._numeric_stats(arrays["rewards"]), sort_keys=True),
+            "return_stats": json.dumps(self._numeric_stats(arrays["returns"]), sort_keys=True),
+            "advantage_stats": json.dumps(self._numeric_stats(arrays["advantages"]), sort_keys=True),
+            "value_stats": json.dumps(self._numeric_stats(arrays["values"]), sort_keys=True),
+            "observation_stats": json.dumps(obs_stats, sort_keys=True),
+            "episode_starts": int(np.sum(getattr(buffer, "episode_starts", 0))),
+        }
+
     def _reset_window(self):
         self._a0 = []                 # continuous action0 seen this window
         self._req = {0: 0, 1: 0, 2: 0}  # HOLD / BUY / SELL requested
@@ -695,6 +745,7 @@ class DiagnosticCollapseCallback(BaseCallback):
                 "policy_entropy": round(float(np.mean(self._ent)), 4) if self._ent else 0.0,
                 "a0_histo": "|".join(str(int(x)) for x in histo),
             }
+            row.update(self._rollout_health())
             # DIAGNOSTIC-V8 collapse detection (measure -> decide, no reward touch).
             # Trip if ANY of the proven collapse signatures holds for this window:
             #   - a0_pct_buy >= 0.97  (near-total BUY, histo degenerate)
@@ -2597,8 +2648,10 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     logger.info(f"[SANDBOX] Training done: +{steps} steps (cum={cumulative_steps}) "
                 f"in {elapsed:.0f}s, checkpoint={ckpt_path}.zip ({size:,} bytes)")
 
-    # Log key training stats
+    # Log key training and terminal financial stats after forced liquidation.
     info = env.get_info() if hasattr(env, 'get_info') else {}
+    metric_rows = env.get_portfolio_metrics_dict() if hasattr(env, "get_portfolio_metrics_dict") else []
+    financial_metrics = metric_rows[0] if metric_rows and isinstance(metric_rows[0], dict) else {}
     n_trades = info.get("run_completed_cycles", info.get("total_trades", "unknown"))
     logger.info(
         "[SANDBOX] Completed trade cycles: %s "
@@ -2617,6 +2670,16 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         "vecnorm": ckpt_path + "_vecnorm.pkl",
         "size": size,
         "trades": n_trades,
+        "terminal_cash": float(financial_metrics.get("cash", info.get("cash", 0.0))),
+        "terminal_equity": float(financial_metrics.get("equity", info.get("portfolio_value", 0.0))),
+        "terminal_realized_pnl": float(financial_metrics.get(
+            "realized_pnl_cumulative", info.get("total_realized_pnl", 0.0)
+        )),
+        "run_opens": int(financial_metrics.get("run_opens", info.get("run_opens", 0))),
+        "run_closes": int(financial_metrics.get("run_closes", info.get("run_closes", 0))),
+        "run_open_positions": int(financial_metrics.get(
+            "run_open_positions", info.get("run_open_positions", 0)
+        )),
         "resumed_from": resume_ckpt,
     }
 

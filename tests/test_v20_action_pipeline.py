@@ -338,6 +338,34 @@ def test_drawdown_penalty_consumes_positive_percent_metric_as_ratio() -> None:
     assert reward == pytest.approx(-math.log1p(0.5))
 
 
+def test_drawdown_delta_is_zero_when_flat_and_telescopes_on_recovery() -> None:
+    env = _reward_env(drawdown_percent=10.0)
+    drawdown = {"percent": 10.0}
+    env.portfolio_manager.get_metrics = lambda: {
+        "drawdown": drawdown["percent"],
+        "peak_equity": 100.0,
+    }
+
+    contributions = []
+    for drawdown_percent in (10.0, 10.0, 5.0):
+        drawdown["percent"] = drawdown_percent
+        env._calculate_reward(np.zeros(5, dtype=np.float32), realized_pnl=0.0)
+        contributions.append(env._last_reward_components["drawdown_penalty"])
+
+    assert contributions == pytest.approx([-0.5, 0.0, 0.375])
+    assert sum(contributions) == pytest.approx(-50.0 * 0.05**2)
+    assert env._reward_previous_drawdown_ratio == pytest.approx(0.05)
+
+
+def test_gym_reset_restarts_drawdown_reward_potential() -> None:
+    source = inspect.getsource(MultiAssetChunkedEnv.reset)
+    episode_reset_at = source.index("self.episode_reward = 0.0")
+    potential_reset_at = source.index("self._reward_previous_drawdown_ratio = 0.0")
+    step_reset_at = source.index("self.step_in_chunk = 0")
+
+    assert episode_reset_at < potential_reset_at < step_reset_at
+
+
 def test_losing_agent_close_keeps_behavior_penalty_out_of_financial_pnl() -> None:
     env = _reward_env(drawdown_percent=0.0, behavior_penalty=-0.05)
     env._step_closed_receipts = [{"reason": "AGENT_CLOSE", "pnl": -1.0}]
@@ -763,6 +791,50 @@ def test_sandbox_source_finalizes_before_save_and_summary() -> None:
     assert learn_at < finalize_at < telemetry_at < save_at < summary_at
     assert 'info.get("run_completed_cycles"' in source
     assert 'info.get("run_open_positions"' in source
+    assert '"terminal_cash"' in source
+    assert '"terminal_equity"' in source
+    assert '"terminal_realized_pnl"' in source
+    assert 'financial_metrics.get("run_opens"' in source
+    assert 'financial_metrics.get("run_closes"' in source
+
+
+def test_diagnostic_numeric_stats_tracks_nonfinite_values() -> None:
+    stats = training.DiagnosticCollapseCallback._numeric_stats(
+        [1.0, 2.0, np.nan, np.inf]
+    )
+
+    assert stats["min"] == pytest.approx(1.0)
+    assert stats["max"] == pytest.approx(2.0)
+    assert stats["mean"] == pytest.approx(1.5)
+    assert stats["p50"] == pytest.approx(1.5)
+    assert stats["nonfinite_frac"] == pytest.approx(0.5)
+
+
+def test_diagnostic_rollout_health_reports_critic_and_observation_clipping() -> None:
+    callback = object.__new__(training.DiagnosticCollapseCallback)
+    callback.model = SimpleNamespace(
+        rollout_buffer=SimpleNamespace(
+            rewards=np.array([[1.0], [2.0], [3.0], [4.0]]),
+            returns=np.array([[1.0], [2.0], [3.0], [4.0]]),
+            advantages=np.array([[0.0], [0.0], [1.0], [0.0]]),
+            values=np.array([[1.0], [2.0], [2.0], [4.0]]),
+            observations={
+                "market": np.array([0.0, 10.0, -10.0, np.nan]),
+                "portfolio": np.array([0.0, 0.5, 1.0, 2.0]),
+            },
+            episode_starts=np.array([[1.0], [0.0], [0.0], [1.0]]),
+        )
+    )
+
+    health = callback._rollout_health()
+    observations = json.loads(health["observation_stats"])
+
+    assert health["critic_explained_variance"] == pytest.approx(0.85)
+    assert health["episode_starts"] == 2
+    assert json.loads(health["reward_stats"])["mean"] == pytest.approx(2.5)
+    assert observations["market"]["abs_ge_10_frac"] == pytest.approx(2.0 / 3.0)
+    assert observations["market"]["nonfinite_frac"] == pytest.approx(0.25)
+    assert observations["portfolio"]["abs_ge_10_frac"] == 0.0
 
 
 def test_finalize_open_positions_is_idempotent_and_traces_one_close(tmp_path) -> None:
