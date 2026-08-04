@@ -837,6 +837,22 @@ def test_diagnostic_rollout_health_reports_critic_and_observation_clipping() -> 
     assert observations["portfolio"]["abs_ge_10_frac"] == 0.0
 
 
+def test_diagnostic_flush_waits_for_completed_rollout() -> None:
+    callback = object.__new__(training.DiagnosticCollapseCallback)
+    callback.num_timesteps = 512
+    callback._next_flush = 512
+    callback.log_every = 512
+    callback._flush_pending = True
+    flushes = []
+    callback._flush = lambda: flushes.append(callback.num_timesteps)
+
+    callback._on_rollout_end()
+
+    assert flushes == [512]
+    assert callback._flush_pending is False
+    assert callback._next_flush == 1024
+
+
 def test_finalize_open_positions_is_idempotent_and_traces_one_close(tmp_path) -> None:
     env = MultiAssetChunkedEnv.__new__(MultiAssetChunkedEnv)
     env.portfolio_manager = _portfolio_for_lifecycle_tests()

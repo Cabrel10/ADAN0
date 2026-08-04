@@ -545,6 +545,9 @@ class DiagnosticCollapseCallback(BaseCallback):
         self._prev_rej_total = None
         self._header_written = False
         self._next_flush = self.log_every  # first flush at exactly log_every steps
+        # Returns/advantages are finalized only after collect_rollouts ends.
+        # Defer CSV writes so critic telemetry never reads zero-filled tensors.
+        self._flush_pending = False
         # DIAGNOSTIC-V8 circuit-breaker state. Auto-stop training the moment a
         # policy collapse is detected (proven pattern from v8 500k run: pct_buy
         # -> 1.0 and a0_mean -> +inf at ~124k-128k). Stops wasting compute on a
@@ -701,12 +704,10 @@ class DiagnosticCollapseCallback(BaseCallback):
             except Exception:
                 pass
 
-            # window flush — fires once each time we cross the next multiple of
-            # log_every (robust to multi-env step increments; no spurious step-1 row).
+            # Mark the window ready, but do not read returns/advantages here:
+            # SB3 computes them only after the final _on_step of the rollout.
             if self.num_timesteps >= self._next_flush:
-                self._flush()
-                while self._next_flush <= self.num_timesteps:
-                    self._next_flush += self.log_every
+                self._flush_pending = True
         except Exception:
             pass
         # DIAGNOSTIC-V8: hard stop if collapse confirmed over consecutive windows.
@@ -720,6 +721,15 @@ class DiagnosticCollapseCallback(BaseCallback):
                 "last healthy checkpoint, NOT this one.", int(self.num_timesteps))
             return False  # SB3 stops learning when a callback returns False
         return True
+
+    def _on_rollout_end(self) -> None:
+        """Flush only after SB3 has finalized returns and advantages."""
+        if not self._flush_pending and self.num_timesteps < self._next_flush:
+            return
+        self._flush()
+        self._flush_pending = False
+        while self._next_flush <= self.num_timesteps:
+            self._next_flush += self.log_every
 
     def _flush(self):
         try:
