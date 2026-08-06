@@ -2664,12 +2664,20 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     except Exception:
         _ckpt_freq = 10000
     _ckpt_freq = max(1000, min(_ckpt_freq, max(1000, steps)))
+    _ckpt_prefix = os.environ.get(
+        "ADAN_CKPT_PREFIX", "ppo_adan0_sandbox_checkpoint"
+    ).strip() or "ppo_adan0_sandbox_checkpoint"
     checkpoint_callback = CheckpointCallback(
         save_freq=_ckpt_freq,  # Save every ADAN_CKPT_FREQ steps (default 10k)
         save_path=str(ckpt_dir),
-        name_prefix="ppo_adan0_sandbox_checkpoint",
+        name_prefix=_ckpt_prefix,
         save_replay_buffer=False,  # Don't save replay buffer to save memory
         save_vecnormalize=False,  # VecNormalize is disabled, don't save it
+    )
+    logger.info(
+        "[SANDBOX] Checkpoints every %d steps with prefix=%s",
+        _ckpt_freq,
+        _ckpt_prefix,
     )
 
     # V2 instrumentation (MESURE SEULE) — suit μ/σ pré-tanh par tête pour voir si
@@ -2745,16 +2753,25 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     else:
         logger.info("[SANDBOX] VecNormalize disabled — skipping vecnorm save")
 
-    # FIX: Save StateBuilder scalers for live/backtest consistency
-    # These scalers were fitted on the training data (first chunk) and must be
-    # used by LiveStateBuilder and deterministic_backtest to avoid distribution shift.
-    try:
-        if hasattr(env, 'state_builder') and env.state_builder is not None:
-            scalers_dir = str(PROJECT_ROOT / "prod_scalers")
-            env.state_builder.save_scalers(scalers_dir)
-            logger.info(f"[SANDBOX] ✅ Training scalers saved to {scalers_dir}")
-    except Exception as e:
-        logger.warning(f"[SANDBOX] ⚠️ Could not save training scalers: {e}")
+    # Persist scalers only when explicitly allowed. Production runs load the
+    # already-fitted prod_scalers and must not rewrite their pickles/manifest at
+    # shutdown (even a metadata-only timestamp rewrite obscures provenance).
+    _save_scalers = os.environ.get("ADAN_SAVE_SCALERS", "1").strip().lower() in (
+        "1", "true", "yes"
+    )
+    if _save_scalers:
+        try:
+            if hasattr(env, 'state_builder') and env.state_builder is not None:
+                scalers_dir = str(PROJECT_ROOT / "prod_scalers")
+                env.state_builder.save_scalers(scalers_dir)
+                logger.info(f"[SANDBOX] Training scalers saved to {scalers_dir}")
+        except Exception as e:
+            logger.warning(f"[SANDBOX] Could not save training scalers: {e}")
+    else:
+        logger.info(
+            "[SANDBOX] Persisted scalers kept read-only "
+            "(ADAN_SAVE_SCALERS=0; no refit/save at shutdown)"
+        )
 
     size = os.path.getsize(ckpt_path + ".zip")
     logger.info(f"[SANDBOX] Training done: +{steps} steps (cum={cumulative_steps}) "
