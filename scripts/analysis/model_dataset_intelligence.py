@@ -47,11 +47,14 @@ from sklearn.metrics import (
     roc_auc_score,
     silhouette_score,
 )
+from sklearn.model_selection import GroupShuffleSplit
 from sklearn.preprocessing import StandardScaler
-from sklearn.tree import DecisionTreeClassifier, export_text
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor, export_text
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+
+from adan_trading_bot.arena_predictor.state_schema import STATE_FEATURES  # noqa: E402
 
 FEATURES = [
     "ema_ratio",
@@ -78,6 +81,17 @@ TF_ALIASES = {
 }
 ACTION_HEADS = ["direction", "size", "timeframe", "sl", "tp"]
 QUANTILES = [0.0, 0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99, 1.0]
+ARENA_TEACHER_FEATURE_MAP = {
+    "atr_pct": "atr_pct",
+    "rsi": "rsi",
+    "adx": "adx_14",
+    "bb_percent_b": "bb_percent_b_20_2",
+    "volatility_ratio": "volatility_ratio_14_50",
+    "volume_ratio": "volume_ratio_20",
+    "ema_ratio": "ema_ratio",
+    "macdh": "macdh",
+    "di_delta": "di_delta",
+}
 
 
 def native(value: Any) -> Any:
@@ -304,6 +318,393 @@ def load_trade_arena(
         "feature_mapping": canonical_snapshot,
     }
     return frame, audit
+
+
+def load_arena_teacher_samples(
+    path: Path,
+    tp_min: float,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Load collector labels without pretending its state has 16 indicators."""
+    if not path.exists():
+        return pd.DataFrame(), {"available": False, "reason": f"missing file: {path}"}
+    rows: list[dict[str, Any]] = []
+    invalid_json = 0
+    rejected: Counter[str] = Counter()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            sample = json.loads(line)
+        except json.JSONDecodeError:
+            invalid_json += 1
+            continue
+        state = sample.get("state")
+        if not isinstance(state, list) or len(state) != len(STATE_FEATURES):
+            rejected["invalid_state_dimension"] += 1
+            continue
+        try:
+            row = {name: float(value) for name, value in zip(STATE_FEATURES, state)}
+            for target in ("break_even", "tp", "sl", "duration", "confidence"):
+                row[target] = float(sample[target])
+            meta = sample.get("meta") if isinstance(sample.get("meta"), dict) else {}
+            row["pnl_net"] = float(meta.get("pnl_net", 0.0))
+            row["global_step"] = int(meta.get("global_step", -1))
+            row["close_reason"] = str(meta.get("reason", "UNKNOWN"))
+        except (KeyError, TypeError, ValueError):
+            rejected["invalid_numeric_payload"] += 1
+            continue
+        rows.append(row)
+    frame = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan).dropna()
+    if frame.empty:
+        return frame, {
+            "available": False,
+            "invalid_json": invalid_json,
+            "rejected": dict(rejected),
+            "reason": "no valid collector samples",
+        }
+    floor = frame["break_even"] * 1.5
+    frame["tp_above_collector_floor"] = (frame["tp"] > floor + 1e-12).astype(int)
+    frame["profitable_trade"] = (frame["pnl_net"] > 0.0).astype(int)
+    frame["tp_atr"] = frame["tp"] / frame["atr_pct"].clip(lower=1e-12)
+    frame["sl_atr"] = frame["sl"] / frame["atr_pct"].clip(lower=1e-12)
+    varying = [name for name in STATE_FEATURES if frame[name].nunique(dropna=False) > 1]
+    constants = [name for name in STATE_FEATURES if name not in varying]
+    state_groups = pd.util.hash_pandas_object(frame[STATE_FEATURES], index=False).astype(str)
+    audit = {
+        "available": True,
+        "file": str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path),
+        "valid_rows": len(frame),
+        "invalid_json": invalid_json,
+        "rejected": dict(rejected),
+        "state_schema_features": list(STATE_FEATURES),
+        "state_feature_count": len(STATE_FEATURES),
+        "varying_model_features": varying,
+        "constant_context_features": constants,
+        "unique_present_states": int(state_groups.nunique()),
+        "raw_mfe_available": False,
+        "requested_mfe_gt_tp_min_exactly_available": False,
+        "tp_min_requested": tp_min,
+        "classification_proxy": "tp_above_collector_floor",
+        "classification_proxy_definition": (
+            "collector tp > 1.5 * round-trip fees; exact raw MFE was not persisted"
+        ),
+        "continuous_proxy": "tp_atr (floor-censored proxy for MFE/ATR)",
+    }
+    frame["_state_group"] = state_groups.to_numpy()
+    return frame, audit
+
+
+def _group_holdout(frame: pd.DataFrame, seed: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Keep exact repeated present states out of the opposite partition."""
+    splitter = GroupShuffleSplit(n_splits=1, test_size=0.30, random_state=seed)
+    train_idx, holdout_idx = next(splitter.split(frame, groups=frame["_state_group"]))
+    return frame.iloc[train_idx].copy(), frame.iloc[holdout_idx].copy()
+
+
+def teacher_classification(
+    train: pd.DataFrame,
+    holdout: pd.DataFrame,
+    features: list[str],
+    target: str,
+    seed: int,
+) -> dict[str, Any]:
+    x_train = finite_frame(train, features)
+    x_test = finite_frame(holdout, features)
+    y_train = train.loc[x_train.index, target].to_numpy(dtype=int)
+    y_test = holdout.loc[x_test.index, target].to_numpy(dtype=int)
+    if np.unique(y_train).size < 2 or np.unique(y_test).size < 2:
+        return {"error": "both grouped partitions must contain two classes"}
+    tree = ExtraTreesClassifier(
+        n_estimators=300,
+        min_samples_leaf=8,
+        class_weight="balanced",
+        n_jobs=-1,
+        random_state=seed,
+    ).fit(x_train, y_train)
+    boost = HistGradientBoostingClassifier(
+        max_iter=220,
+        max_leaf_nodes=15,
+        class_weight="balanced",
+        random_state=seed,
+    ).fit(x_train, y_train)
+    tree_score = tree.predict_proba(x_test)[:, 1]
+    tree_pred = tree.predict(x_test)
+    boost_score = boost.predict_proba(x_test)[:, 1]
+    boost_pred = boost.predict(x_test)
+    permutation = permutation_importance(
+        tree,
+        x_test,
+        y_test,
+        scoring="balanced_accuracy",
+        n_repeats=8,
+        random_state=seed,
+        n_jobs=-1,
+    )
+    baseline_auc = safe_auc(y_test, tree_score)
+    baseline_balanced = balanced_accuracy_score(y_test, tree_pred)
+    ablations = []
+    for removed in features:
+        kept = [feature for feature in features if feature != removed]
+        model = ExtraTreesClassifier(
+            n_estimators=180,
+            min_samples_leaf=8,
+            class_weight="balanced",
+            n_jobs=-1,
+            random_state=seed,
+        ).fit(x_train[kept], y_train)
+        score = model.predict_proba(x_test[kept])[:, 1]
+        prediction = model.predict(x_test[kept])
+        auc = safe_auc(y_test, score)
+        balanced = balanced_accuracy_score(y_test, prediction)
+        ablations.append(
+            {
+                "removed_feature": removed,
+                "roc_auc": auc,
+                "balanced_accuracy": balanced,
+                "auc_delta_vs_all": (
+                    auc - baseline_auc
+                    if auc is not None and baseline_auc is not None
+                    else None
+                ),
+                "balanced_accuracy_delta_vs_all": balanced - baseline_balanced,
+            }
+        )
+    rule_model = DecisionTreeClassifier(
+        max_depth=4,
+        min_samples_leaf=max(20, len(x_train) // 80),
+        class_weight="balanced",
+        random_state=seed,
+    ).fit(x_train, y_train)
+    ranking = rank_scores(features, permutation.importances_mean)
+    top = [row["feature"] for row in ranking[: min(6, len(features))]]
+    one_dimensional = {}
+    for feature in top:
+        pdp = partial_dependence(
+            boost,
+            x_train,
+            [feature],
+            grid_resolution=12,
+            method="brute",
+            response_method="predict_proba",
+        )
+        one_dimensional[feature] = {
+            "grid": pdp["grid_values"][0],
+            "average_response": pdp["average"][0],
+        }
+    two_dimensional = {}
+    for first, second in combinations(top[:4], 2):
+        indices = (
+            int(x_train.columns.get_loc(first)),
+            int(x_train.columns.get_loc(second)),
+        )
+        pdp = partial_dependence(
+            boost,
+            x_train,
+            [indices],
+            grid_resolution=8,
+            method="brute",
+            response_method="predict_proba",
+        )
+        two_dimensional[f"{first}__{second}"] = {
+            "feature_pair": [first, second],
+            "first_grid": pdp["grid_values"][0],
+            "second_grid": pdp["grid_values"][1],
+            "average_response": pdp["average"][0],
+        }
+    return {
+        "target": target,
+        "train_rows": len(x_train),
+        "holdout_rows": len(x_test),
+        "prevalence_train": y_train.mean(),
+        "prevalence_holdout": y_test.mean(),
+        "extra_trees": {
+            "balanced_accuracy": baseline_balanced,
+            "roc_auc": baseline_auc,
+            "confusion_matrix": confusion_matrix(y_test, tree_pred, labels=[0, 1]),
+            "calibration": calibration_payload(y_test, tree_score),
+        },
+        "hist_gradient_boosting": {
+            "balanced_accuracy": balanced_accuracy_score(y_test, boost_pred),
+            "roc_auc": safe_auc(y_test, boost_score),
+            "confusion_matrix": confusion_matrix(y_test, boost_pred, labels=[0, 1]),
+            "calibration": calibration_payload(y_test, boost_score),
+        },
+        "permutation_importance": ranking,
+        "ablations": ablations,
+        "explicit_rules": {
+            "rules": export_text(rule_model, feature_names=features),
+            "balanced_accuracy": balanced_accuracy_score(y_test, rule_model.predict(x_test)),
+            "roc_auc": safe_auc(y_test, rule_model.predict_proba(x_test)[:, 1]),
+        },
+        "partial_dependence": {
+            "one_dimensional": one_dimensional,
+            "two_dimensional": two_dimensional,
+        },
+    }
+
+
+def teacher_regression(
+    train: pd.DataFrame,
+    holdout: pd.DataFrame,
+    features: list[str],
+    target: str,
+    seed: int,
+) -> dict[str, Any]:
+    x_train = finite_frame(train, features)
+    x_test = finite_frame(holdout, features)
+    y_train = train.loc[x_train.index, target].to_numpy(dtype=float)
+    y_test = holdout.loc[x_test.index, target].to_numpy(dtype=float)
+    tree = ExtraTreesRegressor(
+        n_estimators=300,
+        min_samples_leaf=8,
+        n_jobs=-1,
+        random_state=seed,
+    ).fit(x_train, y_train)
+    boost = HistGradientBoostingRegressor(
+        max_iter=220,
+        max_leaf_nodes=15,
+        loss="absolute_error",
+        random_state=seed,
+    ).fit(x_train, y_train)
+    tree_prediction = tree.predict(x_test)
+    boost_prediction = boost.predict(x_test)
+    baseline_prediction = np.full_like(y_test, np.median(y_train), dtype=float)
+    permutation = permutation_importance(
+        tree,
+        x_test,
+        y_test,
+        scoring="neg_mean_absolute_error",
+        n_repeats=8,
+        random_state=seed,
+        n_jobs=-1,
+    )
+    tree_mae = mean_absolute_error(y_test, tree_prediction)
+    ablations = []
+    for removed in features:
+        kept = [feature for feature in features if feature != removed]
+        model = ExtraTreesRegressor(
+            n_estimators=180,
+            min_samples_leaf=8,
+            n_jobs=-1,
+            random_state=seed,
+        ).fit(x_train[kept], y_train)
+        mae = mean_absolute_error(y_test, model.predict(x_test[kept]))
+        ablations.append(
+            {
+                "removed_feature": removed,
+                "mae": mae,
+                "mae_delta_vs_all": mae - tree_mae,
+            }
+        )
+    rule_model = DecisionTreeRegressor(
+        max_depth=4,
+        min_samples_leaf=max(20, len(x_train) // 80),
+        random_state=seed,
+    ).fit(x_train, y_train)
+    ranking = rank_scores(features, permutation.importances_mean)
+    top = [row["feature"] for row in ranking[: min(6, len(features))]]
+    one_dimensional = {}
+    for feature in top:
+        pdp = partial_dependence(boost, x_train, [feature], grid_resolution=12)
+        one_dimensional[feature] = {
+            "grid": pdp["grid_values"][0],
+            "average_response": pdp["average"][0],
+        }
+    two_dimensional = {}
+    for first, second in combinations(top[:4], 2):
+        indices = (
+            int(x_train.columns.get_loc(first)),
+            int(x_train.columns.get_loc(second)),
+        )
+        pdp = partial_dependence(boost, x_train, [indices], grid_resolution=8)
+        two_dimensional[f"{first}__{second}"] = {
+            "feature_pair": [first, second],
+            "first_grid": pdp["grid_values"][0],
+            "second_grid": pdp["grid_values"][1],
+            "average_response": pdp["average"][0],
+        }
+    return {
+        "target": target,
+        "train_rows": len(x_train),
+        "holdout_rows": len(x_test),
+        "baseline_mae": mean_absolute_error(y_test, baseline_prediction),
+        "extra_trees": {"mae": tree_mae, "r2": r2_score(y_test, tree_prediction)},
+        "hist_gradient_boosting": {
+            "mae": mean_absolute_error(y_test, boost_prediction),
+            "r2": r2_score(y_test, boost_prediction),
+        },
+        "permutation_importance": ranking,
+        "ablations": ablations,
+        "explicit_rules": {
+            "rules": export_text(rule_model, feature_names=features),
+            "mae": mean_absolute_error(y_test, rule_model.predict(x_test)),
+        },
+        "partial_dependence": {
+            "one_dimensional": one_dimensional,
+            "two_dimensional": two_dimensional,
+        },
+    }
+
+
+def arena_teacher_section(
+    frame: pd.DataFrame,
+    audit: dict[str, Any],
+    seed: int,
+) -> dict[str, Any]:
+    if frame.empty or not audit.get("available"):
+        return {"available": False, "audit": audit}
+    train, holdout = _group_holdout(frame, seed)
+    features = list(audit["varying_model_features"])
+    return {
+        "available": True,
+        "audit": audit,
+        "split_protocol": (
+            "70/30 grouped holdout by exact present-state hash; "
+            "repeated states never cross partitions"
+        ),
+        "train_rows": len(train),
+        "holdout_rows": len(holdout),
+        "close_reasons": dict(Counter(frame["close_reason"])),
+        "targets": {
+            "tp_above_collector_floor": teacher_classification(
+                train, holdout, features, "tp_above_collector_floor", seed
+            ),
+            "profitable_trade": teacher_classification(
+                train, holdout, features, "profitable_trade", seed
+            ),
+            "tp_atr": teacher_regression(train, holdout, features, "tp_atr", seed),
+            "sl_atr": teacher_regression(train, holdout, features, "sl_atr", seed),
+            "duration": teacher_regression(train, holdout, features, "duration", seed),
+        },
+    }
+
+
+def teacher_policy_comparison(
+    teacher: dict[str, Any],
+    attribution: dict[str, Any],
+) -> dict[str, Any]:
+    if not teacher.get("available") or not attribution.get("available"):
+        return {"available": False, "reason": "teacher or policy attribution unavailable"}
+    teacher_rows = teacher["targets"]["tp_atr"].get("permutation_importance", [])
+    teacher_top = [
+        ARENA_TEACHER_FEATURE_MAP.get(row["feature"], row["feature"])
+        for row in teacher_rows[:5]
+    ]
+    policy_top = [
+        row["feature"]
+        for row in attribution["combined_timeframe_rankings"]["tp"][:5]
+    ]
+    return {
+        "available": True,
+        "comparison": "Arena collector TP/ATR teacher vs PPO TP-head perturbation attribution",
+        "teacher_top_features": teacher_top,
+        "policy_tp_head_top_features": policy_top,
+        "top5_overlap": sorted(set(teacher_top) & set(policy_top)),
+        "teacher_only_top5": [name for name in teacher_top if name not in policy_top],
+        "policy_only_top5": [name for name in policy_top if name not in teacher_top],
+        "causality_warning": (
+            "Both rankings are diagnostic; neither proves causal optimality or "
+            "authorizes feature deletion."
+        ),
+    }
 
 
 def rank_scores(names: list[str], values: np.ndarray) -> list[dict[str, Any]]:
@@ -731,10 +1132,22 @@ def find_checkpoint(checkpoint_root: Path) -> Path | None:
     return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
 
 
+def require_persisted_scalers(builder: Any, timeframes: Iterable[str]) -> None:
+    """Reject policy attribution unless every persisted training scaler is loaded."""
+    required = list(timeframes)
+    missing = [tf for tf in required if builder.scalers.get(tf) is None]
+    if not getattr(builder, "scalers_loaded_from_training", False) or missing:
+        raise RuntimeError(
+            "policy attribution requires persisted training scalers; "
+            f"missing={missing}, loaded_from_training="
+            f"{getattr(builder, 'scalers_loaded_from_training', False)}"
+        )
+
+
 def aligned_observations(
     data: dict[str, dict[str, pd.DataFrame]], sample_count: int, seed: int
 ) -> tuple[dict[str, np.ndarray], dict[str, dict[str, int]]]:
-    """Build timestamp-aligned, normalized validation observations."""
+    """Build timestamp-aligned validation observations with persisted scalers."""
     from adan_trading_bot.data_processing.state_builder import StateBuilder
     from adan_trading_bot.trading.live_state_builder import OBS_WINDOW, TRAIN_COLUMNS
 
@@ -746,10 +1159,7 @@ def aligned_observations(
         include_portfolio_state=True,
         normalize=True,
     )
-    builder.scalers = {}
-    builder.scalers_loaded_from_training = False
-    builder.fit_scalers({"BTCUSDT": train})
-    builder.scalers_loaded_from_training = True
+    require_persisted_scalers(builder, ("5m", "1h", "4h"))
 
     eligible = val["5m"].index[OBS_WINDOW:]
     rng = np.random.default_rng(seed)
@@ -852,6 +1262,7 @@ def policy_attribution(
                 "Sensitivity is associational, not a causal or SHAP attribution.",
                 "Context and portfolio vectors are held fixed during indicator permutations.",
                 "A smoke checkpoint measures the current smoke policy, not a converged 500k policy.",
+                "Observations use persisted production training scalers; the bulletin never refits them.",
                 "Pre-clipping means are required because Box clipping makes saturated heads look exactly constant.",
             ],
             "saturated_postclip_heads": [
@@ -952,6 +1363,14 @@ def arena_verdict(report: dict[str, Any]) -> dict[str, Any]:
         "trade_sample_sufficient": report["trade_telemetry_audit"].get("joined_count", 0) >= 100,
         "strict_json_telemetry": report["trade_telemetry_audit"].get("invalid_json") == 0,
         "policy_attribution_available": bool(report["policy_attribution"].get("available")),
+        "collector_teacher_sample_sufficient": report.get("arena_teacher_8445", {})
+        .get("audit", {})
+        .get("valid_rows", 0)
+        >= 1000,
+        "collector_teacher_strict_json": report.get("arena_teacher_8445", {})
+        .get("audit", {})
+        .get("invalid_json", 1)
+        == 0,
     }
     market_target = report["market_models"]["classification"]["good_long"]
     best_auc = max(
@@ -970,7 +1389,11 @@ def arena_verdict(report: dict[str, Any]) -> dict[str, Any]:
         "checks": checks,
         "failed_checks": failed,
         "authorization": "ARENA_GATE_PASSED" if not failed else "500K_FORBIDDEN",
-        "note": "A red verdict preserves all 16 features; it requests better evidence, never feature deletion.",
+        "note": (
+            "This is an Arena bulletin integrity gate, not a long-run authorization. "
+            "Critic explained variance, lifecycle and finance gates remain independently blocking. "
+            "A red verdict preserves all 16 PPO features and requests better evidence."
+        ),
     }
 
 
@@ -1016,6 +1439,57 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(f"- **{target}**: {top}")
 
     trade = report["trade_arena"]
+    teacher = report.get("arena_teacher_8445", {})
+    lines.extend(["", "## Professeur Arena — 8 445 échantillons historiques", ""])
+    if teacher.get("available"):
+        audit = teacher["audit"]
+        lines.append(
+            f"Échantillons valides: **{audit['valid_rows']}**; états présents uniques: "
+            f"**{audit['unique_present_states']}**; split groupé sans fuite d'états répétés."
+        )
+        lines.append(
+            "Le collector historique contient **9 indicateurs variables**, pas les 16 features "
+            "canoniques; `regime` et les trois bits timeframe sont constants. Le MFE brut "
+            "n'a pas été persisté: `tp_atr` est un proxy censuré par le plancher de frais."
+        )
+        for target, values in teacher["targets"].items():
+            if values.get("error"):
+                lines.append(f"- **{target}**: non évaluable ({values['error']}).")
+            elif "roc_auc" in values.get("extra_trees", {}):
+                top = ", ".join(
+                    row["feature"] for row in values["permutation_importance"][:5]
+                )
+                lines.append(
+                    f"- **{target}**: AUC Extra Trees "
+                    f"{values['extra_trees']['roc_auc']:.3f}, AUC boosting "
+                    f"{values['hist_gradient_boosting']['roc_auc']:.3f}; "
+                    f"top permutation: {top}."
+                )
+            else:
+                top = ", ".join(
+                    row["feature"] for row in values["permutation_importance"][:5]
+                )
+                lines.append(
+                    f"- **{target}**: R² Extra Trees {values['extra_trees']['r2']:.3f}, "
+                    f"R² boosting {values['hist_gradient_boosting']['r2']:.3f}; "
+                    f"top permutation: {top}."
+                )
+        comparison = report.get("teacher_policy_comparison", {})
+        if comparison.get("available"):
+            lines.append(
+                "- **Arena vs réseau (tête TP)**: Arena="
+                + ", ".join(comparison["teacher_top_features"])
+                + "; PPO="
+                + ", ".join(comparison["policy_tp_head_top_features"])
+                + "; overlap="
+                + (", ".join(comparison["top5_overlap"]) or "aucun")
+                + "."
+            )
+    else:
+        lines.append(
+            f"Indisponible: {teacher.get('audit', {}).get('reason', 'unknown reason')}."
+        )
+
     lines.extend(["", "## Arena conditionnée par les trades v24", ""])
     lines.append(
         f"Jointure exacte: {report['trade_telemetry_audit']['joined_count']}/"
@@ -1083,7 +1557,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             "",
             *[f"- {item}" for item in report["telemetry_limitations"]],
             "",
-            "Le JSON contient l’ensemble des distributions, importances, interactions, clusters et grilles TP/SL/ATR.",
+            "Le JSON contient l’ensemble des distributions, importances, ablations, règles, dépendances partielles, interactions, clusters et grilles TP/SL/ATR.",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -1109,6 +1583,12 @@ def parse_args() -> argparse.Namespace:
         help="lifecycle JSONL files or glob patterns",
     )
     parser.add_argument("--policy-samples", type=int, default=256)
+    parser.add_argument(
+        "--arena-samples",
+        type=Path,
+        default=ROOT / "logs/arena/arena_samples_500k.jsonl",
+        help="historical Future Arena collector JSONL",
+    )
     parser.add_argument("--seed", type=int, default=21)
     parser.add_argument(
         "--json-output",
@@ -1142,6 +1622,10 @@ def main() -> int:
         args.horizon,
         args.tp_min,
     )
+    teacher_frame, teacher_audit = load_arena_teacher_samples(
+        args.arena_samples.resolve(), args.tp_min
+    )
+    teacher = arena_teacher_section(teacher_frame, teacher_audit, args.seed)
     checkpoint = args.checkpoint.resolve() if args.checkpoint else find_checkpoint(args.checkpoint_root.resolve())
 
     report: dict[str, Any] = {
@@ -1161,6 +1645,7 @@ def main() -> int:
         "market_models": supervised_section(train_targets, test_targets, args.seed),
         "trade_telemetry_audit": trade_audit,
         "trade_arena": trade_arena_section(trade_frame, args.seed),
+        "arena_teacher_8445": teacher,
         "nonlinear_interactions": interaction_section(train_targets, test_targets, args.seed),
         "regimes": cluster_section(combined_targets, args.seed),
         "risk_geometry": {
@@ -1176,6 +1661,9 @@ def main() -> int:
             "A 2048-step smoke policy is diagnostic evidence, not a converged production policy.",
         ],
     }
+    report["teacher_policy_comparison"] = teacher_policy_comparison(
+        report["arena_teacher_8445"], report["policy_attribution"]
+    )
     report["recommendations"] = recommendations(report)
     report["arena_verdict"] = arena_verdict(report)
     clean = native(report)
