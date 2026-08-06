@@ -567,6 +567,19 @@ class DiagnosticCollapseCallback(BaseCallback):
         self._breaker_enabled = (
             os.environ.get("ADAN_COLLAPSE_BREAKER", "0").strip() in ("1", "true", "True")
         )
+        # Opt-in critic circuit breaker for long instrumented runs.
+        self._critic_breaker_enabled = (
+            os.environ.get("ADAN_CRITIC_BREAKER", "0").strip() in ("1", "true", "True")
+        )
+        self._critic_ev_threshold = float(os.environ.get("ADAN_CRITIC_EV_MIN", "-0.2"))
+        self._critic_ev_windows = max(
+            1, int(os.environ.get("ADAN_CRITIC_EV_WINDOWS", "10"))
+        )
+        self._critic_value_loss_max = float(
+            os.environ.get("ADAN_CRITIC_VALUE_LOSS_MAX", "1000000")
+        )
+        self._critic_bad_ev_streak = 0
+        self._critic_breaker_reason = ""
 
     @staticmethod
     def _numeric_stats(values):
@@ -720,6 +733,13 @@ class DiagnosticCollapseCallback(BaseCallback):
                 "collapse confirmed. Inspect the diagnostic CSV; resume from the "
                 "last healthy checkpoint, NOT this one.", int(self.num_timesteps))
             return False  # SB3 stops learning when a callback returns False
+        if self._critic_breaker_reason and self._critic_breaker_enabled:
+            logging.getLogger(__name__).critical(
+                "[CRITIC-BREAKER] Training STOPPED at %d timesteps — %s. "
+                "Inspect the diagnostic CSV and resume only from a healthy checkpoint.",
+                int(self.num_timesteps), self._critic_breaker_reason,
+            )
+            return False
         return True
 
     def _on_rollout_end(self) -> None:
@@ -756,6 +776,85 @@ class DiagnosticCollapseCallback(BaseCallback):
                 "a0_histo": "|".join(str(int(x)) for x in histo),
             }
             row.update(self._rollout_health())
+
+            # Surface the previous completed PPO update beside the current finalized
+            # rollout. SB3 exposes `value_loss` (the critic loss) under train/*.
+            logger_values = getattr(
+                getattr(self.model, "logger", None), "name_to_value", {}
+            ) or {}
+            ppo_metrics_available = False
+            for metric in (
+                "approx_kl",
+                "clip_fraction",
+                "entropy_loss",
+                "policy_gradient_loss",
+                "value_loss",
+            ):
+                raw_value = logger_values.get(
+                    f"train/{metric}", logger_values.get(metric)
+                )
+                ppo_metrics_available = ppo_metrics_available or raw_value is not None
+                try:
+                    row[metric] = float(raw_value)
+                except (TypeError, ValueError):
+                    row[metric] = float("nan")
+            row["critic_loss"] = row["value_loss"]
+            row["policy_loss"] = row["policy_gradient_loss"]
+            row["ppo_metrics_available"] = ppo_metrics_available
+            row["step"] = row["timesteps"]
+            row["explained_variance"] = row.get(
+                "critic_explained_variance", float("nan")
+            )
+            row["value_std"] = json.loads(row.get("value_stats", "{}")).get(
+                "std", float("nan")
+            )
+            row["advantages_std"] = json.loads(
+                row.get("advantage_stats", "{}")
+            ).get("std", float("nan"))
+
+            # Long-run critic breaker: sustained EV failure, any non-finite rollout
+            # tensor, non-finite PPO metrics once available, or exploding value loss.
+            ev = float(row.get("critic_explained_variance", float("nan")))
+            if np.isfinite(ev) and ev < self._critic_ev_threshold:
+                self._critic_bad_ev_streak += 1
+            else:
+                self._critic_bad_ev_streak = 0
+            reasons = []
+            for stats_name in (
+                "reward_stats", "return_stats", "advantage_stats", "value_stats"
+            ):
+                stats = json.loads(row.get(stats_name, "{}"))
+                if float(stats.get("nonfinite_frac", 0.0)) > 0.0:
+                    reasons.append(f"non-finite {stats_name.removesuffix('_stats')}")
+            if not np.isfinite(ev):
+                reasons.append("non-finite explained variance")
+            if ppo_metrics_available:
+                for metric in (
+                    "approx_kl", "clip_fraction", "entropy_loss",
+                    "policy_gradient_loss", "value_loss",
+                ):
+                    if not np.isfinite(row[metric]):
+                        reasons.append(f"non-finite {metric}")
+                if row["value_loss"] > self._critic_value_loss_max:
+                    reasons.append(
+                        f"value_loss {row['value_loss']:.6g} > "
+                        f"{self._critic_value_loss_max:.6g}"
+                    )
+            if self._critic_bad_ev_streak >= self._critic_ev_windows:
+                reasons.append(
+                    f"explained_variance < {self._critic_ev_threshold:g} for "
+                    f"{self._critic_bad_ev_streak} rollouts"
+                )
+            if reasons and not self._critic_breaker_reason:
+                self._critic_breaker_reason = "; ".join(reasons)
+                logging.getLogger(__name__).critical(
+                    "[CRITIC-DETECT %d] %s -> BREAKER ARMED=%s",
+                    row["timesteps"], self._critic_breaker_reason,
+                    self._critic_breaker_enabled,
+                )
+            row["critic_bad_ev_streak"] = self._critic_bad_ev_streak
+            row["critic_breaker_reason"] = self._critic_breaker_reason
+
             # DIAGNOSTIC-V8 collapse detection (measure -> decide, no reward touch).
             # Trip if ANY of the proven collapse signatures holds for this window:
             #   - a0_pct_buy >= 0.97  (near-total BUY, histo degenerate)
@@ -2590,8 +2689,11 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         _sb_callbacks.append(DiagnosticCollapseCallback(
             csv_path=_diag_csv, log_every=_diag_every, verbose=1,
         ))
-        logger.info(f"[SANDBOX] DiagnosticCollapseCallback ACTIF "
-                    f"(every={_diag_every}, csv={_diag_csv}) — mesure seule.")
+        logger.info(
+            "[SANDBOX] DiagnosticCollapseCallback ACTIF "
+            f"(every={_diag_every}, csv={_diag_csv}, "
+            f"critic_breaker={os.environ.get('ADAN_CRITIC_BREAKER', '0')})"
+        )
 
     if ActionDimMonitor is not None and os.environ.get("ADAN_ACTIONDIM", "0") == "1":
         _sb_ad_csv = os.environ.get(

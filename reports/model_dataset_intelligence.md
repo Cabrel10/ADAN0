@@ -1,7 +1,23 @@
 # ADAN — Bulletin d’intelligence dataset/modèle
 
-Généré: `2026-08-01T08:11:42.312539+00:00`  
+Généré: `2026-08-05T20:41:48.562526+00:00`
+
 Horizon principal: **36 barres 5m**.
+
+## Verdict Arena
+
+**GREEN — ARENA_GATE_PASSED**
+
+- PASS `exactly_16_canonical_features`
+- PASS `all_120_nonlinear_pairs`
+- PASS `trade_join_complete`
+- PASS `trade_sample_sufficient`
+- PASS `strict_json_telemetry`
+- PASS `policy_attribution_available`
+- PASS `collector_teacher_sample_sufficient`
+- PASS `collector_teacher_strict_json`
+- PASS `market_signal_above_random`
+- PASS `trade_target_evaluable`
 
 ## Portée et intégrité
 
@@ -31,6 +47,25 @@ Horizon principal: **36 barres 5m**.
 - **mae_atr**: adx_14, volatility_ratio_14_50, rsi, di_delta, fib_ratio
 - **time_to_mfe**: adx_14, vwap_ratio, macdh, fib_ratio, bb_width_20_2
 
+## Professeur Arena — 8 445 échantillons historiques
+
+Échantillons valides: **8445**; états présents uniques: **4844**; split groupé sans fuite d'états répétés.
+Le collector historique contient **9 indicateurs variables**, pas les 16 features canoniques; `regime` et les trois bits timeframe sont constants. Le MFE brut n'a pas été persisté: `tp_atr` est un proxy censuré par le plancher de frais.
+- **tp_above_collector_floor**: AUC Extra Trees 0.797, AUC boosting 0.780; top permutation: atr_pct, volatility_ratio, adx, di_delta, rsi.
+- **profitable_trade**: AUC Extra Trees 0.817, AUC boosting 0.781; top permutation: atr_pct, volatility_ratio, adx, rsi, ema_ratio.
+- **tp_atr**: R² Extra Trees 0.427, R² boosting 0.202; top permutation: atr_pct, adx, volatility_ratio, rsi, macdh.
+- **sl_atr**: R² Extra Trees 0.312, R² boosting 0.054; top permutation: atr_pct, adx, volatility_ratio, di_delta, rsi.
+- **duration**: R² Extra Trees 0.194, R² boosting 0.110; top permutation: atr_pct, volatility_ratio, adx, di_delta, macdh.
+- **Arena vs réseau (tête TP)**: Arena=atr_pct, adx_14, volatility_ratio_14_50, rsi, macdh; PPO=rsi, fib_ratio, di_delta, market_structure, adx_14; overlap=adx_14, rsi.
+
+## Arena conditionnée par les trades v24
+
+Jointure exacte: 118/118 trades.
+PnL net des trades joints: -7.378631.
+- **mfe_gt_tp_min**: AUC Extra Trees 0.515, AUC Gradient Boosting 0.431.
+- **chosen_tp_attainable**: non évaluable (both temporal partitions must contain two classes).
+- **profitable_trade**: AUC Extra Trees 0.433, AUC Gradient Boosting 0.498.
+
 ## Bons trades vs mauvais trades (long contrefactuel)
 
 Définition: long entry: good if horizon return > +20 bps; bad if < -20 bps. Bons=668, mauvais=687, neutres=892.
@@ -40,18 +75,17 @@ Plus grands écarts standardisés: vwap_ratio (-0.57σ), atr_pct (-0.30σ), bb_w
 ## Régimes
 
 K sélectionné par silhouette: **3**.
-- Régime 0: 0.8%, retour moyen -0.016%, MFE/ATR médian 1.13, MAE/ATR médian 1.30.
-- Régime 1: 49.6%, retour moyen -0.089%, MFE/ATR médian 2.62, MAE/ATR médian 2.86.
-- Régime 2: 49.5%, retour moyen -0.029%, MFE/ATR médian 2.83, MAE/ATR médian 2.89.
+- Régime 0 (**forte_volatilite**): 0.8%, retour moyen -0.016%, MFE/ATR médian 1.13, MAE/ATR médian 1.30, TP conseillé 1.13 ATR, SL conseillé 2.63 ATR.
+- Régime 1 (**tendance**): 49.6%, retour moyen -0.089%, MFE/ATR médian 2.62, MAE/ATR médian 2.86, TP conseillé 2.62 ATR, SL conseillé 5.40 ATR.
+- Régime 2 (**range**): 49.5%, retour moyen -0.029%, MFE/ATR médian 2.83, MAE/ATR médian 2.89, TP conseillé 2.83 ATR, SL conseillé 5.77 ATR.
 
 ## Sorties réseau
 
-Checkpoint: `checkpoints/v21_smoke_gsde/adan_pbt_training/ADAN_PBT_Worker_517b3_00003_3_ent_coef=0.0260,gamma=0.9922,learning_rate=0.0007,sl_pct=0.0582,tp_pct=0.0351,worker_idx=3_2026-07-31_07-00-53/checkpoint_000000/model.zip` (ContextualTemporalFusionExtractor).
-Têtes saturées après clipping sur ≥95% des observations: **direction, size, sl, tp**. Les rangs ci-dessous utilisent donc les moyennes pré-clipping.
-- **direction**: market_structure (0.01423), adx_14 (0.0122), volatility_ratio_14_50 (0.01191), fib_ratio (0.007946), bb_percent_b_20_2 (0.006933)
-- **size**: market_structure (0.05613), adx_14 (0.05573), volatility_ratio_14_50 (0.05183), bb_percent_b_20_2 (0.03403), fib_ratio (0.03369)
-- **sl**: market_structure (0.1241), adx_14 (0.1192), volatility_ratio_14_50 (0.1101), fib_ratio (0.07262), bb_percent_b_20_2 (0.06664)
-- **tp**: adx_14 (0.04617), market_structure (0.04604), volatility_ratio_14_50 (0.04288), fib_ratio (0.02793), bb_percent_b_20_2 (0.02631)
+Checkpoint: `checkpoints/v24_smoke_ray/adan_pbt_training/ADAN_PBT_Worker_6c9e7_00000_0_ent_coef=0.0163,gamma=0.9583,learning_rate=0.0001,sl_pct=0.0169,tp_pct=0.0678,worker_config=worker_i_2026-08-02_11-34-57/checkpoint_000000/model.zip` (ContextualTemporalFusionExtractor).
+- **direction**: fib_ratio (0.002592), market_structure (0.00208), rsi (0.001218), bb_percent_b_20_2 (0.001181), volatility_ratio_14_50 (0.001132)
+- **size**: fib_ratio (0.003551), market_structure (0.002524), bb_percent_b_20_2 (0.001063), di_delta (0.001058), rsi (0.0009783)
+- **sl**: market_structure (0.001715), fib_ratio (0.001446), di_delta (0.001226), bb_percent_b_20_2 (0.0009672), adx_14 (0.0009001)
+- **tp**: rsi (0.002575), fib_ratio (0.002445), di_delta (0.002381), market_structure (0.001656), adx_14 (0.001086)
 
 ## Décisions
 
@@ -63,9 +97,9 @@ Têtes saturées après clipping sur ≥95% des observations: **direction, size,
 
 ## Limites bloquantes de télémétrie trade
 
-- Current OPEN/CLOSE JSONL lacks an exact market timestamp/row id and the 16-feature entry snapshot.
-- Actual trade MFE/MAE, TP_raw, TP/ATR and close-reason attribution therefore cannot be reconstructed without ambiguity.
-- The next smoke must emit entry_market_timestamp, entry_row_id, ATR_raw and the immutable entry feature vector.
+- Trade MFE/MAE uses exact entry timestamp and a fixed future horizon; it does not invent intrabar ordering.
+- The immutable feature snapshot is the decision-close row t while execution is open[t+1], preventing actor leakage.
 - Policy attribution uses real validation observations but does not claim SHAP-equivalent causal credit.
+- A 2048-step smoke policy is diagnostic evidence, not a converged production policy.
 
-Le JSON contient l’ensemble des distributions, importances, interactions, clusters et grilles TP/SL/ATR.
+Le JSON contient l’ensemble des distributions, importances, ablations, règles, dépendances partielles, interactions, clusters et grilles TP/SL/ATR.

@@ -853,6 +853,21 @@ def test_diagnostic_flush_waits_for_completed_rollout() -> None:
     assert callback._next_flush == 1024
 
 
+def test_critic_breaker_stops_only_when_explicitly_armed() -> None:
+    callback = object.__new__(training.DiagnosticCollapseCallback)
+    callback.locals = {}
+    callback.num_timesteps = 512
+    callback._collapse_tripped = False
+    callback._breaker_enabled = False
+    callback._critic_breaker_reason = "non-finite value"
+    callback._critic_breaker_enabled = False
+
+    assert callback._on_step() is True
+
+    callback._critic_breaker_enabled = True
+    assert callback._on_step() is False
+
+
 def test_finalize_open_positions_is_idempotent_and_traces_one_close(tmp_path) -> None:
     env = MultiAssetChunkedEnv.__new__(MultiAssetChunkedEnv)
     env.portfolio_manager = _portfolio_for_lifecycle_tests()
