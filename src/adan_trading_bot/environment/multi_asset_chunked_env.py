@@ -6011,19 +6011,6 @@ class MultiAssetChunkedEnv(gym.Env):
         return obs
 
 
-    def _hmm_probabilities_for_context(self, probabilities: np.ndarray) -> np.ndarray:
-        """Return HMM posteriors in the context contract order: bull, side, bear."""
-        probs = np.asarray(probabilities, dtype=np.float32)
-        model = getattr(getattr(self, "dbe", None), "_hmm_model", None)
-        fitted = bool(getattr(getattr(self, "dbe", None), "_hmm_fitted", False))
-        if not fitted or model is None or probs.shape != (3,):
-            return probs
-
-        means = np.asarray(model.means_)
-        trend_col = 4 if means.shape[1] >= 5 else 0
-        bear_idx, side_idx, bull_idx = np.argsort(means[:, trend_col])
-        return probs[[bull_idx, side_idx, bear_idx]]
-
     def _build_observation(self) -> Dict[str, np.ndarray]:
         """
         Construit l'observation pour le pas de temps actuel en utilisant le StateBuilder.
@@ -6045,8 +6032,8 @@ class MultiAssetChunkedEnv(gym.Env):
             if hasattr(self, "dbe") and self.dbe is not None:
                 try:
                     market_data = self._get_current_market_data_for_hmm()
+                    # DBE owns the public semantic contract: bull, sideways, bear.
                     hmm_probs = self.dbe.get_regime_probabilities(market_data)
-                    hmm_probs = self._hmm_probabilities_for_context(hmm_probs)
                 except Exception:
                     pass  # fallback to uniform prior inside state_builder
 
