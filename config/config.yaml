@@ -1212,10 +1212,10 @@ production:
     context_vector_dim: 12
     cyclical_time_encoding: true
     feature_extractor: ContextualTemporalFusionExtractor
-    hmm_min_obs: 30
+    hmm_min_obs: 60
     hmm_n_states: 3
     hmm_regime_detection: true
-    hmm_window: 120
+    hmm_window: 500
     ppo_class: WorldModelPPO
     symlog_rewards: true
     world_model_prediction: true

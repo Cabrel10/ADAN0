@@ -95,6 +95,31 @@ class DynamicBehaviorEngine:
         self._load_macro_data()
         self._load_btc_daily_history()  # Audit anomaly #1: oracle online from step 1
 
+        # The production config is the single source of truth for the HMM
+        # lifecycle. Module constants remain safe defaults for older configs.
+        hmm_config = self.config.get("production", {}).get("sota_architecture", {})
+        self._hmm_min_obs = int(hmm_config.get("hmm_min_obs", HMM_MIN_OBS))
+        self._hmm_window = int(hmm_config.get("hmm_window", HMM_WINDOW))
+        configured_states = int(hmm_config.get("hmm_n_states", N_HMM_STATES))
+        if configured_states != N_HMM_STATES:
+            raise ValueError(
+                f"Configured hmm_n_states={configured_states}, but the context contract "
+                f"requires {N_HMM_STATES} states"
+            )
+        if self._hmm_min_obs < 2 * N_HMM_STATES:
+            raise ValueError("hmm_min_obs is too small for a three-state HMM")
+        if self._hmm_window < self._hmm_min_obs:
+            raise ValueError("hmm_window must be greater than or equal to hmm_min_obs")
+        logger.info(
+            "[HMM_CONFIG] configured/effective: states=%d min_obs=%d window=%d "
+            "refit_interval=%d available=%s",
+            N_HMM_STATES,
+            self._hmm_min_obs,
+            self._hmm_window,
+            min(120, self._hmm_window),
+            HMM_AVAILABLE,
+        )
+
     def log_info(self, message, step=None):
         """Log un message avec le système intelligent SmartLogger."""
         if self.smart_logger:
@@ -324,6 +349,11 @@ class DynamicBehaviorEngine:
         """
         if not hasattr(self, '_hmm_model'):
             self._hmm_fitted = False
+            self._hmm_fit_count = 0
+            self._hmm_fit_failures = 0
+            self._hmm_last_fallback_reason = "warming_up"
+            self._hmm_last_observation_id = None
+            self._hmm_state_order = None  # semantic indices: [bull, sideways, bear]
             self._hmm_obs_buffer: list = []  # list of [log_return, atr_pct, rsi_norm, vol_ratio]
             if HMM_AVAILABLE:
                 # Use auto-init (k-means) for means/covars — avoids PD matrix issues
@@ -359,10 +389,14 @@ class DynamicBehaviorEngine:
         self._hmm_obs_buffer.append([log_return, atr_pct, rsi_norm, volume_ratio])
 
         # Keep a rolling window
-        if len(self._hmm_obs_buffer) > HMM_WINDOW:
-            self._hmm_obs_buffer = self._hmm_obs_buffer[-HMM_WINDOW:]
+        if len(self._hmm_obs_buffer) > self._hmm_window:
+            self._hmm_obs_buffer = self._hmm_obs_buffer[-self._hmm_window:]
 
-        if self._hmm_model is None or len(self._hmm_obs_buffer) < HMM_MIN_OBS:
+        if self._hmm_model is None:
+            self._hmm_last_fallback_reason = "hmmlearn_unavailable"
+            return self._hmm_probs.copy()
+        if len(self._hmm_obs_buffer) < self._hmm_min_obs:
+            self._hmm_last_fallback_reason = "warming_up"
             return self._hmm_probs.copy()
 
         try:
@@ -423,11 +457,11 @@ class DynamicBehaviorEngine:
                 robust_cov = robust_cov + _ridge_eps * np.eye(robust_cov.shape[0])
 
             # C10: Sliding-window refit every HMM_REFIT_INTERVAL observations
-            _REFIT_INTERVAL = 120  # refit every ~10h of 5m data
+            _REFIT_INTERVAL = min(120, self._hmm_window)  # refit every ~10h on 5m
             if not self._hmm_fitted or len(self._hmm_obs_buffer) % _REFIT_INTERVAL == 0:
                 n_init = getattr(self, '_hmm_n_init', 10)
                 best_score = -np.inf
-                best_model_params = None
+                best_model = None
 
                 # ── Strategy 1: covariance_type='full' with LedoitWolf pre-init ──
                 # First half of inits use LedoitWolf covariance as starting point
@@ -455,12 +489,7 @@ class DynamicBehaviorEngine:
                         score = trial_hmm.score(X)
                         if score > best_score:
                             best_score = score
-                            best_model_params = {
-                                'means_': trial_hmm.means_.copy(),
-                                'covars_': trial_hmm.covars_.copy(),
-                                'transmat_': trial_hmm.transmat_.copy(),
-                                'startprob_': trial_hmm.startprob_.copy(),
-                            }
+                            best_model = trial_hmm
                     except Exception as _hmm_err:
                         if init_i == 0:
                             logger.debug(f"[HMM_FIT] full init {init_i}: {_hmm_err}")
@@ -472,7 +501,7 @@ class DynamicBehaviorEngine:
                 # statistically much more efficient and almost always succeeds
                 # when individual 'full' fits failed due to per-cluster sample
                 # starvation (500 bars / 3 states ≈ 166 samples per state).
-                if best_model_params is None:
+                if best_model is None:
                     logger.warning("[HMM_FIT] full init failed; trying 'tied' covariance")
                     for init_i in range(n_init):
                         try:
@@ -487,17 +516,11 @@ class DynamicBehaviorEngine:
                             score = trial_hmm.score(X)
                             if score > best_score:
                                 best_score = score
-                                best_model_params = {
-                                    'means_': trial_hmm.means_.copy(),
-                                    'covars_': trial_hmm.covars_.copy(),
-                                    'transmat_': trial_hmm.transmat_.copy(),
-                                    'startprob_': trial_hmm.startprob_.copy(),
-                                    '_cov_type_used': 'tied',
-                                }
+                                best_model = trial_hmm
                         except Exception:
                             continue
                 # ── Strategy 3: fallback to 'diag' if 'full' AND 'tied' failed ──
-                if best_model_params is None:
+                if best_model is None:
                     logger.warning(
                         "[HMM_FIT] All 'full'+'tied' covariance inits failed. "
                         "Falling back to covariance_type='diag'."
@@ -515,22 +538,16 @@ class DynamicBehaviorEngine:
                             score = trial_hmm.score(X)
                             if score > best_score:
                                 best_score = score
-                                best_model_params = {
-                                    'means_': trial_hmm.means_.copy(),
-                                    'covars_': trial_hmm.covars_.copy(),
-                                    'transmat_': trial_hmm.transmat_.copy(),
-                                    'startprob_': trial_hmm.startprob_.copy(),
-                                }
-                                # Store the successful model for predict_proba
-                                self._hmm_model = trial_hmm
+                                best_model = trial_hmm
                         except Exception:
                             continue
 
-                # Restore best params
-                if best_model_params is not None:
-                    for k, v in best_model_params.items():
-                        setattr(self._hmm_model, k, v)
+                # Keep the complete fitted estimator and its covariance type.
+                if best_model is not None:
+                    self._hmm_model = best_model
                     self._hmm_fitted = True
+                    self._hmm_fit_count += 1
+                    self._hmm_last_fallback_reason = None
                     # Log regime separation quality
                     try:
                         n_feat = self._hmm_model.means_.shape[1]
@@ -538,6 +555,7 @@ class DynamicBehaviorEngine:
                         means_trend = self._hmm_model.means_[:, trend_col]
                         means_logret = self._hmm_model.means_[:, 0]
                         order = np.argsort(means_trend)
+                        self._hmm_state_order = (int(order[2]), int(order[1]), int(order[0]))
                         cov_type = self._hmm_model.covariance_type
                         lw_tag = "+LedoitWolf" if _use_ledoit_wolf else ""
                         logger.info(
@@ -552,17 +570,28 @@ class DynamicBehaviorEngine:
                     except Exception:
                         pass
                 else:
+                    self._hmm_fit_failures += 1
+                    self._hmm_last_fallback_reason = "all_fit_strategies_failed"
                     logger.warning(
-                        f"[HMM_FIT] ALL inits failed (full+diag). "
-                        f"Keeping uniform priors. n_obs={len(X)}"
+                        f"[HMM_FIT] ALL inits failed (full+tied+diag). "
+                        f"Keeping previous probabilities. n_obs={len(X)}"
                     )
 
-            # Posterior probability of last observation
+            # Hidden-state ids are arbitrary: expose [bull, sideways, bear].
             if self._hmm_fitted:
-                posteriors = self._hmm_model.predict_proba(X)
-                self._hmm_probs = posteriors[-1].astype(np.float32)
+                raw_probs = self._hmm_model.predict_proba(X)[-1]
+                if self._hmm_state_order is None:
+                    means = self._hmm_model.means_
+                    trend_col = 4 if means.shape[1] >= 5 else 0
+                    order = np.argsort(means[:, trend_col])
+                    self._hmm_state_order = (int(order[2]), int(order[1]), int(order[0]))
+                self._hmm_probs = np.asarray(
+                    [raw_probs[index] for index in self._hmm_state_order], dtype=np.float32
+                )
+                self._hmm_probs /= max(float(self._hmm_probs.sum()), 1e-12)
         except Exception as e:
-            logger.debug(f"HMM update fallback: {e}")
+            self._hmm_last_fallback_reason = f"update_error:{type(e).__name__}"
+            logger.warning(f"HMM update fallback: {e}")
 
         return self._hmm_probs.copy()
 
@@ -576,6 +605,11 @@ class DynamicBehaviorEngine:
           log_return, atr_pct, rsi_norm (rsi/100), volume_ratio_20
         """
         self._init_hmm()
+
+        observation_id = market_data.get("observation_id")
+        if observation_id is not None and observation_id == self._hmm_last_observation_id:
+            return self._hmm_probs.copy()
+        self._hmm_last_observation_id = observation_id
 
         # Extract 4D feature vector
         log_ret = market_data.get("log_return", 0.0)
@@ -591,6 +625,27 @@ class DynamicBehaviorEngine:
                 log_ret = float(np.log(close / prev_close))
 
         return self._update_hmm(log_ret, atr_pct, rsi_norm, volume_ratio)
+
+    def get_hmm_diagnostics(self) -> Dict[str, Any]:
+        """Return compact runtime diagnostics without exposing model internals."""
+        self._init_hmm()
+        probs = self._hmm_probs.astype(float)
+        return {
+            "available": bool(HMM_AVAILABLE),
+            "configured_min_obs": self._hmm_min_obs,
+            "effective_min_obs": self._hmm_min_obs,
+            "configured_window": self._hmm_window,
+            "effective_window": self._hmm_window,
+            "buffer_length": len(self._hmm_obs_buffer),
+            "fitted": bool(self._hmm_fitted),
+            "fit_count": int(self._hmm_fit_count),
+            "fit_failures": int(self._hmm_fit_failures),
+            "probabilities": probs.tolist(),
+            "probability_sum": float(probs.sum()),
+            "state_order": list(self._hmm_state_order) if self._hmm_state_order else None,
+            "covariance_type": self._hmm_model.covariance_type if self._hmm_model is not None and self._hmm_fitted else None,
+            "fallback_reason": self._hmm_last_fallback_reason,
+        }
 
     # ─── Exogenous Regime Oracle Integration ────────────────────────────
     def _load_oracle(self):
@@ -828,33 +883,10 @@ class DynamicBehaviorEngine:
         best_state = int(np.argmax(probs))
         confidence = float(probs[best_state])
 
-        # Derive human-readable label from HMM means if fitted
+        # Fitted probabilities already follow the stable semantic order
+        # [bull, sideways, bear], independent of hmmlearn's hidden-state ids.
         if hasattr(self, '_hmm_model') and self._hmm_model is not None and self._hmm_fitted:
-            try:
-                # A3 FIX: Use cumulative return feature (col 4 = cum_ret_60) for
-                # regime labeling. This has O(1) values (amplified 1000x) and
-                # provides real separation between bull/bear/sideways states.
-                n_feat = self._hmm_model.means_.shape[1]
-                # Use the trend feature: col 4 (cum_ret_60) if 6D, else col 0
-                trend_col = 4 if n_feat >= 5 else 0
-                means = self._hmm_model.means_[:, trend_col]
-                order = np.argsort(means)  # ascending: bear, sideways, bull
-
-                mean_spread = means[order[2]] - means[order[0]]
-                # A3 FIX v3: Always use sorted labeling when spread is non-trivial.
-                # With 6D features (cumret × 1000), typical spreads are O(0.001-0.01).
-                # Any non-degenerate spread means HMM found different regimes.
-                if mean_spread > 1e-4:
-                    labels = {int(order[0]): 'bear', int(order[1]): 'sideways', int(order[2]): 'bull'}
-                    regime = labels.get(best_state, 'sideways')
-                else:
-                    regime = 'sideways'
-                    logger.debug(
-                        f"[HMM_REGIME] Degenerate spread ({mean_spread:.6f}), "
-                        f"defaulting to sideways"
-                    )
-            except Exception:
-                regime = ['bear', 'sideways', 'bull'][best_state]
+            regime = ['bull', 'sideways', 'bear'][best_state]
         else:
             # Heuristic fallback while HMM is warming up
             adx = market_data.get("adx", 0)

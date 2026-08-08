@@ -19,6 +19,7 @@ from adan_trading_bot.environment.dynamic_behavior_engine import (
     DynamicBehaviorEngine,
     N_HMM_STATES,
     HMM_AVAILABLE,
+    HMM_MIN_OBS,
 )
 from adan_trading_bot.environment.reward_calculator import symlog
 
@@ -184,14 +185,16 @@ class TestHMMRegime:
 
     @pytest.mark.skipif(not HMM_AVAILABLE, reason="hmmlearn not installed")
     def test_hmm_fits_after_enough_data(self, dbe):
-        """After 30+ observations, HMM should be fitted."""
-        for i in range(40):
+        """The HMM fits once the code-defined minimum is reached."""
+        for i in range(HMM_MIN_OBS):
             dbe.get_regime_probabilities({
                 "close": 100 + i * 0.1,
                 "prev_close": 100 + (i - 1) * 0.1,
                 "volatility": 0.01,
             })
-        assert dbe._hmm_fitted, "HMM should be fitted after 40 observations"
+        assert dbe._hmm_fitted, (
+            f"HMM should be fitted after {HMM_MIN_OBS} observations"
+        )
 
 
 # =====================================================================

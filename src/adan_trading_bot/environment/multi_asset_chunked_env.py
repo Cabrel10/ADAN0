@@ -6011,6 +6011,19 @@ class MultiAssetChunkedEnv(gym.Env):
         return obs
 
 
+    def _hmm_probabilities_for_context(self, probabilities: np.ndarray) -> np.ndarray:
+        """Return HMM posteriors in the context contract order: bull, side, bear."""
+        probs = np.asarray(probabilities, dtype=np.float32)
+        model = getattr(getattr(self, "dbe", None), "_hmm_model", None)
+        fitted = bool(getattr(getattr(self, "dbe", None), "_hmm_fitted", False))
+        if not fitted or model is None or probs.shape != (3,):
+            return probs
+
+        means = np.asarray(model.means_)
+        trend_col = 4 if means.shape[1] >= 5 else 0
+        bear_idx, side_idx, bull_idx = np.argsort(means[:, trend_col])
+        return probs[[bull_idx, side_idx, bear_idx]]
+
     def _build_observation(self) -> Dict[str, np.ndarray]:
         """
         Construit l'observation pour le pas de temps actuel en utilisant le StateBuilder.
@@ -6033,6 +6046,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 try:
                     market_data = self._get_current_market_data_for_hmm()
                     hmm_probs = self.dbe.get_regime_probabilities(market_data)
+                    hmm_probs = self._hmm_probabilities_for_context(hmm_probs)
                 except Exception:
                     pass  # fallback to uniform prior inside state_builder
 
@@ -6125,10 +6139,12 @@ class MultiAssetChunkedEnv(gym.Env):
                 return result
             for asset, tfs in self.current_data.items():
                 df = None
+                source_timeframe = None
                 for timeframe in ("5m", "1h", "4h"):
                     candidate = tfs.get(timeframe)
                     if candidate is not None and not candidate.empty:
                         df = candidate
+                        source_timeframe = timeframe
                         break
                 if df is None:
                     continue
@@ -6136,6 +6152,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 if col not in df.columns:
                     continue
                 safe_idx = min(idx, len(df) - 1)
+                chunk_index = int(getattr(self, "current_chunk_idx", 0))
+                result["source_timeframe"] = source_timeframe
+                result["observation_id"] = f"{chunk_index}:{asset}:{source_timeframe}:{safe_idx}"
                 close = float(df[col].iloc[safe_idx])
                 prev_close = float(df[col].iloc[safe_idx - 1]) if safe_idx > 0 else close
                 result["close"] = close

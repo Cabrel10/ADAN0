@@ -8,7 +8,9 @@ ROOT="${ROOT:-/home/ubuntu/webapp/MORNINGSTAR/ADAN0}"
 PY="${PY:-$ROOT/../miniconda3/envs/trading_env/bin/python}"
 RUNTIME_DIR="${RUNTIME_DIR:-$ROOT/logs/training/500k_runtime}"
 CURRENT_PID="${CURRENT_PID:-$RUNTIME_DIR/current.pid}"
-CURRENT_MANIFEST="${CURRENT_MANIFEST:-$RUNTIME_DIR/current_manifest.json}"
+# V26 current_manifest.json is a protected historical artifact. V27 writes its
+# own live pointer and never overwrites the V26 manifest.
+CURRENT_MANIFEST="${CURRENT_MANIFEST:-$RUNTIME_DIR/current_v27_manifest.json}"
 STEPS="${STEPS:-500000}"
 DRY_RUN=0
 MONITOR_PID=""
@@ -134,7 +136,7 @@ if [[ -f "$CURRENT_PID" ]]; then
     fi
 fi
 
-RUN_ID="v26_mtm_anchor_$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_ID="v27_hmm_semantic_$(date -u +%Y%m%dT%H%M%SZ)"
 LOG="$ROOT/logs/training/adan_500k_${RUN_ID}.log"
 TRACE="$ROOT/logs/action_pipeline/adan_500k_${RUN_ID}_w{worker_id}.jsonl"
 ACTIONDIM="$ROOT/logs/training/actiondim_500k_${RUN_ID}.csv"
@@ -173,6 +175,8 @@ ADAN_COLLAPSE_BREAKER=1
 ADAN_DIAG_EVERY=512
 ADAN_REWARD_TELEM=1
 ADAN_SAVE_SCALERS=0
+ADAN_ARENA_COLLECT=1
+ADAN_DISABLE_EV_FEE_GATE=0
 log=$LOG
 trace=$TRACE
 actiondim=$ACTIONDIM
@@ -198,7 +202,7 @@ export ADAN_TRAINING_SILENT=1 ADAN_PIPELINE_TRACE_PATH="$TRACE"
 export ADAN_ACTIONDIM=1 ADAN_ACTIONDIM_CSV="$ACTIONDIM" ADAN_ACTIONDIM_EVERY=1
 export ADAN_DIAG_COLLAPSE=1 ADAN_DIAG_CSV="$DIAG" ADAN_DIAG_EVERY=512
 export ADAN_REWARD_TELEM=1 ADAN_REWARD_TELEM_EVERY=100 ADAN_REWARD_TELEM_CSV="$REWARD_TELEM"
-export ADAN_SAVE_SCALERS=0
+export ADAN_SAVE_SCALERS=0 ADAN_ARENA_COLLECT=1 ADAN_DISABLE_EV_FEE_GATE=0
 
 nohup "${COMMAND[@]}" >"$LOG" 2>&1 &
 TRAIN_PID=$!
@@ -220,13 +224,14 @@ manifest = {
     "mode": "sandbox",
     "profile": "scalper",
     "requested_timesteps": int(os.environ["STEPS"]),
-    "correction_basis": "V16 validated MTM reward plus loss-level L2 action anchor",
+    "correction_basis": "V27 semantic HMM posteriors plus validated V16 MTM anchor baseline",
     "exploration": {"use_sde": False, "distribution": "DiagGaussian", "log_std_init": -1.0, "ent_coef": 0.05},
     "ppo": {"class": "WorldModelPPO", "n_steps": 512, "n_epochs": 4, "checkpoint_freq": 10000},
     "reward": {"mtm_enabled": True, "l2_anchor_lambda": 0.05, "aux_loss_coef": 0.0},
     "critic_breaker": {"enabled": True, "ev_min": -0.2, "windows": 10, "value_loss_max": 1000000},
     "collapse_breaker": {"enabled": True},
-    "diagnostics": {"every": 512, "reward_telemetry_every": 100},
+    "diagnostics": {"every": 512, "reward_telemetry_every": 100, "arena_collect": True},
+    "hmm": {"states": 3, "min_obs": 60, "window": 500, "semantic_order": ["bull", "sideways", "bear"]},
     "scalers": {"persisted": True, "refit_allowed": False, "save_at_shutdown": False},
     "paths": {
         "log": os.environ["LOG"],
@@ -240,7 +245,7 @@ manifest = {
 }
 serialized = json.dumps(manifest, indent=2) + "\n"
 Path(os.environ["MANIFEST"]).write_text(serialized, encoding="utf-8")
-Path("logs/training/500k_runtime/current_manifest.json").write_text(serialized, encoding="utf-8")
+Path(os.environ["CURRENT_MANIFEST"]).write_text(serialized, encoding="utf-8")
 PYMANIFEST
 
 sleep 5
