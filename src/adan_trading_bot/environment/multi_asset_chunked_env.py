@@ -29,6 +29,7 @@ from ..common.utils import get_logger
 from .action_routing import (
     route_action_by_state as _route_action_by_state,
     resolve_agent_close_gate as _resolve_agent_close_gate,
+    resolve_ev_fee_gate as _resolve_ev_fee_gate,
 )
 from ..common.logging_utils import create_smart_logger, configure_smart_logger
 
@@ -6123,8 +6124,13 @@ class MultiAssetChunkedEnv(gym.Env):
             if self.current_data is None:
                 return result
             for asset, tfs in self.current_data.items():
-                df = tfs.get("5m") or tfs.get("1h") or tfs.get("4h")
-                if df is None or df.empty:
+                df = None
+                for timeframe in ("5m", "1h", "4h"):
+                    candidate = tfs.get(timeframe)
+                    if candidate is not None and not candidate.empty:
+                        df = candidate
+                        break
+                if df is None:
                     continue
                 col = "close" if "close" in df.columns else "CLOSE"
                 if col not in df.columns:
@@ -9422,7 +9428,21 @@ class MultiAssetChunkedEnv(gym.Env):
                 else:
                     p_min_required = 0.99  # no SL = reject
 
-                if p_hmm <= p_min_required:
+                _ev_gate_disabled = os.environ.get(
+                    "ADAN_DISABLE_EV_FEE_GATE", "0"
+                ).strip().lower() in {"1", "true", "yes", "on"}
+                _ev_gate_blocked, _ev_gate_reason = _resolve_ev_fee_gate(
+                    p_hmm=p_hmm,
+                    p_min_required=p_min_required,
+                    disabled=_ev_gate_disabled,
+                )
+                if _ev_gate_reason == "disabled_advisory":
+                    self._trace_action_pipeline(
+                        "gate_advisory", asset, 1, 1, "negative_ev_fee_gate_bypassed",
+                        p_hmm=p_hmm, p_min_required=p_min_required,
+                        rr=tp_pct / sl_pct if sl_pct > 0 else 0.0,
+                    )
+                if _ev_gate_blocked:
                     self.invalid_trade_attempts += 1
                     self.rejection_reasons["fee_gate"] += 1
                     self._step_invalid_penalty += -_inv_pen_weight

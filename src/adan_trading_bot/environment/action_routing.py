@@ -106,6 +106,25 @@ def route_action_by_state(
     return HOLD
 
 
+def resolve_ev_fee_gate(
+    *,
+    p_hmm: float,
+    p_min_required: float,
+    disabled: bool,
+) -> tuple[bool, str]:
+    """Resolve the optional EV fee gate without hiding a bypass.
+
+    The environment flag is intended for controlled diagnostics only. When it
+    is active, a negative gate comparison remains observable as advisory
+    telemetry but cannot suppress the policy's BUY action.
+    """
+    if float(p_hmm) > float(p_min_required):
+        return False, "accepted"
+    if disabled:
+        return False, "disabled_advisory"
+    return True, "negative_ev_fee_gate"
+
+
 def resolve_agent_close_gate(
     *,
     exit_authority: bool,
