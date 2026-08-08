@@ -18,6 +18,7 @@ from adan_trading_bot.environment.action_routing import (
     HOLD,
     SELL,
     resolve_agent_close_gate,
+    resolve_ev_fee_gate,
     route_action_by_state,
 )
 from adan_trading_bot.environment.multi_asset_chunked_env import MultiAssetChunkedEnv
@@ -38,6 +39,101 @@ def test_negative_action_while_flat_is_routing_hold_not_deadband() -> None:
     assert abs(-0.67) > 0.05
     assert route_action_by_state(-0.67, in_position=False, threshold=0.05) == HOLD
     assert route_action_by_state(-0.67, in_position=True, threshold=0.05) == SELL
+
+
+def test_ev_fee_gate_blocks_negative_ev_by_default() -> None:
+    assert resolve_ev_fee_gate(
+        p_hmm=1.0 / 3.0,
+        p_min_required=0.38,
+        disabled=False,
+    ) == (True, "negative_ev_fee_gate")
+
+
+def test_ev_fee_gate_flag_bypasses_as_explicit_advisory() -> None:
+    assert resolve_ev_fee_gate(
+        p_hmm=1.0 / 3.0,
+        p_min_required=0.38,
+        disabled=True,
+    ) == (False, "disabled_advisory")
+
+
+def test_ev_fee_gate_accepts_positive_ev_without_bypass() -> None:
+    assert resolve_ev_fee_gate(
+        p_hmm=0.60,
+        p_min_required=0.38,
+        disabled=False,
+    ) == (False, "accepted")
+
+
+@pytest.mark.parametrize(
+    ("five_minute", "expected_close"),
+    [
+        (pd.DataFrame({"close": [100.0, 101.0]}), 101.0),
+        (pd.DataFrame(), 201.0),
+    ],
+)
+def test_hmm_market_data_selects_dataframe_without_boolean_evaluation(
+    five_minute: pd.DataFrame,
+    expected_close: float,
+) -> None:
+    env = MultiAssetChunkedEnv.__new__(MultiAssetChunkedEnv)
+    env.step_in_chunk = 1
+    env.current_data = {
+        "BTCUSDT": {
+            "5m": five_minute,
+            "1h": pd.DataFrame({"close": [200.0, 201.0]}),
+            "4h": pd.DataFrame({"close": [300.0, 301.0]}),
+        }
+    }
+
+    market_data = env._get_current_market_data_for_hmm()
+
+    assert market_data["close"] == pytest.approx(expected_close)
+    assert market_data["prev_close"] == pytest.approx(expected_close - 1.0)
+
+
+def _hmm_market_frame(first_close: float) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "close": [first_close, first_close + 1.0],
+            "volume": [10.0, 12.0],
+        }
+    )
+
+
+def _hmm_market_snapshot(timeframes: dict[str, object]) -> dict[str, float]:
+    env = object.__new__(MultiAssetChunkedEnv)
+    env.step_in_chunk = 1
+    env.current_data = {"BTCUSDT": timeframes}
+    return env._get_current_market_data_for_hmm()
+
+
+def test_hmm_market_data_uses_first_non_empty_timeframe_without_dataframe_truthiness() -> None:
+    empty = pd.DataFrame()
+    frame_5m = _hmm_market_frame(500.0)
+    frame_1h = _hmm_market_frame(100.0)
+    frame_4h = _hmm_market_frame(40.0)
+
+    assert _hmm_market_snapshot(
+        {"5m": frame_5m, "1h": frame_1h, "4h": frame_4h}
+    )["close"] == pytest.approx(501.0)
+    assert _hmm_market_snapshot(
+        {"5m": empty, "1h": frame_1h, "4h": frame_4h}
+    )["close"] == pytest.approx(101.0)
+    assert _hmm_market_snapshot(
+        {"5m": None, "1h": empty, "4h": frame_4h}
+    )["close"] == pytest.approx(41.0)
+
+
+def test_hmm_market_data_returns_safe_defaults_without_usable_timeframe() -> None:
+    snapshot = _hmm_market_snapshot(
+        {"5m": None, "1h": pd.DataFrame(), "4h": pd.DataFrame()}
+    )
+
+    assert snapshot["close"] == 0.0
+    assert snapshot["prev_close"] == 0.0
+    assert snapshot["rsi_norm"] == 0.5
+    assert snapshot["volume_ratio_20"] == 1.0
 
 
 def test_v20_exit_authority_cannot_override_budget_quota_or_gap() -> None:
