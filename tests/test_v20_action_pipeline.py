@@ -136,6 +136,36 @@ def test_hmm_market_data_returns_safe_defaults_without_usable_timeframe() -> Non
     assert snapshot["volume_ratio_20"] == 1.0
 
 
+def test_hmm_posteriors_are_mapped_to_context_bull_side_bear_order() -> None:
+    env = object.__new__(MultiAssetChunkedEnv)
+    env.dbe = SimpleNamespace(
+        _hmm_fitted=True,
+        _hmm_model=SimpleNamespace(
+            means_=np.asarray(
+                [
+                    [0.0, 0.0, 0.0, 0.0, -2.0],
+                    [0.0, 0.0, 0.0, 0.0, 3.0],
+                    [0.0, 0.0, 0.0, 0.0, 0.5],
+                ]
+            )
+        ),
+    )
+
+    mapped = env._hmm_probabilities_for_context(
+        np.asarray([0.70, 0.10, 0.20], dtype=np.float32)
+    )
+
+    assert mapped == pytest.approx([0.10, 0.20, 0.70])
+
+
+def test_hmm_warmup_prior_keeps_existing_probability_order() -> None:
+    env = object.__new__(MultiAssetChunkedEnv)
+    env.dbe = SimpleNamespace(_hmm_fitted=False, _hmm_model=None)
+    prior = np.asarray([1 / 3, 1 / 3, 1 / 3], dtype=np.float32)
+
+    assert env._hmm_probabilities_for_context(prior) == pytest.approx(prior)
+
+
 def test_v20_exit_authority_cannot_override_budget_quota_or_gap() -> None:
     """A policy exit must not silently bypass the anti-churn hard gate."""
     assert resolve_agent_close_gate(
