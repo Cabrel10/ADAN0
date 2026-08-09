@@ -355,6 +355,15 @@ class DynamicBehaviorEngine:
             self._hmm_last_observation_id = None
             self._hmm_state_order = None  # semantic indices: [bull, sideways, bear]
             self._hmm_obs_buffer: list = []  # list of [log_return, atr_pct, rsi_norm, vol_ratio]
+            # V28 FIX: monotone observation counters for refit scheduling.
+            # The previous condition `len(buffer) % REFIT_INTERVAL == 0` could
+            # never trigger again once the rolling buffer was capped at
+            # _hmm_window (500 % 120 == 20 forever): the model froze on the
+            # first ~480 observations of a chunk for the rest of the run,
+            # pinning posteriors (e.g. bear=99.7%) and driving p_hmm to the
+            # 0.01 clamp, which starved the EV gate and collapsed the critic.
+            self._hmm_total_obs = 0       # total observations ever ingested
+            self._hmm_last_refit_obs = 0  # value of _hmm_total_obs at last fit attempt
             if HMM_AVAILABLE:
                 # Use auto-init (k-means) for means/covars — avoids PD matrix issues
                 # Multiple random restarts are done in _update_hmm by creating fresh models
@@ -386,7 +395,21 @@ class DynamicBehaviorEngine:
             np.ndarray of shape (3,) summing to 1.0.
         """
         self._init_hmm()
+        # V28 FIX (data root cause): winsorize raw features AT INGESTION.
+        # The 5m parquet contains stitching discontinuities every ~200 rows
+        # (single-bar |log_return| up to 9.7% — impossible for BTC 5m, whose
+        # real 99.9th percentile is ~0.86%). After RobustScaler (IQR ~1e-3)
+        # these artifacts reach |scaled| ~84 and capture an entire Gaussian
+        # state (state means at ±37..62 in scaled space), pinning the bull
+        # posterior at the 0.01 clamp 58% of the time and starving the EV
+        # gate. Clipping here protects BOTH fit and posterior, and preserves
+        # >99.9% of genuine market moves.
+        log_return = float(np.clip(log_return, -0.02, 0.02))   # ±2% per 5m bar
+        atr_pct = float(np.clip(atr_pct, 0.0, 0.05))           # ATR <= 5% of price
+        rsi_norm = float(np.clip(rsi_norm, 0.0, 1.0))
+        volume_ratio = float(np.clip(volume_ratio, 0.0, 10.0))
         self._hmm_obs_buffer.append([log_return, atr_pct, rsi_norm, volume_ratio])
+        self._hmm_total_obs += 1  # V28 FIX: monotone counter drives refit schedule
 
         # Keep a rolling window
         if len(self._hmm_obs_buffer) > self._hmm_window:
@@ -456,9 +479,16 @@ class DynamicBehaviorEngine:
                 _ridge_eps = 1e-4 * np.trace(robust_cov) / robust_cov.shape[0]
                 robust_cov = robust_cov + _ridge_eps * np.eye(robust_cov.shape[0])
 
-            # C10: Sliding-window refit every HMM_REFIT_INTERVAL observations
+            # C10: Sliding-window refit every HMM_REFIT_INTERVAL observations.
+            # V28 FIX: schedule on the MONOTONE total-observation counter, not
+            # on len(buffer) which saturates at _hmm_window and made the modulo
+            # condition unreachable (buffer capped at 500; 500 % 120 == 20).
             _REFIT_INTERVAL = min(120, self._hmm_window)  # refit every ~10h on 5m
-            if not self._hmm_fitted or len(self._hmm_obs_buffer) % _REFIT_INTERVAL == 0:
+            _need_refit = (
+                not self._hmm_fitted
+                or (self._hmm_total_obs - self._hmm_last_refit_obs) >= _REFIT_INTERVAL
+            )
+            if _need_refit:
                 n_init = getattr(self, '_hmm_n_init', 10)
                 best_score = -np.inf
                 best_model = None
@@ -548,6 +578,9 @@ class DynamicBehaviorEngine:
                     self._hmm_fitted = True
                     self._hmm_fit_count += 1
                     self._hmm_last_fallback_reason = None
+                    # V28 FIX: advance the refit watermark so the next fit is
+                    # scheduled _REFIT_INTERVAL NEW observations from now.
+                    self._hmm_last_refit_obs = self._hmm_total_obs
                     # Log regime separation quality
                     try:
                         n_feat = self._hmm_model.means_.shape[1]
