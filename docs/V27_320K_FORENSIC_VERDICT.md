@@ -131,3 +131,36 @@ Hypothèse falsifiable associée (à tester, pas à appliquer) :
 Toute modification ultérieure devra : (1) cibler uniquement le mécanisme prouvé fautif, (2) être paramétrée dans `config/config.yaml` (constantes existantes : `invalid_trade_penalty_weight`, `capital_tier_rewards`, etc.), (3) passer un smoke 2048 avec matrice `état × action` assainie, (4) passer les 4 portes avant tout run 500k.
 
 **V27-320k reste la référence immuable.**
+
+---
+
+## Annexe — Simulation contrefactuelle A–F (exécutée le 2026-08-10)
+
+Batterie `scripts/backtest/counterfactual_320k.py`, 6 bras × 3 000 steps, split val,
+checkpoint 320k gelé, résultats dans `logs/validation/counterfactual_320k/`.
+
+| Bras | Equity | Return | Trades | Reward |
+|---|---:|---:|---:|---:|
+| A — politique réelle | 20.50 | 0.00% | 0 | −917.5913 |
+| B — HOLD forcé | 20.50 | 0.00% | 0 | −917.5913 |
+| C — BUY forcé | 16.51 | −19.47% | 59 | −937.1939 |
+| D — SELL forcé | 20.50 | 0.00% | 0 | −917.5913 |
+| E — politique sans frais | 20.50 | 0.00% | 0 | −917.5913 |
+| F — A + pénalité −0.05/SELL stérile | 20.50 | 0.00% | 0 | −1 067.5913 |
+
+Faits tranchés :
+
+1. A ≡ B ≡ D ≡ E au centième (reward −917.5912693738937 identique) : la politique
+   320k ne produit hors-échantillon QUE des SELL stériles — 3 000/3 000 steps
+   (bras F). Le collapse est total et déterministe ; SELL = HOLD déguisé.
+2. SELL ne produit aucun edge (equity figée, identique au HOLD forcé).
+   Réponse définitive : action la moins dangereuse, pas rentable.
+3. BUY forcé perd −19.47 % sur cette fenêtre (59 trades, 0 gagnant) — avec les
+   size/SL/TP du modèle collapsé ; attribution marché vs politique non isolable.
+4. Bras F : la pénalité couche-B proposée (−0.05/SELL stérile) aurait coûté
+   −150 de reward sur ce comportement — première quantification directe de
+   l'effet dissuasif attendu de la correction.
+
+Décision inchangée : branche « collapse structurel + reward shaping prouvé ».
+Correction ciblée autorisée à l'étude : pénalité SELL-flat + dé-pénalisation
+BUY-flat, constantes dans config/config.yaml, puis smoke 2048 from scratch.
