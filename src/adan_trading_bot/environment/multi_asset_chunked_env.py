@@ -8645,8 +8645,30 @@ class MultiAssetChunkedEnv(gym.Env):
                     # reward_shaping.behavior_penalties (config.yaml),
                     # calibrated on measured 320k |R_base| (=0.2312).
                     if _bp_enabled:
+                        # ── CAUSAL GUARD (V28-a) ──────────────────────────
+                        # SL/TP/MaxDuration close in the PRE-EXECUTE phase of
+                        # THIS step (market-driven, before the agent acts).
+                        # The portfolio is already flat when routing runs, so
+                        # a SELL intent formed WHILE the position was open
+                        # (a legitimate exit decision) would be misread as
+                        # sterile "sell_while_flat". Penalising it would
+                        # re-introduce the exact bias we are fixing (teaching
+                        # "SELL is dangerous" on a valid exit). Only MARKET
+                        # closes (SL/TP/MaxDuration) qualify — never AGENT_CLOSE.
+                        _mkt_closed_this_step = False
+                        if not _in_pos_route:
+                            try:
+                                for _rcpt in getattr(self, "_step_closed_receipts", []):
+                                    if not isinstance(_rcpt, dict):
+                                        continue
+                                    _rs = str(_rcpt.get("reason", _rcpt.get("close_reason", ""))).upper()
+                                    if any(k in _rs for k in ("SL", "TP", "STOP", "TAKE", "MAXDURATION", "MAX_DURATION", "DRAWDOWN")):
+                                        _mkt_closed_this_step = True
+                                        break
+                            except Exception:
+                                _mkt_closed_this_step = False
                         _bp_val = _bp_sell_flat if not _in_pos_route else _bp_buy_open
-                        if _bp_val != 0.0:
+                        if _bp_val != 0.0 and not _mkt_closed_this_step:
                             self._step_invalid_penalty += _bp_val
                             self._behavior_penalty_step += _bp_val
                             _bp_key = "sell_while_flat" if not _in_pos_route else "buy_while_open"
