@@ -1420,6 +1420,30 @@ reward_shaping:
   # steps, laissant une fenêtre de biais BUY. À 15k le frein est plein bien avant
   # 128k. On ne touche NI aux frais NI au reward, juste à la rampe temporelle.
   sterile_warmup_steps_self_caused: 15000
+  # ──────────────────────────────────────────────────────────────────
+  # V28 REWARD FIX (2026-08-10) — pénalités d'invalidité ADDITIVES.
+  #   Architecture: R = R_eco + R_action + R_invalid  (ADDITIF, jamais
+  #   multiplicatif — l'invalidité est une contrainte comportementale,
+  #   PAS une deuxième fonction économique).
+  #   Calibration sur valeurs RÉELLES mesurées du run 320k
+  #   (adan_500k_v27_hmm_semantic_20260809T123040Z) :
+  #     |R_base|_ref = mean |pnl_base| sur les 112 événements de clôture
+  #     non-nuls = 0.2312  ->  bande prescrite [1.0x, 1.5x] = [0.23, 0.35]
+  #   Appliqué au call-site du routing (là où l'intention brute a0 et
+  #   l'état du portefeuille sont simultanément visibles, AVANT que
+  #   route_action_by_state ne neutralise l'intention en HOLD).
+  #   Jamais hardcodé dans l'env — modifier UNIQUEMENT ici.
+  behavior_penalties:
+    enabled: true
+    # SELL intent alors que FLAT (stérile = HOLD déguisé; mode de collapse
+    # V27 prouvé: 3000/3000 SELL stériles sur le bras F contrefactuel).
+    sell_while_flat: -0.28   # 1.21 x |R_base|_ref (0.2312), milieu de bande
+    # BUY intent alors qu'une position est OUVERTE (renforcement interdit).
+    buy_while_open: -0.28    # symétrique: même classe d'invalidité
+    # BUY ouvrant (FLAT -> open): VALIDE. Le coût d'engagement du capital
+    # est porté par le PnL ensuite, JAMAIS par une pénalité d'entrée
+    # ("BUY-flat ne doit pas être puni simplement parce qu'il ouvre un risque").
+    buy_flat_opening: 0.0
   logging:
     disable_existing_loggers: false
     formatters:

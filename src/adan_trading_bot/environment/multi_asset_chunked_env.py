@@ -744,6 +744,11 @@ class MultiAssetChunkedEnv(gym.Env):
         self._invalid_window = _deque_v5(maxlen=200)  # 1=invalid step,0=legal
         # Accumulate invalid_trade_penalty per step (reset each step)
         self._step_invalid_penalty = 0.0
+        # V28 (2026-08-10): additive invalid-intent penalty bookkeeping.
+        # Magnitudes are NEVER hardcoded here - they come from
+        # reward_shaping.behavior_penalties in config.yaml, resolved per step.
+        self._behavior_penalty_step = 0.0
+        self._behavior_penalty_counts = {"sell_while_flat": 0, "buy_while_open": 0}
         # Track requested vs executed action per step
         self._last_discrete_action_requested = 0
         self._last_discrete_action = 0
@@ -7524,6 +7529,13 @@ class MultiAssetChunkedEnv(gym.Env):
             "latent_pnl":       latent_pnl_contrib,
             "saturation_penalty": saturation_penalty,
             "action_anchor_penalty": action_anchor_penalty,
+            # V28: additive invalid-intent penalty applied THIS step (subset
+            # of behavior_penalty, isolated for telemetry) + cumulative counts
+            "behavior_invalid_penalty": float(getattr(self, "_behavior_penalty_step", 0.0)),
+            "behavior_sell_while_flat_count": int(
+                getattr(self, "_behavior_penalty_counts", {}).get("sell_while_flat", 0)),
+            "behavior_buy_while_open_count": int(
+                getattr(self, "_behavior_penalty_counts", {}).get("buy_while_open", 0)),
         }
 
         # ──────────────────────────────────────────────────────────────────
@@ -7577,6 +7589,7 @@ class MultiAssetChunkedEnv(gym.Env):
                                       "future_contrib,promotion_bonus,demotion_penalty,closure_bonus,"
                                       "drawdown_penalty,symmetry_penalty,action_entropy_penalty,"
                                       "saturation_penalty,holding_cost,smart_flat,time_decay,"
+                                      "behavior_invalid_penalty,"
                                       "position_state,action,a0,portfolio\n")
                         _fh.write(
                             f"{int(self.current_step)},{int(getattr(self,'worker_id',0))},"
@@ -7585,7 +7598,9 @@ class MultiAssetChunkedEnv(gym.Env):
                             f"{demotion_penalty:.6f},{closure_bonus:.6f},{drawdown_penalty:.6f},"
                             f"{symmetry_penalty:.6f},{action_entropy_penalty:.6f},"
                             f"{saturation_penalty:.6f},{holding_cost:.6f},{smart_flat_reward:.6f},"
-                            f"{time_decay_cost:.6f},{_pos_state},{_act},{_a0:.4f},{_pv:.4f}\n"
+                            f"{time_decay_cost:.6f},"
+                            f"{float(getattr(self, '_behavior_penalty_step', 0.0)):.6f},"
+                            f"{_pos_state},{_act},{_a0:.4f},{_pv:.4f}\n"
                         )
         except Exception:
             pass
@@ -8303,6 +8318,15 @@ class MultiAssetChunkedEnv(gym.Env):
 
         # Reset per-step penalty accumulator
         self._step_invalid_penalty = 0.0
+        # V28: reset per-step additive invalid-intent penalty + resolve config
+        self._behavior_penalty_step = 0.0
+        _bp_cfg = (self.config.get("reward_shaping", {}) or {}).get(
+            "behavior_penalties", {}) or {}
+        _bp_enabled = bool(_bp_cfg.get("enabled", False))
+        _bp_sell_flat = float(_bp_cfg.get("sell_while_flat", 0.0))
+        _bp_buy_open = float(_bp_cfg.get("buy_while_open", 0.0))
+        # buy_flat_opening intentionally unused: a FLAT->open BUY is VALID,
+        # its cost is carried by the PnL, never by an entry penalty.
 
         # C6: Gate rejection penalty = 0.0 (neutral — no trajectory, no signal)
         # Only actions that are actually EXECUTED can generate non-zero reward.
@@ -8613,6 +8637,22 @@ class MultiAssetChunkedEnv(gym.Env):
                 else:
                     _route_stage = "routing_reject"
                     _route_reason = "sell_while_flat" if not _in_pos_route else "buy_while_long"
+                    # V28 REWARD FIX (2026-08-10): ADDITIVE invalid-intent
+                    # penalty. Raw intent (a0 sign) and portfolio state are
+                    # visible HERE, before route_action_by_state neutralises
+                    # the intent into HOLD. R = R_eco + R_action + R_invalid
+                    # (additive, never multiplicative). Magnitudes from
+                    # reward_shaping.behavior_penalties (config.yaml),
+                    # calibrated on measured 320k |R_base| (=0.2312).
+                    if _bp_enabled:
+                        _bp_val = _bp_sell_flat if not _in_pos_route else _bp_buy_open
+                        if _bp_val != 0.0:
+                            self._step_invalid_penalty += _bp_val
+                            self._behavior_penalty_step += _bp_val
+                            _bp_key = "sell_while_flat" if not _in_pos_route else "buy_while_open"
+                            self._behavior_penalty_counts[_bp_key] = (
+                                self._behavior_penalty_counts.get(_bp_key, 0) + 1
+                            )
                 self._trace_action_pipeline(
                     _route_stage, asset, main_decision, 0, _route_reason,
                     in_position=_in_pos_route, slot_available=_slot_available,
