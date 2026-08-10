@@ -136,7 +136,7 @@ if [[ -f "$CURRENT_PID" ]]; then
     fi
 fi
 
-RUN_ID="v27_hmm_semantic_$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_ID="${RUN_ID_PREFIX:-v27_hmm_semantic}_$(date -u +%Y%m%dT%H%M%SZ)"
 LOG="$ROOT/logs/training/adan_500k_${RUN_ID}.log"
 TRACE="$ROOT/logs/action_pipeline/adan_500k_${RUN_ID}_w{worker_id}.jsonl"
 ACTIONDIM="$ROOT/logs/training/actiondim_500k_${RUN_ID}.csv"
