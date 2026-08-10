@@ -7567,9 +7567,26 @@ class MultiAssetChunkedEnv(gym.Env):
                         _a0 = float(action[0]) if action is not None and len(action) > 0 else 0.0
                     except Exception:
                         _a0 = 0.0
-                    if _a0 > 0.10:
+                    # V28-b (2026-08-10): label with the SAME thresholds the
+                    # router used (per-TF action_thresholds + optional
+                    # ADAN_SELL_THRESHOLD asymmetric override), NOT a fixed
+                    # 0.10. Smoke-2048 audit showed intents with |a0| in
+                    # [0.05, 0.10] were penalized by the router (correctly)
+                    # but labeled "HOLD" here — 27 phantom HOLD-cell penalties
+                    # that would pollute the post-run state x action matrix.
+                    try:
+                        _tf_now = str(getattr(self, "current_timeframe_for_trade", "5m") or "5m")
+                        _thr_cfg = (self.config.get("environment", {}) or {}).get("action_thresholds", {}) or {}
+                        _buy_thr_lbl = float(_thr_cfg.get(_tf_now, 0.05))
+                        _sell_thr_lbl = _buy_thr_lbl
+                        _st_env = os.environ.get("ADAN_SELL_THRESHOLD")
+                        if _st_env is not None:
+                            _sell_thr_lbl = abs(float(_st_env))
+                    except Exception:
+                        _buy_thr_lbl = _sell_thr_lbl = 0.05
+                    if _a0 > _buy_thr_lbl:
                         _act = "BUY"
-                    elif _a0 < -0.10:
+                    elif _a0 < -abs(_sell_thr_lbl):
                         _act = "SELL"
                     else:
                         _act = "HOLD"
