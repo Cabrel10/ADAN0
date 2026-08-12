@@ -8715,36 +8715,32 @@ class MultiAssetChunkedEnv(gym.Env):
             is_open = position and position.is_open
 
             # ---- Target-Weight Sizing ----
+            # V29 PATCH 4 (2026-08-12): le sizing est RENDU A L'AGENT.
+            # Avant : cette valeur etait ecrasee plus bas par LINEAR_EXPO x
+            # bull_prob_HMM (anomalie C du rapport PHASE 2) -> le canal size
+            # de la politique n'avait aucun gradient utile.
+            # Desormais target_exposure_pct reste pilote par size_raw et
+            # HMM ne sert plus qu'a l'EV gate (p_hmm).
             normalized_size = (size_raw + 1.0) / 2.0  # 0..1
+            normalized_size = max(0.0, min(1.0, normalized_size))
             target_exposure_pct = min_exp + normalized_size * (max_exp - min_exp)
-
             # ==============================================================
-            # EXPOSITION LINÉAIRE PAR PALIER (remplace Kelly)
-            # exposure = exp_min + (exp_max - exp_min) * confidence_hmm
-            # confidence = probabilité bull issue du HMM (ctx[3])
-            # Reste STRICTEMENT dans les bornes du palier.
+            # HMM confidence : lecture SEULE pour l'EV gate (p_hmm).
+            # N'ecrase PLUS le sizing (reste strictement dans les bornes
+            # du palier par construction ci-dessus).
             # ==============================================================
             p_hmm = 0.5  # used later by EV gate
             try:
-                # Bornes du palier
-                exp_limits = tier.get("exposure_range", [70, 90])
-                exp_min_pct = float(exp_limits[0]) / 100.0
-                exp_max_pct = float(exp_limits[1]) / 100.0
-
-                # Confiance HMM (bull probability)
-                confidence = 0.5
+                # Confiance HMM (bull probability) - advisory EV gate only
                 obs = getattr(self, '_last_observation', None)
                 if obs is not None and isinstance(obs, dict):
                     ctx = obs.get('context_vector')
                     if ctx is not None and hasattr(ctx, '__len__') and len(ctx) >= 6:
                         bull_prob = float(ctx[3])
-                        confidence = max(0.01, min(0.99, bull_prob))
-                        p_hmm = confidence  # save for EV gate
-
-                # Exposition linéaire garantie dans [exp_min, exp_max]
-                target_exposure_pct = exp_min_pct + (exp_max_pct - exp_min_pct) * confidence
-
-                # Montant à investir (respecte le minimum de 11$)
+                        p_hmm = max(0.01, min(0.99, bull_prob))  # save for EV gate
+                # Exposition garantie dans [min_exp, max_exp] (bornees palier)
+                target_exposure_pct = max(min_exp, min(max_exp, target_exposure_pct))
+                # Montant a investir (plancher min_order)
                 notional_usd = max(min_order_value, capital * target_exposure_pct)
 
                 # ---- Anti-spam HOLD (MOVED UP) ----
@@ -9103,7 +9099,9 @@ class MultiAssetChunkedEnv(gym.Env):
                         pass
                     _exposure = _pos_val / capital if capital > 0 else 0
 
-                    if _exposure < 0.05:
+                    # V29 PATCH3: 0.05 -> 0.02 — le plancher 5% bloquait
+                    # des SELL legitimes (hysteresis ~70% des rejets V28).
+                    if _exposure < 0.02:
                         # Position trop petite pour valoir les frais
                         discrete_action = 0
                         self.rejection_reasons["hysteresis"] += 1
@@ -9139,7 +9137,8 @@ class MultiAssetChunkedEnv(gym.Env):
                         # below break-even), capped at 2%. Premature exits are now
                         # judged by the Arena (Scenario B), not physically walled.
                         import os as _os_v17
-                        _barrier_mult = float(_os_v17.environ.get("ADAN_BARRIER_MULT", "1.0"))
+                        # V29 PATCH3: defaut 1.0 -> 0.75 (reduit hysteresis, gate illegal<50%)
+                        _barrier_mult = float(_os_v17.environ.get("ADAN_BARRIER_MULT", "0.75"))
                         _atr_pct_bar = 0.0
                         try:
                             _atr_pct_bar = float(self._get_atr_pct_for_asset(asset)) or 0.0
