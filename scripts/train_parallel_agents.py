@@ -1352,10 +1352,16 @@ class ADAN_PBT_Worker(_TrainableBase):
         self._callbacks.append(metrics_monitor)
 
         if PpoStdSafetyCallback is not None:
+            # V29 PATCH 1 (2026-08-12): log_std borne dans [-2, 0] au lieu de
+            # [-5, +2]. Le clamp precedent autorisait sigma jusqu'a exp(2)=7.39
+            # -> rupture mesuree V28 a step 90112 (a0_std median 0.62 -> 8.64,
+            # x14, direction_sat_frac 1.00). Avec [-2,0], sigma <= 1.0 par
+            # construction (gate smoke 2048: a0_std < 1.0). Overridable via
+            # ADAN_LOG_STD_MIN / ADAN_LOG_STD_MAX pour diagnostics.
             ppo_safety = PpoStdSafetyCallback(
-                min_log_std=-5.0,
-                max_log_std=2.0,
-                std_warn_threshold=100.0,
+                min_log_std=float(os.environ.get("ADAN_LOG_STD_MIN", "-2.0")),
+                max_log_std=float(os.environ.get("ADAN_LOG_STD_MAX", "0.0")),
+                std_warn_threshold=1.0,
                 verbose=0,
             )
             self._callbacks.append(ppo_safety)

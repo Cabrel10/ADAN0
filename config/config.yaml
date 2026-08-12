@@ -665,21 +665,8 @@ environment:
   # (20 candles) => 95% of SELLs rejected. At 0.40% R/T a ~2-candle BTC move
   # nets a profit and the dynamic barrier (Fix A) becomes crossable.
   commission: 0.0020
-  features_config:
-    indicators:
-    - rsi_14
-    - macd_hist
-    - atr_14
-    - bb_upper
-    - bb_middle
-    - bb_lower
-    price:
-    - open
-    - high
-    - low
-    - close
-    volume:
-    - volume
+  # V29: environment.features_config SUPPRIME (doublon de
+  # data.features_config, zero consommateur dans src/ — verifie PHASE 1).
   frequency_validation:
     force_trade:
       enabled: false
@@ -733,9 +720,11 @@ environment:
       skip_validation_after_retries: 3
   hard_constraints:
     max_drawdown_pct: 40.0    # C3: aligned with Tier Micro (was 0.25)
-    max_position_size_pct: 0.5
-    max_risk_per_trade_pct: 0.02
-    min_order_value_usdt: 11.0
+    # V29: DEAD CONFIG — aucun consommateur dans src/ (verifie PHASE 1).
+    # Le domaine d'exposition est dicte EXCLUSIVEMENT par capital_tiers.
+    # max_position_size_pct: 0.5
+    # max_risk_per_trade_pct: 0.02
+    min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
     min_position_size_pct: 0.01
     # FINDING #4: HARD caps TIGHTENED to the real BTC wick distribution.
     # These are the AUTHORITATIVE final clamps (applied by PortfolioManager
@@ -865,22 +854,8 @@ environment:
         risk_reward_ratio: 1.5
         trailing_deviation_pct: 0.01
         trailing_enabled: false
-  timeframe_trading_config:
-    1h:
-      action_threshold: 0.02   # Session 9: was 0.08 — see action_thresholds note
-      description: Medium-term trading optimized
-      force_trade_steps: 120
-      min_magnitude: 0.08  # SESSION 15: Increased from 0.05 to filter weak signals
-    4h:
-      action_threshold: 0.03   # Session 9: was 0.10
-      description: Long-term trading enabled
-      force_trade_steps: 240
-      min_magnitude: 0.12  # SESSION 15: Increased from 0.08 to require stronger setups
-    5m:
-      action_threshold: 0.01   # Session 9: was 0.05
-      description: High-frequency trading enabled
-      force_trade_steps: 72
-      min_magnitude: 0.06  # SESSION 15: Increased from 0.03 to avoid micro-trades
+  # V29: timeframe_trading_config SUPPRIME (fantome, zero consommateur —
+  # environment.action_thresholds l.649 est la source de verite).
   trading_mode: backtest
   volatility_handling:
     cache_calculations: true
@@ -1154,7 +1129,7 @@ portfolio:
   default_position_pct: 0.7
   include_portfolio_state: true
   initial_balance: 20.5
-  min_order_value_usdt: 11.0
+  min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
   portfolio_state_features: 20
 preprocessing:
   normalization:
@@ -1237,7 +1212,7 @@ production:
     audit_verdict: PASS
     context_vector_dim: 12
     initial_balance: 20.5
-    min_order_value_usdt: 11.0
+    min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
     tier: Micro Capital
     unit_tests_failed: 0
     unit_tests_passed: 62
@@ -1674,8 +1649,9 @@ trading_rules:
     enabled: true
     window: 50                # fenetre glissante (nb de trades/decisions SL-TP)
     threshold: 0.5            # part de saturation au-dela de laquelle on penalise
-    lambda: 0.10              # poids de la penalite log
-    cap: 0.20                 # plafond absolu de la penalite par step
+    lambda: 0.02              # V29 PATCH2: was 0.10 — dominait le reward
+                              #   (mean -0.1249 = 14x behavior_invalid -0.0087)
+    cap: 0.05                 # V29 PATCH2: was 0.20 — plafond aligne lambda
   duration_tracking:
     # PortfolioManager is the only close authority. Base limits reproduce the
     # effective V19 limits for non-scalper profiles; explicit profile overrides
@@ -1754,7 +1730,7 @@ trading_rules:
   futures_enabled: false
   leverage: 1
   max_position_steps: 144
-  min_order_value_usdt: 11.0
+  min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
   slippage_pct: 0.0005
   stop_loss_pct: 0.02
   take_profit_pct: 0.04
