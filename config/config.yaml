@@ -1888,9 +1888,13 @@ sandbox:
   learning_rate: 0.00008      # DIAGNOSTIC-V6: was 1.5e-4. approx_kl 0.12-0.17 per
                               #   update => step size still too large. Halved again.
   clip_range: 0.12            # DIAGNOSTIC-V6: tighter trust region (was 0.15)
-  target_kl: 0.04             # DIAGNOSTIC-V6: was 0.02. 0.02 tripped early-stop at
-                              #   step 0 (1.5*0.02=0.03 < first-batch KL). 0.04 lets
-                              #   a small update complete before stopping.
+  target_kl: 0.15             # V30: was 0.04 (V29). Autopsie V29: 902/976 updates
+                              #   avortees (92%), 878 au minibatch 0, KL au stop
+                              #   median 0.12 (seuil SB3 1.5x0.04=0.06). Le critic
+                              #   aveugle (EV=0.024) rend les ratios volatils d'ou
+                              #   un KL eleve des le 1er minibatch. 0.15 (seuil
+                              #   0.225 > p75 KL=0.196) laisse les updates se
+                              #   completer. Combine a ADAN_LOG_STD_INIT=-1.0.
   max_grad_norm: 0.3          # DIAGNOSTIC-V6: was 0.5. Tighter gradient clip to
                               #   prevent the violent first-batch KL jump.
   ent_coef: 0.03              # DIAGNOSTIC-V3 (2026-06-29): was 0.01. The sandbox
