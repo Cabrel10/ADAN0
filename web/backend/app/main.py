@@ -242,11 +242,17 @@ def runs() -> dict:
     prog = log_service.parse_progress()
     proc = system_service.training_process()
     cks = checkpoint_service.list_checkpoints()
+    # Derive run identity from the ACTIVE training log filename instead of a
+    # hardcoded V4 label (the dashboard kept showing "DIAGNOSTIC-V4" long after
+    # V29/V30 runs took over — see settings.resolve_train_log()).
+    log_name = settings.resolve_train_log().name  # e.g. v30_500k.log
+    run_id = log_name.rsplit(".", 1)[0] or "unknown_run"
+    run_label = run_id.replace("_", " ").upper()
     return {
         "runs": [
             {
-                "id": "v4_500k",
-                "name": "DIAGNOSTIC-V4 500k (scalper, BTC/USDT)",
+                "id": run_id,
+                "name": f"{run_label} (scalper, BTC/USDT)",
                 "status": "training" if proc.get("running") else "stopped",
                 "last_timestep": prog.get("last_timestep"),
                 "checkpoints": len(cks),
