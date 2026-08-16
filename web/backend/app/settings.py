@@ -66,7 +66,14 @@ def _latest(glob_patterns, fallback: str, exclude_substrings: tuple[str, ...] = 
 #   train_vN_500k.log  /  diagnostic_collapse_*.csv
 # Excludes drop archived / failed / smoke / validation / *_COLLAPSED_* frozen
 # copies so the dashboard locks onto the primary live run file.
-_TRAIN_LOG_GLOBS = ["v20_500k_ray.log", "train_*_500k_*.log", "train_*_500k.log"]
+_TRAIN_LOG_GLOBS = [
+    "v20_500k_ray.log",
+    "train_*_500k_*.log",
+    "train_*_500k.log",
+    # V29/V30 sandbox naming convention: v30_500k.log, v29_500k_sandbox.log, ...
+    "v[0-9]*_500k.log",
+    "v[0-9]*_500k_*.log",
+]
 _TRAIN_LOG_EXCLUDE = ("web_scalper",)
 _TELEMETRY_GLOBS = ["diag_*_500k.csv", "diag_*.csv", "diagnostic_collapse_*.csv"]
 _TELEMETRY_EXCLUDE = (
