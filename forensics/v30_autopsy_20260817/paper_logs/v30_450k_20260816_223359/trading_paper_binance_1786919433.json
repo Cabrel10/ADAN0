@@ -1,0 +1,40 @@
+{
+  "mode": "paper",
+  "exchange": "binance",
+  "symbol": "BTC/USDT",
+  "profile": "intraday",
+  "initial_capital": 20.5,
+  "final_equity": 20.4182,
+  "return_pct": -0.3993,
+  "n_trades": 1,
+  "metrics": {
+    "n_closed_trades": 0,
+    "win_rate_pct": 0.0,
+    "profit_factor": 0.0,
+    "sharpe_per_trade": 0.0,
+    "gross_win_usd": 0,
+    "gross_loss_usd": 0,
+    "max_drawdown_pct": 0.4,
+    "expectancy_usd": 0.0
+  },
+  "trades": [
+    {
+      "timestamp": 2071791.635278336,
+      "side": "BUY",
+      "symbol": "BTC/USDT",
+      "price": 63120.151505999995,
+      "size_usd": 15.70300005376339,
+      "size_asset": 0.0002487795051041776,
+      "sl_pct": 0.02,
+      "tp_pct": 0.04,
+      "fee_usd": 0.01570300005376339,
+      "source": "paper",
+      "order_id": "",
+      "pnl_usd": 0.0,
+      "reason": "OPEN"
+    }
+  ],
+  "killed": false,
+  "kill_reason": "",
+  "max_drawdown_pct": 0.4
+}

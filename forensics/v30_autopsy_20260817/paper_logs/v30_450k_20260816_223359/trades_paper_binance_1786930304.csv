@@ -1,0 +1,2 @@
+timestamp,side,symbol,price,size_usd,size_asset,sl_pct,tp_pct,fee_usd,pnl_usd,reason,source,order_id
+2071791.635278336,BUY,BTC/USDT,63120.151505999995,15.70300005376339,0.0002487795051041776,0.02,0.04,0.01570300005376339,0.0,OPEN,paper,
