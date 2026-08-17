@@ -1412,9 +1412,26 @@ reward_shaping:
     enabled: true
     # SELL intent alors que FLAT (stérile = HOLD déguisé; mode de collapse
     # V27 prouvé: 3000/3000 SELL stériles sur le bras F contrefactuel).
-    sell_while_flat: -0.28   # 1.21 x |R_base|_ref (0.2312), milieu de bande
+    # V31 FIX (2026-08-17) — RÉFUTATION AUTOPSIE V30 : cette pénalité est le
+    # VRAI driver du collapse (RC1 révisé). Preuve carte causale
+    # forensics/v30_autopsy_20260817/timeline/causal_map_state_intent.txt :
+    # FLAT+SELL reward=-0.2331 vs FLAT+BUY=-0.0149 vs FLAT+HOLD=-0.0143.
+    # Le gradient PPO pousse a0 vers +1 dans les DEUX états (delta ~0.22)
+    # dès le step 0 -> verrou a0=+1.0 à ~27502 -> 472k steps post-mortem.
+    # Justification C6 (env:8349-8353) : pénaliser une intention REJETÉE
+    # (SELL-flat = aucune transition d'état, rien n'est exécuté) viole
+    # l'équation de Bellman Q(s,a) qui exige s->s'. SELL-flat est une
+    # simple intention "ne rien faire" -> NEUTRE (0.0), comme HOLD.
+    # L'anti-spam SELL réel est déjà porté par le cooldown/force_cooldown.
+    sell_while_flat: 0.0   # V31: NEUTRE (était -0.28). Voir addendum rapport.
     # BUY intent alors qu'une position est OUVERTE (renforcement interdit).
-    buy_while_open: -0.28    # symétrique: même classe d'invalidité
+    # V31 FIX (2026-08-17) : même classe d'invalidité que sell_while_flat =
+    # intention REJETÉE par le gate (ActExec=HOLD, aucune transition d'état)
+    # -> C6 impose 0.0. Prouvé par test déterministe 6 combinaisons :
+    # OPEN+BUY reward=-0.2424 vs OPEN+SELL=+0.0056 créait une pression
+    # directionnelle artificielle vers SELL en position. L'anti-spam réel
+    # est porté par force_cooldown_steps / HOLD_MIN, pas par cette pénalité.
+    buy_while_open: 0.0      # V31: NEUTRE (était -0.28). C6: rejet = 0 reward.
     # BUY ouvrant (FLAT -> open): VALIDE. Le coût d'engagement du capital
     # est porté par le PnL ensuite, JAMAIS par une pénalité d'entrée
     # ("BUY-flat ne doit pas être puni simplement parce qu'il ouvre un risque").
