@@ -108,6 +108,48 @@ V30 log : **1 seul chunk**, BTCUSDT seul. 5m=7 991 lignes (~28 jours), 1h=912 (~
 | **"EV crash @23.5k = cause première"** | **RÉFUTÉ** | Première rupture *mesurable* dans les métriques PPO, mais la dérive a0 commence dès step 0 (0.011→0.91 sur 23k steps). EV crash = conséquence de a0→0.98. |
 | **"Saturation = dérive de checkpoint"** | **RÉFUTÉ** | 450k et 500k saturent identiquement dès tick 1. Structurel, pas checkpoint-spécifique. |
 | **Backtest "332 trades variés = modèle sain"** | **RÉFUTÉ** | Le backtest utilise le même env (gates, force_close, stop_loss) qui transforment a0=+1.0 constant en séquences BUY/hold/force_close variées. La variété vient de l'env, pas du modèle. |
+| **Backtest "53 789 RESETs = anomalie"** | **RÉFUTÉ** | Artefact de comptage (tqdm `\r` + logs CRITICAL dupliqués). Réalité : 4 épisodes réels pour 10k steps (≈2500 steps/épisode, cohérent avec le chunk test). Backtest sain sur ce point. |
+
+---
+
+## TESTS CONTREFACTUELS + ATTENTION HEADS (chaîne causale bouclée)
+
+### Test contrefactuel (counterfactual_obs_eps.txt) — POLICY = FONCTION CONSTANTE
+```
+a0=+1.000000 pour TOUTES les entrées :
+  obs réelles (idx 500/4000/7000)     → a0=+1.0
+  obs marché TOUTES à zéro            → a0=+1.0  (Δ=0.000000)
+  obs ALÉATOIRES N(0,1)               → a0=+1.0  (Δ=0.000000)
+  perturbation ±0.5σ chaque bloc      → Δa0=0.000000 (5m/1h/4h/context/portfolio)
+```
+**Conclusion** : le réseau ne lit plus AUCUNE observation. Le +1.0 vient d'un biais interne saturé du réseau (pre-tanh logit profondément positif). ACTION DECODER audit CLOS : +1.0 = policy, pas decoder. Paper-replay parity clos par transitivité (action constante ⇒ replay==paper forcément).
+
+### Audit attention heads (attention_head_audit.txt) — ENCODEUR VIVANT, TÊTE MORTE
+```
+Architecture: features_extractor.cross_attention = HierarchicalCrossAttention
+             (MultiheadAttention + LayerNorm×3 + FFN GELU/Dropout)
+latent (256-dim) std across 5 obs différentes: mean=0.149 max=0.585
+latent pairwise diff (obs500 vs obs7000): max|Δ|=1.61
+*** ENCODER ALIVE: latents vary — collapse is in policy head only ***
+```
+**Conclusion** : l'encodeur/attention discrimine correctement les états de marché. Seule la tête de policy est morte (biais saturé). Le collapse est LOCALISÉ à la couche de sortie, pas à l'encodeur — le capacity_reward a saturé la tête sans détruire la représentation (bonne nouvelle pour la réutilisabilité de l'encodeur).
+
+### CHAÎNE CAUSALE FINALE (bouclée)
+```
+obs (variées) → encodeur/attention (SAIN, latents variés) → latent 256d (discriminant)
+  → TÊTE POLICY (MORTE: biais saturé → a0=+1.0 constant)
+  → decoder (BUY quand flat, hold figé quand open)
+  → reward dominé par capacity (+2.0 open vs −1.5 flat) → PPO renforce → NO_EDGE
+```
+
+---
+
+## HIÉRARCHIE DES CRITÈRES DE SUCCÈS (EV ≠ ligne d'arrivée)
+Correction méthodologique majeure intégrée : l'EV positif n'est que le **feu vert n°1**, pas le succès. ADAN doit satisfaire SIMULTANÉMENT :
+```
+EV>0 → PnL>0 → WR>60% → PF≥seuil → DD acceptable → palier franchi → OOS robuste → > Buy&Hold
+```
+**V30 échoue à TOUS les niveaux** (pas seulement EV). Le capacity_reward explique le COLLAPSE comportemental, mais ne démontre PAS qu'ADAN corrigé atteindrait l'objectif global — c'est la question ouverte pour V31.
 
 ---
 
