@@ -113,6 +113,16 @@ try:
 except ImportError:
     PpoStdSafetyCallback = None
 
+# ActionSaturationGuard: anti-collapse par tete (V31-500k FIX).
+# Le forensic V31-DIAG (forensics/v31_diag_collapse_20260817/) a demontre un
+# boundary-lock tanh: 62-72% des actions a |a0|>=0.999, std=0.136, KL 0.58-0.96.
+# Ce callback RELEVE le plancher log_std des tetes saturees (PpoStdSafetyCallback
+# ne clampe que la borne HAUTE). Active via ADAN_SATGUARD (defaut ON pour V31).
+try:
+    from adan_trading_bot.utils.action_saturation_guard import ActionSaturationGuard
+except ImportError:
+    ActionSaturationGuard = None
+
 # ActionDimMonitor: instrumentation par tête (MESURE SEULE — ne modifie rien).
 # Active via ADAN_ACTIONDIM=1 (par défaut OFF pour ne pas alourdir les runs
 # de production). Le run diagnostique V2 l'active pour suivre μ(size)/σ(size).
@@ -1366,6 +1376,28 @@ class ADAN_PBT_Worker(_TrainableBase):
             )
             self._callbacks.append(ppo_safety)
 
+        # V31-500k FIX: ActionSaturationGuard — anti-collapse par tete.
+        # PpoStdSafetyCallback ne clampe que la borne HAUTE de log_std; ce guard
+        # RELEVE le plancher quand une tete se verrouille a +-1 (boundary lock).
+        # Defaut ON pour V31; desactivable via ADAN_SATGUARD=0.
+        if ActionSaturationGuard is not None and \
+                os.environ.get("ADAN_SATGUARD", "1") == "1":
+            sat_guard = ActionSaturationGuard(
+                sat_edge=0.98,
+                sat_threshold=float(os.environ.get("ADAN_SATGUARD_THR", "0.95")),
+                patience=int(os.environ.get("ADAN_SATGUARD_PATIENCE", "2")),
+                bump_log_std=float(os.environ.get("ADAN_SATGUARD_BUMP", "0.5")),
+                max_log_std=float(os.environ.get("ADAN_SATGUARD_MAXLS", "2.0")),
+                intervene=os.environ.get("ADAN_SATGUARD_INTERVENE", "1") == "1",
+                verbose=1,
+            )
+            self._callbacks.append(sat_guard)
+            logger.info(
+                f"Worker {self.worker_idx}: ActionSaturationGuard ACTIF "
+                f"(thr={sat_guard.sat_threshold}, bump={sat_guard.bump_log_std}, "
+                f"intervene={sat_guard.intervene})"
+            )
+
         # ActionDimMonitor (MESURE SEULE) — suit μ/σ pré-tanh + post-tanh par tête.
         # Activé seulement si ADAN_ACTIONDIM=1 (run diagnostique V2). NE MODIFIE
         # RIEN ; permet d'observer si μ(size)=-7.2 remonte au fil de l'entraînement.
@@ -1965,7 +1997,7 @@ def run_pbt(
         hyperparam_mutations={
             # PPO hyperparams
             "learning_rate": tune.loguniform(1e-6, 1e-3),
-            "ent_coef": tune.uniform(0.0, 0.1),
+            "ent_coef": tune.uniform(0.02, 0.1),   # V31 FIX: floor 0.02 anti-collapse
             "gamma": tune.uniform(0.9, 0.999),
             # Trading hyperparams (Ray PBT will auto-evolve these)
             "sl_pct": tune.uniform(0.01, 0.08),   # Stop-Loss: 1% to 8%
@@ -1994,7 +2026,7 @@ def run_pbt(
             "interval_timesteps": interval_timesteps,
             # PPO hyperparams
             "learning_rate": tune.loguniform(1e-4, 1e-3),
-            "ent_coef": tune.uniform(0.0, 0.05),
+            "ent_coef": tune.uniform(0.02, 0.05),  # V31 FIX: floor 0.02 anti-collapse
             "gamma": tune.uniform(0.95, 0.999),
             # Trading hyperparams (PBT auto-evolves these)
             "sl_pct": tune.uniform(0.01, 0.08),
@@ -2012,7 +2044,7 @@ def run_pbt(
             "interval_timesteps": interval_timesteps,
             # PPO hyperparams
             "learning_rate": tune.loguniform(1e-4, 1e-3),
-            "ent_coef": tune.uniform(0.0, 0.05),
+            "ent_coef": tune.uniform(0.02, 0.05),  # V31 FIX: floor 0.02 anti-collapse
             "gamma": tune.uniform(0.95, 0.999),
             # Trading hyperparams (PBT auto-evolves these)
             "sl_pct": tune.uniform(0.01, 0.08),
