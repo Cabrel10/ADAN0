@@ -70,4 +70,34 @@ invalid_ratio 94-95% ≈ **structurel** (fee_gate + hysteresis + routing), PAS u
 **STOP exécuté** (kill TERM gracieux, 20:05 UTC). Prochaine étape : fix ent_coef (hyperparamètre PBT search space), puis UN SEUL run contrôlé. **Pas de V32 à l'aveugle** — le fix doit être validé par web doc + gate déterministe avant relance.
 
 ---
+
+## 7. ADDENDUM FORENSIQUE (post-kill, 20:1x UTC) — 2 raffinements
+
+### 7a. Mécanisme d'absorption de la dérive a0 = `routing_reject` (BOUCLE CAUSALE FERMÉE)
+`routing_reject` (l.8655-8656) = `sell_while_flat` (agent hors position) / `buy_while_long` (agent en position). C'est le **bloqueur dominant** : 3027/5600 = **54% des intents**.
+
+Boucle causale complète du « gradient-free float » :
+1. a0 dérive négatif (intent SELL)
+2. Mais le portefeuille est FLAT la plupart du temps (fee_gate + hysteresis bloquent les ouvertures)
+3. SELL-intent-while-FLAT → `_route_action_by_state` neutralise en HOLD (`routing_reject`)
+4. HOLD = **aucune conséquence économique** → aucun signal PnL → **aucun gradient correctif**
+5. La dérive persiste sans opposition → boundary lock tanh
+
+**Le float persiste PRÉCISÉMENT PARCE QUE l'intent est économiquement stérile.** La neutralisation routing (nécessaire en spot, pas de short) supprime le feedback qui corrigerait la dérive. Mécaniquement symétrique (sell_while_flat ET buy_while_long → HOLD, pénalités 0.0 des deux côtés) — pas un biais, mais une **absorption du signal**.
+
+### 7b. Révision honnête — interprétation entropie gSDE
+Le run utilise **gSDE** (`use_sde=1`, `use_expln=1`, `log_std_init=-2.0` → std0≈exp(−2.0)=**0.135**). Le « std=0.136 » rapporté ≈ valeur initiale → le `log_std` de base a **peu bougé**. L'`entropy_loss` SB3 en espace continu est une **entropie différentielle** (peut être négative — normal, cf. doc Ray/SB3) ; sa dérive −9.25 → −10.1 (plus négatif) indique concentration. 
+
+**MAIS la conclusion ne repose PAS sur le signe de l'entropie** — elle repose sur la donnée ACTION non ambiguë : 62-72% des actions à |a0|≥0.999 (boundary lock), action_std qui s'effondre, KL 0.576/0.959. Le collapse est confirmé **comportementalement**, indépendamment de la subtilité d'interprétation entropique gSDE.
+
+### 7c. Remédiations DÉJÀ CONSTRUITES mais NON ACTIVES (preuves codebase)
+1. **`ActionSaturationGuard`** (`utils/action_saturation_guard.py`) — cible EXACTEMENT notre mécanisme (boundary lock tanh). Détecte saturation par tête, relève le plancher `log_std`. Docstring cite l'audit A7 juin 2026 : « tête size GELÉE 100% à -1.0 malgré ent_coef et gSDE ; PpoStdSafetyCallback ne clampe que la borne HAUTE, ne fait RIEN contre l'effondrement ». **0 événement SaturationGuard dans le log V31** → NON câblé au run.
+2. **DIAGNOSTIC-V3** (train l.926-980) recommande ent_coef=0.03 scalper / 0.015 intraday comme « levier anti-collapse #1 » — mais PBT a samplé 0.0143/0.0131 (borne basse search space = 0.0).
+
+**Recommandation fix (à valider par gate déterministe AVANT relance, conforme "on ne corrige que ce qui est démontré")** :
+- Câbler `ActionSaturationGuard` (intervention directe sur le mécanisme observé)
+- ET relever la borne basse du search space ent_coef de 0.0 → ~0.02 (empêche PBT de sampler l'effondrement)
+- NE PAS toucher au reward (fix V31 déjà validé : symétrie parfaite, invalid_pen=0.0)
+
+---
 *Artefacts : metrics.json, pre_kill_snapshot.txt (94 lignes PPO tables)*
