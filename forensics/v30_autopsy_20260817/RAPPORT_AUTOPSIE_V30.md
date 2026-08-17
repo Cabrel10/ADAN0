@@ -3,6 +3,33 @@
 
 ---
 
+## ⚠️ ADDENDUM CRITIQUE (2026-08-17, post-rapport) — RC1 RÉFUTÉ PAR RÉGRESSION
+
+**Test décisif sur 40 000 échantillons réels** (`worker_0_rewards_20260815_193056.jsonl`) :
+
+1. **Régression `raw ~ sum(termes exacts l.7395-7418) + β·capacity_reward`** → **β = 0.000000**, résidu std = 0.00000. La somme exacte des termes du code reproduit `raw` à 1e-6 **sans** capacity.
+2. **`final_reward == symlog(raw_reward)`** exactement (diff max = 0.000000 sur 5 000 échantillons).
+3. `calculate_capacity_based_reward()` n'a **qu'un seul call site** : l.4204, télémétrie `rc["capacity_reward"]`. Elle n'apparaît **nulle part** dans la somme `raw_reward`. Les commentaires l.7359-7363 documentent le revert du 6-juin.
+
+**Conséquence** : `capacity_reward` (FLAT=−1.5 / OPEN=+2.0) est de la **télémétrie morte** — jamais injectée dans le gradient PPO. La section « CAUSE RACINE #1 » ci-dessous est donc **RÉFUTÉE** (R4 : contradiction → nouvelle investigation → réfutation). L'erreur de l'autopsie initiale : avoir lu la télémétrie `rc` comme si elle était le gradient.
+
+**RC1 RÉVISÉ (confiance haute, preuve `timeline/causal_map_state_intent.txt`)** : le vrai driver est l'**asymétrie de la pénalité d'intention invalide V28** (`behavior_penalty`, config `behavior_penalties.sell_while_flat/buy_while_open = −0.28`, env:8660-8700) :
+
+| État × Intention | n | final_rew | behavior_pen |
+|---|---:|---:|---:|
+| FLAT + SELL | 3 540 | **−0.2331** | **−0.2511** |
+| FLAT + HOLD | 1 173 | −0.0143 | −0.0047 |
+| FLAT + BUY | 14 105 | −0.0149 | −0.0046 |
+| OPEN + SELL | 1 683 | −0.0052 | −0.0046 |
+| OPEN + HOLD | 581 | −0.0066 | −0.0047 |
+| OPEN + BUY | 6 420 | **−0.2287** | **−0.2534** |
+
+Dans les DEUX états, `a0>0` domine `a0<0` de ~0.22 → le gradient advantage-weighted pousse a0 vers +1 à chaque update, d'où la dérive monotone dès le step 0 (champ de dérive mesuré : FLAT+SELL → Δa0=+0.418/step). RC2 (ADAN_ANCHOR_LAMBDA=0, jamais activé) demeure **CONTRIBUTING confirmé** : il était conçu exactement pour contrer cette dérive. Le mécanisme « HOLD-flat à variance nulle vs BUY qui reçoit du signal » (commentaire v13, env:7272-7286) aggrave la convergence vers a0>0.
+
+**Correction minimale désormais justifiée** : symétriser la pénalité d'intention invalide par rapport à la direction (ne pénaliser que l'invalidité structurelle réelle), PAS toucher `capacity_reward`. À valider par test déterministe des 6 combinaisons état×action AVANT tout run.
+
+---
+
 ## VERDICT FINAL : **NO-GO**
 
 Le checkpoint V30 500k est une policy **morte** : `direction = +1.0000` constante, `a0_std = 0.0000`, verrouillée depuis le step ~27 502 (5.5% du run). Inutilisable en production, paper ou live. Backtest 500k : **NO_EDGE** (332 trades, WR=42.8%, expectancy=−0.0395%/trade, PF=0.7743, return=−1.31%). Backtest 450k : identique (mêmes métriques à 0.01% près — preuve que tout ce qui suit ~28k n'a rien appris).
