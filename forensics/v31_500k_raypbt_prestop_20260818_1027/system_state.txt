@@ -1,0 +1,26 @@
+=== DATE ===
+Tue Aug 18 10:27:57 CEST 2026
+=== DRIVER+WORKERS ===
+    PID    PPID NLWP %CPU %MEM   RSS    VSZ     ELAPSED CMD
+1023298 1023293   45  1.7  7.2 892916 11962528 01:48:46 /home/ubuntu/webapp/MORNINGSTAR/miniconda3/envs/trading_env/bin/python scripts/train_parallel_agents.py --mode heavy --steps 500000 --steps-per-iter 10000 --num-cpus 4 --num-samples 2 --envs-per-worker 1 --profiles scalper --checkpoint-dir training_output/v31_500k_20260818_0839 --log-level INFO
+1023867 1023635   53  287 10.0 1225668 12597136 01:48:22 ray::ResourceTrainable.train
+1023868 1023635   53  287 10.0 1225436 12592776 01:48:22 ray::ResourceTrainable.train
+=== ALL RAY ===
+ubuntu   1023298  1.7  7.2 11962528 892916 ?     Sl   08:39   1:51 /home/ubuntu/webapp/MORNINGSTAR/miniconda3/envs/trading_env/bin/python scripts/train_parallel_agents.py --mode heavy --steps 500000 --steps-per-iter 10000 --num-cpus 4 --num-samples 2 --envs-per-worker 1 --profiles scalper --checkpoint-dir training_output/v31_500k_20260818_0839 --log-level INFO
+ubuntu   1023666  0.0  0.8 1474148 108776 ?      Sl   08:39   0:04 ray::DashboardAgent
+ubuntu   1023668  0.0  0.7 1440976 87268 ?       Sl   08:39   0:04 ray::RuntimeEnvAgent
+ubuntu   1023740  1.1  0.6 5028948 85560 ?       SNl  08:39   1:17 ray::IDLE
+ubuntu   1023867  287 10.0 12597136 1225672 ?    RNl  08:39 311:51 ray::ResourceTrainable.train
+ubuntu   1023868  287 10.0 12592776 1225436 ?    RNl  08:39 311:23 ray::ResourceTrainable.train
+=== MEM/SWAP ===
+               total        used        free      shared  buff/cache   available
+Mem:            11Gi       5.9Gi       4.4Gi       107Mi       1.8Gi       5.8Gi
+Swap:           15Gi       3.6Gi        12Gi
+=== LOAD ===
+ 10:27:57 up 25 days, 11:23, 137 users,  load average: 11.18, 10.83, 10.63
+=== FD COUNT ===
+w0(1023867): 49  w1(1023868): 48
+=== THREADS ===
+NLWP
+  53
+  53

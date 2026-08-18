@@ -1,0 +1,19 @@
+=== CHECKPOINTS dans training_output ===
+=== Arborescence 2 niveaux ===
+training_output/v31_500k_20260818_0839
+training_output/v31_500k_20260818_0839/adan_pbt_training
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00001_1_ent_coef=0.0474,gamma=0.9725,learning_rate=0.0004,sl_pct=0.0288,tp_pct=0.0533,worker_config=worker_i_2026-08-18_08-39-35
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00000_0_ent_coef=0.0231,gamma=0.9715,learning_rate=0.0004,sl_pct=0.0275,tp_pct=0.1249,worker_config=worker_i_2026-08-18_08-39-35
+=== Fichiers par trial ===
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00001_1_ent_coef=0.0474,gamma=0.9725,learning_rate=0.0004,sl_pct=0.0288,tp_pct=0.0533,worker_config=worker_i_2026-08-18_08-39-35/params.json
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00001_1_ent_coef=0.0474,gamma=0.9725,learning_rate=0.0004,sl_pct=0.0288,tp_pct=0.0533,worker_config=worker_i_2026-08-18_08-39-35/events.out.tfevents.1787035191.vmi3461930
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00001_1_ent_coef=0.0474,gamma=0.9725,learning_rate=0.0004,sl_pct=0.0288,tp_pct=0.0533,worker_config=worker_i_2026-08-18_08-39-35/result.json
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00001_1_ent_coef=0.0474,gamma=0.9725,learning_rate=0.0004,sl_pct=0.0288,tp_pct=0.0533,worker_config=worker_i_2026-08-18_08-39-35/params.pkl
+training_output/v31_500k_20260818_0839/adan_pbt_training/experiment_state-2026-08-18_08-39-34.json
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00000_0_ent_coef=0.0231,gamma=0.9715,learning_rate=0.0004,sl_pct=0.0275,tp_pct=0.1249,worker_config=worker_i_2026-08-18_08-39-35/params.json
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00000_0_ent_coef=0.0231,gamma=0.9715,learning_rate=0.0004,sl_pct=0.0275,tp_pct=0.1249,worker_config=worker_i_2026-08-18_08-39-35/events.out.tfevents.1787035191.vmi3461930
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00000_0_ent_coef=0.0231,gamma=0.9715,learning_rate=0.0004,sl_pct=0.0275,tp_pct=0.1249,worker_config=worker_i_2026-08-18_08-39-35/result.json
+training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00000_0_ent_coef=0.0231,gamma=0.9715,learning_rate=0.0004,sl_pct=0.0275,tp_pct=0.1249,worker_config=worker_i_2026-08-18_08-39-35/params.pkl
+training_output/v31_500k_20260818_0839/adan_pbt_training/basic-variant-state-2026-08-18_08-39-34.json
+training_output/v31_500k_20260818_0839/adan_pbt_training/.validate_storage_marker
+training_output/v31_500k_20260818_0839/adan_pbt_training/tuner.pkl

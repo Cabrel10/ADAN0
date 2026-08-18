@@ -1,0 +1,69 @@
+=== TIMESTAMPS des tables PPO (loss) — périodicité des updates ===
+2962:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss    | -0.00691    |
+3067:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss    | -0.00535     |
+4443:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss | -0.00541     |
+4537:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss | -0.00179     |
+6080:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss    | -0.00521    |
+6185:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss    | -0.00501     |
+7790:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss | -0.00609    |
+7856:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss | -0.00387   |
+9293:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss    | -0.00701    |
+9434:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss    | -0.00898     |
+10873:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss | -0.00238     |
+10936:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss | -0.00605    |
+12533:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss    | -0.00934     |
+12638:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss    | -0.00431   |
+14052:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss | -0.0101      |
+14153:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss | -0.00681     |
+15638:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss    | -0.00791     |
+15853:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss    | -0.00874     |
+17438:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss | -0.00362    |
+17527:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss | -0.00657     |
+18995:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss    | -0.000896    |
+19180:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss    | -0.00696    |
+20638:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss | -0.00739     |
+20870:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss | -0.00358     |
+22461:[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss    | -0.00616     |
+22674:[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss    | -0.00717     |
+
+=== TIMESTAMPS METRICS_SYNC (repères 500 steps) ===
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 08:43:02
+Step 500 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 08:43:03
+Step 500 | Worker 0
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 08:51:15
+Step 1000 | Worker 0
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 08:51:15
+Step 1000 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 08:59:29
+Step 1500 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 08:59:36
+Step 1500 | Worker 0
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 09:07:20
+Step 2000 | Worker 0
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 09:07:21
+Step 2000 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 09:15:23
+Step 2500 | Worker 0
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 09:15:25
+Step 2500 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 09:23:26
+Step 3000 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 09:23:33
+Step 3000 | Worker 0
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 09:31:29
+Step 3500 | Worker 0
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 09:31:30
+Step 3500 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 09:39:18
+Step 4000 | Worker 0
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 09:39:18
+Step 4000 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 09:47:34
+Step 4500 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 09:47:43
+Step 4500 | Worker 0
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 09:55:27
+Step 5000 | Worker 1
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 09:55:45
+Step 5000 | Worker 0
