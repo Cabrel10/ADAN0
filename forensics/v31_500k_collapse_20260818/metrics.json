@@ -1,0 +1,36 @@
+{
+  "run": "v31_500k_20260817_2141",
+  "killed_at": "2026-08-18T06:25Z",
+  "duration_h": 8.7,
+  "satguard_bumps": 14,
+  "workers": {
+    "401115": {
+      "n_updates": 89,
+      "a0_mean_first_last": [
+        -0.018,
+        -8.58
+      ],
+      "a0_std_first_last": [
+        0.774,
+        108.0
+      ],
+      "kl_max": 433.40857,
+      "entropy_last": -20.3,
+      "ev_last": 0.296
+    },
+    "401116": {
+      "n_updates": 91,
+      "a0_mean_first_last": [
+        -0.0567,
+        -14.8
+      ],
+      "a0_std_first_last": [
+        0.841,
+        85.3
+      ],
+      "kl_max": 58.306614,
+      "entropy_last": -20.6,
+      "ev_last": 0.406
+    }
+  }
+}
