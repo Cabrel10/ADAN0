@@ -8,13 +8,13 @@
 # Alerts appended to forensics monitor log; never kills the run.
 
 LOG_DIR="/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/training"
-OUT="/home/ubuntu/webapp/MORNINGSTAR/ADAN0/forensics/v31_500k_corrected_monitor.log"
+OUT="/home/ubuntu/webapp/MORNINGSTAR/ADAN0/forensics/v31_sandbox_monitor.log"
 INTERVAL=300  # 5 min
 
 echo "=== V31-500k CORRECTED RUN MONITOR started $(date) ===" >> "$OUT"
 
 while true; do
-    LOG=$(ls -t "$LOG_DIR"/v31_500k_*.log 2>/dev/null | head -1)
+    LOG=$(ls -t "$LOG_DIR"/v31_sandbox_500k_*.log 2>/dev/null | head -1)
     if [ -z "$LOG" ]; then
         echo "$(date) | NO LOG FOUND" >> "$OUT"
         sleep "$INTERVAL"; continue
