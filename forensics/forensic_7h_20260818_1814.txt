@@ -1,0 +1,629 @@
+               total        used        free      shared  buff/cache   available
+Mem:            11Gi       5.7Gi       4.3Gi       121Mi       2.1Gi       6.0Gi
+Swap:           15Gi       3.3Gi        12Gi
+
+ 18:15:18 up 25 days, 19:10, 29 users,  load average: 6.38, 6.83, 6.97
+
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1       193G  170G   24G  89% /
+/dev/sda1       193G  170G   24G  89% /
+
+Filename				Type		Size		Used		Priority
+/swapfile                               file		16777212	3496660		-1
+    PID    PPID STAT %CPU %MEM NLWP   RSS    VSZ     ELAPSED COMMAND
+1131558 1131547 Rl    512 18.8   30 2303212 8709240 07:40:14 python
+ 127393  127379 Sl    0.6  8.4   19 1034692 25589388 24-07:40:15 next-server (v1
+3615212 3615210 Sl    2.7  8.2  109 1012928 7383916 8-08:45:18 java
+1577596 1577502 Sl+   3.5  2.3   11 285144 2307380  03:52:27 MainThread
+3872435 3872432 Ssl   1.7  1.7   21 212200 2597248 1-18:48:33 python
+ 516562       1 Ssl   0.5  0.8   13 99392 3300324 20-12:12:02 prometheus
+ 452538  452473 Ssl   0.0  0.7    3 97620 261296    17:45:23 python
+ 452473  452472 Sl    0.2  0.7   11 91464 702628    17:45:24 python
+1651468       1 Ssl   0.6  0.5   24 65508 3083920 5-17:58:48 dockerd
+1816565 1816563 Sl    0.3  0.4    7 59128 576180  5-05:54:14 uvicorn
+1651263       1 Ssl   0.5  0.2   15 35616 2313380 5-17:58:50 containerd
+1167208       1 Ssl   0.1  0.2    5 35436 697204  6-11:34:20 fail2ban-server
+1680885       1 Ssl   0.3  0.2   23 34216 1267284 5-15:06:56 wings
+1167117       1 Ssl   0.0  0.2    4 32480 600020  6-11:34:20 fwupd
+2835576 2835571 S     0.0  0.2    1 29572 250128  2-05:21:37 php8.5
+4178909       1 Ssl   0.0  0.2   13 27404 2147208 3-19:56:18 snapd
+1167067       1 Ssl   0.0  0.2   13 27168 2258012 6-11:34:21 ollama
+ 687989       1 Sl    0.2  0.2   13 26684 1295492 19-03:00:03 cloudflared
+2750050 2750047 S     0.0  0.2    1 26460 185624  2-06:15:02 python3
+1541250 2792872 S     0.0  0.2    1 25832 250196  5-23:06:13 php8.5
+1161097       1 S<s   0.0  0.2    1 25768  52888  6-11:35:23 systemd-journal
+3106251 3106250 Sl    0.0  0.1   11 23100 11831040 8-20:04:13 node
+1660436 1660386 Ssl   0.0  0.1   18 20904 8591743980 5-17:02:49 mariadbd
+1408585 1408584 S     0.0  0.1    1 20072  31736    05:18:38 python
+    PID    PPID STAT %CPU %MEM NLWP   RSS    VSZ     ELAPSED COMMAND
+1131558 1131547 Rl    512 18.8   30 2303212 8709240 07:40:14 python
+1991326 1991325 R     100  0.0    1  4348  10308       00:00 ps
+1991316 1991314 S    27.7  0.1    1 14368  22744       00:00 python3
+1577596 1577502 Sl+   3.5  2.3   11 285144 2307380  03:52:27 MainThread
+3615212 3615210 Sl    2.7  8.2  109 1012928 7383916 8-08:45:19 java
+ 516534       1 Ssl   1.7  0.1    8 19484 1763444 20-12:12:02 prometheus-node
+3872435 3872432 Ssl   1.7  1.7   21 212200 2597248 1-18:48:33 python
+   1568       1 Ss    1.6  0.0    1  3960  10012 25-19:10:32 dbus-daemon
+      1       0 Ss    0.7  0.1    1 16240  27800 25-19:10:43 systemd
+1651468       1 Ssl   0.6  0.5   24 65508 3083920 5-17:58:48 dockerd
+ 127393  127379 Sl    0.6  8.4   19 1034692 25589388 24-07:40:15 next-server (v1
+ 516562       1 Ssl   0.5  0.8   13 99392 3300324 20-12:12:02 prometheus
+1660426 1660379 Ssl   0.5  0.0    6  7080  66472  5-17:02:49 redis-server
+1651263       1 Ssl   0.5  0.2   15 35616 2313380 5-17:58:50 containerd
+1577478       1 Sl    0.4  0.1   12 12784 1233872   03:52:29 containerd-shim
+     15       2 R     0.4  0.0    1     0      0 25-19:10:43 rcu_preempt
+1680885       1 Ssl   0.3  0.2   23 34216 1267284 5-15:06:57 wings
+3510980       1 Sl    0.3  0.1    2 17156 160588  4-06:08:50 python
+1705671 1705669 Sl    0.3  0.0   12 10100 570968 16-08:38:37 python
+1816565 1816563 Sl    0.3  0.4    7 59128 576180  5-05:54:14 uvicorn
+1705715 1705713 Sl    0.3  0.0    7 10496 287000 16-08:38:29 python
+3715658       1 Ssl   0.2  0.1   18 19580 1118236 1-20:28:34 python
+ 452473  452472 Sl    0.2  0.7   11 91464 702628    17:45:24 python
+ 687989       1 Sl    0.2  0.2   13 26684 1295492 19-03:00:03 cloudflared
+1131558 1131547 Rl    512 18.8   30 2303212  07:40:14 /home/ubuntu/webapp/MORNINGSTAR/miniconda3/envs/trading_env/bin/python scripts/train_parallel_agents.py --mode sandbox --steps 500000 --profiles scalper --checkpoint-out checkpoints/ppo_adan0_sandbox_500k_2
+1705669       1 S     0.0  0.0    1   644 16-08:38:37 bash -c cd /home/ubuntu && (source /home/ubuntu/.bashrc 2>/dev/null || true) && nohup bash -c 'export PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8; cd /home/ubuntu/webapp/MORNINGSTAR/MAPNET/services/ccaa-compl
+1705713       1 S     0.0  0.0    1   648 16-08:38:29 bash -c cd /home/ubuntu && (source /home/ubuntu/.bashrc 2>/dev/null || true) && nohup bash -c 'export PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8; cd /home/ubuntu/webapp/MORNINGSTAR/MAPNET/services/places && 
+3615210       1 S     0.0  0.0    1   836  8-08:45:19 bash -c cd /home/ubuntu && (source /home/ubuntu/.bashrc 2>/dev/null || true) && nohup bash -c 'K=/tmp/kafka/kafka_2.13-3.9.0 && $K/bin/kafka-server-start.sh $K/config/kraft/server.properties' >/tmp/sandbox_
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           5.9G  1.3M  5.9G   1% /dev/shm
+total 1256
+drwxrwxrwt  2 root     root         280 Aug 18 11:36 .
+drwxr-xr-x 19 root     root        4100 Jul 27 14:27 ..
+-rw-------  1 postgres postgres   29776 Aug 12 06:40 PostgreSQL.331186822
+-rw-------  1 postgres postgres 1048576 Aug 12 06:40 PostgreSQL.4114577210
+-rw-------  1 root     root       82488 Aug 12 23:40 libpod_lock
+-rw-------  1 ubuntu   ubuntu     82488 Jul 30 23:41 libpod_rootless_lock_1000
+-rw-------  1 ubuntu   ubuntu        32 Aug 12 19:38 sem.loky-1559604-g40gcv0q
+-rw-------  1 ubuntu   ubuntu        32 Aug 12 19:38 sem.loky-1559605-pphqbm9b
+-rw-------  1 ubuntu   ubuntu        32 Aug 12 19:38 sem.loky-1559630-henb9atx
+-rw-------  1 ubuntu   ubuntu        32 Aug 12 19:38 sem.loky-1559633-npdyt35l
+-rw-------  1 ubuntu   ubuntu        32 Aug  8 22:12 sem.loky-3004505-qziu_rio
+-rw-------  1 ubuntu   ubuntu        32 Aug  8 22:12 sem.loky-3004506-c9cwnhpo
+-rw-------  1 ubuntu   ubuntu        32 Aug  8 22:12 sem.loky-3004586-_s0hisc2
+-rw-------  1 ubuntu   ubuntu        32 Aug  8 22:12 sem.loky-3004610-e5_omyfl
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 1 -> /tmp/sandbox_256a34f4-0dac-4498-a16e-b937620765ef/shell_bash_54795a2b/stdout (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 2 -> /tmp/sandbox_256a34f4-0dac-4498-a16e-b937620765ef/shell_bash_54795a2b/stderr (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 1 -> /tmp/sandbox_256a34f4-0dac-4498-a16e-b937620765ef/shell_bash_5d41623c/stdout (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 2 -> /tmp/sandbox_256a34f4-0dac-4498-a16e-b937620765ef/shell_bash_5d41623c/stderr (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 17 -> /home/ubuntu/.npm/_logs/2026-07-25T08_35_02_515Z-debug-0.log (deleted)
+lrwx------ 1 ubuntu ubuntu 64 Aug 12 19:09 5 -> /memfd:opcache_lock (deleted)
+lrwx------ 1 ubuntu ubuntu 64 Aug 16 12:54 5 -> /memfd:opcache_lock (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 12 16:06 17 -> /home/ubuntu/webapp/MORNINGSTAR/Immo-Artz/frontend/$APPDATA/npm-cache/_logs/2026-08-09T20_11_04_996Z-debug-0.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 22 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/ptyhost.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 23 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/remoteagent.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 24 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/remoteTelemetry.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 22 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/ptyhost.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 23 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/remoteagent.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 24 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/remoteTelemetry.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 22 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/ptyhost.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 23 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/remoteagent.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 24 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/remoteTelemetry.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 22 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/ptyhost.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 23 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/remoteagent.log (deleted)
+l-wx------ 1 ubuntu ubuntu 64 Aug 14 22:59 24 -> /home/ubuntu/.kiro-server/data/logs/20260730T084040/remoteTelemetry.log (deleted)
+1787041878.4262162420 0 training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00000_0_ent_coef=0.0231,gamma=0.9715,learning_rate=0.0004,sl_pct=0.0275,tp_pct=0.1249,worker_config=worker_i_2026-08-18_08-39-35/result.json
+1787041878.4256845030 0 training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00001_1_ent_coef=0.0474,gamma=0.9725,learning_rate=0.0004,sl_pct=0.0288,tp_pct=0.0533,worker_config=worker_i_2026-08-18_08-39-35/result.json
+1787034394.3299779760 143000 training_output/v31_500k_20260817_2141/adan_pbt_training/ADAN_PBT_Worker_92c7b_00000_0_ent_coef=0.0483,gamma=0.9754,learning_rate=0.0005,sl_pct=0.0674,tp_pct=0.1005,worker_config=worker_i_2026-08-17_23-42-41/result.json
+1787034394.3290726920 107334 training_output/v31_500k_20260817_2141/adan_pbt_training/ADAN_PBT_Worker_92c7b_00001_1_ent_coef=0.0367,gamma=0.9532,learning_rate=0.0003,sl_pct=0.0129,tp_pct=0.1221,worker_config=worker_i_2026-08-17_23-42-41/result.json
+1787029070.8260104260 7684016 training_output/v31_500k_20260817_2141/adan_pbt_training/ADAN_PBT_Worker_92c7b_00000_0_ent_coef=0.0483,gamma=0.9754,learning_rate=0.0005,sl_pct=0.0674,tp_pct=0.1005,worker_config=worker_i_2026-08-17_23-42-41/checkpoint_000001/model.zip
+1787017813.9185003050 7676409 training_output/v31_500k_20260817_2141/adan_pbt_training/ADAN_PBT_Worker_92c7b_00000_0_ent_coef=0.0483,gamma=0.9754,learning_rate=0.0005,sl_pct=0.0674,tp_pct=0.1005,worker_config=worker_i_2026-08-17_23-42-41/checkpoint_000000/model.zip
+1786996916.2051899860 0 training_output/v31_diag_20260817_1753/adan_pbt_training/ADAN_PBT_Worker_03b8a_00000_0_ent_coef=0.0143,gamma=0.9894,learning_rate=0.0002,sl_pct=0.0345,tp_pct=0.0397,worker_config=worker_i_2026-08-17_17-55-05/result.json
+1786996916.2049247720 0 training_output/v31_diag_20260817_1753/adan_pbt_training/ADAN_PBT_Worker_03b8a_00001_1_ent_coef=0.0131,gamma=0.9772,learning_rate=0.0002,sl_pct=0.0310,tp_pct=0.1275,worker_config=worker_i_2026-08-17_17-55-05/result.json
+1786981689.9749185520 0 training_output/quarantine_test_runs/v31_diag_20260817_173737/adan_pbt_training/ADAN_PBT_Worker_a3e7b_00000_0_ent_coef=0.0012,gamma=0.9761,learning_rate=0.0001,sl_pct=0.0290,tp_pct=0.0551,worker_config=worker_i_2026-08-17_17-38-05/result.json
+1786981689.9745553860 0 training_output/quarantine_test_runs/v31_diag_20260817_173737/adan_pbt_training/ADAN_PBT_Worker_a3e7b_00001_1_ent_coef=0.0334,gamma=0.9609,learning_rate=0.0009,sl_pct=0.0654,tp_pct=0.0741,worker_config=worker_i_2026-08-17_17-38-06/result.json
+1787068151.1766770680 7395568 checkpoints/ppo_adan0_sandbox_checkpoint_140000_steps.zip
+1787066201.1762445040 7394372 checkpoints/ppo_adan0_sandbox_checkpoint_130000_steps.zip
+1787064236.3834527980 7394715 checkpoints/ppo_adan0_sandbox_checkpoint_120000_steps.zip
+1787062248.6379871830 7392100 checkpoints/ppo_adan0_sandbox_checkpoint_110000_steps.zip
+1787060334.0126336400 7392981 checkpoints/ppo_adan0_sandbox_checkpoint_100000_steps.zip
+1787058377.2170207100 7389855 checkpoints/ppo_adan0_sandbox_checkpoint_90000_steps.zip
+1787056546.2206144730 7390622 checkpoints/ppo_adan0_sandbox_checkpoint_80000_steps.zip
+1787054674.7663697840 7387583 checkpoints/ppo_adan0_sandbox_checkpoint_70000_steps.zip
+1787052969.3287037230 7386555 checkpoints/ppo_adan0_sandbox_checkpoint_60000_steps.zip
+1787051216.3037307580 7385298 checkpoints/ppo_adan0_sandbox_checkpoint_50000_steps.zip
+1787049509.1611555480 7386071 checkpoints/ppo_adan0_sandbox_checkpoint_40000_steps.zip
+1787047601.4122394010 7383029 checkpoints/ppo_adan0_sandbox_checkpoint_30000_steps.zip
+1787045753.4553962370 7382025 checkpoints/ppo_adan0_sandbox_checkpoint_20000_steps.zip
+1787043993.9013348820 7380685 checkpoints/ppo_adan0_sandbox_checkpoint_10000_steps.zip
+1786925359.7693075220 7382496 checkpoints/ppo_adan0_sandbox_500224steps.zip
+1786925301.5311399580 7381111 checkpoints/ppo_adan0_v30_500k_checkpoint_500000_steps.zip
+1786923413.2561449180 7382976 checkpoints/ppo_adan0_v30_500k_checkpoint_490000_steps.zip
+1786921495.7436296980 7381097 checkpoints/ppo_adan0_v30_500k_checkpoint_480000_steps.zip
+1786919692.8645009930 7380967 checkpoints/ppo_adan0_v30_500k_checkpoint_470000_steps.zip
+1786916303.7958755300 7380995 checkpoints/ppo_adan0_v30_500k_checkpoint_460000_steps.zip
+1787069719.1842884260 535216719 logs/rewards/worker_0_rewards_20260818_103519.jsonl
+1786985355.2908960540 204665 logs/rewards/quarantine_test_runs/worker_0_rewards_20260817_184912.jsonl
+1786980919.1293738110 204650 logs/rewards/quarantine_test_runs/worker_0_rewards_20260817_173516.jsonl
+1786980815.4998470630 204971 logs/rewards/quarantine_test_runs/worker_0_rewards_20260817_173332.jsonl
+1786980762.7055976130 205416 logs/rewards/quarantine_test_runs/worker_0_rewards_20260817_173240.jsonl
+1786958027.4542269710 38591137 logs/rewards/worker_0_rewards_20260817_104125.jsonl
+1786925346.4044985540 1907466244 logs/rewards/worker_0_rewards_20260815_193056.jsonl
+1786918778.8195478040 38595424 logs/rewards/worker_0_rewards_20260816_223047.jsonl
+1786815007.8295914320 32254931 logs/rewards/worker_0_rewards_20260815_190150.jsonl
+1786808973.9571857480 32942438 logs/rewards/worker_0_rewards_20260815_172123.jsonl
+1786806729.8893979550 32951318 logs/rewards/worker_0_rewards_20260815_164006.jsonl
+1786804054.5886313060 1480117 logs/rewards/worker_0_rewards_20260815_162610.jsonl
+1786803889.0000099260 1480132 logs/rewards/worker_0_rewards_20260815_162312.jsonl
+1786770777.2436760200 1943214854 logs/rewards/worker_0_rewards_20260813_115519.jsonl
+1786542365.6130564270 7913307 logs/rewards/worker_0_rewards_20260812_153637.jsonl
+1786541735.9200902990 3663903 logs/rewards/worker_0_rewards_20260812_153224.jsonl
+1786541126.5278347100 4449627 logs/rewards/worker_0_rewards_20260812_152137.jsonl
+1786512474.9080186920 1942408718 logs/rewards/worker_0_rewards_20260811_160722.jsonl
+1786390556.7651606830 7957381 logs/rewards/worker_0_rewards_20260810_212945.jsonl
+1786390097.8317166140 3395010 logs/rewards/worker_0_rewards_20260810_212653.jsonl
+1787041727.1984622980 27536585 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-18_08-39-28_430079_1023298/artifacts/2026-08-18_08-39-34/adan_pbt_training/working_dirs/ADAN_PBT_Worker_9380b_00000_0_ent_coef=0.0231,gamma=0.9715,learning_rate=0.0004,sl_pct=0.0275,tp_pct=0.1249,worker_config=worker_i_2026-08-18_08-39-35/logs/rewards/worker_0_rewards_20260818_083952.jsonl
+1787041698.0008825760 27740108 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-18_08-39-28_430079_1023298/artifacts/2026-08-18_08-39-34/adan_pbt_training/working_dirs/ADAN_PBT_Worker_9380b_00001_1_ent_coef=0.0474,gamma=0.9725,learning_rate=0.0004,sl_pct=0.0288,tp_pct=0.0533,worker_config=worker_i_2026-08-18_08-39-35/logs/rewards/worker_1_rewards_20260818_083952.jsonl
+1787035191.9856967950 0 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-18_08-39-28_430079_1023298/artifacts/2026-08-18_08-39-34/adan_pbt_training/driver_artifacts/ADAN_PBT_Worker_9380b_00000_0_ent_coef=0.0231,gamma=0.9715,learning_rate=0.0004,sl_pct=0.0275,tp_pct=0.1249,worker_config=worker_i_2026-08-18_08-39-35/result.json
+1787035191.9724822660 0 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-18_08-39-28_430079_1023298/artifacts/2026-08-18_08-39-34/adan_pbt_training/driver_artifacts/ADAN_PBT_Worker_9380b_00001_1_ent_coef=0.0474,gamma=0.9725,learning_rate=0.0004,sl_pct=0.0288,tp_pct=0.0533,worker_config=worker_i_2026-08-18_08-39-35/result.json
+1787034401.6270535840 184081773 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00000_0_ent_coef=0.0483,gamma=0.9754,learning_rate=0.0005,sl_pct=0.0674,tp_pct=0.1005,worker_config=worker_i_2026-08-17_23-42-41/logs/rewards/worker_0_rewards_20260817_234307.jsonl
+1787034249.1922896370 187727884 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00001_1_ent_coef=0.0367,gamma=0.9532,learning_rate=0.0003,sl_pct=0.0129,tp_pct=0.1221,worker_config=worker_i_2026-08-17_23-42-41/logs/rewards/worker_1_rewards_20260817_234307.jsonl
+1787029070.7120120680 143000 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/driver_artifacts/ADAN_PBT_Worker_92c7b_00000_0_ent_coef=0.0483,gamma=0.9754,learning_rate=0.0005,sl_pct=0.0674,tp_pct=0.1005,worker_config=worker_i_2026-08-17_23-42-41/result.json
+1787029070.6790125430 7684016 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00000_0_ent_coef=0.0483,gamma=0.9754,learning_rate=0.0005,sl_pct=0.0674,tp_pct=0.1005,worker_config=worker_i_2026-08-17_23-42-41/adan_checkpoints/checkpoint_00040000/model.zip
+1787028931.1371929710 107334 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/driver_artifacts/ADAN_PBT_Worker_92c7b_00001_1_ent_coef=0.0367,gamma=0.9532,learning_rate=0.0003,sl_pct=0.0129,tp_pct=0.1221,worker_config=worker_i_2026-08-17_23-42-41/result.json
+1787028931.0340239560 7684064 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00001_1_ent_coef=0.0367,gamma=0.9532,learning_rate=0.0003,sl_pct=0.0129,tp_pct=0.1221,worker_config=worker_i_2026-08-17_23-42-41/adan_checkpoints/checkpoint_00040000/model.zip
+1787023526.2764404970 7678130 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00000_0_ent_coef=0.0483,gamma=0.9754,learning_rate=0.0005,sl_pct=0.0674,tp_pct=0.1005,worker_config=worker_i_2026-08-17_23-42-41/adan_checkpoints/checkpoint_00030000/model.zip
+1787023371.1026647390 7678158 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00001_1_ent_coef=0.0367,gamma=0.9532,learning_rate=0.0003,sl_pct=0.0129,tp_pct=0.1221,worker_config=worker_i_2026-08-17_23-42-41/adan_checkpoints/checkpoint_00030000/model.zip
+1787017813.7585025960 7676409 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00000_0_ent_coef=0.0483,gamma=0.9754,learning_rate=0.0005,sl_pct=0.0674,tp_pct=0.1005,worker_config=worker_i_2026-08-17_23-42-41/adan_checkpoints/checkpoint_00020000/model.zip
+1787017678.1984438520 7676422 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00001_1_ent_coef=0.0367,gamma=0.9532,learning_rate=0.0003,sl_pct=0.0129,tp_pct=0.1221,worker_config=worker_i_2026-08-17_23-42-41/adan_checkpoints/checkpoint_00020000/model.zip
+1787012007.8485457780 7674729 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00000_0_ent_coef=0.0483,gamma=0.9754,learning_rate=0.0005,sl_pct=0.0674,tp_pct=0.1005,worker_config=worker_i_2026-08-17_23-42-41/adan_checkpoints/checkpoint_00010000/model.zip
+1787011908.3469732730 7674701 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_23-42-34_518411_400696/artifacts/2026-08-17_23-42-41/adan_pbt_training/working_dirs/ADAN_PBT_Worker_92c7b_00001_1_ent_coef=0.0367,gamma=0.9532,learning_rate=0.0003,sl_pct=0.0129,tp_pct=0.1221,worker_config=worker_i_2026-08-17_23-42-41/adan_checkpoints/checkpoint_00010000/model.zip
+1786996916.9136342240 21624692 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_17-54-59_751079_243930/artifacts/2026-08-17_17-55-05/adan_pbt_training/working_dirs/ADAN_PBT_Worker_03b8a_00000_0_ent_coef=0.0143,gamma=0.9894,learning_rate=0.0002,sl_pct=0.0345,tp_pct=0.0397,worker_config=worker_i_2026-08-17_17-55-05/logs/rewards/worker_0_rewards_20260817_175528.jsonl
+1786996916.6346382140 21720127 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_17-54-59_751079_243930/artifacts/2026-08-17_17-55-05/adan_pbt_training/working_dirs/ADAN_PBT_Worker_03b8a_00001_1_ent_coef=0.0131,gamma=0.9772,learning_rate=0.0002,sl_pct=0.0310,tp_pct=0.1275,worker_config=worker_i_2026-08-17_17-55-05/logs/rewards/worker_1_rewards_20260817_175527.jsonl
+1786982126.6466721070 0 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_17-54-59_751079_243930/artifacts/2026-08-17_17-55-05/adan_pbt_training/driver_artifacts/ADAN_PBT_Worker_03b8a_00000_0_ent_coef=0.0143,gamma=0.9894,learning_rate=0.0002,sl_pct=0.0345,tp_pct=0.0397,worker_config=worker_i_2026-08-17_17-55-05/result.json
+1786982126.4852142790 0 /home/ubuntu/webapp/.adan_ray/tmp/session_2026-08-17_17-54-59_751079_243930/artifacts/2026-08-17_17-55-05/adan_pbt_training/driver_artifacts/ADAN_PBT_Worker_03b8a_00001_1_ent_coef=0.0131,gamma=0.9772,learning_rate=0.0002,sl_pct=0.0310,tp_pct=0.1275,worker_config=worker_i_2026-08-17_17-55-05/result.json
+====================================================================================================
+ ADAN FORENSIC STATUS — 7h APRES
+====================================================================================================
+DATE: 2026-08-18 18:15:18.778660+02:00
+
+====================================================================================================
+1) RESSOURCES SYSTEME
+====================================================================================================
+
+--- TOP MEMOIRE (cmd tronquee a 160c) ---
+
+--- TOP CPU ---
+
+--- RAY / ADAN / PYTHON (full cmd) ---
+
+--- SHM / FICHIERS SUPPRIMES OUVERTS ---
+
+--- ZOMBIES ---
+
+====================================================================================================
+2) LOGS V31 / SANDBOX / RAY
+====================================================================================================
+2026-08-18T18:15:19.149289 132.19MB logs/training/v31_sandbox_500k_20260818_1035.log
+2026-08-18T18:14:20.508128 0.03MB forensics/v31_sandbox_monitor.log
+2026-08-18T10:31:19.944264 4.49MB logs/training/v31_500k_20260818_0839.log
+2026-08-18T10:31:01.686527 0.00MB forensics/v31_500k_raypbt_prestop_20260818_1027
+2026-08-18T10:27:53.229239 0.01MB forensics/v31_500k_corrected_monitor.log
+2026-08-18T08:36:53.716075 0.00MB forensics/v31_500k_collapse_20260818
+2026-08-18T08:26:42.202045 31.37MB logs/training/v31_500k_20260817_2141.log
+2026-08-17T22:02:52.645837 0.00MB forensics/v31_diag_collapse_20260817
+2026-08-17T22:01:57.025633 4.02MB logs/training/v31_diag_50k_20260817_1753.log
+2026-08-17T21:56:08.479620 0.02MB logs/diagnostics/v31_monitor_20260817_1753.log
+2026-08-17T17:48:22.309474 0.36MB logs/training/v31_diag_50k_20260817_173737.log
+2026-08-15T07:13:12.429457 395.63MB logs/training/v29_500k_sandbox.log
+
+====================================================================================================
+3) CHECKPOINTS / RESULT.JSON / REWARDS
+====================================================================================================
+
+--- training_output ---
+
+--- checkpoints ---
+
+--- logs/rewards ---
+
+--- /home/ubuntu/webapp/.adan_ray/tmp ---
+
+====================================================================================================
+4) DERNIERS LOGS DE TRADING
+====================================================================================================
+logs/training/v31_sandbox_500k_20260818_1035.log
+logs/training/v31_500k_20260818_0839.log
+logs/training/v31_500k_20260817_2141.log
+logs/training/v31_diag_50k_20260817_1753.log
+logs/training/v31_diag_50k_20260817_173737.log
+logs/training/v29_500k_sandbox.log
+
+====================================================================================================
+5) DERNIER LOG = logs/training/v31_sandbox_500k_20260818_1035.log
+====================================================================================================
+
+--- PROGRESSION ---
+2026-08-18 18:15:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5036
+2026-08-18 18:15:18,340 INFO [STEP] Starting step 5036
+2026-08-18 18:15:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5037
+2026-08-18 18:15:18,518 INFO [STEP] Starting step 5037
+2026-08-18 18:15:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5038
+2026-08-18 18:15:18,582 INFO [STEP] Starting step 5038
+2026-08-18 18:15:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5039
+2026-08-18 18:15:18,693 INFO [STEP] Starting step 5039
+2026-08-18 18:15:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5040
+2026-08-18 18:15:18,812 INFO [STEP] Starting step 5040
+2026-08-18 18:15:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5041
+2026-08-18 18:15:18,974 INFO [STEP] Starting step 5041
+2026-08-18 18:15:19 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5042
+2026-08-18 18:15:19,127 INFO [STEP] Starting step 5042
+2026-08-18 18:15:19 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5043
+2026-08-18 18:15:19,270 INFO [STEP] Starting step 5043
+2026-08-18 18:15:19 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5044
+2026-08-18 18:15:19,413 INFO [STEP] Starting step 5044
+2026-08-18 18:15:19 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5045
+2026-08-18 18:15:19,547 INFO [STEP] Starting step 5045
+
+--- PPO ---
+|    a0_mean_raw          | -7.26      |
+|    a0_std_raw           | 0.378      |
+|    anchor_loss          | 1.89       |
+|    approx_kl            | 0.22893903 |
+|    entropy_loss         | -2.21      |
+|    explained_variance   | -2.33      |
+|    policy_gradient_loss | 0.193      |
+|    value_loss           | 0.000828   |
+|    a0_mean_raw          | -7.21      |
+|    a0_std_raw           | 0.378      |
+|    anchor_loss          | 1.87       |
+|    approx_kl            | 0.07873972 |
+|    entropy_loss         | -2.21      |
+|    explained_variance   | -0.151     |
+|    policy_gradient_loss | 0.0369     |
+|    value_loss           | 0.000686   |
+|    a0_mean_raw          | -7.2       |
+|    a0_std_raw           | 0.378      |
+|    anchor_loss          | 1.86       |
+|    approx_kl            | 0.27000397 |
+|    entropy_loss         | -2.21      |
+|    explained_variance   | -1.29      |
+|    policy_gradient_loss | 0.232      |
+|    value_loss           | 0.000923   |
+|    a0_mean_raw          | -7.23      |
+|    a0_std_raw           | 0.378      |
+|    anchor_loss          | 1.88       |
+|    approx_kl            | 0.22594073 |
+|    entropy_loss         | -2.21      |
+|    explained_variance   | -0.612     |
+|    policy_gradient_loss | 0.214      |
+|    value_loss           | 0.000712   |
+|    a0_mean_raw          | -7.23      |
+|    a0_std_raw           | 0.378      |
+|    anchor_loss          | 1.88       |
+|    approx_kl            | 0.22749403 |
+|    entropy_loss         | -2.21      |
+|    explained_variance   | -2.49      |
+|    policy_gradient_loss | 0.104      |
+|    value_loss           | 0.000803   |
+
+--- METRICS SYNC ---
+2026-08-18 17:52:16 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 6000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 17:52:16,050 INFO [METRICS_SYNC] Step 6000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 17:53:51 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 6500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 17:53:51,944 INFO [METRICS_SYNC] Step 6500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 17:55:35 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 7000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 17:55:35,990 INFO [METRICS_SYNC] Step 7000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 17:57:30 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 7500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 17:57:30,004 INFO [METRICS_SYNC] Step 7500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 17:58:59 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EPISODE_END_STATS] Worker=0 | Initial=$20.50 | Final=$20.50 | PnL=$0.00 (+0.00%) | Trades=0 | Steps=7940 | Trade/Step=0.0000 | MaxDD=0.00% | Sharpe=0.0000 | WinRate=0.0%
+2026-08-18 17:58:59,857 INFO [EPISODE_END_STATS] Worker=0 | Initial=$20.50 | Final=$20.50 | PnL=$0.00 (+0.00%) | Trades=0 | Steps=7940 | Trade/Step=0.0000 | MaxDD=0.00% | Sharpe=0.0000 | WinRate=0.0%
+2026-08-18 18:00:29 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:00:29,448 INFO [METRICS_SYNC] Step 500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:01:53 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 1000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:01:53,992 INFO [METRICS_SYNC] Step 1000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:03:21 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 1500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:03:21,110 INFO [METRICS_SYNC] Step 1500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:05:02 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 2000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:05:02,572 INFO [METRICS_SYNC] Step 2000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:07:09 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 2500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:07:09,876 INFO [METRICS_SYNC] Step 2500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:08:45 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 3000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:08:45,919 INFO [METRICS_SYNC] Step 3000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:10:26 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 3500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:10:26,119 INFO [METRICS_SYNC] Step 3500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:12:11 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 4000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:12:11,786 INFO [METRICS_SYNC] Step 4000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:13:33 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 4500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:13:33,463 INFO [METRICS_SYNC] Step 4500 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:15:02 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 5000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+2026-08-18 18:15:02,547 INFO [METRICS_SYNC] Step 5000 | Worker 0 | Sharpe=0.0000, Sortino=0.0000, WinRate=0.00%, Trades=0
+
+--- EV GATE ---
+2026-08-18 11:56:38,471 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.373 (RR=2.02, SL=0.0062) -- EV<0, trade cancelled
+2026-08-18 12:05:01 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.039 <= p_min=0.414 (RR=1.55, SL=0.0083) -- EV<0, trade cancelled
+2026-08-18 12:05:01,087 INFO [EV_GATE] BTCUSDT W=0.039 <= p_min=0.414 (RR=1.55, SL=0.0083) -- EV<0, trade cancelled
+2026-08-18 12:07:30 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.90, SL=0.0087) -- EV<0, trade cancelled
+2026-08-18 12:07:30,481 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.90, SL=0.0087) -- EV<0, trade cancelled
+2026-08-18 12:07:46 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.390 (RR=1.67, SL=0.0088) -- EV<0, trade cancelled
+2026-08-18 12:07:46,985 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.390 (RR=1.67, SL=0.0088) -- EV<0, trade cancelled
+2026-08-18 12:13:28 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.404 (RR=1.50, SL=0.0106) -- EV<0, trade cancelled
+2026-08-18 12:13:28,158 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.404 (RR=1.50, SL=0.0106) -- EV<0, trade cancelled
+2026-08-18 12:16:46 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.352 (RR=2.07, SL=0.0074) -- EV<0, trade cancelled
+2026-08-18 12:16:46,354 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.352 (RR=2.07, SL=0.0074) -- EV<0, trade cancelled
+2026-08-18 12:17:03 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.341 (RR=2.18, SL=0.0073) -- EV<0, trade cancelled
+2026-08-18 12:17:03,800 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.341 (RR=2.18, SL=0.0073) -- EV<0, trade cancelled
+2026-08-18 12:23:15 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.89, SL=0.0089) -- EV<0, trade cancelled
+2026-08-18 12:23:15,157 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.89, SL=0.0089) -- EV<0, trade cancelled
+
+--- TRADES OPEN/CLOSE ---
+2026-08-18 12:29:32 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=5382 | chunk=0/1 | step_in_chunk=5432 | exec_src=open[t+1] | raw_exec_p=62115.0 | buy_price(+slip)=62127.42 | size=0.000182 | notional=$11.28 | capital_before=$16.12 | cash_after=$4.81 | exposure=70.00% | SL=0.60% TP=1.65% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:29:32,327 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=5382 | chunk=0/1 | step_in_chunk=5432 | exec_src=open[t+1] | raw_exec_p=62115.0 | buy_price(+slip)=62127.42 | size=0.000182 | notional=$11.28 | capital_before=$16.12 | cash_after=$4.81 | exposure=70.00% | SL=0.60% TP=1.65% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:29:32 - adan_trading_bot.portfolio.portfolio_manager - WARNING - [TRADE_AUDIT_CLOSE] BTCUSDT | step=5385 | reason=SL_HIT | entry_price=62127.42 | sl_price=61754.66 | low_price=61693.08 | pnl_net=-0.1127 | fees=0.0450 | hold_steps=3 | capital_after=16.01
+2026-08-18 12:29:32,678 WARNING [TRADE_AUDIT_CLOSE] BTCUSDT | step=5385 | reason=SL_HIT | entry_price=62127.42 | sl_price=61754.66 | low_price=61693.08 | pnl_net=-0.1127 | fees=0.0450 | hold_steps=3 | capital_after=16.01
+2026-08-18 12:30:26 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=5612 | chunk=0/1 | step_in_chunk=5662 | exec_src=open[t+1] | raw_exec_p=62500.0 | buy_price(+slip)=62512.50 | size=0.000199 | notional=$12.45 | capital_before=$16.01 | cash_after=$3.53 | exposure=77.78% | SL=0.85% TP=1.65% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:30:26,101 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=5612 | chunk=0/1 | step_in_chunk=5662 | exec_src=open[t+1] | raw_exec_p=62500.0 | buy_price(+slip)=62512.50 | size=0.000199 | notional=$12.45 | capital_before=$16.01 | cash_after=$3.53 | exposure=77.78% | SL=0.85% TP=1.65% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:30:39 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=5677 | chunk=0/1 | step_in_chunk=5727 | exec_src=open[t+1] | raw_exec_p=62632.64 | buy_price(+slip)=62645.17 | size=0.000178 | notional=$11.17 | capital_before=$15.96 | cash_after=$4.76 | exposure=70.00% | SL=0.88% TP=1.88% | tier=Micro Capital | TF=1h | profile=scalper
+2026-08-18 12:30:39,220 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=5677 | chunk=0/1 | step_in_chunk=5727 | exec_src=open[t+1] | raw_exec_p=62632.64 | buy_price(+slip)=62645.17 | size=0.000178 | notional=$11.17 | capital_before=$15.96 | cash_after=$4.76 | exposure=70.00% | SL=0.88% TP=1.88% | tier=Micro Capital | TF=1h | profile=scalper
+2026-08-18 12:31:00 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=5771 | chunk=0/1 | step_in_chunk=5821 | exec_src=open[t+1] | raw_exec_p=63211.48 | buy_price(+slip)=63224.12 | size=0.000177 | notional=$11.17 | capital_before=$15.95 | cash_after=$4.76 | exposure=70.00% | SL=0.90% TP=1.97% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:31:00,157 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=5771 | chunk=0/1 | step_in_chunk=5821 | exec_src=open[t+1] | raw_exec_p=63211.48 | buy_price(+slip)=63224.12 | size=0.000177 | notional=$11.17 | capital_before=$15.95 | cash_after=$4.76 | exposure=70.00% | SL=0.90% TP=1.97% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:31:20 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=5880 | chunk=0/1 | step_in_chunk=5930 | exec_src=open[t+1] | raw_exec_p=62750.0 | buy_price(+slip)=62762.55 | size=0.000177 | notional=$11.11 | capital_before=$15.87 | cash_after=$4.74 | exposure=70.00% | SL=0.97% TP=1.98% | tier=Micro Capital | TF=1h | profile=scalper
+2026-08-18 12:31:20,621 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=5880 | chunk=0/1 | step_in_chunk=5930 | exec_src=open[t+1] | raw_exec_p=62750.0 | buy_price(+slip)=62762.55 | size=0.000177 | notional=$11.11 | capital_before=$15.87 | cash_after=$4.74 | exposure=70.00% | SL=0.97% TP=1.98% | tier=Micro Capital | TF=1h | profile=scalper
+2026-08-18 12:32:02 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=6111 | chunk=0/1 | step_in_chunk=6161 | exec_src=open[t+1] | raw_exec_p=63391.67 | buy_price(+slip)=63404.35 | size=0.000178 | notional=$11.28 | capital_before=$15.85 | cash_after=$4.54 | exposure=71.17% | SL=0.89% TP=1.49% | tier=Micro Capital | TF=1h | profile=scalper
+2026-08-18 12:32:02,475 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=6111 | chunk=0/1 | step_in_chunk=6161 | exec_src=open[t+1] | raw_exec_p=63391.67 | buy_price(+slip)=63404.35 | size=0.000178 | notional=$11.28 | capital_before=$15.85 | cash_after=$4.54 | exposure=71.17% | SL=0.89% TP=1.49% | tier=Micro Capital | TF=1h | profile=scalper
+2026-08-18 12:32:23 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=6224 | chunk=0/1 | step_in_chunk=6274 | exec_src=open[t+1] | raw_exec_p=61997.11 | buy_price(+slip)=62009.51 | size=0.000190 | notional=$11.77 | capital_before=$15.77 | cash_after=$3.98 | exposure=74.62% | SL=1.20% TP=1.99% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:32:23,488 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=6224 | chunk=0/1 | step_in_chunk=6274 | exec_src=open[t+1] | raw_exec_p=61997.11 | buy_price(+slip)=62009.51 | size=0.000190 | notional=$11.77 | capital_before=$15.77 | cash_after=$3.98 | exposure=74.62% | SL=1.20% TP=1.99% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:34:27 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=6914 | chunk=0/1 | step_in_chunk=6964 | exec_src=open[t+1] | raw_exec_p=62110.0 | buy_price(+slip)=62122.42 | size=0.000178 | notional=$11.05 | capital_before=$15.71 | cash_after=$4.63 | exposure=70.36% | SL=1.02% TP=2.00% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:34:27,330 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=6914 | chunk=0/1 | step_in_chunk=6964 | exec_src=open[t+1] | raw_exec_p=62110.0 | buy_price(+slip)=62122.42 | size=0.000178 | notional=$11.05 | capital_before=$15.71 | cash_after=$4.63 | exposure=70.36% | SL=1.02% TP=2.00% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:34:51 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=7058 | chunk=0/1 | step_in_chunk=7108 | exec_src=open[t+1] | raw_exec_p=62976.22 | buy_price(+slip)=62988.82 | size=0.000177 | notional=$11.15 | capital_before=$15.68 | cash_after=$4.51 | exposure=71.07% | SL=0.70% TP=1.93% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:34:51,222 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=7058 | chunk=0/1 | step_in_chunk=7108 | exec_src=open[t+1] | raw_exec_p=62976.22 | buy_price(+slip)=62988.82 | size=0.000177 | notional=$11.15 | capital_before=$15.68 | cash_after=$4.51 | exposure=71.07% | SL=0.70% TP=1.93% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:34:58 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=7095 | chunk=0/1 | step_in_chunk=7145 | exec_src=open[t+1] | raw_exec_p=62613.1 | buy_price(+slip)=62625.62 | size=0.000194 | notional=$12.18 | capital_before=$15.58 | cash_after=$3.38 | exposure=78.15% | SL=1.02% TP=2.00% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:34:58,921 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=7095 | chunk=0/1 | step_in_chunk=7145 | exec_src=open[t+1] | raw_exec_p=62613.1 | buy_price(+slip)=62625.62 | size=0.000194 | notional=$12.18 | capital_before=$15.58 | cash_after=$3.38 | exposure=78.15% | SL=1.02% TP=2.00% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:38:55 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=491 | chunk=0/1 | step_in_chunk=541 | exec_src=open[t+1] | raw_exec_p=80200.75 | buy_price(+slip)=80216.79 | size=0.000179 | notional=$14.35 | capital_before=$20.50 | cash_after=$6.12 | exposure=70.00% | SL=0.87% TP=1.70% | tier=Micro Capital | TF=1h | profile=scalper
+2026-08-18 12:38:55,721 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=491 | chunk=0/1 | step_in_chunk=541 | exec_src=open[t+1] | raw_exec_p=80200.75 | buy_price(+slip)=80216.79 | size=0.000179 | notional=$14.35 | capital_before=$20.50 | cash_after=$6.12 | exposure=70.00% | SL=0.87% TP=1.70% | tier=Micro Capital | TF=1h | profile=scalper
+2026-08-18 12:38:56 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [TRADE_AUDIT_CLOSE] BTCUSDT | step=494 | exec_src=open[t+1] | entry_price=80216.79 | sell_price=80224.93 | pnl_gross=0.0014567536450704362 | fees=0.0574 | pnl_net=-0.0560 | hold_steps=3 | reason=AGENT_CLOSE | TF=4h | unrealized_pnl_pct=0.0302% | capital_after=$20.44 | WAIT until step 514
+2026-08-18 12:38:56,078 INFO [TRADE_AUDIT_CLOSE] BTCUSDT | step=494 | exec_src=open[t+1] | entry_price=80216.79 | sell_price=80224.93 | pnl_gross=0.0014567536450704362 | fees=0.0574 | pnl_net=-0.0560 | hold_steps=3 | reason=AGENT_CLOSE | TF=4h | unrealized_pnl_pct=0.0302% | capital_after=$20.44 | WAIT until step 514
+2026-08-18 12:40:33 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=1000 | chunk=0/1 | step_in_chunk=1050 | exec_src=open[t+1] | raw_exec_p=77096.73 | buy_price(+slip)=77112.15 | size=0.000212 | notional=$16.36 | capital_before=$20.44 | cash_after=$4.05 | exposure=80.00% | SL=0.90% TP=2.00% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:40:33,602 WARNING [TRADE_AUDIT_OPEN] BTCUSDT | step=1000 | chunk=0/1 | step_in_chunk=1050 | exec_src=open[t+1] | raw_exec_p=77096.73 | buy_price(+slip)=77112.15 | size=0.000212 | notional=$16.36 | capital_before=$20.44 | cash_after=$4.05 | exposure=80.00% | SL=0.90% TP=2.00% | tier=Micro Capital | TF=5m | profile=scalper
+2026-08-18 12:40:36 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [TRADE_AUDIT_CLOSE] BTCUSDT | step=1003 | exec_src=open[t+1] | entry_price=77112.15 | sell_price=77065.58 | pnl_gross=-0.009878374815083399 | fees=0.0654 | pnl_net=-0.0753 | hold_steps=3 | reason=AGENT_CLOSE | TF=5m | unrealized_pnl_pct=-0.0404% | capital_after=$20.37 | WAIT until step 1009
+2026-08-18 12:40:36,059 INFO [TRADE_AUDIT_CLOSE] BTCUSDT | step=1003 | exec_src=open[t+1] | entry_price=77112.15 | sell_price=77065.58 | pnl_gross=-0.009878374815083399 | fees=0.0654 | pnl_net=-0.0753 | hold_steps=3 | reason=AGENT_CLOSE | TF=5m | unrealized_pnl_pct=-0.0404% | capital_after=$20.37 | WAIT until step 1009
+
+--- ACTION / ROUTING ---
+2026-08-18 18:13:04 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4300 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147220, 'deadband_reject': 5681, 'routi
+2026-08-18 18:13:04,697 INFO [ACTION_DIFF] Step 4300 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147220, 'deadband_reject': 5681, 'routing_reject': 127508, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:13:09 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4350 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147270, 'deadband_reject': 5681, 'routi
+2026-08-18 18:13:09,462 INFO [ACTION_DIFF] Step 4350 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147270, 'deadband_reject': 5681, 'routing_reject': 127558, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:13:17 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4400 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147320, 'deadband_reject': 5681, 'routi
+2026-08-18 18:13:17,322 INFO [ACTION_DIFF] Step 4400 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147320, 'deadband_reject': 5681, 'routing_reject': 127608, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:13:24 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4450 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147370, 'deadband_reject': 5681, 'routi
+2026-08-18 18:13:24,323 INFO [ACTION_DIFF] Step 4450 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147370, 'deadband_reject': 5681, 'routing_reject': 127658, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:13:33 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4500 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147420, 'deadband_reject': 5681, 'routi
+2026-08-18 18:13:33,422 INFO [ACTION_DIFF] Step 4500 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147420, 'deadband_reject': 5681, 'routing_reject': 127708, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:13:46 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4550 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147470, 'deadband_reject': 5681, 'routi
+2026-08-18 18:13:46,556 INFO [ACTION_DIFF] Step 4550 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147470, 'deadband_reject': 5681, 'routing_reject': 127758, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:13:55 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4600 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147520, 'deadband_reject': 5681, 'routi
+2026-08-18 18:13:55,144 INFO [ACTION_DIFF] Step 4600 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147520, 'deadband_reject': 5681, 'routing_reject': 127808, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:14:02 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4650 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147570, 'deadband_reject': 5681, 'routi
+2026-08-18 18:14:02,270 INFO [ACTION_DIFF] Step 4650 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147570, 'deadband_reject': 5681, 'routing_reject': 127858, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:14:16 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4700 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147620, 'deadband_reject': 5681, 'routi
+2026-08-18 18:14:16,266 INFO [ACTION_DIFF] Step 4700 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147620, 'deadband_reject': 5681, 'routing_reject': 127908, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:14:24 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4750 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147670, 'deadband_reject': 5681, 'routi
+2026-08-18 18:14:24,460 INFO [ACTION_DIFF] Step 4750 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147670, 'deadband_reject': 5681, 'routing_reject': 127958, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:14:32 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4800 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147720, 'deadband_reject': 5681, 'routi
+2026-08-18 18:14:32,792 INFO [ACTION_DIFF] Step 4800 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147720, 'deadband_reject': 5681, 'routing_reject': 128008, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:14:41 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4850 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147770, 'deadband_reject': 5681, 'routi
+2026-08-18 18:14:41,176 INFO [ACTION_DIFF] Step 4850 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147770, 'deadband_reject': 5681, 'routing_reject': 128058, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:14:49 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4900 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147820, 'deadband_reject': 5681, 'routi
+2026-08-18 18:14:49,009 INFO [ACTION_DIFF] Step 4900 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147820, 'deadband_reject': 5681, 'routing_reject': 128108, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:14:54 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 4950 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147870, 'deadband_reject': 5681, 'routi
+2026-08-18 18:14:54,650 INFO [ACTION_DIFF] Step 4950 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147870, 'deadband_reject': 5681, 'routing_reject': 128158, 'budget_reject': 5243, 'barrier_rej
+2026-08-18 18:15:02 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 5000 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147920, 'deadband_reject': 5681, 'routi
+2026-08-18 18:15:02,504 INFO [ACTION_DIFF] Step 5000 | Requested=HOLD Executed=HOLD | inv_penalty=0.00000 | rejections={'fee_gate': 0, 'risk_gate': 0, 'cooldown_wait': 0, 'cooldown_hold_min': 0, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 0, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 0, 'sell_no_position': 0} | pipeline={'policy': 147920, 'deadband_reject': 5681, 'routing_reject': 128208, 'budget_reject': 5243, 'barrier_rej
+
+====================================================================================================
+6) METRIQUES TRADING CALCULEES
+====================================================================================================
+
+--- intraday / pid 1023867 ---
+trades       = 18
+wins         = 5
+losses       = 13
+winrate      = 27.78 %
+PnL total    = -1.4422
+PnL/trade    = -0.08012
+profitfactor = 0.4919
+fees total   = 1.0092
+fees/trade   = 0.05607
+hold mean    = 15.78 steps
+hold median  = 15.0
+reasons      = {'SL_HIT': 13, 'TP_HIT': 5}
+
+WINDOWS 500 STEPS:
+   501-  1000 trades=  2 WR=  0.0% PnL=-0.4736 PF=0.00
+  1501-  2000 trades=  2 WR=  0.0% PnL=-0.5599 PF=0.00
+  2001-  2500 trades=  4 WR= 50.0% PnL=+0.0635 PF=1.13
+  2501-  3000 trades=  1 WR=100.0% PnL=+0.2907 PF=inf
+  3001-  3500 trades=  4 WR= 25.0% PnL=-0.3545 PF=0.41
+  4001-  4500 trades=  3 WR=  0.0% PnL=-0.5241 PF=0.00
+  4501-  5000 trades=  1 WR=100.0% PnL=+0.3005 PF=inf
+  6001-  6500 trades=  1 WR=  0.0% PnL=-0.1848 PF=0.00
+
+--- scalper / pid 1023868 ---
+trades       = 44
+wins         = 12
+losses       = 32
+winrate      = 27.27 %
+PnL total    = -3.1614
+PnL/trade    = -0.07185
+profitfactor = 0.3124
+fees total   = 2.2945
+fees/trade   = 0.05215
+hold mean    = 9.73 steps
+hold median  = 9.0
+reasons      = {'SL_HIT': 32, 'TP_HIT': 12}
+
+WINDOWS 500 STEPS:
+   501-  1000 trades=  3 WR=  0.0% PnL=-0.4899 PF=0.00
+  1501-  2000 trades=  7 WR= 28.6% PnL=-0.5733 PF=0.30
+  2001-  2500 trades=  8 WR= 25.0% PnL=-0.6079 PF=0.32
+  2501-  3000 trades=  1 WR=100.0% PnL=+0.1189 PF=inf
+  3001-  3500 trades=  8 WR= 25.0% PnL=-0.5491 PF=0.36
+  3501-  4000 trades=  2 WR=  0.0% PnL=-0.2541 PF=0.00
+  4001-  4500 trades=  8 WR= 12.5% PnL=-0.8417 PF=0.08
+  4501-  5000 trades=  6 WR= 50.0% PnL=-0.0715 PF=0.80
+  6001-  6500 trades=  1 WR=100.0% PnL=+0.1072 PF=inf
+
+--- 401115 / pid 401115 ---
+trades       = 118
+wins         = 15
+losses       = 103
+winrate      = 12.71 %
+PnL total    = -14.1165
+PnL/trade    = -0.11963
+profitfactor = 0.1074
+fees total   = 6.3742
+fees/trade   = 0.05402
+hold mean    = 10.05 steps
+hold median  = 10.0
+reasons      = {'TP_HIT': 15, 'SL_HIT': 103}
+
+WINDOWS 500 STEPS:
+     1-   500 trades=  2 WR= 50.0% PnL=+0.0252 PF=1.18
+   501-  1000 trades=  3 WR= 33.3% PnL=-0.2512 PF=0.32
+  1001-  1500 trades=  2 WR= 50.0% PnL=-0.0796 PF=0.46
+  1501-  2000 trades= 11 WR=  0.0% PnL=-2.0647 PF=0.00
+  2001-  2500 trades= 15 WR= 13.3% PnL=-1.9712 PF=0.10
+  2501-  3000 trades=  8 WR= 37.5% PnL=-0.3551 PF=0.51
+  3001-  3500 trades= 25 WR=  8.0% PnL=-3.3917 PF=0.07
+  3501-  4000 trades=  3 WR=  0.0% PnL=-0.3790 PF=0.00
+  4001-  4500 trades= 12 WR=  0.0% PnL=-1.7032 PF=0.00
+  4501-  5000 trades= 13 WR=  7.7% PnL=-1.7758 PF=0.04
+  5001-  5500 trades=  7 WR= 14.3% PnL=-0.7128 PF=0.08
+  6001-  6500 trades=  5 WR= 40.0% PnL=-0.2156 PF=0.53
+  6501-  7000 trades=  7 WR=  0.0% PnL=-0.8979 PF=0.00
+  7001-  7500 trades=  1 WR=100.0% PnL=+0.1215 PF=inf
+  7501-  8000 trades=  4 WR=  0.0% PnL=-0.4654 PF=0.00
+
+--- 401116 / pid 401116 ---
+trades       = 155
+wins         = 21
+losses       = 134
+winrate      = 13.55 %
+PnL total    = -17.0167
+PnL/trade    = -0.10979
+profitfactor = 0.2139
+fees total   = 8.1525
+fees/trade   = 0.0526
+hold mean    = 18.17 steps
+hold median  = 14
+reasons      = {'SL_HIT': 134, 'TP_HIT': 21}
+
+WINDOWS 500 STEPS:
+     1-   500 trades=  1 WR=  0.0% PnL=-0.1399 PF=0.00
+   501-  1000 trades= 12 WR=  8.3% PnL=-2.2223 PF=0.10
+  1001-  1500 trades=  1 WR=  0.0% PnL=-0.1211 PF=0.00
+  1501-  2000 trades= 19 WR=  0.0% PnL=-3.7627 PF=0.00
+  2001-  2500 trades= 28 WR= 17.9% PnL=-2.7389 PF=0.33
+  2501-  3000 trades=  6 WR= 66.7% PnL=+0.6753 PF=3.78
+  3001-  3500 trades= 16 WR= 18.8% PnL=-1.9037 PF=0.27
+  3501-  4000 trades=  4 WR=  0.0% PnL=-0.5052 PF=0.00
+  4001-  4500 trades= 16 WR=  0.0% PnL=-2.2509 PF=0.00
+  4501-  5000 trades= 10 WR= 30.0% PnL=-0.3864 PF=0.58
+  5001-  5500 trades=  8 WR= 12.5% PnL=-0.6758 PF=0.13
+  5501-  6000 trades=  5 WR= 20.0% PnL=-0.3999 PF=0.12
+  6001-  6500 trades=  9 WR= 33.3% PnL=-0.2010 PF=0.77
+  6501-  7000 trades= 13 WR=  0.0% PnL=-1.5673 PF=0.00
+  7001-  7500 trades=  3 WR=  0.0% PnL=-0.3581 PF=0.00
+  7501-  8000 trades=  4 WR=  0.0% PnL=-0.4588 PF=0.00
+
+--- 244350 / pid 244350 ---
+trades       = 28
+wins         = 4
+losses       = 24
+winrate      = 14.29 %
+PnL total    = -3.4166
+PnL/trade    = -0.12202
+profitfactor = 0.105
+fees total   = 1.5789
+fees/trade   = 0.05639
+hold mean    = 11.11 steps
+hold median  = 12.0
+reasons      = {'TP_HIT': 4, 'SL_HIT': 24}
+
+WINDOWS 500 STEPS:
+     1-   500 trades=  1 WR=100.0% PnL=+0.1686 PF=inf
+  1501-  2000 trades=  5 WR=  0.0% PnL=-1.0014 PF=0.00
+  2001-  2500 trades=  4 WR= 25.0% PnL=-0.4263 PF=0.14
+  2501-  3000 trades=  2 WR= 50.0% PnL=-0.0574 PF=0.59
+  3001-  3500 trades=  8 WR= 12.5% PnL=-0.9928 PF=0.07
+  3501-  4000 trades=  2 WR=  0.0% PnL=-0.2478 PF=0.00
+  4001-  4500 trades=  3 WR=  0.0% PnL=-0.4169 PF=0.00
+  4501-  5000 trades=  2 WR=  0.0% PnL=-0.3278 PF=0.00
+  5001-  5500 trades=  1 WR=  0.0% PnL=-0.1148 PF=0.00
+
+--- 244351 / pid 244351 ---
+trades       = 17
+wins         = 2
+losses       = 15
+winrate      = 11.76 %
+PnL total    = -2.0651
+PnL/trade    = -0.12148
+profitfactor = 0.2044
+fees total   = 0.9292
+fees/trade   = 0.05466
+hold mean    = 20.06 steps
+hold median  = 15
+reasons      = {'SL_HIT': 15, 'TP_HIT': 2}
+
+WINDOWS 500 STEPS:
+   501-  1000 trades=  2 WR=  0.0% PnL=-0.4819 PF=0.00
+  1501-  2000 trades=  4 WR=  0.0% PnL=-0.9169 PF=0.00
+  2001-  2500 trades=  4 WR= 25.0% PnL=-0.0825 PF=0.83
+  2501-  3000 trades=  1 WR=100.0% PnL=+0.1304 PF=inf
+  3501-  4000 trades=  1 WR=  0.0% PnL=-0.1555 PF=0.00
+  4001-  4500 trades=  2 WR=  0.0% PnL=-0.2467 PF=0.00
+  5001-  5500 trades=  3 WR=  0.0% PnL=-0.3120 PF=0.00
+
+--- 232313 / pid 232313 ---
+trades       = 1
+wins         = 1
+losses       = 0
+winrate      = 100.0 %
+PnL total    = 0.1686
+PnL/trade    = 0.1686
+profitfactor = inf
+fees total   = 0.0687
+fees/trade   = 0.0687
+hold mean    = 7 steps
+hold median  = 7
+reasons      = {'TP_HIT': 1}
+
+WINDOWS 500 STEPS:
+     1-   500 trades=  1 WR=100.0% PnL=+0.1686 PF=inf
+
+====================================================================================================
+7) ARBRE DIAGNOSTIQUE
+====================================================================================================
+
+A. PROCESSUS ?
+   |- aucun train/sandbox/Ray -> RUN TERMINE / CRASH / STOP
+   +- process present -> continuer
+
+B. DONNEES ?
+   |- aucun nouveau log -> verifier autre session/Ray/tmp
+   |- log avance -> RUN VIVANT
+   +- log fige -> process bloque ou update/checkpoint
+
+C. PPO ?
+   |- a0 stable + KL bas -> pas de collapse
+   |- a0 vers +/-1 + KL haut -> collapse
+   +- EV negative -> critic / reward / etat a examiner
+
+D. TRADING ?
+   |- WR faible + PF<1 -> edge negatif actuel
+   |- PF>1 mais petit N -> tendance, pas conclusion
+   |- frais eleves / trade -> micro-capital couteux
+   +- MaxDuration dominant -> comportement de sortie / horizon a examiner
+
+E. EV GATE ?
+   |- W~0.01 systematiquement -> HMM/EV-confidence peut bloquer le flux
+   |- W varie -> gate recoit un signal
+   +- beaucoup de rejet fee/EV -> faible frequence d'execution
+
+F. RESSOURCES ?
+   |- Ray mort mais RAM toujours basse -> processus orphelins / cache / shm / swap
+   |- Python/Ray vivants -> memoire de workers
+   |- fichiers supprimes mais ouverts -> RAM retenue
+   +- swap eleve + si/so >0 -> pression memoire active
+
+
+FIN DU RAPPORT
