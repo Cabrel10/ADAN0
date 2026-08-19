@@ -1474,7 +1474,7 @@ reward_shaping:
     version: 1
   # Alias de trading_rules.cooldown.hold_min_steps[5m].
   # Fallback si la config cooldown n'est pas disponible. 6 steps = 30 min en 5m.
-  min_holding_period_steps: 6
+  min_holding_period_steps: 3   # V32 C4 (etait 6)
   missed_penalty: -0.5
   multi_traque_bonus: 1.5
   overstay_penalty: -1.0
@@ -1634,7 +1634,7 @@ trading_rules:
   # coute proportionnellement a sa nuisance (duree trop courte + PnL faible).
   close_intention_penalty:
     enabled: true
-    min_hold_steps: 6         # en dessous => penalise (close trop precoce)
+    min_hold_steps: 3         # V32 C4 (etait 6): reduit close_intent penalty sur exits legitimes
     lambda_duration: 0.05     # poids du deficit de duree
   # 🔵 ACTION ENTROPY CONSTRAINT (V3) — penalise une frequence de switch
   # d'action (HOLD<->BUY<->SELL) trop elevee sur une fenetre glissante.
@@ -1642,7 +1642,7 @@ trading_rules:
     enabled: true
     window: 20                # taille de la fenetre glissante (steps)
     switch_threshold: 0.5     # part de switches au-dela de laquelle on penalise
-    lambda_switch: 0.03       # poids de la penalite de switch
+    lambda_switch: 0.0        # V32 C5 (etait 0.03): neutralise l'anti-diversite (switch penalty). CAUSAL §3: alt/random deja penalises vs hold.
   # 🟢 LATENT PnL SHAPING (V4, 2026-06-27) — la "ligne imaginaire" (cf. user).
   # Des qu'une position est REELLEMENT ouverte, le PnL courant (non realise)
   # est positif (au-dessus de l'entree) ou negatif (en-dessous). Le modele doit

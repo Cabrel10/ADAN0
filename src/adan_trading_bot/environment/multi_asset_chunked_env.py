@@ -9511,6 +9511,15 @@ class MultiAssetChunkedEnv(gym.Env):
                         p_min_required *= 0.85  # 15% softer during training
                 else:
                     p_min_required = 0.99  # no SL = reject
+                # V32 C1 (tracable, reversible): plafond p_min_required pour ne pas
+                # bloquer 40/40 BUY quand p_hmm~0.5 (CAUSAL_LEARNING_PIPELINE §8).
+                # Cap par env var, defaut 0.99 (= comportement historique inchange).
+                try:
+                    _pmin_cap = float(os.environ.get("ADAN_FEE_GATE_PMIN_CAP", "0.99"))
+                    if p_min_required > _pmin_cap:
+                        p_min_required = _pmin_cap
+                except (TypeError, ValueError):
+                    pass
 
                 _ev_gate_disabled = os.environ.get(
                     "ADAN_DISABLE_EV_FEE_GATE", "0"
