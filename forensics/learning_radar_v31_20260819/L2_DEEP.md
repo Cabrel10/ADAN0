@@ -66,7 +66,8 @@ marché baissier tôt (78400→66400, -0.46% mesuré sur closes)
 | L2 réaction pénalités | CONFIRME | +42pts de changement après pénalité vs neutre |
 | L2 évitement SELL stérile | REFUTE | P(SELL|stérile t-1)=12.6% >> baseline 1.1% — la répétition persiste |
 | L2 réduction taux SL | PROBABLE | SL% H1=60.8% → H2=41.5% |
-| L3 adaptation vol→fréquence | PROBABLE | corr=0.831 ; fréquence/win chute 36→3 avec la vol et le collapse |
+| L3 adaptation vol→fréquence | REFUTE | corr=0.831 sur run complet, MAIS **0.408 en pré-collapse** (fréquences 21-22 constantes) → artefact du collapse, pas une adaptation réelle |
+| L3 adaptation durée (hold) | REFUTE | hold_mean TP_HIT=9.6 ≈ SL_HIT=9.7 (aucune différenciation) ; AGENT_CLOSE=5.9 (coupe tôt, non conditionné) ; H1→H2 : 9.4→8.7 (dérive légère, pas stratégique) |
 | L4 collapse absorbant | CONFIRME | share_SELL=1.0 dès upd≈368, advBUY_nan=100%, a0=-8.07 |
 | L4 spam stérile | CONFIRME | fenêtre 9 : 406k policy → 32 exec (0.01%) |
 | L5 performance | CONFIRME (négative) | WR 23.5%→21.8%, PF moyen 0.29, Sharpe indicatif -8.81 |
