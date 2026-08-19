@@ -52,3 +52,16 @@ logs V30/V31), aucune supposition.
 **GO CONDITIONNEL** pour coder le RAL selon la contrainte ci-dessus, PUIS test
 déterministe 6 combinaisons état×action (reward sans biais directionnel + μ borné
 |μ|≲0.8 sur mini-run), PUIS V32 500k. Tout écart → NO-GO documenté.
+
+## Livrable causal (preuve de bout en bout)
+
+**`CAUSAL_LEARNING_PIPELINE.md`** — sonde déterministe SANS PPO (`scripts/diagnostics/probe_env_deterministic.py`),
+3 campagnes (advisory/gated × sl-tp saturant/non), 3 splits, 5 séquences. Résultats prouvés :
+- **Ambiguïté nB/nH/nS résolue par code** : réponse (A) = a0 brut pré-routing (pas exécution).
+- **saturation_penalty domine** le reward quand SL/TP saturent (-2.87/40 pas) et est décorrélée du trade ;
+  retirée → reward quasi nul (hold/sell = +0.00000) ⇒ **pas de biais structurel**, seul un biais **dataset** subsiste.
+- **fee-gate = seule EV de CONTRÔLE** : bloque 40/40 BUY (mode gated).
+- **symlog** rend les pénalités sous-linéaires/sous-quadratiques ; **action_anchor plafonne à 0.02** (négligeable).
+- **behavior_penalty punit des SELL légitimes** ; **min_hold ignore des SELL légitimes**.
+
+**Verdict : V2/V32 = NO-GO** tant que les corrections §10 ne sont pas validées **par sonde**, une variable à la fois.
