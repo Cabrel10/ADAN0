@@ -34,11 +34,17 @@ OUT = LOG.parent / (LOG.stem.replace("v32_train", "radar") + ".jsonl")
 
 RE_STEP = re.compile(r"Starting step (\d+)")
 RE_ANCHOR = re.compile(r"nB=(\d+)\s+nS=(\d+)\s+nH=(\d+)")
-RE_KL = re.compile(r"approx_kl[\"']?\s*[:=]\s*([-\d.eE]+)")
-RE_EV = re.compile(r"explained_variance[\"']?\s*[:=]\s*([-\d.eEnan]+)")
-RE_ENT = re.compile(r"entropy_loss[\"']?\s*[:=]\s*([-\d.eE]+)")
-RE_MU = re.compile(r"mu[_ ]?mean[\"']?\s*[:=]\s*([-\d.eE]+)")
-RE_STD = re.compile(r"std[_ ]?mean[\"']?\s*[:=]\s*([-\d.eE]+)")
+# SB3 logs metrics as pipe-delimited tables:  |    approx_kl    | 0.012   |
+RE_KL = re.compile(r"\|\s*approx_kl\s*\|\s*([-\d.eEnan]+)\s*\|")
+RE_EV = re.compile(r"\|\s*explained_variance\s*\|\s*([-\d.eEnan]+)\s*\|")
+RE_ENT = re.compile(r"\|\s*entropy_loss\s*\|\s*([-\d.eEnan]+)\s*\|")
+RE_CLIP = re.compile(r"\|\s*clip_fraction\s*\|\s*([-\d.eEnan]+)\s*\|")
+# mu/std come from the [ANCHOR_DEBUG] line: a0_mean=... a0_std=...
+RE_MU = re.compile(r"a0_mean=([-\d.eEnan]+)")
+RE_STD = re.compile(r"a0_std=([-\d.eEnan]+)")
+RE_ANCHORVAL = re.compile(r"ANCHOR_DEBUG.*?anchor=([-\d.eEnan]+)")
+# tanh_mu_mean SB3 custom metric (policy mean after tanh)
+RE_TANHMU = re.compile(r"\|\s*tanh_mu_mean\s*\|\s*([-\d.eEnan]+)\s*\|")
 RE_PORT = re.compile(r"Portfolio value:\s*([\d.]+)")
 RE_REJ = re.compile(r"\[EPISODE_REJECTIONS\].*Reasons:\s*(\{[^}]+\})")
 
@@ -61,8 +67,20 @@ def alerts_from(radar):
             elif frac < 0.05:
                 a.append(f"{k} rare ({frac:.1%})")
     ev = radar.get("explained_variance")
-    if ev is not None and (ev != ev):  # NaN
-        a.append("explained_variance=NaN")
+    if ev is not None:
+        if ev != ev:  # NaN
+            a.append("explained_variance=NaN")
+        elif ev < 0:
+            a.append(f"EV<0 critic aveugle ({ev:.3f})")
+    mu = radar.get("mu_mean")
+    if mu is not None and mu == mu and abs(mu) > 1.0:
+        a.append(f"|mu|>1.0 DERIVE ({mu:+.3f})")
+    sd = radar.get("std_mean")
+    if sd is not None and sd == sd and sd < 0.1:
+        a.append(f"sigma<0.1 GEL ({sd:.3f})")
+    kl = radar.get("approx_kl")
+    if kl is not None and kl == kl and kl > 0.15:
+        a.append(f"KL>0.15 ({kl:.3f})")
     return a
 
 
@@ -100,8 +118,9 @@ def main():
                 nB, nS, nH = map(int, anchors[-1])
                 radar.update(nB=nB, nS=nS, nH=nH)
             for rx, key in ((RE_KL, "approx_kl"), (RE_EV, "explained_variance"),
-                            (RE_ENT, "entropy_loss"), (RE_MU, "mu_mean"),
-                            (RE_STD, "std_mean")):
+                            (RE_ENT, "entropy_loss"), (RE_CLIP, "clip_fraction"),
+                            (RE_MU, "mu_mean"), (RE_STD, "std_mean"),
+                            (RE_ANCHORVAL, "anchor"), (RE_TANHMU, "tanh_mu_mean")):
                 m = rx.findall(chunk)
                 if m:
                     try:
