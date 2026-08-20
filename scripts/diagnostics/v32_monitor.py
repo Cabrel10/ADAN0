@@ -30,7 +30,13 @@ if not LOG or not LOG.exists():
     print("usage: v32_monitor.py <train_log> [interval_s]")
     sys.exit(1)
 
-OUT = LOG.parent / (LOG.stem.replace("v32_train", "radar") + ".jsonl")
+# Normalize any "<vN>_train_<ts>" stem into "radar_<vN>_<ts>" (handles v32/v33/v34...)
+_stem = re.sub(r"^(v\d+)_train_", r"radar_\1_", LOG.stem)
+if _stem == LOG.stem:  # fallback for stems without a version prefix
+    _stem = LOG.stem.replace("_train", "").replace("v32", "radar")
+    if "radar" not in _stem:
+        _stem = "radar_" + _stem
+OUT = LOG.parent / (_stem + ".jsonl")
 
 RE_STEP = re.compile(r"Starting step (\d+)")
 RE_ANCHOR = re.compile(r"nB=(\d+)\s+nS=(\d+)\s+nH=(\d+)")
@@ -56,6 +62,15 @@ def tail_scan(path, last_pos):
         return chunk, f.tell()
 
 
+# Persistence counters (stateful) — a single warmup EV<0 must NOT trigger SIGSTOP.
+_STATE = {"ev_neg": 0, "kl_hi": 0, "nB0": 0, "nS0": 0}
+# SIGSTOP thresholds (user intervention table): EV<0 >5 updates, KL>0.15 persistent,
+# nB/nS=0 >3 updates. Radar samples every INTERVAL; counters count consecutive samples.
+EV_NEG_LIMIT = 5
+KL_HI_LIMIT = 3
+N0_LIMIT = 3
+
+
 def alerts_from(radar):
     a = []
     tot = radar.get("nB", 0) + radar.get("nH", 0) + radar.get("nS", 0)
@@ -66,21 +81,45 @@ def alerts_from(radar):
                 a.append(f"{k}=0 (action brute disparue)")
             elif frac < 0.05:
                 a.append(f"{k} rare ({frac:.1%})")
+        # persistence for nB / nS = 0 (absorption)
+        _STATE["nB0"] = _STATE["nB0"] + 1 if radar.get("nB", 0) == 0 else 0
+        _STATE["nS0"] = _STATE["nS0"] + 1 if radar.get("nS", 0) == 0 else 0
+        if _STATE["nB0"] >= N0_LIMIT:
+            a.append(f"SIGSTOP: nB=0 x{_STATE['nB0']} (absorption)")
+        if _STATE["nS0"] >= N0_LIMIT:
+            a.append(f"SIGSTOP: nS=0 x{_STATE['nS0']} (absorption)")
     ev = radar.get("explained_variance")
     if ev is not None:
         if ev != ev:  # NaN
             a.append("explained_variance=NaN")
+            _STATE["ev_neg"] += 1
         elif ev < 0:
-            a.append(f"EV<0 critic aveugle ({ev:.3f})")
+            _STATE["ev_neg"] += 1
+            if _STATE["ev_neg"] >= EV_NEG_LIMIT:
+                a.append(f"SIGSTOP: EV<0 x{_STATE['ev_neg']} critic aveugle ({ev:.3f})")
+            else:
+                a.append(f"EV<0 warmup ({ev:.3f}) [{_STATE['ev_neg']}/{EV_NEG_LIMIT}]")
+        else:
+            _STATE["ev_neg"] = 0
     mu = radar.get("mu_mean")
-    if mu is not None and mu == mu and abs(mu) > 1.0:
-        a.append(f"|mu|>1.0 DERIVE ({mu:+.3f})")
+    if mu is not None and mu == mu:
+        am = abs(mu)
+        if am > 1.0:
+            a.append(f"SIGSTOP: |mu|>1.0 DERIVE ({mu:+.3f})")
+        elif am > 0.8:
+            a.append(f"|mu|>0.8 derive serieuse ({mu:+.3f})")
+        elif am > 0.5:
+            a.append(f"|mu|>0.5 pre-alerte ({mu:+.3f})")
     sd = radar.get("std_mean")
     if sd is not None and sd == sd and sd < 0.1:
-        a.append(f"sigma<0.1 GEL ({sd:.3f})")
+        a.append(f"SIGSTOP: sigma<0.1 GEL ({sd:.3f})")
     kl = radar.get("approx_kl")
-    if kl is not None and kl == kl and kl > 0.15:
-        a.append(f"KL>0.15 ({kl:.3f})")
+    if kl is not None and kl == kl:
+        _STATE["kl_hi"] = _STATE["kl_hi"] + 1 if kl > 0.15 else 0
+        if _STATE["kl_hi"] >= KL_HI_LIMIT:
+            a.append(f"SIGSTOP: KL>0.15 x{_STATE['kl_hi']} ({kl:.3f})")
+        elif kl > 0.15:
+            a.append(f"KL>0.15 ({kl:.3f}) [{_STATE['kl_hi']}/{KL_HI_LIMIT}]")
     return a
 
 
