@@ -2507,9 +2507,51 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     # causing progressive OOM after ~6900 steps. Using raw observations instead.
     vec_env = DummyVecEnv([lambda: env])
     gamma = config.get("agent", {}).get("gamma", 0.99)
-    
-    # Skip VecNormalize entirely - observations are already normalized in StateBuilder
-    logger.info("[SANDBOX] VecNormalize DISABLED to prevent OOM crashes (using raw observations)")
+
+    # ==========================================================================
+    # V34 CRITIC FIX (ADAN_NORM_REWARD=1) - REWARD-ONLY RETURN NORMALIZATION.
+    # --------------------------------------------------------------------------
+    # ROOT CAUSE (confirmed by code + V33 log, NOT guessed):
+    #   The sandbox path builds NO VecNormalize at all -> the PPO return (value
+    #   target) is the raw discounted symlog-reward on $20.50 capital: tiny,
+    #   poorly-scaled magnitudes. The critic value-loss gradient is therefore
+    #   minuscule and it never fits even the mean -> explained_variance goes
+    #   NEGATIVE (V33 log: EV=-0.80/-2.04/-1.19). A blind critic yields noisy /
+    #   nan advantages (V33: adv_BUY=nan, nB=0) -> mu drifts negative -> the
+    #   directional FLAT/SELL absorption (collapse upd~439). This matches
+    #   hypothesis #2 of docs/V16_FINAL_GATE_REPORT.md (value targets mal
+    #   calibres), the one lever never yet tested in isolation.
+    #
+    # MINIMAL CORRECTION (ONE variable): standardize the RETURN (reward running
+    # std) so the critic receives a unit-variance value target. Everything else
+    # (MTM/anchor/thresholds/PPO hp) is held identical so V34 vs V33 is a clean
+    # A/B on critic EV.
+    #
+    # MEMORY SAFETY: the historic OOM came from norm_obs (per-key obs-sized
+    # running buffers). norm_reward keeps only SCALAR return running stats
+    # -> negligible memory, no OOM path. obs stays raw.
+    # OFF by default (ADAN_NORM_REWARD unset) => byte-for-byte V33 behavior.
+    # ==========================================================================
+    _norm_reward_v34 = os.environ.get("ADAN_NORM_REWARD", "0") == "1"
+    if _norm_reward_v34:
+        _clip_rew = float(os.environ.get("ADAN_NORM_REWARD_CLIP", "10.0") or 10.0)
+        vec_env = VecNormalize(
+            vec_env,
+            norm_obs=False,       # StateBuilder already normalizes obs (no OOM)
+            norm_reward=True,     # V34: standardize the return -> critic target
+            clip_obs=10.0,
+            clip_reward=_clip_rew,
+            gamma=gamma,
+            training=True,
+        )
+        logger.info(
+            "[SANDBOX][V34] VecNormalize ENABLED norm_reward=True "
+            "(norm_obs=False, clip_reward=%.1f, gamma=%.3f) - critic value-target "
+            "standardization to fix EV<0 blind critic.", _clip_rew, gamma
+        )
+    else:
+        # Skip VecNormalize entirely - observations are already normalized in StateBuilder
+        logger.info("[SANDBOX] VecNormalize DISABLED to prevent OOM crashes (using raw observations)")
 
     # Read hyperparams from config (NEVER hardcode)
     agent_cfg = config.get("agent", {})
@@ -2710,7 +2752,7 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         save_path=str(ckpt_dir),
         name_prefix=_ckpt_prefix,
         save_replay_buffer=False,  # Don't save replay buffer to save memory
-        save_vecnormalize=False,  # VecNormalize is disabled, don't save it
+        save_vecnormalize=_norm_reward_v34,  # V34: save vecnorm stats when norm_reward is enabled
     )
     logger.info(
         "[SANDBOX] Checkpoints every %d steps with prefix=%s",
