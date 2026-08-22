@@ -8910,8 +8910,37 @@ class MultiAssetChunkedEnv(gym.Env):
             _b = _BOUNDS.get(_prof, _BOUNDS["intraday"])
             sl_lo, sl_hi = _b["sl"]
             tp_lo, tp_hi = _b["tp"]
-            # fee gate (real 0.50% A/R): TP_min >= 1.2x round-trip fees = 0.6%
-            tp_lo = max(tp_lo, 0.006)
+
+            # =====================================================================
+            # V35 SL/TP LIBERATION (ADAN_FREE_SLTP=1) - GIVE THE POLICY REAL CONTROL
+            # ---------------------------------------------------------------------
+            # V34 proved the critic now learns (EV 0.4-0.6, mu~-0.05, nB/nS/nH
+            # present). The NEXT bottleneck is trade GEOMETRY: the env currently
+            # OVERWRITES the policy SL/TP after it decides, via three layers:
+            #   (1) four per-profile bands (scalper/intraday/swing/position),
+            #   (2) a hard R/R >= 1.5 floor (TP >= 1.5*SL),
+            #   (3) a scalper min SL = max(0.6%, 3xATR).
+            # Evidence (1202 opens): SL_HIT=200 vs TP_HIT=60, SL mean 0.82% / TP
+            # mean 1.54% -> the model does NOT own its exit geometry.
+            # FIX (one variable, env-gated, reversible): ONE universal WIDE
+            # envelope (physical limits only), DROP R/R + ATR floors, KEEP only
+            # the economic fee gate from the REAL commission (profile-independent).
+            # Future Arena stays a TUTOR only (no live SL/TP rewrite, no look-ahead).
+            # OFF by default = byte-for-byte V34 geometry (clean A/B for V35).
+            # =====================================================================
+            _free_sltp = os.environ.get("ADAN_FREE_SLTP", "0") == "1"
+            if _free_sltp:
+                sl_lo, sl_hi = 0.003, 0.060
+                tp_lo, tp_hi = 0.003, 0.120
+                try:
+                    _comm2 = float(getattr(self, "commission_pct", 0.0020) or 0.0020)
+                except Exception:
+                    _comm2 = 0.0020
+                _round_trip = max(2.0 * _comm2, 0.005)
+                tp_lo = max(tp_lo, _round_trip * 1.2)
+            else:
+                # fee gate (real 0.50% A/R): TP_min >= 1.2x round-trip fees = 0.6%
+                tp_lo = max(tp_lo, 0.006)
 
             normalized_sl = (sl_raw + 1.0) / 2.0
             sl_pct = float(np.clip(sl_lo + normalized_sl * (sl_hi - sl_lo), sl_lo, sl_hi))
@@ -8982,16 +9011,20 @@ class MultiAssetChunkedEnv(gym.Env):
             except Exception:
                 pass
 
-            # Enforce R/R >= 1.5
-            if tp_pct < sl_pct * 1.5:
+            # Enforce R/R >= 1.5  (V35: SKIPPED when ADAN_FREE_SLTP=1 so the
+            # policy may pick e.g. SL 1.2%/TP 1.0% if P(TP) justifies it, or
+            # SL 0.6%/TP 2.0% - the return/probability trade-off is LEARNED.)
+            if not _free_sltp and tp_pct < sl_pct * 1.5:
                 tp_pct = float(min(sl_pct * 1.5, tp_hi))
 
             # ==============================================================
             # CHANTIER 4: ATR-BASED SCALPER SL (Survival mechanism)
             # On 5m, SL must NEVER be below 3x market noise (~0.2% ATR)
             # This prevents the scalper from being stopped out by noise.
+            # V35: SKIPPED when ADAN_FREE_SLTP=1 (BTC can move <1% for hours;
+            # forcing a 3xATR floor was rewriting the policy's decision).
             # ==============================================================
-            if _prof == "scalper":
+            if not _free_sltp and _prof == "scalper":
                 # Try to get ATR from observation context
                 atr_pct_estimate = 0.002  # default: 0.2% ATR
                 try:
