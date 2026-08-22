@@ -9694,6 +9694,12 @@ class MultiAssetChunkedEnv(gym.Env):
                         f"| capital_before=${capital:.2f} | cash_after=${_cash_after_open:.2f} "
                         f"| exposure={final_pct:.2%} "
                         f"| SL={sl_pct:.2%} TP={tp_pct:.2%} "
+                        # V35 SMOKE PROOF: full SL/TP chain sl_raw -> mapped(dbe) -> final.
+                        # In FREE mode dbe MUST equal final (RR/ATR skipped) -> proves the
+                        # policy owns geometry at EXECUTION, not just in the sonde.
+                        f"| SLCHAIN sl_raw={sl_raw:+.3f} sl_dbe={_sl_dbe:.4f} sl_final={sl_pct:.4f} "
+                        f"| TPCHAIN tp_raw={tp_raw:+.3f} tp_dbe={_tp_dbe:.4f} tp_final={tp_pct:.4f} "
+                        f"| free_sltp={int(os.environ.get('ADAN_FREE_SLTP','0')=='1')} "
                         f"| tier={tier.get('name', '?')} | TF={self.current_timeframe_for_trade} "
                         f"| profile={_prof}"
                     )
