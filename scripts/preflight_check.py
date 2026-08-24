@@ -105,8 +105,8 @@ def check_dataset_present(asset):
             res["detail"][f"{s}/{tf}"] = ex
             if not ex:
                 res["ok"] = False
-    res["ok"] = res["ok"] and asset.endswith("_binance")
-    res["is_binance"] = asset.endswith("_binance")
+    res["ok"] = res["ok"] and asset.lower().endswith("_binance")
+    res["is_binance"] = asset.lower().endswith("_binance")
     return res
 
 
