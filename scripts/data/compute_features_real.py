@@ -4,11 +4,18 @@
 Uses direct importlib import to avoid pulling gym/torch through __init__.py.
 Loads config.yaml to construct FeatureEngineer with proper data_config.
 """
-import sys, json, logging
+import os, sys, json, logging
 import numpy as np
 import pandas as pd
 import yaml
 from pathlib import Path
+
+# Pair is parameterized via env var; default preserves exact BTC behavior.
+PAIR = os.environ.get("ADAN_DL_PAIR", "BTCUSDT")
+# Optional override of the raw input dir name (e.g. "BTCUSDT_binance") and the
+# processed output dir name. Defaults keep original behavior.
+RAW_DIRNAME = os.environ.get("ADAN_DL_RAW_DIR", PAIR)
+PROC_DIRNAME = os.environ.get("ADAN_DL_PROC_DIR", PAIR)
 
 # Resolve project root relative to this script (scripts/ -> project root)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -68,7 +75,7 @@ report = {}
 all_ok = True
 
 for tf, required_cols in REQUIRED_FEATURES.items():
-    raw_path = _PROJECT_ROOT / f"data/raw/BTCUSDT/{tf}/BTCUSDT_{tf}_raw.parquet"
+    raw_path = _PROJECT_ROOT / f"data/raw/{RAW_DIRNAME}/{tf}/{PAIR}_{tf}_raw.parquet"
     if not raw_path.exists():
         logger.error(f"MISSING: {raw_path}")
         all_ok = False; continue
@@ -112,9 +119,9 @@ for tf, required_cols in REQUIRED_FEATURES.items():
                     tf_report["errors"].append(f"RANGE {col}: [{vmin:.3f}, {vmax:.3f}] vs [{lo}, {hi}]")
 
     # Always save the featured data — range warnings are informational, not fatal
-    out_dir = _PROJECT_ROOT / "data/processed/BTCUSDT"
+    out_dir = _PROJECT_ROOT / f"data/processed/{PROC_DIRNAME}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"BTCUSDT_{tf}_featured.parquet"
+    out_path = out_dir / f"{PAIR}_{tf}_featured.parquet"
     df_feat.to_parquet(out_path)
     
     # Separate hard errors (missing cols, NaN excess) from soft warnings (range)
