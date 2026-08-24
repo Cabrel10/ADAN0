@@ -33,15 +33,18 @@ RUNS = {
 # STOP-worthy patterns (real technical/scientific failures only).
 # NaN detection targets ACTUAL runtime failures, not benign INFO logs that
 # merely mention the word "NaN" (e.g. "prevent NaN from std=0",
-# "leading NaN rows dropped", "SafeScalerWrapper"). We require the NaN mention
-# to co-occur with an error/loss/reward context.
+# "leading NaN rows dropped", "SafeScalerWrapper") and NOT the substring "NAN"
+# inside asset names like BI-NAN-CE. NaN must be a standalone token adjacent to
+# a loss/reward/gradient context on the SAME line (no cross-line .* bridging).
+_NAN = r"(?<![A-Za-z])nan(?![A-Za-z])"
 FATAL = [
     (re.compile(r"Traceback \(most recent call last\)"), "crash_traceback"),
-    (re.compile(r"(loss|reward|action|gradient|value)\s*(is|=|:)?\s*nan", re.I), "nan_in_training"),
-    (re.compile(r"nan.*(loss|reward|gradient|encountered in|not finite)", re.I), "nan_in_training"),
-    (re.compile(r"COLLAPSE[_ ]?BREAKER.*TRIGGER", re.I), "collapse_breaker"),
-    (re.compile(r"CRITIC[_ ]?BREAKER.*TRIGGER", re.I), "critic_breaker"),
-    (re.compile(r"checkpoint.*corrupt", re.I), "checkpoint_corruption"),
+    (re.compile(rf"(loss|reward|advantage|gradient|value)\s*(is|=|:)?\s*{_NAN}", re.I), "nan_in_training"),
+    (re.compile(rf"{_NAN}\s*(loss|reward|gradient|not finite|encountered)", re.I), "nan_in_training"),
+    (re.compile(r"(loss|reward|value)[^\n]{0,30}\b(inf|-inf)\b", re.I), "inf_in_training"),
+    (re.compile(r"COLLAPSE[_ ]?BREAKER[^\n]*TRIGGER", re.I), "collapse_breaker"),
+    (re.compile(r"CRITIC[_ ]?BREAKER[^\n]*TRIGGER", re.I), "critic_breaker"),
+    (re.compile(r"checkpoint[^\n]*corrupt", re.I), "checkpoint_corruption"),
 ]
 
 def procs_alive():
