@@ -524,7 +524,24 @@ class StateBuilder:
         
         if not hasattr(self, 'scalers'):
             self.scalers = {}
-        
+
+        # ── FROZEN-EXPERIMENT SCALER GUARD (opt-in, default OFF) ──
+        # For the 5y BTC/DOGE controlled experiment each independent brain MUST
+        # fit its scalers ON ITS OWN TRAIN split (scaler TRAIN-only invariant).
+        # The stale global prod_scalers/*.pkl were fitted on the OLD dataset;
+        # loading them here would silently inject a different-distribution scaler
+        # (data leakage / invariant violation). When ADAN_FORCE_FIT_SCALERS=1 we
+        # skip loading prod_scalers entirely so fit_scalers() runs fresh on the
+        # first env reset with the loaded TRAIN chunk. Default OFF => byte-for-byte
+        # identical behavior for all existing live/backtest/CI paths.
+        if os.environ.get("ADAN_FORCE_FIT_SCALERS", "0").strip() in ("1", "true", "True"):
+            logger.warning(
+                "[SCALER_GUARD] ADAN_FORCE_FIT_SCALERS=1 -> NOT loading prod_scalers; "
+                "scalers will be fit TRAIN-only on first env reset (frozen-experiment mode)."
+            )
+            self.scalers_loaded_from_training = False
+            return
+
         # Essayer d'abord prod_scalers/ (nouveau format)
         # Chercher depuis le répertoire courant ET depuis le parent
         possible_paths = [
