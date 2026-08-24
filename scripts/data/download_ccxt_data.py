@@ -25,17 +25,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ─── Configuration ──────────────────────────────────────────────────────
-SYMBOL = "BTC/USDT"
+# Parameterized via env vars. Defaults preserve exact BTC behavior:
+#   ADAN_DL_SYMBOL   e.g. "DOGE/USDT"  (default "BTC/USDT")
+#   ADAN_DL_PAIR     e.g. "DOGEUSDT"   (default derived from SYMBOL: BTC/USDT -> BTCUSDT)
+#   ADAN_DL_MIN_VOL  min median volume USD (default 50000; lower for alts if needed)
+SYMBOL = os.environ.get("ADAN_DL_SYMBOL", "BTC/USDT")
+PAIR = os.environ.get("ADAN_DL_PAIR", SYMBOL.replace("/", ""))
 TIMEFRAMES = {
     "5m":  {"limit": 25000, "minutes": 5},
     "1h":  {"limit": 4500,  "minutes": 60},
     "4h":  {"limit": 2200,  "minutes": 240},
 }
-OUTPUT_BASE = "data/raw/BTCUSDT"
-MIN_MEDIAN_VOLUME_USD = 50_000  # Reject data with lower median volume
+OUTPUT_BASE = os.environ.get("ADAN_DL_OUTPUT_BASE", f"data/raw/{PAIR}")
+MIN_MEDIAN_VOLUME_USD = int(os.environ.get("ADAN_DL_MIN_VOL", "50000"))  # Reject data with lower median volume
 
-# Exchanges to try (in order)
-EXCHANGES = ["bitget", "okx", "kucoin"]
+# Exchanges to try (in order). Override with ADAN_DL_EXCHANGES="okx,kucoin,bitget"
+# (default preserves exact BTC behavior: bitget first).
+EXCHANGES = [e.strip() for e in os.environ.get(
+    "ADAN_DL_EXCHANGES", "bitget,okx,kucoin").split(",") if e.strip()]
 
 
 def connect_exchange():
@@ -172,11 +179,11 @@ def main():
         out_dir = os.path.join(OUTPUT_BASE, safe_tf)
         os.makedirs(out_dir, exist_ok=True)
         
-        out_path = os.path.join(out_dir, f"BTCUSDT_{safe_tf}_raw.parquet")
+        out_path = os.path.join(out_dir, f"{PAIR}_{safe_tf}_raw.parquet")
         df.to_parquet(out_path)
         
         # Also save CSV for human inspection
-        csv_path = os.path.join(out_dir, f"BTCUSDT_{safe_tf}_raw.csv")
+        csv_path = os.path.join(out_dir, f"{PAIR}_{safe_tf}_raw.csv")
         df.to_csv(csv_path)
         
         results[tf_name] = {
