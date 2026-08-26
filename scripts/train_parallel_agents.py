@@ -2581,9 +2581,26 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     # NOTE: VecNormalize(norm_obs) is NOT the fix here — StateBuilder already
     # normalizes+clips obs to [-10,10] (measured), and heavy/500k_FIXED used
     # norm_obs=False too. LayerNorm on features makes it WORSE (||.||_2->16).
-    _sb_log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", "-2.0"))
-    _sb_use_expln = os.environ.get("ADAN_USE_EXPLN", "1") == "1"
-    _sb_use_sde = os.environ.get("ADAN_USE_SDE", "1") == "1"
+    # V30 EXPLORATION FIX (2026-08-26, autonomous audit): the sandbox CONFIG
+    # block is now the SINGLE SOURCE OF TRUTH for the exploration knobs. Env
+    # vars override ONLY when explicitly set — otherwise the config value wins.
+    # Previously these read hardcoded defaults ("1"/"-2.0") that IGNORED the
+    # config's use_sde:false, silently re-enabling gSDE (root cause of the 245k
+    # KL explosion + log_std collapse). See config.yaml sandbox block comment.
+    def _cfg_or_env(env_key, cfg_key, cfg_default, cast):
+        _env_val = os.environ.get(env_key)
+        if _env_val is not None and str(_env_val).strip() != "":
+            return cast(_env_val)
+        return cast(sandbox_cfg.get(cfg_key, cfg_default))
+
+    _sb_log_std_init = _cfg_or_env(
+        "ADAN_LOG_STD_INIT", "log_std_init", -1.0, float)
+    _sb_use_expln = _cfg_or_env(
+        "ADAN_USE_EXPLN", "use_expln", False,
+        lambda v: str(v).strip().lower() in ("1", "true", "yes"))
+    _sb_use_sde = _cfg_or_env(
+        "ADAN_USE_SDE", "use_sde", False,
+        lambda v: str(v).strip().lower() in ("1", "true", "yes"))
     policy_kwargs = {
         "share_features_extractor": True,
         "log_std_init": _sb_log_std_init,
@@ -2744,9 +2761,14 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     except Exception:
         _ckpt_freq = 10000
     _ckpt_freq = max(1000, min(_ckpt_freq, max(1000, steps)))
-    _ckpt_prefix = os.environ.get(
-        "ADAN_CKPT_PREFIX", "ppo_adan0_sandbox_checkpoint"
+    # V30 CHECKPOINT SEPARATION: env var (set per-asset by launch_asset_run.py)
+    # wins; config sandbox.checkpoint_prefix is the fallback; flat literal last.
+    _ckpt_prefix_default = str(
+        sandbox_cfg.get("checkpoint_prefix", "ppo_adan0_sandbox_checkpoint")
     ).strip() or "ppo_adan0_sandbox_checkpoint"
+    _ckpt_prefix = os.environ.get(
+        "ADAN_CKPT_PREFIX", _ckpt_prefix_default
+    ).strip() or _ckpt_prefix_default
     checkpoint_callback = CheckpointCallback(
         save_freq=_ckpt_freq,  # Save every ADAN_CKPT_FREQ steps (default 10k)
         save_path=str(ckpt_dir),
