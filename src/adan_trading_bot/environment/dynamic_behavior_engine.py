@@ -2621,236 +2621,26 @@ class DynamicBehaviorEngine:
 
     def _compute_risk_parameters(
         self,
-        state: Dict[str, Any],
-        mod: Dict[str, Any],
+        state: Dict[str, Any] = None,
+        mod: Dict[str, Any] = None,
         risk_horizon: float = 0.0,
     ) -> None:
-        """
-        Calcule les paramètres de risque dynamiques (SL/TP).
+        """REMOVED DEAD CODE (V30 autonomous audit, 2026-08-26).
 
-        Args:
-            state: Dictionnaire contenant l'état actuel
-            mod: Dictionnaire à mettre à jour avec les nouveaux paramètres de risque
-            risk_horizon: Horizon de risque choisi par l'agent (-1: court terme, 1: long terme)
-
-        DEPRECATED (FINDING #4 / revue utilisateur 2026-06-26) : CODE MORT.
-        Aucun appelant en production (verifie par grep). Le chemin runtime actif est
-        compute_dynamic_modulation() -> _get_tier_based_parameters() qui lit
-        workers.*.trading_parameters. On emet un warning LOUD si jamais cette
-        fonction est reactivee par megarde, pour eviter de reintroduire d'anciennes
-        bornes SL/TP (10-20%) via le bloc top-level risk_parameters.
+        FINDING #4 confirmed by grep: ZERO production callers. The active
+        runtime risk path is compute_dynamic_modulation() ->
+        _get_tier_based_parameters() (reads workers.*.trading_parameters).
+        The old body re-derived SL/TP from a top-level 'risk_parameters'
+        block with obsolete 10-20 pct bounds that CONTRADICT the per-profile
+        _PROFILE_BOUNDS contract. Its logic is deleted entirely so it can
+        never silently re-inject stale risk geometry. Kept as a hard-fail
+        stub (not deleted outright) to surface any accidental re-wiring.
         """
-        logger.warning(
-            "[DEPRECATED] _compute_risk_parameters appele alors qu'il est CODE MORT "
-            "(FINDING #4). Le chemin valide est compute_dynamic_modulation(). "
-            "Verifier l'appelant — risque de bornes SL/TP obsoletes."
+        raise RuntimeError(
+            "_compute_risk_parameters is REMOVED dead code (V30/FINDING #4). "
+            "Use compute_dynamic_modulation() -> _get_tier_based_parameters(). "
+            "If you hit this, a caller was wrongly re-introduced."
         )
-        try:
-            if state is None or mod is None:
-                logger.warning("State ou mod est None dans _compute_risk_parameters")
-                return
-
-            # Récupération des configurations
-            risk_cfg = self.config.get("risk_parameters", {})
-            regime_params = self.config.get("regime_parameters", {}).get(
-                self.current_regime, {}
-            )
-
-            # Paramètres de base
-            base_sl = float(risk_cfg.get("base_sl_pct", 0.02))
-            base_tp = float(risk_cfg.get("base_tp_pct", 0.04))
-            
-            # ⚠️ IMPORTANT: SL/TP sont IMMUABLES - pas de modulation dynamique
-            # Les valeurs SL/TP sont déterminées par Optuna pour chaque worker
-            # et appliquées directement par le portfolio manager
-            # Forcer les valeurs de base sans modulation
-            mod["sl_pct"] = base_sl
-            mod["tp_pct"] = base_tp
-            return  # EXIT EARLY - pas de modulation SL/TP
-
-            # Initialisation des valeurs d'état avec des valeurs par défaut si manquantes
-            current_drawdown = float(state.get("drawdown", 0.0))
-            volatility = float(state.get("volatility", 0.0))
-            win_rate = float(state.get("win_rate", 0.5))  # 50% par défaut
-            sharpe_ratio = float(state.get("sharpe_ratio", 0.0))
-            current_step = int(state.get("current_step", 0))
-
-            # ACCUMULATION VOLATILITÉ: Stocker dans l'historique
-            if volatility > 0.0:
-                if not hasattr(self, "volatility_history"):
-                    self.volatility_history = []
-                # Éviter les doublons
-                if (
-                    not self.volatility_history
-                    or abs(self.volatility_history[-1] - volatility) > 1e-6
-                ):
-                    self.volatility_history.append(volatility)
-                    logger.debug(
-                        f"[VOL HISTORY] Ajouté: {volatility:.4f}, Total: {len(self.volatility_history)} points"
-                    )
-
-            # Récupération des multiplicateurs spécifiques au régime
-            sl_multiplier = float(regime_params.get("sl_multiplier", 1.0))
-            tp_multiplier = float(regime_params.get("tp_multiplier", 1.0))
-
-            # === NOUVEAU: Ajustement basé sur l'horizon de risque de l'agent ===
-            # risk_horizon est entre -1 (court terme) et 1 (long terme)
-            # Pour le SL: plus l'horizon est court (-1), plus le SL est serré (multiplicateur > 1)
-            #             plus l'horizon est long (1), plus le SL est large (multiplicateur < 1)
-            sl_multiplier_rh = 1.0 - (
-                risk_horizon * 0.3
-            )  # Ex: -1 -> 1.3, 0 -> 1.0, 1 -> 0.7
-            # Pour le TP: plus l'horizon est court (-1), plus le TP est serré (multiplicateur < 1)
-            #             plus l'horizon est long (1), plus le TP est large (multiplicateur > 1)
-            tp_multiplier_rh = 1.0 + (
-                risk_horizon * 0.3
-            )  # Ex: -1 -> 0.7, 0 -> 1.0, 1 -> 1.3
-
-            sl_multiplier *= sl_multiplier_rh
-            tp_multiplier *= tp_multiplier_rh
-            # ==================================================================
-
-            # 1. Ajustement basé sur le drawdown
-            max_drawdown = float(risk_cfg.get("max_drawdown", 0.1))  # 10% par défaut
-            drawdown_factor = 1.0 - min(
-                current_drawdown / (max_drawdown * 2), 0.5
-            )  # Réduction jusqu'à 50%
-
-            # 2. Ajustement basé sur la volatilité
-            vol_management = self.config.get("volatility_management", {})
-            min_vol = float(vol_management.get("min_volatility", 0.01))
-            max_vol = float(vol_management.get("max_volatility", 0.20))
-            vol_factor = (
-                1.0 - ((volatility - min_vol) / (max_vol - min_vol + 1e-6)) * 0.5
-            )  # Réduction jusqu'à 50%
-
-            # 3. Ajustement basé sur le win rate
-            target_win_rate = 0.6  # Cible de 60% de trades gagnants
-            win_rate_factor = (win_rate / target_win_rate) ** 2  # Effet non linéaire
-
-            # 4. Ajustement basé sur le ratio de Sharpe
-            sharpe_factor = 1.0 + (
-                max(0, sharpe_ratio) / 2.0
-            )  # Améliore le risque avec un meilleur Sharpe
-
-            # Calcul des nouveaux paramètres avec contraintes
-            min_sl = float(risk_cfg.get("min_sl_pct", 0.005))  # 0.5% minimum
-            max_sl = float(risk_cfg.get("max_sl_pct", 0.10))  # 10% maximum
-            min_tp = float(risk_cfg.get("min_tp_pct", 0.01))  # 1% minimum
-            max_tp = float(risk_cfg.get("max_tp_pct", 0.20))  # 20% maximum
-
-            # Calcul des nouvelles valeurs
-            new_sl = base_sl * sl_multiplier * drawdown_factor * vol_factor
-            new_tp = base_tp * tp_multiplier * win_rate_factor * sharpe_factor
-
-            # Application des limites
-            new_sl = max(min_sl, min(max_sl, new_sl))
-            new_tp = max(min_tp, min(max_tp, new_tp))
-
-            # Vérification de l'initialisation de smoothed_params
-            if not hasattr(self, "smoothed_params"):
-                self.smoothed_params = {
-                    "sl_pct": base_sl,
-                    "tp_pct": base_tp,
-                    "position_size": 0.1,
-                    "risk_level": 1.0,
-                }
-
-            # Application du lissage exponentiel
-            smoothing = self.config.get("smoothing", {}).get("adaptation_rate", 0.1)
-
-            # Mise à jour des paramètres lissés
-            for param, new_val in [("sl_pct", new_sl), ("tp_pct", new_tp)]:
-                if param in self.smoothed_params:
-                    self.smoothed_params[param] = (
-                        1.0 - smoothing
-                    ) * self.smoothed_params[param] + smoothing * new_val
-                else:
-                    self.smoothed_params[param] = new_val
-
-            # Calcul du coefficient d'agressivité (0-1) basé sur plusieurs facteurs
-            # 1. Facteur de confiance (winrate récent)
-            winrate_factor = min(
-                1.0, max(0.0, (win_rate - 0.4) / 0.6) # 0% à 100% pour winrate de 0.4 à 1.0
-            )
-
-            # 2. Facteur de drawdown (pénalise les périodes de pertes)
-            drawdown_factor = 1.0 - (
-                self.state["drawdown"] / 100.0 * 2
-            )  # Réduit la taille avec le drawdown
-
-            # 3. Facteur de volatilité (pénalise la volatilité élevée)
-            vol_factor = 1.0 / (
-                1.0 + self.state["volatility"] * 10
-            )  # Réduit la taille avec la volatilité
-
-            # 4. Facteur de régime de marché
-            regime_factors = {
-                "bull": 1.0,
-                "bear": 0.3,
-                "volatile": 0.5,
-                "sideways": 0.7,
-                "neutral": 0.8,
-            }
-            regime_factor = regime_factors.get(self.current_regime.lower(), 0.5)
-
-            # Calcul final du coefficient d'agressivité (0-1)
-            aggressivity = (
-                winrate_factor * 0.4
-                + drawdown_factor * 0.3
-                + volatility_factor * 0.2
-                + regime_factor * 0.1
-            )
-
-            # Lissage du coefficient d'agressivité
-            if "aggressivity" not in self.smoothed_params:
-                self.smoothed_params["aggressivity"] = 0.5  # Valeur par défaut
-
-            smoothing = self.config.get("smoothing", {}).get("adaptation_rate", 0.1)
-            self.smoothed_params["aggressivity"] = (
-                1.0 - smoothing
-            ) * self.smoothed_params["aggressivity"] + smoothing * aggressivity
-
-            # Mise à jour du dictionnaire de sortie avec les valeurs lissées
-            mod.update(
-                {
-                    "sl_pct": self.smoothed_params.get("sl_pct", base_sl),
-                    "tp_pct": self.smoothed_params.get("tp_pct", base_tp),
-                    "risk_level": self.state.get("current_risk_level", 1.0),
-                    "regime": self.current_regime,
-                    "volatility": volatility,
-                    "aggressivity": self.smoothed_params["aggressivity"],
-                }
-            )
-
-            # Journalisation des changements importants (tous les 50 pas)
-            if current_step > 0 and current_step % 50 == 0:
-                logger.info(
-                    f"🔧 Paramètres de risque - "
-                    f"Régime: {self.current_regime.upper()} | "
-                    f"Drawdown: {current_drawdown:.2f}% | "
-                    f"Volatilité: {volatility:.2f}% | "
-                    f"Win Rate: {win_rate:.1f}% | "
-                    f"Sharpe: {sharpe_ratio:.2f} | "
-                    f"SL: {new_sl:.2f}% (lissé: {mod['sl_pct']:.2f}%) | "
-                    f"TP: {new_tp:.2f}% (lissé: {mod['tp_pct']:.2f}%) | "
-                    f"Niveau de risque: {mod['risk_level']:.2f}"
-                )
-
-        except Exception as e:
-            logger.error(
-                f"Erreur dans _compute_risk_parameters: {str(e)}", exc_info=True
-            )
-            # En cas d'erreur, on utilise les valeurs par défaut
-            mod.update(
-                {
-                    "sl_pct": risk_cfg.get("base_sl_pct", 0.02),
-                    "tp_pct": risk_cfg.get("base_tp_pct", 0.04),
-                    "risk_level": 1.0,
-                    "regime": self.current_regime,
-                    "volatility": 0.0,
-                }
-            )
 
     def _compute_reward_modulation(self, mod: Dict[str, Any]) -> None:
         """Calcule la modulation des récompenses."""

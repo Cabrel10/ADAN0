@@ -8931,13 +8931,38 @@ class MultiAssetChunkedEnv(gym.Env):
             _free_sltp = os.environ.get("ADAN_FREE_SLTP", "0") == "1"
             if _free_sltp:
                 sl_lo, sl_hi = 0.003, 0.060
-                tp_lo, tp_hi = 0.003, 0.120
+                # V30 DATA-DRIVEN TP CEILING (2026-08-26, autonomous audit).
+                # The flat 12%% TP ceiling was ~10x BTC 1h p99 ATR (3.68%%) and
+                # ~60x BTC 5m median ATR (0.20%%): the TP head had NO reachable
+                # target on BTC, so trades died on SL/MaxDuration instead of TP
+                # (measured: SL_HIT=200 vs TP_HIT=60). We scale the ceiling to
+                # each asset's empirical volatility (ATR percentiles computed on
+                # the real 5y parquet). Per-asset override via ADAN_TP_HI /
+                # ADAN_TP_LO / ADAN_SL_HI (set by launch_asset_run.py from data).
+                #   BTC : tp_hi=0.060 (~2.7x 1h p95 ATR)  — was 0.120
+                #   DOGE: tp_hi=0.090 (DOGE ~1.6x more volatile, 1h p99 ATR 7.1%%)
+                # Default keeps 0.120 when the env var is unset (byte-compat).
+                try:
+                    tp_hi = float(os.environ.get("ADAN_TP_HI", "0.120"))
+                except Exception:
+                    tp_hi = 0.120
+                try:
+                    tp_lo = float(os.environ.get("ADAN_TP_LO", "0.003"))
+                except Exception:
+                    tp_lo = 0.003
+                try:
+                    sl_hi = float(os.environ.get("ADAN_SL_HI", str(sl_hi)))
+                except Exception:
+                    pass
                 try:
                     _comm2 = float(getattr(self, "commission_pct", 0.0020) or 0.0020)
                 except Exception:
                     _comm2 = 0.0020
                 _round_trip = max(2.0 * _comm2, 0.005)
                 tp_lo = max(tp_lo, _round_trip * 1.2)
+                # Safety: keep the band ordered even under bad env values.
+                if tp_hi <= tp_lo:
+                    tp_hi = tp_lo + 0.010
             else:
                 # fee gate (real 0.50% A/R): TP_min >= 1.2x round-trip fees = 0.6%
                 tp_lo = max(tp_lo, 0.006)

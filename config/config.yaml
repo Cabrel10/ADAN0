@@ -1673,17 +1673,24 @@ trading_rules:
     # PortfolioManager is the only close authority. Base limits reproduce the
     # effective V19 limits for non-scalper profiles; explicit profile overrides
     # avoid inferring profiles from Ray worker/sub-env identifiers.
+    # ── V30 MaxDuration x2 (2026-08-26, autonomous audit) ─────────────────
+    # DELIBERATE experimental hypothesis (user mandate): give trades TWICE the
+    # holding budget so the (now shorter, reachable) TP has time to be hit
+    # BEFORE MaxDuration force-closes the position. Paired with the reduced
+    # data-driven TP ceiling: shorter target + longer runway = the TP head can
+    # actually resolve winners instead of every trade dying on the timeout.
+    #   1h 20->40 | 4h 15->30 | 5m 50->100 | scalper 5m 20->40
     1h:
-      max_duration_steps: 20
+      max_duration_steps: 40
     4h:
-      max_duration_steps: 15
+      max_duration_steps: 30
     5m:
-      max_duration_steps: 50
+      max_duration_steps: 100
       optimal_duration: 25
     profile_overrides:
       scalper:
         5m:
-          max_duration_steps: 20
+          max_duration_steps: 40
   # ============================================================================
   # COOLDOWN RULES — Empêchent les cycles BUY→SELL trop rapides
   # Cycle : BUY → HOLD (position ouverte) → SELL → WAIT → BUY → ...
@@ -1921,6 +1928,26 @@ sandbox:
                               #   measured entropy collapse (action0 bimodal at +-1,
                               #   HOLD=0%, 99.7% in-position). Can be overridden at
                               #   launch via ADAN_ENT_COEF. Fees held at 0.5%.
+  # ── V30 EXPLORATION FIX (2026-08-26, autonomous audit) ──────────────────
+  # ROOT CAUSE of the 245k degradation: gSDE was ACTIVE despite this config
+  # declaring use_sde:false. The training path read ADAN_USE_SDE (default "1")
+  # and ADAN_LOG_STD_INIT (default "-2.0") from the ENVIRONMENT, ignoring config.
+  # With gSDE, σ_eff ≈ ||features||_2(≈11.4) × exp(log_std_init) → exploration
+  # blew up then collapsed (KL 7→12, clip_frac 0.9, log_std pinned -2.0). We now
+  # make the sandbox block the SINGLE SOURCE OF TRUTH: env vars only override
+  # when EXPLICITLY set. Plain DiagGaussian (use_sde:false) → σ independent of
+  # features, cannot diverge. log_std_init=-1.0 → std0≈0.37 (nuanced but alive).
+  use_sde: false              # gSDE OFF: plain diagonal Gaussian policy.
+  use_expln: false            # only relevant for gSDE; kept for completeness.
+  log_std_init: -1.0          # std0 = exp(-1.0) ≈ 0.368 — alive exploration,
+                              #   no feature-coupled blow-up (was env-forced -2.0).
+  sde_sample_freq: -1         # unused when use_sde:false.
+  # ── V30 CHECKPOINT SEPARATION ───────────────────────────────────────────
+  # Both BTC and DOGE runs previously wrote name_prefix=ppo_adan0_sandbox_checkpoint
+  # into the SAME checkpoints/ dir → weights were physically mixed across the two
+  # independent per-asset brains. The launcher now sets a per-asset ADAN_CKPT_PREFIX
+  # (ppo_adan0_BTCUSDT / ppo_adan0_DOGEUSDT); this default is the flat fallback only.
+  checkpoint_prefix: ppo_adan0_sandbox_checkpoint
   # Session 6 fixes:
   # A8 FIX: Reward is now scaled by 100/initial_capital (percentage-based).
   #   On $20.50 capital, a $0.05 PnL → 0.244% → symlog(0.244) = 0.219
