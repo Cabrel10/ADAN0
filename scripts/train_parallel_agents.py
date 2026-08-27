@@ -2750,8 +2750,18 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         prior_steps = 0
 
     # Checkpoints directory
-    ckpt_dir = PROJECT_ROOT / "checkpoints"
+    # V31 CHECKPOINT PATH FIX (2026-08-27): the intermediate SB3 CheckpointCallback
+    # and the final --checkpoint-out MUST land in the same directory. Previously
+    # ckpt_dir was hardcoded to PROJECT_ROOT/"checkpoints" (root) while
+    # checkpoint_out pointed to checkpoints/v31_BTC/ -> intermediates written to
+    # root, final to v31_BTC/ (split). Now: when checkpoint_out is given, derive
+    # ckpt_dir from ITS parent so callback intermediates + final share one folder.
+    if checkpoint_out:
+        ckpt_dir = Path(checkpoint_out).expanduser().resolve().parent
+    else:
+        ckpt_dir = PROJECT_ROOT / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"[SANDBOX] checkpoint dir (intermediates + final) = {ckpt_dir}")
 
     # MEMORY FIX: Add frequent checkpoints to recover from OOM crashes
     # GARDE-FOU (2026-06-27): fréquence pilotable par ADAN_CKPT_FREQ (défaut 10k)

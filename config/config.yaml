@@ -1909,8 +1909,18 @@ sandbox:
                               #   real (small) update land before KL early-stop.
   max_training_steps: 10000   # CI: ~4 min on 2-CPU runner
   ci_training_steps: 10000    # Relay segment size
-  learning_rate: 0.00008      # DIAGNOSTIC-V6: was 1.5e-4. approx_kl 0.12-0.17 per
-                              #   update => step size still too large. Halved again.
+  learning_rate: 0.00003      # V31 (2026-08-27): was 8e-5 (V30). SEULE variable
+                              #   modifiee vs V30. Preuve: V30 BTC 500k dose-reponse
+                              #   monotone clip_fraction vs NIVEAU de LR (parse
+                              #   total_timesteps, 196 updates): clip<0.30 tant que
+                              #   LR<=4.15e-5, flip a 4.23e-5, pic 0.938 @ LR 7.47e-5.
+                              #   A LR~3e-5 V30 a mesure clip max 0.036 / kl max 0.0022.
+                              #   Confond LR/temps (warmup) leve par TEST B: au flip
+                              #   std+0.3% entropy-0.6% PLATS => cause=magnitude update
+                              #   (LR), pas regime data ni TP band. Docs: SB3 "clipping
+                              #   is not enough to prevent large update"; EmbersArc LR
+                              #   1e-5-1e-3 "decrease if unstable". Voir
+                              #   logs/v30_500k/V31_LR_DECISION.md.
   clip_range: 0.12            # DIAGNOSTIC-V6: tighter trust region (was 0.15)
   target_kl: 0.15             # V30: was 0.04 (V29). Autopsie V29: 902/976 updates
                               #   avortees (92%), 878 au minibatch 0, KL au stop

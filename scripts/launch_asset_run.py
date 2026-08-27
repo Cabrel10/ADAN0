@@ -95,8 +95,17 @@ def main():
     os.environ.setdefault("ADAN_DIAG_COLLAPSE", "1")
 
     derived = derive_config(Path(args.base_config), args.asset, args.steps)
+    # V31: surface the effective sandbox learning_rate in the [LAUNCH] banner so
+    # the single-variable change (8e-5 -> 3e-5) is auditable at launch time.
+    try:
+        import yaml as _yaml
+        _dcfg = _yaml.safe_load(open(derived))
+        _lr = (_dcfg.get("sandbox", {}) or {}).get("learning_rate", "?")
+    except Exception:
+        _lr = "?"
     print(f"[LAUNCH] asset={args.asset} steps={args.steps} "
           f"ckpt_prefix={os.environ['ADAN_CKPT_PREFIX']} "
+          f"learning_rate={_lr} "
           f"tp_hi={os.environ['ADAN_TP_HI']} sl_hi={os.environ['ADAN_SL_HI']} "
           f"free_sltp={os.environ['ADAN_FREE_SLTP']} "
           f"force_fit_scalers={os.environ['ADAN_FORCE_FIT_SCALERS']} "
