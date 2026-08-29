@@ -2685,15 +2685,30 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         _lr_target = float(sandbox_cfg.get("learning_rate",
                            agent_cfg.get("learning_rate", 3e-4)))
         _warmup_frac = float(sandbox_cfg.get("lr_warmup_frac", 0.20))
+        # FIX V32 (2026-08-29) - LR DECAY apres warmup.
+        # BUG V31 : le schedule montait 10%->100% sur les 20% premiers pas PUIS
+        # restait PLAT a _lr_target jusqu'a la fin. Sur PPO, un LR constant en
+        # fin de run (quand la policy se durcit) produit des updates de plus en
+        # plus violents -> clip_fraction a grimpe de ~0 a ~0.9 et KL 0.4-0.65,
+        # bien au-dessus de target_kl (0.03). On ajoute une decroissance cosine
+        # de _lr_target vers un plancher apres le warmup : la region de confiance
+        # se resserre naturellement quand l'entrainement avance.
+        import math as _math_lr
+        _lr_floor_frac = float(sandbox_cfg.get("lr_floor_frac", 0.10))  # 10% du LR cible
+        _lr_floor = _lr_target * _lr_floor_frac
         def _lr_schedule(progress_remaining: float) -> float:
             # SB3 passes progress_remaining: 1.0 at start -> 0.0 at end.
             done = 1.0 - float(progress_remaining)
             if _warmup_frac > 0 and done < _warmup_frac:
                 ramp = 0.10 + 0.90 * (done / _warmup_frac)  # 0.10 -> 1.0
                 return _lr_target * ramp
-            return _lr_target
-        logger.info(f"[SANDBOX] LR warmup schedule: target={_lr_target:.2e}, "
-                    f"warmup_frac={_warmup_frac} (start={_lr_target*0.10:.2e})")
+            # Decroissance cosine de _lr_target -> _lr_floor sur la phase post-warmup.
+            span = max(1e-9, 1.0 - _warmup_frac)
+            t = min(1.0, max(0.0, (done - _warmup_frac) / span))  # 0 -> 1
+            cos = 0.5 * (1.0 + _math_lr.cos(_math_lr.pi * t))     # 1 -> 0
+            return _lr_floor + (_lr_target - _lr_floor) * cos
+        logger.info(f"[SANDBOX] LR schedule: warmup->{_lr_target:.2e} sur {_warmup_frac:.0%}, "
+                    f"puis cosine decay ->{_lr_floor:.2e} (start={_lr_target*0.10:.2e})")
         # V15 (2026-07-07): when the L2 action anchor is requested
         # (ADAN_L2_ANCHOR_LAMBDA>0), the sandbox path MUST instantiate
         # WorldModelPPO — its overridden train() is the ONLY place the anchor
