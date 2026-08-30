@@ -78,19 +78,23 @@ def main():
     # V30 exploration fix is now enforced by config (use_sde:false, log_std:-1.0);
     # do NOT re-inject the buggy ADAN_USE_SDE here. Leave unset so config wins.
 
-    # ── V30 DATA-DRIVEN TP CEILING (per-asset, from empirical ATR) ─────────
-    # Measured on the real 5y parquet (scripts audit 2026-08-26):
-    #   BTC  1h ATR%: med 0.78  p95 2.22  p99 3.68   | 5m med 0.20
-    #   DOGE 1h ATR%: med 1.17  p95 3.46  p99 7.10   | 5m med 0.30
-    # The old flat 12% TP was unreachable for BTC (TP head starved). We size
-    # each ceiling to the asset's realistic multi-bar favorable excursion:
-    #   BTC : tp_hi 6%  (~2.7x 1h p95 ATR)  — reachable swing, no fantasy target
-    #   DOGE: tp_hi 9%  (DOGE ~1.6x more volatile) — still below the flat 12%
-    # SL ceiling left at the physical 6% (both assets' p99 SL noise fits under).
-    _TP_HI = {"BTCUSDT": "0.060", "DOGEUSDT": "0.090"}
-    os.environ.setdefault("ADAN_TP_HI", _TP_HI.get(_asset_tag, "0.060"))
-    os.environ.setdefault("ADAN_TP_LO", "0.003")
-    os.environ.setdefault("ADAN_SL_HI", "0.060")
+    # ── V33 HORIZON-CONDITIONED SL/TP DOMAIN (Future Arena source of truth) ─
+    # Measured on the actual 662,603-row BTC TRAIN parquet at MaxDuration=40:
+    #   MFE p50/p75/p90 = 0.5813% / 1.2018% / 2.2131%
+    #   |MAE| p50/p75/p90 = 0.5932% / 1.2400% / 2.3436%
+    # The action domain therefore spans the statistically reachable p50..p90
+    # region instead of the previous arbitrary 6% ceiling. TP floor remains
+    # 0.60%, the economic floor imposed by 1.2 x round-trip fees (0.50%).
+    # DOGE retains its own frozen domain until the same horizon-conditioned
+    # matrix is rerun for DOGE; this launch is BTC-only.
+    _SLTP = {
+        "BTCUSDT": {"tp_lo": "0.006", "tp_hi": "0.0222", "sl_hi": "0.0235"},
+        "DOGEUSDT": {"tp_lo": "0.003", "tp_hi": "0.090", "sl_hi": "0.060"},
+    }
+    _sltp = _SLTP[_asset_tag]
+    os.environ.setdefault("ADAN_TP_HI", _sltp["tp_hi"])
+    os.environ.setdefault("ADAN_TP_LO", _sltp["tp_lo"])
+    os.environ.setdefault("ADAN_SL_HI", _sltp["sl_hi"])
     # Radar telemetry ON so EV/KL/log_std/entropy are tracked during the run.
     os.environ.setdefault("ADAN_DIAG_COLLAPSE", "1")
 
