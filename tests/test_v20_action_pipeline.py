@@ -1206,3 +1206,42 @@ def test_max_duration_alert_is_non_lethal_performance_warning() -> None:
     source = Path("scripts/analysis/monitor_v20_pbt.py").read_text()
     assert 'f"WARN arena: MaxDuration=' in source
     assert 'f"CRITICAL arena: MaxDuration=' not in source
+
+
+def test_portfolio_open_guard_uses_environment_minimum_notional() -> None:
+    config = {
+        "initial_capital": 20.5,
+        "assets": ["BTCUSDT"],
+        "environment": {
+            "commission": 0.0,
+            "hard_constraints": {"min_order_value_usdt": 5.0},
+        },
+        "risk_management": {},
+        "trading_rules": {"leverage": 1.0},
+    }
+    manager = PortfolioManager(config=config, worker_id=0, max_positions=1)
+    opened = manager.open_position(
+        asset="BTCUSDT",
+        size=0.06,
+        price=100.0,
+        current_step=1,
+        stop_loss_pct=0.01,
+        take_profit_pct=0.02,
+        timestamp=datetime(2026, 1, 1, 0, 0),
+    )
+    assert opened is not None, "env accepts $5 but PortfolioManager still applies stale $11"
+
+
+def test_v33_sizing_trace_contains_requested_and_executable_values() -> None:
+    source = inspect.getsource(MultiAssetChunkedEnv._execute_trades)
+    assert '"sizing_decoded"' in source
+    for field in (
+        "size_raw=float(size_raw)",
+        "normalized_size=float(normalized_size)",
+        "target_exposure_pct=float(target_exposure_pct)",
+        "requested_notional_usd=float(capital * target_exposure_pct)",
+        "notional_usd=float(notional_usd)",
+        "min_order_value=float(min_order_value)",
+        "available_cash=float(available_cash_for_sizing)",
+    ):
+        assert field in source

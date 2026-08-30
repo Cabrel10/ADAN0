@@ -707,14 +707,27 @@ class PortfolioManager:
 
         cost = size * price
 
-        # Enforce minimum notional based on capital tiers/risk management configuration
+        # Use the same minimum-notional source as MultiAssetChunkedEnv.  V31
+        # exposed a split-brain bug: the env accepted $5 from hard_constraints,
+        # while PortfolioManager silently fell back to $11 and rejected the
+        # already-approved order.  Keep the legacy risk_management key only as
+        # the last compatibility fallback.
         try:
-            rm_cfg = self.config.get("risk_management", {}) if isinstance(self.config, dict) else {}
-            min_trade_value_cfg = rm_cfg.get("min_trade_value")
-            # Default to 11.0 USDT (Micro tier law) when not specified
-            min_trade_value = float(min_trade_value_cfg) if min_trade_value_cfg is not None else 11.0
-        except Exception:
-            min_trade_value = 11.0
+            env_cfg = self.config.get("environment", {}) if isinstance(self.config, dict) else {}
+            hard_cfg = env_cfg.get("hard_constraints", {}) if isinstance(env_cfg, dict) else {}
+            trading_cfg = self.config.get("trading_rules", {}) if isinstance(self.config, dict) else {}
+            portfolio_cfg = self.config.get("portfolio", {}) if isinstance(self.config, dict) else {}
+            risk_cfg = self.config.get("risk_management", {}) if isinstance(self.config, dict) else {}
+            candidates = (
+                hard_cfg.get("min_order_value_usdt"),
+                trading_cfg.get("min_order_value_usdt"),
+                portfolio_cfg.get("min_order_value_usdt"),
+                risk_cfg.get("min_trade_value"),
+            )
+            configured = next(value for value in candidates if value is not None)
+            min_trade_value = float(configured)
+        except (AttributeError, TypeError, ValueError, StopIteration):
+            min_trade_value = 5.0
 
         if cost < max(0.0, min_trade_value):
             logger.warning(

@@ -6539,7 +6539,7 @@ class MultiAssetChunkedEnv(gym.Env):
             elif capacity_usage > 0.9:
                 reward -= (capacity_usage - 0.9) * 10
             elif capacity_usage < 0.3:
-                reward -= (0.3 - capacity_usage) * 5
+                reward -= (0.3 - capacity_usage) * 0.1
 
         return reward
 
@@ -8775,6 +8775,22 @@ class MultiAssetChunkedEnv(gym.Env):
                     available_cash_for_sizing = float(self.portfolio_manager.cash)
                 if notional_usd > available_cash_for_sizing:
                     notional_usd = available_cash_for_sizing
+                if discrete_action == 1:
+                    # V33 measure-only sizing trace. Records the full policy ->
+                    # tier -> cash transform before any sizing rejection.
+                    self._trace_action_pipeline(
+                        "sizing_decoded", asset, main_decision, discrete_action,
+                        "size_raw_mapped",
+                        size_raw=float(size_raw),
+                        normalized_size=float(normalized_size),
+                        target_exposure_pct=float(target_exposure_pct),
+                        capital=float(capital),
+                        requested_notional_usd=float(capital * target_exposure_pct),
+                        notional_usd=float(notional_usd),
+                        min_order_value=float(min_order_value),
+                        available_cash=float(available_cash_for_sizing),
+                        in_position=bool(is_open),
+                    )
                 if notional_usd < min_order_value:
                     # C14: Probabilistic sizer — bridge $0-$11 discontinuity
                     # Instead of hard reject, Bernoulli trial: p = notional/min_order

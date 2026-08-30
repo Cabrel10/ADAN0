@@ -68,9 +68,15 @@ def scripted_direction(
     raise ValueError(f"Unknown scenario: {scenario}")
 
 
-def controlled_action(direction: float, *, sl_raw: float, tp_raw: float) -> np.ndarray:
+def controlled_action(
+    direction: float,
+    *,
+    size_raw: float,
+    sl_raw: float,
+    tp_raw: float,
+) -> np.ndarray:
     """Build [direction, size, timeframe, SL, TP] for BTCUSDT on 5m."""
-    return np.asarray([direction, 0.0, -1.0, sl_raw, tp_raw], dtype=np.float32)
+    return np.asarray([direction, size_raw, -1.0, sl_raw, tp_raw], dtype=np.float32)
 
 
 def _open_position(env: Any) -> Any | None:
@@ -104,10 +110,30 @@ def _counter_delta(current: dict[str, int], previous: dict[str, int]) -> Counter
     return delta
 
 
+def _gate_category(stage: str, reason: str) -> str:
+    """Map a pipeline rejection to one mutually exclusive execution gate."""
+    haystack = f"{stage}:{reason}".lower()
+    if "fee" in haystack:
+        return "fee_gate"
+    if "min_notional" in haystack or "min_order" in haystack:
+        return "min_notional"
+    if "daily" in haystack:
+        return "daily_limit"
+    if "cash" in haystack or "budget" in haystack:
+        return "cash_budget"
+    if "portfolio" in haystack or "pm_reject" in haystack:
+        return "portfolio"
+    if "barrier" in haystack:
+        return "barrier"
+    return "other"
+
+
 def _read_trace(path: Path) -> dict[str, Any]:
     stages: Counter = Counter()
     reasons: Counter = Counter()
     stage_reasons: Counter = Counter()
+    rejection_gates: Counter = Counter()
+    sizings: list[dict[str, Any]] = []
     opens: list[dict[str, Any]] = []
     closes: list[dict[str, Any]] = []
     if not path.exists():
@@ -115,6 +141,8 @@ def _read_trace(path: Path) -> dict[str, Any]:
             "stages": {},
             "reasons": {},
             "stage_reasons": {},
+            "rejection_gates": {},
+            "sizings": [],
             "opens": [],
             "closes": [],
         }
@@ -128,6 +156,13 @@ def _read_trace(path: Path) -> dict[str, Any]:
         stages[stage] += 1
         reasons[reason] += 1
         stage_reasons[f"{stage}:{reason}"] += 1
+        if stage == "sizing_decoded":
+            sizings.append(event)
+        elif stage.endswith("reject") or "reject" in reason.lower() or reason in {
+            "min_notional",
+            "daily_limit",
+        }:
+            rejection_gates[_gate_category(stage, reason)] += 1
         if stage == "trade_executed" and event.get("lifecycle_event") == "open":
             opens.append(event)
         elif stage == "trade_executed" and event.get("lifecycle_event") == "close":
@@ -137,6 +172,8 @@ def _read_trace(path: Path) -> dict[str, Any]:
         "stages": dict(stages),
         "reasons": dict(reasons),
         "stage_reasons": dict(stage_reasons),
+        "rejection_gates": dict(rejection_gates),
+        "sizings": sizings,
         "opens": opens,
         "closes": closes,
     }
@@ -194,6 +231,34 @@ def _open_summary(opens: Iterable[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _sizing_summary(
+    sizings: Iterable[dict[str, Any]],
+    opens: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize policy sizing separately from cash-clamped/executed sizing."""
+    sizings = list(sizings)
+    opens = list(opens)
+
+    def stats(events: list[dict[str, Any]], key: str) -> dict[str, float | int | None]:
+        values = [float(event[key]) for event in events if event.get(key) is not None]
+        return {
+            "count": len(values),
+            "min": min(values) if values else None,
+            "max": max(values) if values else None,
+            "mean": float(np.mean(values)) if values else None,
+        }
+
+    return {
+        "decoded_events": len(sizings),
+        "size_raw": stats(sizings, "size_raw"),
+        "normalized_size": stats(sizings, "normalized_size"),
+        "target_exposure_pct": stats(sizings, "target_exposure_pct"),
+        "requested_notional_usd": stats(sizings, "requested_notional_usd"),
+        "cash_capped_notional_usd": stats(sizings, "notional_usd"),
+        "executed_notional_usd": stats(opens, "notional_usd"),
+    }
+
+
 def _scenario_verdict(result: dict[str, Any]) -> str:
     scenario = result["scenario"]
     stages = result["pipeline"]["stages"]
@@ -228,6 +293,7 @@ def run_scenario(
     steps: int,
     split: str,
     seed: int,
+    size_raw: float,
     sl_raw: float,
     tp_raw: float,
     trace_path: Path,
@@ -296,7 +362,12 @@ def run_scenario(
         label = "BUY" if direction > 0.0 else "SELL" if direction < 0.0 else "HOLD"
         requested[label] += 1
         requested_by_state[f"{'LONG' if in_position else 'FLAT'}:{label}"] += 1
-        action = controlled_action(direction, sl_raw=sl_raw, tp_raw=tp_raw)
+        action = controlled_action(
+            direction,
+            size_raw=size_raw,
+            sl_raw=sl_raw,
+            tp_raw=tp_raw,
+        )
         _, reward, terminated, truncated, info = env.step(action)
         total_reward += float(reward)
         _numeric_component_sums(reward_components, info.get("reward_components"))
@@ -329,7 +400,7 @@ def run_scenario(
         "seed": seed,
         "steps": steps,
         "action": {
-            "size_raw": 0.0,
+            "size_raw": size_raw,
             "timeframe_raw": -1.0,
             "sl_raw": sl_raw,
             "tp_raw": tp_raw,
@@ -342,7 +413,9 @@ def run_scenario(
             "stages": trace["stages"],
             "stage_rates_per_policy": pipeline_rates,
             "stage_reasons": trace["stage_reasons"],
+            "rejection_gates": trace["rejection_gates"],
         },
+        "sizing": _sizing_summary(trace["sizings"], trace["opens"]),
         "opens": _open_summary(trace["opens"]),
         "closes": _close_summary(trace["closes"]),
         "reward": {
@@ -367,31 +440,42 @@ def run_harness(
     steps: int,
     split: str,
     seed: int,
+    size_raw_values: Iterable[float],
     sl_raw: float,
     tp_raw: float,
     trace_dir: Path,
 ) -> dict[str, Any]:
     results = []
-    for index, scenario in enumerate(scenarios):
-        print(f"[harness] scenario={scenario} steps={steps} split={split}", file=sys.stderr)
-        trace_path = trace_dir / f"{scenario}.jsonl"
-        results.append(
-            run_scenario(
-                scenario,
-                steps=steps,
-                split=split,
-                seed=seed + index,
-                sl_raw=sl_raw,
-                tp_raw=tp_raw,
-                trace_path=trace_path,
+    scenarios = tuple(scenarios)
+    size_raw_values = tuple(size_raw_values)
+    for size_index, size_raw in enumerate(size_raw_values):
+        size_tag = f"{size_raw:+.2f}".replace("+", "pos").replace("-", "neg").replace(".", "p")
+        for scenario_index, scenario in enumerate(scenarios):
+            print(
+                f"[harness] scenario={scenario} size_raw={size_raw:+.2f} "
+                f"steps={steps} split={split}",
+                file=sys.stderr,
             )
-        )
+            trace_path = trace_dir / f"{scenario}_size_{size_tag}.jsonl"
+            results.append(
+                run_scenario(
+                    scenario,
+                    steps=steps,
+                    split=split,
+                    seed=seed + size_index * len(SCENARIOS) + scenario_index,
+                    size_raw=size_raw,
+                    sl_raw=sl_raw,
+                    tp_raw=tp_raw,
+                    trace_path=trace_path,
+                )
+            )
     return {
         "diagnostic": "controlled_action_pipeline_without_ppo",
         "config": "config/config.yaml",
         "split": split,
         "steps_per_scenario": steps,
         "seed": seed,
+        "size_raw_values": list(size_raw_values),
         "scenarios": results,
     }
 
@@ -401,6 +485,12 @@ def main() -> int:
     parser.add_argument("--split", choices=("train", "val", "test"), default="val")
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=26027)
+    parser.add_argument(
+        "--size-raw",
+        type=float,
+        action="append",
+        help="Repeat to build a sizing matrix; default: 0.0",
+    )
     parser.add_argument("--sl-raw", type=float, default=1.0)
     parser.add_argument("--tp-raw", type=float, default=1.0)
     parser.add_argument("--scenario", action="append", choices=SCENARIOS)
@@ -415,6 +505,9 @@ def main() -> int:
     args = parser.parse_args()
     if args.steps <= 0:
         parser.error("--steps must be positive")
+    size_raw_values = args.size_raw if args.size_raw is not None else [0.0]
+    if any(not -1.0 <= value <= 1.0 for value in size_raw_values):
+        parser.error("--size-raw must be in [-1, 1]")
     if not -1.0 <= args.sl_raw <= 1.0 or not -1.0 <= args.tp_raw <= 1.0:
         parser.error("--sl-raw and --tp-raw must be in [-1, 1]")
 
@@ -428,6 +521,7 @@ def main() -> int:
         steps=args.steps,
         split=args.split,
         seed=args.seed,
+        size_raw_values=size_raw_values,
         sl_raw=args.sl_raw,
         tp_raw=args.tp_raw,
         trace_dir=trace_dir,

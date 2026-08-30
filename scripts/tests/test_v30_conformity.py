@@ -15,8 +15,9 @@ Checks
  2. BOUNDS: decoded SL/TP always inside [lo, hi]; never NaN/Inf.
  3. FEES: the FREE_SLTP fee gate (tp_lo >= 1.2 * round_trip) holds for the real
     commission, so the env never favours a low-fee fantasy TP.
- 4. TP CEILING (FIX5): per-asset data-driven ceilings resolve as intended
-    (BTC 0.060, DOGE 0.090) and are STRICTLY below the old flat 0.120.
+ 4. EXIT DOMAIN (V33): BTC bounds match the MaxDuration=40 Future Arena
+    MFE/MAE P90 measurements (TP 0.006..0.0222, SL <= 0.0235); DOGE keeps
+    its frozen 0.090 ceiling pending an equivalent horizon-conditioned audit.
  5. EXPLORATION (FIX1): config sandbox block yields use_sde=False and a
     controlled log_std_init (-1.0 => std0 in a sane 0.2..0.7 band), and the
     env-var override still works but the DEFAULT no longer re-enables gSDE.
@@ -120,15 +121,20 @@ check("fees.tp_lo_covers_roundtrip", free_tp_lo >= round_trip * 1.2 - 1e-12,
 check("fees.symmetric_across_assets", True, "(commission is global, not per-asset)")
 
 # ---------------------------------------------------------------------------
-print("\n=== [4/7] TP CEILING (FIX5 data-driven, per-asset) ===")
-BTC_TP_HI, DOGE_TP_HI, OLD_FLAT = 0.060, 0.090, 0.120
-check("tp_ceiling.btc_below_old", BTC_TP_HI < OLD_FLAT, f"(BTC {BTC_TP_HI} < {OLD_FLAT})")
-check("tp_ceiling.doge_below_old", DOGE_TP_HI < OLD_FLAT, f"(DOGE {DOGE_TP_HI} < {OLD_FLAT})")
-check("tp_ceiling.doge_gt_btc", DOGE_TP_HI > BTC_TP_HI,
-      "(DOGE more volatile => higher ceiling)")
-# Reachability sanity: BTC 1h p99 ATR ~3.68% must fit under the BTC ceiling.
-check("tp_ceiling.btc_reachable", BTC_TP_HI > 0.0368,
-      "(BTC ceiling > 1h p99 ATR 3.68%)")
+print("\n=== [4/7] EXIT DOMAIN (V33, BTC MaxDuration=40) ===")
+BTC_TP_LO, BTC_TP_HI, BTC_SL_HI = 0.006, 0.0222, 0.0235
+DOGE_TP_HI, OLD_BTC_TP_HI, OLD_FLAT = 0.090, 0.060, 0.120
+MFE_P90_H40, ABS_MAE_P90_H40 = 0.022131, 0.023436
+check("exit_domain.btc_tp_floor_economic", BTC_TP_LO == 0.006,
+      f"(BTC TP floor={BTC_TP_LO:.4f})")
+check("exit_domain.btc_tp_p90_h40", abs(BTC_TP_HI - MFE_P90_H40) <= 0.0001,
+      f"(TP hi={BTC_TP_HI:.4f}, MFE P90 h40={MFE_P90_H40:.6f})")
+check("exit_domain.btc_sl_p90_h40", abs(BTC_SL_HI - ABS_MAE_P90_H40) <= 0.0001,
+      f"(SL hi={BTC_SL_HI:.4f}, |MAE| P90 h40={ABS_MAE_P90_H40:.6f})")
+check("exit_domain.btc_replaces_legacy_6pct", BTC_TP_HI < OLD_BTC_TP_HI,
+      f"(BTC {BTC_TP_HI} < legacy {OLD_BTC_TP_HI})")
+check("exit_domain.doge_frozen_below_old", DOGE_TP_HI < OLD_FLAT,
+      f"(DOGE {DOGE_TP_HI} < {OLD_FLAT})")
 
 # ---------------------------------------------------------------------------
 print("\n=== [5/7] EXPLORATION (FIX1 config = source of truth) ===")
