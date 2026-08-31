@@ -83,7 +83,8 @@ def _load_btc_financial_contract() -> dict[str, float]:
     btc = sltp["BTCUSDT"]
     tp_low = _finite_float(btc.get("tp_lo"), -1.0)
     tp_high = _finite_float(btc.get("tp_hi"), -1.0)
-    if min(round_trip_fees, commission_per_side, tp_low, tp_high) < 0.0:
+    sl_high = _finite_float(btc.get("sl_hi"), -1.0)
+    if min(round_trip_fees, commission_per_side, tp_low, tp_high, sl_high) < 0.0:
         raise RuntimeError("invalid negative or missing financial contract value")
     if tp_high < tp_low:
         raise RuntimeError("BTC TP upper bound is below lower bound")
@@ -92,8 +93,22 @@ def _load_btc_financial_contract() -> dict[str, float]:
         "round_trip_fees": round_trip_fees,
         "tp_low": tp_low,
         "tp_high": tp_high,
+        "sl_high": sl_high,
         "mean_tp": (tp_low + tp_high) / 2.0,
     }
+
+
+def _apply_btc_launcher_runtime(contract: dict[str, float]) -> dict[str, str]:
+    """Mirror the launcher's execution-relevant BTC invariants for the gate."""
+    requested = {
+        "ADAN_FREE_SLTP": "1",
+        "ADAN_TP_LO": str(contract["tp_low"]),
+        "ADAN_TP_HI": str(contract["tp_high"]),
+        "ADAN_SL_HI": str(contract["sl_high"]),
+    }
+    for key, value in requested.items():
+        os.environ.setdefault(key, value)
+    return {key: os.environ[key] for key in requested}
 
 
 def build_environment(split: str, seed: int):
@@ -149,6 +164,8 @@ def run_check(*, steps: int, split: str, seed: int) -> dict[str, Any]:
         )
 
     np.random.seed(seed)
+    contract = _load_btc_financial_contract()
+    launcher_runtime = _apply_btc_launcher_runtime(contract)
     env = build_environment(split, seed)
     capacity_rewards: list[float] = []
     financial_rewards: list[float] = []
@@ -317,7 +334,6 @@ def run_check(*, steps: int, split: str, seed: int) -> dict[str, Any]:
         threshold={"operator": ">", "value": REWARD_STD_MIN},
     )
 
-    contract = _load_btc_financial_contract()
     fees_to_mean_tp = (
         contract["round_trip_fees"] / contract["mean_tp"]
         if contract["mean_tp"] > 0.0
@@ -352,6 +368,7 @@ def run_check(*, steps: int, split: str, seed: int) -> dict[str, Any]:
             "action_diff_steps_B": ACTION_DIFF_STEPS,
             "trajectory": "single uninterrupted trajectory except natural episode resets",
         },
+        "launcher_runtime_invariants": launcher_runtime,
         "reward_influence_audit": {
             "capacity_reward": "telemetry_only_not_in_raw_reward",
             "inaction_penalty_function": "constant_0.0",
