@@ -4204,7 +4204,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 rc["capacity_reward"] = self.calculate_capacity_based_reward()
 
                 # Inaction penalty
-                rc["inaction_penalty"] = self.calculate_inaction_penalty()
+                rc["inaction_penalty"] = 0.0  # neutralisé: cohérent avec patience_bonus_val L.7078
 
                 # Excellence breakdown (if available)
                 if hasattr(self, "excellence_rewards") and self.excellence_rewards:
@@ -10744,25 +10744,7 @@ class MultiAssetChunkedEnv(gym.Env):
         return 0.0
 
     def calculate_inaction_penalty(self):
-        """RENAMED: Calculate patience bonus for selectivity (not inaction penalty).
-        
-        With 0.80% fees, forced trading = slow death.
-        Philosophy: Reward waiting for high-conviction setups, not constant action.
-        
-        Returns:
-            float: Positive bonus if steps_since_trade > 100 (patience), else 0.0
-        """
-        import math
-        
-        steps_since_trade = self.current_step - getattr(self, 'last_trade_step', -10000)
-        
-        if steps_since_trade > 100:
-            # Logarithmic bonus: grows but saturates (doesn't encourage infinite holding)
-            bonus = 0.005 * math.log1p(steps_since_trade - 100)
-            return float(bonus)
-        else:
-            # No penalty, no bonus — neutral zone (first 100 steps after trade)
-            return 0.0
+        return 0.0
 
     def close(self) -> None:
         """Nettoie les ressources de l'environnement."""
