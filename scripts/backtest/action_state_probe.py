@@ -96,7 +96,14 @@ def classify_transition(
     return "ROUTED_HOLD"
 
 
-def run_probe(ckpt: str, steps: int, split: str, capture_trace: bool = False) -> dict:
+def run_probe(
+    ckpt: str,
+    steps: int,
+    split: str,
+    capture_trace: bool = False,
+    deterministic: bool = True,
+    seed: int = 0,
+) -> dict:
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv
     from adan_trading_bot.common.config_loader import ConfigLoader
@@ -113,6 +120,7 @@ def run_probe(ckpt: str, steps: int, split: str, capture_trace: bool = False) ->
                                worker_id=0, live_mode=False)
     vec = DummyVecEnv([lambda: env])
     model = PPO.load(ckpt, device="cpu"); model.set_env(vec)
+    model.set_random_seed(seed)
     obs = vec.reset()
     u = vec.envs[0]; pm = u.portfolio_manager
 
@@ -130,7 +138,7 @@ def run_probe(ckpt: str, steps: int, split: str, capture_trace: bool = False) ->
     )
     for s in range(steps):
         open_before = _is_open(pm)
-        action, _ = model.predict(obs, deterministic=True)
+        action, _ = model.predict(obs, deterministic=deterministic)
         raw_a0 = float(np.ravel(action)[0])
         cont.append(raw_a0)
         intent = semantic_policy_intent(raw_a0, open_before, thr)
@@ -221,6 +229,7 @@ def run_probe(ckpt: str, steps: int, split: str, capture_trace: bool = False) ->
     }
     return {
         "checkpoint": os.path.basename(ckpt), "split": split, "steps": steps,
+        "deterministic": deterministic, "seed": seed,
         "episodes": n_eps,
         "confusion": {names[a]: conf[a] for a in conf},
         "steps_flat": flat_total, "steps_open": open_total,
@@ -254,9 +263,22 @@ def main() -> int:
         default=None,
         help="Optional JSONL path for per-step intent/route/gate/execution telemetry.",
     )
+    p.add_argument(
+        "--stochastic",
+        action="store_true",
+        help="Sample the trained PPO distribution instead of using its mean action.",
+    )
+    p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
     print(f"[probe] {a.ckpt} steps={a.steps}", file=sys.stderr)
-    r = run_probe(a.ckpt, a.steps, a.split, capture_trace=bool(a.trace_out))
+    r = run_probe(
+        a.ckpt,
+        a.steps,
+        a.split,
+        capture_trace=bool(a.trace_out),
+        deterministic=not a.stochastic,
+        seed=a.seed,
+    )
     out = Path(a.out) if a.out else (REPO_ROOT / "logs/validation/forensic" /
                                      f"probe_{Path(a.ckpt).stem}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
