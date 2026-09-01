@@ -48,7 +48,55 @@ def _is_open(pm) -> bool:
         return False
 
 
-def run_probe(ckpt: str, steps: int, split: str) -> dict:
+def semantic_policy_intent(raw_a0: float, in_position: bool, threshold: float) -> str:
+    """Name the policy intent without confusing V12 routing with execution."""
+    if in_position:
+        return "SELL" if raw_a0 < -threshold else "HOLD_POSITION"
+    if raw_a0 > threshold:
+        return "BUY"
+    if abs(raw_a0) <= threshold:
+        return "WAIT"
+    return "NO_ENTRY_RAW"
+
+
+def classify_transition(
+    *,
+    intent: str,
+    routed: int,
+    executed: int,
+    gate_reasons: list[str],
+    close_reason: str = "",
+) -> str:
+    """Classify patience, forced waiting, holding, and autonomous trades."""
+    close = close_reason.upper()
+    if executed == 2:
+        for marker, category in (
+            ("MAX_DURATION", "MAX_DURATION_CLOSE"),
+            ("MAXDURATION", "MAX_DURATION_CLOSE"),
+            ("TP", "TP_CLOSE"),
+            ("TAKE", "TP_CLOSE"),
+            ("SL", "SL_CLOSE"),
+            ("STOP", "SL_CLOSE"),
+        ):
+            if marker in close:
+                return category
+        return "AGENT_CLOSE" if routed == 2 else "MARKET_CLOSE"
+    if executed == 1:
+        return "BUY_EXECUTED"
+    if routed == 1:
+        return "BLOCKED_BUY" if gate_reasons else "BUY_NOT_EXECUTED"
+    if routed == 2:
+        return "BLOCKED_SELL" if gate_reasons else "SELL_NOT_EXECUTED"
+    if intent == "HOLD_POSITION":
+        return "VALID_HOLD"
+    if intent == "WAIT":
+        return "PATIENT_WAIT"
+    if intent == "NO_ENTRY_RAW":
+        return "NO_ENTRY_RAW"
+    return "ROUTED_HOLD"
+
+
+def run_probe(ckpt: str, steps: int, split: str, capture_trace: bool = False) -> dict:
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv
     from adan_trading_bot.common.config_loader import ConfigLoader
@@ -71,15 +119,75 @@ def run_probe(ckpt: str, steps: int, split: str) -> dict:
     # action(req) x state(open?) confusion
     names = {0: "HOLD", 1: "BUY", 2: "SELL"}
     conf = {a: {"flat": 0, "open": 0} for a in (0, 1, 2)}
-    cont = []  # raw action[0]
+    cont = []  # continuous policy action[0]
+    trace = []
+    category_counts: dict[str, int] = {}
+    intent_counts: dict[str, int] = {}
+    route_execution_counts: dict[str, int] = {}
     n_eps = 0
+    thr = float(
+        cfg.get("trading_rules", {}).get("frequency", {}).get("action_threshold", 0.01)
+    )
     for s in range(steps):
         open_before = _is_open(pm)
         action, _ = model.predict(obs, deterministic=True)
-        cont.append(float(np.ravel(action)[0]))
-        obs, _r, dones, _i = vec.step(action)
-        req = int(getattr(u, "_last_discrete_action_requested", 0) or 0)
+        raw_a0 = float(np.ravel(action)[0])
+        cont.append(raw_a0)
+        intent = semantic_policy_intent(raw_a0, open_before, thr)
+        rejection_before = dict(getattr(u, "rejection_reasons", {}) or {})
+        portfolio_before = np.asarray(obs["portfolio_state"]).reshape(-1)
+        cooldown_remaining = (
+            float(portfolio_before[26]) if portfolio_before.size > 26 else 0.0
+        )
+        time_in_position = (
+            float(portfolio_before[12]) if portfolio_before.size > 12 else 0.0
+        )
+        last_sell = getattr(u, "_last_sell_step_by_asset", {}).get("BTCUSDT")
+        time_since_sell = None if last_sell is None else int(u.current_step - last_sell)
+
+        obs, rewards, dones, _i = vec.step(action)
+        routed = int(getattr(u, "_last_route_action", 0) or 0)
+        executed = int(getattr(u, "_last_discrete_action", 0) or 0)
+        rejection_after = dict(getattr(u, "rejection_reasons", {}) or {})
+        gate_reasons = sorted(
+            key for key, value in rejection_after.items()
+            if int(value) > int(rejection_before.get(key, 0))
+        )
+        closed = list(getattr(u, "_step_closed_receipts", []) or [])
+        close_reason = ""
+        if closed and isinstance(closed[0], dict):
+            close_reason = str(closed[0].get("reason", closed[0].get("close_reason", "")))
+        category = classify_transition(
+            intent=intent,
+            routed=routed,
+            executed=executed,
+            gate_reasons=gate_reasons,
+            close_reason=close_reason,
+        )
+        req = int(getattr(u, "_last_discrete_action_requested", routed) or 0)
         conf[req]["open" if open_before else "flat"] += 1
+        category_counts[category] = category_counts.get(category, 0) + 1
+        intent_counts[intent] = intent_counts.get(intent, 0) + 1
+        route_exec_key = f"{names.get(routed, routed)}->{names.get(executed, executed)}"
+        route_execution_counts[route_exec_key] = route_execution_counts.get(route_exec_key, 0) + 1
+        if capture_trace:
+            trace.append({
+                "step": int(s),
+                "env_step": int(getattr(u, "current_step", s)),
+                "position_state": "LONG" if open_before else "FLAT",
+                "raw_a0": raw_a0,
+                "policy_intent": intent,
+                "routed_action": names.get(routed, str(routed)),
+                "executed_action": names.get(executed, str(executed)),
+                "category": category,
+                "cooldown_remaining": cooldown_remaining,
+                "time_in_position_normalized": time_in_position,
+                "time_since_sell": time_since_sell,
+                "gate_reasons": gate_reasons,
+                "close_reason": close_reason,
+                "reward": float(np.ravel(rewards)[0]),
+                "realized_pnl": float(getattr(u, "_step_realized_pnl", 0.0) or 0.0),
+            })
         if bool(np.ravel(dones)[0]):
             n_eps += 1; obs = vec.reset(); u = vec.envs[0]; pm = u.portfolio_manager
 
@@ -92,7 +200,6 @@ def run_probe(ckpt: str, steps: int, split: str) -> dict:
 
     # Hypothesis A test: is action0 oscillating in a narrow band near the
     # decision threshold (so discretization flips it artificially)?
-    thr = 0.01  # action_threshold used by the env
     near_thr = float((np.abs(np.abs(carr) - thr) <= 0.05).mean())
     # histogram of action0 in 10 bins over [-1,1]
     hist, edges = np.histogram(carr, bins=10, range=(-1.0, 1.0))
@@ -129,6 +236,10 @@ def run_probe(ckpt: str, steps: int, split: str) -> dict:
         "action0_pct_near_threshold_band": round(near_thr, 4),
         "action0_histogram": histo,
         "rejection_reasons": rej,
+        "semantic_intents": intent_counts,
+        "transition_categories": category_counts,
+        "route_execution": route_execution_counts,
+        "trace": trace if capture_trace else None,
     }
 
 
@@ -138,13 +249,23 @@ def main() -> int:
     p.add_argument("--split", default="test")
     p.add_argument("--steps", type=int, default=3000)
     p.add_argument("--out", default=None)
+    p.add_argument(
+        "--trace-out",
+        default=None,
+        help="Optional JSONL path for per-step intent/route/gate/execution telemetry.",
+    )
     a = p.parse_args()
     print(f"[probe] {a.ckpt} steps={a.steps}", file=sys.stderr)
-    r = run_probe(a.ckpt, a.steps, a.split)
+    r = run_probe(a.ckpt, a.steps, a.split, capture_trace=bool(a.trace_out))
     out = Path(a.out) if a.out else (REPO_ROOT / "logs/validation/forensic" /
                                      f"probe_{Path(a.ckpt).stem}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
+    trace = r.pop("trace", None)
     out.write_text(json.dumps(r, indent=2))
+    if a.trace_out and trace is not None:
+        trace_out = Path(a.trace_out)
+        trace_out.parent.mkdir(parents=True, exist_ok=True)
+        trace_out.write_text("".join(json.dumps(row) + "\n" for row in trace))
     print(json.dumps(r, indent=2))
     return 0
 
