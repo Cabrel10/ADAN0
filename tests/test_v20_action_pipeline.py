@@ -26,6 +26,10 @@ from adan_trading_bot.performance.metrics import PerformanceMetrics
 from adan_trading_bot.portfolio.portfolio_manager import PortfolioManager
 from adan_trading_bot.utils.reward_collector import RewardCollector
 from scripts import train_parallel_agents as training
+from scripts.backtest.action_state_probe import (
+    classify_transition,
+    semantic_policy_intent,
+)
 from scripts.analysis.monitor_v20_pbt import (
     persistent_alerts,
     pipeline_counts,
@@ -107,6 +111,50 @@ def test_flat_state_ignores_historical_buy_tracker() -> None:
 
     assert env._cooldown_remaining_ratio() == 0.0
     assert "BTCUSDT" not in env._buy_step_by_asset
+
+
+@pytest.mark.parametrize(
+    ("raw_a0", "in_position", "expected"),
+    [
+        (0.5, False, "BUY"),
+        (0.0, False, "WAIT"),
+        (-0.5, False, "NO_ENTRY_RAW"),
+        (0.5, True, "HOLD_POSITION"),
+        (-0.5, True, "SELL"),
+    ],
+)
+def test_probe_names_policy_intent_by_spot_state(
+    raw_a0: float, in_position: bool, expected: str
+) -> None:
+    assert semantic_policy_intent(raw_a0, in_position, 0.01) == expected
+
+
+def test_probe_separates_voluntary_wait_from_blocked_buy() -> None:
+    assert classify_transition(
+        intent="WAIT", routed=HOLD, executed=HOLD, gate_reasons=[]
+    ) == "PATIENT_WAIT"
+    assert classify_transition(
+        intent="BUY",
+        routed=1,
+        executed=HOLD,
+        gate_reasons=["cooldown_wait"],
+    ) == "BLOCKED_BUY"
+
+
+def test_probe_separates_valid_hold_no_entry_and_market_close() -> None:
+    assert classify_transition(
+        intent="HOLD_POSITION", routed=HOLD, executed=HOLD, gate_reasons=[]
+    ) == "VALID_HOLD"
+    assert classify_transition(
+        intent="NO_ENTRY_RAW", routed=HOLD, executed=HOLD, gate_reasons=[]
+    ) == "NO_ENTRY_RAW"
+    assert classify_transition(
+        intent="HOLD_POSITION",
+        routed=HOLD,
+        executed=SELL,
+        gate_reasons=[],
+        close_reason="MAX_DURATION",
+    ) == "MAX_DURATION_CLOSE"
 
 
 def test_ev_fee_gate_blocks_negative_ev_by_default() -> None:
