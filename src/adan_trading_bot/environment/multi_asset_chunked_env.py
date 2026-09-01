@@ -27,6 +27,7 @@ from ..exchange_api.websocket_manager import WebSocketManager
 from ..exchange_api.connector import get_exchange_client
 from ..common.utils import get_logger
 from .action_routing import (
+    post_sell_reentry_penalty as _post_sell_reentry_penalty,
     route_action_by_state as _route_action_by_state,
     resolve_agent_close_gate as _resolve_agent_close_gate,
     resolve_ev_fee_gate as _resolve_ev_fee_gate,
@@ -665,10 +666,10 @@ class MultiAssetChunkedEnv(gym.Env):
         self._all_episode_receipts: List[dict] = []
         self._last_open_step_by_asset: Dict[str, int] = {}
 
-        # WAIT post-SELL cooldown tracking (per asset)
-        # After SELL, BUY is forbidden for M steps (varies by timeframe).
-        # 5m=6 steps, 1h=10 steps, 4h=20 steps (from config).
-        # This prevents rapid SELL→BUY cycles that drain capital via fees.
+        # Post-SELL re-entry friction tracking (per asset).
+        # BUY remains executable during this observable window; choosing to
+        # re-enter early incurs a linearly decaying economic reward penalty.
+        # 5m=5 steps, 1h=3 steps, 4h=4 steps in the current config.
         self._last_sell_step_by_asset: Dict[str, int] = {}
 
         # HOLD_MIN post-BUY cooldown tracking (per asset)
@@ -710,7 +711,6 @@ class MultiAssetChunkedEnv(gym.Env):
         self.rejection_reasons: Dict[str, int] = {
             "fee_gate": 0,      # EV-based fee gate (p_hmm <= p_min)
             "risk_gate": 0,     # Max concurrent positions exceeded
-            "cooldown_wait": 0, # WAIT post-SELL cooldown active
             "cooldown_hold_min": 0,  # HOLD_MIN post-BUY cooldown active
             "cooldown_omega4e": 0,   # Anti-spam cooldown between BUYs
             "min_notional": 0,  # Cash < min_order_value or notional too small
@@ -2778,7 +2778,7 @@ class MultiAssetChunkedEnv(gym.Env):
             "rej_barrier": 0, "executed": 0, "exec_profit": 0,
         }
         self.rejection_reasons = {
-            "fee_gate": 0, "risk_gate": 0, "cooldown_wait": 0,
+            "fee_gate": 0, "risk_gate": 0,
             "cooldown_hold_min": 0, "cooldown_omega4e": 0,
             "min_notional": 0, "hysteresis": 0, "anti_spam_hold": 0,
             "daily_limit": 0, "pm_rejected": 0, "sell_no_position": 0,
@@ -6023,13 +6023,14 @@ class MultiAssetChunkedEnv(gym.Env):
 
 
     def _cooldown_remaining_ratio(self) -> float:
-        """Return the largest currently blocking cooldown fraction.
+        """Return the largest active temporal-friction fraction.
 
         Capability Vector slot [26] used to be set from the mere presence of a
         tracker key. Since those keys survive after expiry, the observation
-        could report a permanent cooldown although the relevant gate was open.
-        This mirrors the state-conditioned gates: HOLD_MIN while LONG and WAIT
-        while FLAT, including the doubled post-stop-loss cooldown.
+        could report a permanent cooldown although the temporal constraint had
+        expired. The signal now covers the hard HOLD_MIN gate while LONG and
+        the economic post-SELL re-entry window while FLAT, including its doubled
+        duration after a stop loss.
         """
         current_step = int(getattr(self, "current_step", 0))
         cooldown_cfg = self.config.get("trading_rules", {}).get("cooldown", {})
@@ -7456,10 +7457,14 @@ class MultiAssetChunkedEnv(gym.Env):
         behavior_penalty = float(
             getattr(self, "_step_invalid_penalty", 0.0) or 0.0
         )
+        cooldown_reentry_penalty = float(
+            getattr(self, "_step_cooldown_reentry_penalty", 0.0) or 0.0
+        )
 
         raw_reward = (
             pnl_base_reward  # PnL signal (terme structurant)
-            + behavior_penalty  # Invalid/cooldown/clamp behavior; never ledger PnL
+            + behavior_penalty  # Invalid/clamp behavior; never ledger PnL
+            + cooldown_reentry_penalty  # Executed early BUY after SELL; economic friction
             + action_anchor_penalty  # 2026-07-06: anti-drift a0 anchor (no-op only)
             + holding_cost  # v13: coût de détention (anti disposition-effect)
             + smart_flat_reward  # v13: signal POSITIF pour HOLD-flat intelligent
@@ -7507,6 +7512,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 float(self.mtm_scale) * delta_equity_pct
                 + _mtm_cost
                 + behavior_penalty
+                + cooldown_reentry_penalty
             )
             # Keep drawdown risk-management pressure (survival first) but drop
             # the asymmetric realized-PnL / tier / closure terms entirely.
@@ -7576,6 +7582,7 @@ class MultiAssetChunkedEnv(gym.Env):
             "drawdown":         drawdown_penalty,
             "drawdown_penalty": drawdown_penalty,  # Logger key
             "behavior_penalty": behavior_penalty,
+            "cooldown_reentry_penalty": cooldown_reentry_penalty,
             "patience_bonus":   patience_bonus_val,
             "inaction":         patience_bonus_val,  # Logger fallback key (was inaction_penalty)
             "inaction_penalty": patience_bonus_val,  # Logger compatibility key
@@ -8393,8 +8400,9 @@ class MultiAssetChunkedEnv(gym.Env):
         first_discrete_action = 0
         first_discrete_action_requested = 0  # raw action before cooldown/gate filtering
 
-        # Reset per-step penalty accumulator
+        # Reset per-step penalty accumulators.
         self._step_invalid_penalty = 0.0
+        self._step_cooldown_reentry_penalty = 0.0
         # V28: reset per-step additive invalid-intent penalty + resolve config
         self._behavior_penalty_step = 0.0
         _bp_cfg = (self.config.get("reward_shaping", {}) or {}).get(
@@ -8441,7 +8449,6 @@ class MultiAssetChunkedEnv(gym.Env):
                 # anti_spam_hold (0.8). Must beat the per-step latent_pnl reward.
                 "min_notional_self_caused": 0.55,
                 "hysteresis": 0.4,
-                "cooldown_wait": 0.4,
                 "cooldown_hold_min": 0.4,
             }
             return float(_sev.get(reason, 0.8))
@@ -9551,39 +9558,40 @@ class MultiAssetChunkedEnv(gym.Env):
             #    Conditions :
             #    1. Signal BUY (discrete_action == 1)
             #    2. Pas de position ouverte (!is_open)
-            #    3. WAIT post-SELL respecté : M steps depuis le dernier SELL
-            #       5m=72 steps, 1h=100 steps, 4h=200 steps
-            #       Si non respecté → pénalité + action ignorée (reste en HOLD)
+            #    3. Une réentrée post-SELL précoce reste exécutable mais paie une
+            #       friction économique décroissante, observable par la policy.
             #    4. RISK_GATE : max_concurrent_positions du tier
             #    5. EV gate, daily limits, etc.
             # ================================================================
             elif discrete_action == 1 and not is_open:
                 self.trade_attempts += 1
 
-                # ── WAIT post-SELL check ──────────────────────────────────
-                # BUY interdit pendant M steps après un SELL.
-                # Durée par timeframe lue depuis trading_rules.cooldown.wait_steps_post_sell
-                # (plus la TF est haute, plus l'attente est longue).
+                # ── Post-SELL economic re-entry friction ──────────────────
+                # This is deliberately NOT a gate: BUY continues through the
+                # normal risk/EV/cash pipeline. PPO receives the economic cost
+                # when it chooses BUY while the observable window is active.
                 _wait_cfg = self.config.get("trading_rules", {}).get(
                     "cooldown", {}).get("wait_steps_post_sell", {})
                 _tf = self.current_timeframe_for_trade
-                _wait_min = int(_wait_cfg.get(_tf, {"5m": 6, "1h": 10, "4h": 20}.get(_tf, 6)))
-                _last_sell = self._last_sell_step_by_asset.get(asset, -9999)
-                _steps_since_sell = self.current_step - _last_sell
-
-                if _steps_since_sell < _wait_min:
-                    # BUY trop tôt après SELL — pénalité + ignoré
-                    self.invalid_trade_attempts += 1
-                    self.rejection_reasons["cooldown_wait"] += 1
-                    _wait_pen = -_inv_pen_weight * (_wait_min - _steps_since_sell)
-                    self._step_invalid_penalty += _wait_pen
-                    if self.current_step % 50 == 0:
-                        self.logger.info(
-                            f"[WAIT_BLOCK] {asset} | TF={_tf} | "
-                            f"steps_since_sell={_steps_since_sell}/{_wait_min} "
-                            f"— BUY bloqué (WAIT actif), pénalité={_wait_pen:.5f}"
-                        )
-                    continue
+                _wait_min = int(_wait_cfg.get(
+                    _tf, {"5m": 6, "1h": 10, "4h": 20}.get(_tf, 6)
+                ))
+                _last_sell = self._last_sell_step_by_asset.get(asset)
+                _wait_pen = 0.0
+                _wait_proximity = 0.0
+                _rt_fees_cfg = float(
+                    (self.config.get("reward_shaping", {}).get(
+                        "future_reward", {}) or {}).get("round_trip_fees", 0.004)
+                )
+                if _last_sell is not None:
+                    _wait_pen, _wait_proximity = _post_sell_reentry_penalty(
+                        current_step=self.current_step,
+                        last_sell_step=_last_sell,
+                        wait_steps=_wait_min,
+                        total_cooldown_steps=self._sell_cooldown_total_by_asset.get(asset),
+                        round_trip_fees=_rt_fees_cfg,
+                        pnl_reward_scale=0.5,
+                    )
 
                 # ==============================================================
                 # STRICT CONCURRENT POSITIONS LIMIT (RISK_GATE)
@@ -9742,6 +9750,23 @@ class MultiAssetChunkedEnv(gym.Env):
                     self.logger.error(f"[OPEN_ERROR] {asset}: {open_err}", exc_info=True)
 
                 if receipt:
+                    if _wait_pen < 0.0:
+                        # Charge only an EXECUTED re-entry. A BUY rejected by an
+                        # independent risk/EV/cash gate remains reward-neutral.
+                        self._step_cooldown_reentry_penalty += _wait_pen
+                        self._trace_action_pipeline(
+                            "gate_advisory", asset, 1, 1,
+                            "post_sell_reentry_penalty",
+                            cooldown_proximity=_wait_proximity,
+                            cooldown_penalty=_wait_pen,
+                            round_trip_fees=_rt_fees_cfg,
+                        )
+                        if self.current_step % 50 == 0:
+                            self.logger.info(
+                                f"[REENTRY_COST] {asset} | TF={_tf} | "
+                                f"proximity={_wait_proximity:.3f} | "
+                                f"penalty={_wait_pen:.5f} — BUY executed"
+                            )
                     # C14-A: Record action_policy in receipt for replay buffer
                     receipt["action_policy"] = "probabilistic" if notional_usd == min_order_value and target_exposure_pct == (min_order_value / capital if capital > 0 else 0) else "deterministic"
                     self.receipts.append(receipt)
