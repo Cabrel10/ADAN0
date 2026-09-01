@@ -153,20 +153,18 @@ class MultiAssetChunkedEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
     # Constantes pour les actions
-    # Cycle : BUY → HOLD → SELL → WAIT → BUY → ...
+    # Cycle : BUY → HOLD_POSITION → SELL → fenêtre de friction → BUY → ...
     #
     # BUY  : En USDT, ouvre position (USDT → crypto). SL/TP placés.
     # HOLD : Position ouverte (on a des crypto). Cherche meilleur prix de vente.
     #        SL/TP actifs. Durée libre, bornée par max_duration_steps.
-    # SELL : Ferme position (crypto → USDT). Déclenche cooldown WAIT.
-    # WAIT : En USDT après vente. Cooldown obligatoire avant re-entrée.
-    #        Durée : 5m=72 steps, 1h=100 steps, 4h=200 steps.
-    #        Pendant WAIT, le modèle cherche le prochain point d'entrée.
-    #        Si BUY tenté avant fin du cooldown → pénalité + ignoré.
+    # SELL : Ferme position (crypto → USDT). Démarre une fenêtre observable.
+    # FLAT : Pendant cette fenêtre, BUY reste exécutable via le pipeline normal.
+    #        Une réentrée exécutée paie une friction économique décroissante.
     HOLD = 0
     BUY  = 1
     SELL = 2
-    WAIT = 3  # post-SELL cooldown uniquement
+    WAIT = 3  # Legacy telemetry label only; never routed or executed.
 
     def __init__(
         self,
@@ -2744,9 +2742,9 @@ class MultiAssetChunkedEnv(gym.Env):
         # OMEGA-3/4: Reset episode receipts and per-asset cooldown
         self._all_episode_receipts = deque(maxlen=50)  # REDUCED: Cap memory: keep last 50 receipts (was 500)
         self._last_open_step_by_asset = {}
-        self._last_sell_step_by_asset = {}   # WAIT post-SELL cooldown
-        self._buy_step_by_asset = {}          # HOLD_MIN post-BUY cooldown
-        self._sell_cooldown_total_by_asset = {}  # normalized remaining WAIT
+        self._last_sell_step_by_asset = {}   # start of post-SELL re-entry friction
+        self._buy_step_by_asset = {}          # hard HOLD_MIN post-BUY guard
+        self._sell_cooldown_total_by_asset = {}  # friction normalization window
 
         # Log and reset rejection reasons from previous episode
         if hasattr(self, 'rejection_reasons') and any(v > 0 for v in self.rejection_reasons.values()):
@@ -4273,8 +4271,8 @@ class MultiAssetChunkedEnv(gym.Env):
                     
                     # Determine action and triggers — use first_discrete_action from _execute_trades
                     _da = getattr(self, '_last_discrete_action', 0)
-                    # _last_discrete_action = action demandée par le modèle (avant filtrage WAIT/HOLD_MIN)
-                    # L'action effective peut différer si bloquée par cooldown
+                    # _last_discrete_action = action effectivement exécutée.
+                    # La route demandée est séparée pour identifier chaque gate dur.
                     _da_requested = getattr(self, '_last_discrete_action_requested', _da)
                     _action_map = {0: "hold", 1: "buy", 2: "sell"}
                     action_taken = _action_map.get(_da, "hold")
@@ -8318,15 +8316,15 @@ class MultiAssetChunkedEnv(gym.Env):
         Implements the strict trade lifecycle sequence validated by QA:
             RESET -> Warmup -> TARGET_WEIGHT -> LINEAR_EXPO -> SIZE_GATE
             -> SL/TP/MAX_DURATION check -> SELL (HOLD_MIN / AGENT_CLOSE)
-            -> BUY (WAIT_BLOCK / RISK_GATE / OMEGA4E / EV_GATE / SIZE_GATE / TRADE_OPEN)
+            -> BUY (REENTRY_FRICTION / RISK_GATE / OMEGA4E / EV_GATE / SIZE_GATE / TRADE_OPEN)
             -> ACTION_DIFF log -> REWARD_ANTIHACK (in _calculate_reward)
 
         Action space per asset (5 dims): [action_raw, size_raw, tf_raw, sl_raw, tp_raw]
-            - action_raw: -1..1  (< -threshold = SELL, > threshold = BUY, else HOLD)
+            - action_raw: -1..1, routé selon l'état (FLAT: BUY/no-entry; LONG: SELL/HOLD)
             - size_raw:   -1..1  mapped linearly to tier exposure_range
             - tf_raw:     -1..1  maps to timeframe index [5m, 1h, 4h]
             - sl_raw:     -1..1  dynamic SL bounded by profile (scalper/intraday/swing/position)
-            - tp_raw:     -1..1  dynamic TP with R/R >= 1.5 floor and fee gate (TP >= 3x fees)
+            - tp_raw:     -1..1  dynamic TP; optional R/R floor plus 1.2x geometry floor
 
         Execution order (per step):
             1. update_market_price() — checks SL/TP/MaxDuration against OHLC lows/highs
@@ -8338,9 +8336,10 @@ class MultiAssetChunkedEnv(gym.Env):
                d. Dynamic SL/TP with ATR-aware scalper protection
                e. Anti-spam HOLD: skip if target exposure ~ current exposure
                f. MAX_DURATION kill-switch (profile-aware: scalper=20, intraday=50...)
-               g. SELL path: HOLD_MIN check -> close_position -> WAIT trigger
-               h. BUY path: WAIT_BLOCK -> RISK_GATE -> OMEGA4E -> DAILY_LIMIT
-                            -> EV_GATE -> SIZE_GATE -> open_position -> TRADE_OPEN
+               g. SELL path: HOLD_MIN check -> close_position -> friction-window start
+               h. BUY path: compute re-entry friction -> RISK_GATE -> OMEGA4E
+                            -> DAILY_LIMIT -> EV_GATE -> SIZE_GATE -> open_position
+                            -> charge friction only after TRADE_OPEN
             4. ACTION_DIFF log (requested vs executed every 50 steps)
 
         Args:
@@ -8419,8 +8418,8 @@ class MultiAssetChunkedEnv(gym.Env):
         # Only actions that are actually EXECUTED can generate non-zero reward.
         # Penalizing rejected actions violates the Bellman equation: Q(s,a) requires
         # a state transition s->s', which doesn't happen when a gate blocks execution.
-        # Cooldown violations (HOLD_MIN, WAIT_BLOCK) keep a small penalty since the
-        # agent actively chose to violate a known timing constraint.
+        # HOLD_MIN and every rejected gate are reward-neutral here. Post-SELL is not
+        # a gate: its separate economic friction is charged only after an executed BUY.
         _inv_pen_weight = 0.0  # was 0.005 — C6 fix (all gate rejections = 0 reward)
 
         # DIAGNOSTIC-V4 (2026-06-30): symmetric sterile penalty helper.
@@ -8545,17 +8544,11 @@ class MultiAssetChunkedEnv(gym.Env):
             trade_executed_this_step = True
             self._pre_execute_pnl = 0.0
 
-        # ── COOLDOWN PATCH: SL/TP/MaxDuration closures must trigger WAIT ──────
-        # When the MARKET closes a position (SL/TP/MaxDuration), the agent did
-        # not choose to sell — but the position IS closed. Without this patch,
-        # _last_sell_step_by_asset is never updated, so WAIT_BLOCK never fires
-        # after a market-triggered close. The agent can immediately re-BUY on
-        # the very next step, catching a falling knife repeatedly until DD=40%.
-        #
-        # Fix: for every market-triggered close, register the sell step so the
-        # WAIT cooldown applies exactly as it would for an AGENT_CLOSE.
-        # SL closures get a 2× WAIT multiplier (trauma penalty) because they
-        # indicate a momentum collapse — the worst time to re-enter.
+        # ── Market closures start the observable re-entry friction window ─────
+        # SL/TP/MaxDuration closes are physical exits even though the policy did
+        # not request SELL. Register them so an immediate, actually executed BUY
+        # is priced like a post-AGENT_CLOSE re-entry instead of being silently free.
+        # SL closures use a 2x window, but no BUY is blocked by this tracker.
         for _receipt in _pre_receipts:
             if not isinstance(_receipt, dict):
                 continue  # close_position returned None (already closed) — skip
@@ -8574,22 +8567,17 @@ class MultiAssetChunkedEnv(gym.Env):
                 ))
                 self._sell_cooldown_total_by_asset[_closed_asset] = _wait_base
                 if "stop_loss" in _close_reason.lower():
-                    # Trauma penalty: double WAIT after a stop-loss hit.
-                    # LOGIC: _steps_since_sell = current_step - _last_sell_step
-                    # BUY is blocked while _steps_since_sell < _wait_min.
-                    # To enforce 2× wait_min cooldown, we register:
-                    #   _last_sell_step = current_step + wait_base
-                    # So at step N+k: steps_since_sell = k - wait_base
-                    # BUY blocked until k >= 2×wait_base (i.e., 2× normal wait).
-                    # Register sell step AHEAD by wait_base → effective 2× cooldown
+                    # Double the economic-friction window after a stop loss.
+                    # A future-valued anchor preserves the existing remaining-ratio
+                    # representation; it changes only penalty proximity, never routing.
                     self._last_sell_step_by_asset[_closed_asset] = (
                         self.current_step + _wait_base
                     )
                     self._sell_cooldown_total_by_asset[_closed_asset] = 2 * _wait_base
                     self.logger.info(
-                        f"[SL_TRAUMA_WAIT] {_closed_asset} | "
+                        f"[SL_REENTRY_FRICTION] {_closed_asset} | "
                         f"SL hit at step {self.current_step} | "
-                        f"WAIT 2×{_wait_base}={2*_wait_base} steps before re-BUY"
+                        f"economic window=2×{_wait_base}={2*_wait_base} steps"
                     )
 
         # ================================================================
@@ -9206,7 +9194,7 @@ class MultiAssetChunkedEnv(gym.Env):
             #    3. HOLD_MIN respecté : N steps minimum depuis le BUY
             #       5m=6 steps, 1h=3 steps, 4h=2 steps
             #       Si non respecté → pénalité + action ignorée (reste en HOLD)
-            #    Après SELL réussi → déclenche WAIT post-SELL (M steps)
+            #    Après SELL réussi → démarre la friction de réentrée (M steps)
             # ================================================================
             if discrete_action == 2 and is_open:
                 # V17-Audit: SELL requested on an open position.
@@ -9495,8 +9483,8 @@ class MultiAssetChunkedEnv(gym.Env):
                                             )
                                 except Exception:
                                     pass
-                                # Déclenche WAIT post-SELL pour cet asset and record
-                                # its total duration for observable normalization.
+                                # Start post-SELL economic friction and record its
+                                # total duration for observable normalization.
                                 self._last_sell_step_by_asset[asset] = self.current_step
                                 _wait_cfg = self.config.get("trading_rules", {}).get(
                                     "cooldown", {}).get("wait_steps_post_sell", {})
@@ -9504,7 +9492,6 @@ class MultiAssetChunkedEnv(gym.Env):
                                     _tf, {"5m": 6, "1h": 10, "4h": 20}.get(_tf, 6)
                                 ))
                                 self._sell_cooldown_total_by_asset[asset] = _wait_steps
-                                _wait_map = {"5m": 6, "1h": 10, "4h": 20}
                                 # ── TRADE AUDIT: full chain trace on EVERY close ──
                                 _close_exec_src = "open[t+1]" if (_exec_p is not None and _exec_p > 0) else "close[t]_FALLBACK"
                                 _hold_dur = self.current_step - self._buy_step_by_asset.get(asset, self.current_step)
@@ -9518,7 +9505,7 @@ class MultiAssetChunkedEnv(gym.Env):
                                     f"| reason=AGENT_CLOSE | TF={_tf} "
                                     f"| unrealized_pnl_pct={unrealized_pnl_pct:.4%} "
                                     f"| capital_after=${self.portfolio_manager.get_equity():.2f} "
-                                    f"| WAIT until step {self.current_step + _wait_map.get(_tf, 6)}"
+                                    f"| reentry_friction_until={self.current_step + _wait_steps}"
                                 )
                             else:
                                 self.invalid_trade_attempts += 1
