@@ -27,6 +27,8 @@ from ..exchange_api.websocket_manager import WebSocketManager
 from ..exchange_api.connector import get_exchange_client
 from ..common.utils import get_logger
 from .action_routing import (
+    economic_round_trip_fees as _economic_round_trip_fees,
+    minimum_profitable_win_probability as _minimum_profitable_win_probability,
     post_sell_reentry_penalty as _post_sell_reentry_penalty,
     route_action_by_state as _route_action_by_state,
     resolve_agent_close_gate as _resolve_agent_close_gate,
@@ -1420,8 +1422,8 @@ class MultiAssetChunkedEnv(gym.Env):
             )
 
             # ── Per-profile SL/TP bounds ──────────────────────────────────
-            # Rule: TP_min >= 3x round-trip fees (0.1% maker + 0.1% taker = 0.2%)
-            #       => TP_min = 0.6% absolute minimum to cover fees
+            # Rule: TP_min >= 1.2x the geometric round-trip fee floor.
+            # With the current 0.50% geometry floor, TP_min is at least 0.60%.
             #
             # SCALPER (5m): fast moves, tight stops
             #   SL: 0.3-0.8%  |  TP: 0.6-1.5%  |  R/R target: 2:1
@@ -8959,8 +8961,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 target_exposure_pct = min_order_value / capital if capital > 0 else 0
 
             # ---- Dynamic SL/TP bounded by profile (fee-aware) ----
-            # TP must cover 3x round-trip fees (0.1%+0.1%=0.2% RT -> TP_min=0.6%)
-            # R/R must be >= 1.5 (TP >= 1.5 * SL)
+            # TP geometry uses a 1.2x round-trip fee floor (0.50% floor -> 0.60% TP).
+            # This is distinct from the EV gate, which uses the configured economic
+            # round-trip contract. R/R must be >= 1.5 when FREE_SLTP is disabled.
             _prof = str(self.worker_config.get("profile") or
                         self.worker_config.get("name", "intraday")).lower()
             _pmap = {"conservative": "scalper", "moderate": "intraday",
@@ -9644,27 +9647,31 @@ class MultiAssetChunkedEnv(gym.Env):
 
                 # ==============================================================
                 # CHANTIER 2: EV-BASED FEE GATE
-                # Instead of rigid 3x fee check, we compute the minimum
-                # win probability for positive expected value:
-                #   p_min = (1 + fee_pct/SL) / (1 + RR)
+                # Compute the minimum win probability for positive expected value:
+                #   p_min = (SL + round_trip_fees) / (SL + TP)
                 # If W <= p_min, the trade has negative EV and is cancelled.
                 #
+                # The economic fee comes from the same financial contract as the
+                # Future Arena and re-entry penalty. ADAN_FREE_SLTP intentionally
+                # affects geometry only; it never disables this profitability gate.
+                #
                 # TRAINING MODE: When HMM has no real signal (p_hmm=0.5),
-                # we use a softer threshold (0.9 * p_min) to allow exploration.
-                # Without this, no trades pass the gate during early training
-                # with synthetic data, and the agent can never learn.
+                # soften p_min by 15% to preserve early exploration.
                 # ==============================================================
-                estimated_fees_pct = 0.002  # 0.2% round-trip (0.1% maker + 0.1% taker)
-                if sl_pct > 0:
-                    _rr_for_ev = tp_pct / sl_pct
-                    p_min_required = (1.0 + estimated_fees_pct / sl_pct) / (1.0 + _rr_for_ev)
-                    # Training softener: reduce threshold by 10% during exploration
-                    # This allows the agent to learn from actual trade outcomes
-                    _is_training = not getattr(self, 'live_mode', False)
-                    if _is_training:
-                        p_min_required *= 0.85  # 15% softer during training
-                else:
-                    p_min_required = 0.99  # no SL = reject
+                _economic_fees_pct = _economic_round_trip_fees(
+                    self.config,
+                    commission_pct=float(getattr(self, "commission_pct", 0.002) or 0.002),
+                )
+                _rr_for_ev = tp_pct / sl_pct if sl_pct > 0 else 0.0
+                p_min_required = _minimum_profitable_win_probability(
+                    stop_loss_pct=sl_pct,
+                    take_profit_pct=tp_pct,
+                    round_trip_fees=_economic_fees_pct,
+                )
+                # This allows the agent to learn from actual trade outcomes.
+                _is_training = not getattr(self, 'live_mode', False)
+                if _is_training and sl_pct > 0 and tp_pct > 0:
+                    p_min_required *= 0.85  # 15% softer during training
                 # V32 C1 (tracable, reversible): plafond p_min_required pour ne pas
                 # bloquer 40/40 BUY quand p_hmm~0.5 (CAUSAL_LEARNING_PIPELINE §8).
                 # Cap par env var, defaut 0.99 (= comportement historique inchange).
@@ -9687,6 +9694,7 @@ class MultiAssetChunkedEnv(gym.Env):
                     self._trace_action_pipeline(
                         "gate_advisory", asset, 1, 1, "negative_ev_fee_gate_bypassed",
                         p_hmm=p_hmm, p_min_required=p_min_required,
+                        round_trip_fees=_economic_fees_pct,
                         rr=tp_pct / sl_pct if sl_pct > 0 else 0.0,
                     )
                 if _ev_gate_blocked:
@@ -9696,12 +9704,14 @@ class MultiAssetChunkedEnv(gym.Env):
                     self._trace_action_pipeline(
                         "barrier_reject", asset, 1, 0, "negative_ev_fee_gate",
                         p_hmm=p_hmm, p_min_required=p_min_required,
+                        round_trip_fees=_economic_fees_pct,
                         rr=tp_pct / sl_pct if sl_pct > 0 else 0.0,
                     )
                     if self.current_step % 100 == 0:
                         self.logger.info(
                             f"[EV_GATE] {asset} W={p_hmm:.3f} <= p_min={p_min_required:.3f} "
-                            f"(RR={tp_pct/sl_pct if sl_pct>0 else 0:.2f}, SL={sl_pct:.4f}) "
+                            f"(RR={tp_pct/sl_pct if sl_pct>0 else 0:.2f}, SL={sl_pct:.4f}, "
+                            f"fees_rt={_economic_fees_pct:.4f}) "
                             f"-- EV<0, trade cancelled"
                         )
                     continue

@@ -17,6 +17,8 @@ import pytest
 from adan_trading_bot.environment.action_routing import (
     HOLD,
     SELL,
+    economic_round_trip_fees,
+    minimum_profitable_win_probability,
     post_sell_reentry_penalty,
     resolve_agent_close_gate,
     resolve_ev_fee_gate,
@@ -209,6 +211,44 @@ def test_post_sl_reentry_penalty_normalizes_doubled_window() -> None:
     )
     assert proximity == pytest.approx(0.5)
     assert penalty == pytest.approx(-0.1)
+
+
+def test_economic_round_trip_fees_prefers_financial_contract() -> None:
+    config = {
+        "reward_shaping": {
+            "future_reward": {"round_trip_fees": 0.004},
+        }
+    }
+    assert economic_round_trip_fees(config, commission_pct=0.001) == pytest.approx(0.004)
+
+
+def test_economic_round_trip_fees_falls_back_to_two_sided_commission() -> None:
+    assert economic_round_trip_fees({}, commission_pct=0.0015) == pytest.approx(0.003)
+
+
+def test_ev_probability_uses_complete_round_trip_contract() -> None:
+    probability = minimum_profitable_win_probability(
+        stop_loss_pct=0.01,
+        take_profit_pct=0.02,
+        round_trip_fees=0.004,
+    )
+    assert probability == pytest.approx((0.01 + 0.004) / (0.01 + 0.02))
+
+
+def test_free_sltp_does_not_bypass_economic_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ADAN_FREE_SLTP", "1")
+    p_min = minimum_profitable_win_probability(
+        stop_loss_pct=0.01,
+        take_profit_pct=0.02,
+        round_trip_fees=economic_round_trip_fees(
+            {"reward_shaping": {"future_reward": {"round_trip_fees": 0.004}}}
+        ),
+    )
+    assert resolve_ev_fee_gate(
+        p_hmm=0.40,
+        p_min_required=p_min,
+        disabled=False,
+    ) == (True, "negative_ev_fee_gate")
 
 
 def test_ev_fee_gate_blocks_negative_ev_by_default() -> None:

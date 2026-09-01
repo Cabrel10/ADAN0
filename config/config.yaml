@@ -1236,7 +1236,8 @@ reward_shaping:
   # (anti-oracle §10.10 : le futur n'entre JAMAIS dans l'observation de l'acteur).
   #   enabled            : pont actif ?
   #   mode               : classic | future_guided | stochastic_hybrid
-  #   round_trip_fees    : frais A/R reels (0.50% = 0.005) pour les cibles SL/TP
+  #   round_trip_fees    : contrat économique A/R (0.40% = 0.004), partagé par
+  #                         Future Arena, gate EV et friction de réentrée
   #   max_future_contrib : plafond de la contribution (<= 0.60) -> le PnL reste roi
   future_reward:
     enabled: true

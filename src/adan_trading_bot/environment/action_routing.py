@@ -38,6 +38,9 @@ driven by the Future Arena oracle and must remain intact.
 
 from __future__ import annotations
 
+import math
+from typing import Any, Mapping
+
 # Discrete action codes (kept identical to the legacy convention used across
 # the env / execution engine / paper-trading monitor).
 HOLD = 0
@@ -139,6 +142,63 @@ def post_sell_reentry_penalty(
         0.0, float(pnl_reward_scale)
     )
     return -max_penalty * proximity, proximity
+
+
+def economic_round_trip_fees(
+    config: Mapping[str, Any] | None,
+    *,
+    commission_pct: float = 0.002,
+) -> float:
+    """Return the round-trip fee contract used by economic decisions.
+
+    ``reward_shaping.future_reward.round_trip_fees`` is the project's financial
+    source of truth.  Falling back to twice the per-side commission keeps
+    minimal/test configurations coherent.  This function intentionally does
+    not inspect ``ADAN_FREE_SLTP``: that flag only releases SL/TP geometry and
+    must never disable profitability checks.
+    """
+    configured: Any = None
+    if isinstance(config, Mapping):
+        reward_cfg = config.get("reward_shaping", {})
+        if isinstance(reward_cfg, Mapping):
+            future_cfg = reward_cfg.get("future_reward", {})
+            if isinstance(future_cfg, Mapping):
+                configured = future_cfg.get("round_trip_fees")
+
+    try:
+        configured_fees = float(configured)
+    except (TypeError, ValueError):
+        configured_fees = math.nan
+    if math.isfinite(configured_fees) and configured_fees >= 0.0:
+        return configured_fees
+
+    try:
+        per_side = float(commission_pct)
+    except (TypeError, ValueError):
+        per_side = 0.002
+    if not math.isfinite(per_side):
+        per_side = 0.002
+    return 2.0 * max(0.0, per_side)
+
+
+def minimum_profitable_win_probability(
+    *,
+    stop_loss_pct: float,
+    take_profit_pct: float,
+    round_trip_fees: float,
+) -> float:
+    """Return the break-even win probability after a complete fee round trip.
+
+    For a win worth ``TP - fees`` and a loss worth ``SL + fees``, positive EV
+    requires ``p > (SL + fees) / (SL + TP)``.  The fee argument is therefore
+    the complete entry-plus-exit contract, not a one-sided commission.
+    """
+    sl = float(stop_loss_pct)
+    tp = float(take_profit_pct)
+    fees = max(0.0, float(round_trip_fees))
+    if sl <= 0.0 or tp <= 0.0:
+        return 0.99
+    return (sl + fees) / (sl + tp)
 
 
 def resolve_ev_fee_gate(
