@@ -106,6 +106,41 @@ def route_action_by_state(
     return HOLD
 
 
+def post_sell_reentry_penalty(
+    *,
+    current_step: int,
+    last_sell_step: int,
+    wait_steps: int,
+    total_cooldown_steps: int | None,
+    round_trip_fees: float,
+    pnl_reward_scale: float = 0.5,
+) -> tuple[float, float]:
+    """Price an early re-entry without masking the policy's BUY.
+
+    Returns ``(penalty, proximity)`` where proximity decreases linearly from
+    one immediately after a close to zero when the post-SELL window expires.
+    ``last_sell_step`` may intentionally point into the future after a stop
+    loss; ``total_cooldown_steps`` then normalizes the doubled SL window.
+
+    The maximum raw-reward penalty equals one real round trip expressed on the
+    same scale as ``pnl_base_reward``: fee fraction × 100 percentage points ×
+    the PnL reward coefficient (currently 0.5).  The environment therefore
+    lets the action execute and lets PPO learn whether rapid re-entry was worth
+    paying for, rather than silently replacing BUY with HOLD.
+    """
+    wait = max(0, int(wait_steps))
+    if wait == 0:
+        return 0.0, 0.0
+
+    remaining = wait - (int(current_step) - int(last_sell_step))
+    total = max(wait, int(total_cooldown_steps or wait), 1)
+    proximity = min(1.0, max(0.0, remaining / float(total)))
+    max_penalty = max(0.0, float(round_trip_fees)) * 100.0 * max(
+        0.0, float(pnl_reward_scale)
+    )
+    return -max_penalty * proximity, proximity
+
+
 def resolve_ev_fee_gate(
     *,
     p_hmm: float,

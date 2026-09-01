@@ -17,6 +17,7 @@ import pytest
 from adan_trading_bot.environment.action_routing import (
     HOLD,
     SELL,
+    post_sell_reentry_penalty,
     resolve_agent_close_gate,
     resolve_ev_fee_gate,
     route_action_by_state,
@@ -155,6 +156,59 @@ def test_probe_separates_valid_hold_no_entry_and_market_close() -> None:
         gate_reasons=[],
         close_reason="MAX_DURATION",
     ) == "MAX_DURATION_CLOSE"
+
+
+def test_post_sell_reentry_penalty_decays_without_masking_action() -> None:
+    penalty, proximity = post_sell_reentry_penalty(
+        current_step=20,
+        last_sell_step=20,
+        wait_steps=5,
+        total_cooldown_steps=5,
+        round_trip_fees=0.004,
+    )
+    assert proximity == pytest.approx(1.0)
+    # 0.40% round trip expressed in percentage points, then pnl scale 0.5.
+    assert penalty == pytest.approx(-0.2)
+
+    penalty, proximity = post_sell_reentry_penalty(
+        current_step=23,
+        last_sell_step=20,
+        wait_steps=5,
+        total_cooldown_steps=5,
+        round_trip_fees=0.004,
+    )
+    assert proximity == pytest.approx(0.4)
+    assert penalty == pytest.approx(-0.08)
+
+    assert post_sell_reentry_penalty(
+        current_step=25,
+        last_sell_step=20,
+        wait_steps=5,
+        total_cooldown_steps=5,
+        round_trip_fees=0.004,
+    ) == (0.0, 0.0)
+
+
+def test_post_sl_reentry_penalty_normalizes_doubled_window() -> None:
+    penalty, proximity = post_sell_reentry_penalty(
+        current_step=30,
+        last_sell_step=35,
+        wait_steps=5,
+        total_cooldown_steps=10,
+        round_trip_fees=0.004,
+    )
+    assert proximity == pytest.approx(1.0)
+    assert penalty == pytest.approx(-0.2)
+
+    penalty, proximity = post_sell_reentry_penalty(
+        current_step=35,
+        last_sell_step=35,
+        wait_steps=5,
+        total_cooldown_steps=10,
+        round_trip_fees=0.004,
+    )
+    assert proximity == pytest.approx(0.5)
+    assert penalty == pytest.approx(-0.1)
 
 
 def test_ev_fee_gate_blocks_negative_ev_by_default() -> None:

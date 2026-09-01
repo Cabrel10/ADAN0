@@ -1692,8 +1692,8 @@ trading_rules:
         5m:
           max_duration_steps: 40
   # ============================================================================
-  # COOLDOWN RULES — Empêchent les cycles BUY→SELL trop rapides
-  # Cycle : BUY → HOLD (position ouverte) → SELL → WAIT → BUY → ...
+  # TEMPORAL RULES — Encadrent les cycles BUY→SELL trop rapides
+  # Cycle : BUY → HOLD (position ouverte) → SELL → fenêtre de réentrée → BUY → ...
   #
   # hold_min_steps : Nombre minimum de steps entre BUY et SELL autorisé.
   #   Pendant ce délai, le modèle est en HOLD (position ouverte, SL/TP actifs).
@@ -1701,10 +1701,11 @@ trading_rules:
   #   Logique : plus la timeframe est haute, plus on tient longtemps.
   #   5m = 6 steps (30 min), 1h = 3 steps (3h), 4h = 2 steps (8h)
   #
-  # wait_steps_post_sell : Nombre minimum de steps entre SELL et BUY autorisé.
-  #   Pendant ce délai, le modèle est en WAIT (en USDT, cherche point d'entrée).
-  #   Si BUY tenté avant → pénalité proportionnelle + action ignorée.
-  #   Logique : calé sur force_trade_steps (1 journée / nb_trades_cibles).
+  # wait_steps_post_sell : Fenêtre de friction après SELL.
+  #   Pendant ce délai, le modèle observe le ratio restant dans portfolio[26].
+  #   Un BUY reste exécutable mais reçoit une pénalité économique décroissante,
+  #   maximale à un aller-retour de frais sur l'échelle du reward PnL.
+  #   Logique : décourager le churn sans transformer l'intention BUY en HOLD.
   #   5m = 72 steps (≈6h), 1h = 100 steps, 4h = 200 steps
   #
   # omega4e_cooldown : Cooldown anti-spam par profil worker (steps entre 2 BUY).
@@ -1718,8 +1719,8 @@ trading_rules:
       5m: 3    # 15 min minimum hold after BUY
       1h: 2    # 2h minimum hold
       4h: 2    # 8h minimum hold
-    # WAIT post-SELL: minimum steps between SELL and next BUY.
-    # SELL at step N -> BUY allowed from step N + wait_steps_post_sell.
+    # Post-SELL re-entry friction window (BUY is not blocked).
+    # SELL at step N -> penalty decays to zero at N + wait_steps_post_sell.
     wait_steps_post_sell:
       5m: 5    # DIAGNOSTIC-V3 (2026-06-29): was 2. Forces ~25min FLAT after SELL to
                #   test whether steps_flat rises above 5% (collapse: flat=0.3%). One
