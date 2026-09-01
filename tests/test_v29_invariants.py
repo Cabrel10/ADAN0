@@ -66,27 +66,17 @@ def _run_scenario_with_size(
     scenario: str, *, size_raw: float, steps: int, tag: str
 ) -> dict:
     """Run one harness scenario with a controlled size_raw dimension."""
-    original = harness.controlled_action
-
-    def _sized(direction: float, *, sl_raw: float, tp_raw: float) -> np.ndarray:
-        return np.asarray(
-            [direction, size_raw, -1.0, sl_raw, tp_raw], dtype=np.float32
-        )
-
-    harness.controlled_action = _sized
-    try:
-        TRACE_DIR.mkdir(parents=True, exist_ok=True)
-        return harness.run_scenario(
-            scenario,
-            steps=steps,
-            split="val",
-            seed=26027,
-            sl_raw=1.0,
-            tp_raw=1.0,
-            trace_path=TRACE_DIR / f"{tag}.jsonl",
-        )
-    finally:
-        harness.controlled_action = original
+    TRACE_DIR.mkdir(parents=True, exist_ok=True)
+    return harness.run_scenario(
+        scenario,
+        steps=steps,
+        split="val",
+        seed=26027,
+        size_raw=size_raw,
+        sl_raw=1.0,
+        tp_raw=1.0,
+        trace_path=TRACE_DIR / f"{tag}.jsonl",
+    )
 
 
 @pytest.fixture(scope="module")
