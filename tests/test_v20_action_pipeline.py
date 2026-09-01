@@ -41,6 +41,74 @@ def test_negative_action_while_flat_is_routing_hold_not_deadband() -> None:
     assert route_action_by_state(-0.67, in_position=True, threshold=0.05) == SELL
 
 
+def _cooldown_env(*, current_step: int, is_open: bool, timeframe: str = "5m"):
+    env = object.__new__(MultiAssetChunkedEnv)
+    env.current_step = current_step
+    env.current_timeframe_for_trade = timeframe
+    env.assets = ["BTCUSDT"]
+    env.config = {
+        "trading_rules": {
+            "cooldown": {
+                "hold_min_steps": {"5m": 3, "1h": 2, "4h": 2},
+                "wait_steps_post_sell": {"5m": 5, "1h": 3, "4h": 4},
+            }
+        }
+    }
+    position = SimpleNamespace(is_open=is_open, timeframe=timeframe)
+    env.portfolio_manager = SimpleNamespace(positions={"BTCUSDT": position})
+    env._buy_step_by_asset = {}
+    env._last_sell_step_by_asset = {}
+    env._sell_cooldown_total_by_asset = {}
+    return env
+
+
+def test_cooldown_observation_tracks_post_buy_hold_min_and_expires() -> None:
+    env = _cooldown_env(current_step=10, is_open=True)
+    env._buy_step_by_asset["BTCUSDT"] = 10
+
+    assert env._cooldown_remaining_ratio() == pytest.approx(1.0)
+    env.current_step = 11
+    assert env._cooldown_remaining_ratio() == pytest.approx(2.0 / 3.0)
+    env.current_step = 13
+    assert env._cooldown_remaining_ratio() == 0.0
+    assert "BTCUSDT" not in env._buy_step_by_asset
+
+
+def test_cooldown_observation_tracks_post_sell_wait_and_removes_stale_key() -> None:
+    env = _cooldown_env(current_step=20, is_open=False)
+    env._last_sell_step_by_asset["BTCUSDT"] = 20
+    env._sell_cooldown_total_by_asset["BTCUSDT"] = 5
+
+    assert env._cooldown_remaining_ratio() == pytest.approx(1.0)
+    env.current_step = 23
+    assert env._cooldown_remaining_ratio() == pytest.approx(0.4)
+    env.current_step = 25
+    assert env._cooldown_remaining_ratio() == 0.0
+    assert "BTCUSDT" not in env._last_sell_step_by_asset
+    assert "BTCUSDT" not in env._sell_cooldown_total_by_asset
+
+
+def test_cooldown_observation_represents_double_stop_loss_trauma() -> None:
+    env = _cooldown_env(current_step=30, is_open=False)
+    # Runtime encoding at an SL close: sell_step=N+wait, total=2*wait.
+    env._last_sell_step_by_asset["BTCUSDT"] = 35
+    env._sell_cooldown_total_by_asset["BTCUSDT"] = 10
+
+    assert env._cooldown_remaining_ratio() == pytest.approx(1.0)
+    env.current_step = 35
+    assert env._cooldown_remaining_ratio() == pytest.approx(0.5)
+    env.current_step = 40
+    assert env._cooldown_remaining_ratio() == 0.0
+
+
+def test_flat_state_ignores_historical_buy_tracker() -> None:
+    env = _cooldown_env(current_step=10, is_open=False)
+    env._buy_step_by_asset["BTCUSDT"] = 10
+
+    assert env._cooldown_remaining_ratio() == 0.0
+    assert "BTCUSDT" not in env._buy_step_by_asset
+
+
 def test_ev_fee_gate_blocks_negative_ev_by_default() -> None:
     assert resolve_ev_fee_gate(
         p_hmm=1.0 / 3.0,

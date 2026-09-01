@@ -677,6 +677,10 @@ class MultiAssetChunkedEnv(gym.Env):
         # This prevents immediate BUY→SELL that causes cash to swing wildly.
         self._buy_step_by_asset: Dict[str, int] = {}
 
+        # Total post-SELL cooldown duration used to normalize Capability Vector
+        # slot [26]. An SL stores a synthetic future sell step for 2x cooldown.
+        self._sell_cooldown_total_by_asset: Dict[str, int] = {}
+
         self.last_trade_step = -1
         self.risk_metrics = {
             "sharpe_ratio": 0.0,
@@ -2740,6 +2744,7 @@ class MultiAssetChunkedEnv(gym.Env):
         self._last_open_step_by_asset = {}
         self._last_sell_step_by_asset = {}   # WAIT post-SELL cooldown
         self._buy_step_by_asset = {}          # HOLD_MIN post-BUY cooldown
+        self._sell_cooldown_total_by_asset = {}  # normalized remaining WAIT
 
         # Log and reset rejection reasons from previous episode
         if hasattr(self, 'rejection_reasons') and any(v > 0 for v in self.rejection_reasons.values()):
@@ -3263,6 +3268,7 @@ class MultiAssetChunkedEnv(gym.Env):
             self._last_open_step_by_asset.clear()
             self._last_sell_step_by_asset.clear()
             self._buy_step_by_asset.clear()
+            self._sell_cooldown_total_by_asset.clear()
             self._observation_cache.clear()
             self._last_trade_ids_cleared_at = self.current_step
             logger.info(f"[MEMORY] Cleared all growing dicts at step {self.current_step}")
@@ -6016,6 +6022,69 @@ class MultiAssetChunkedEnv(gym.Env):
         return obs
 
 
+    def _cooldown_remaining_ratio(self) -> float:
+        """Return the largest currently blocking cooldown fraction.
+
+        Capability Vector slot [26] used to be set from the mere presence of a
+        tracker key. Since those keys survive after expiry, the observation
+        could report a permanent cooldown although the relevant gate was open.
+        This mirrors the state-conditioned gates: HOLD_MIN while LONG and WAIT
+        while FLAT, including the doubled post-stop-loss cooldown.
+        """
+        current_step = int(getattr(self, "current_step", 0))
+        cooldown_cfg = self.config.get("trading_rules", {}).get("cooldown", {})
+        hold_cfg = cooldown_cfg.get("hold_min_steps", {})
+        wait_cfg = cooldown_cfg.get("wait_steps_post_sell", {})
+        buy_steps = getattr(self, "_buy_step_by_asset", {})
+        sell_steps = getattr(self, "_last_sell_step_by_asset", {})
+        sell_totals = getattr(self, "_sell_cooldown_total_by_asset", {})
+        positions = getattr(getattr(self, "portfolio_manager", None), "positions", {})
+        if not isinstance(positions, dict):
+            positions = {}
+
+        max_ratio = 0.0
+        for asset in getattr(self, "assets", []):
+            position = positions.get(asset)
+            is_open = bool(position is not None and getattr(position, "is_open", False))
+            timeframe = str(
+                getattr(position, "timeframe", None)
+                or getattr(self, "current_timeframe_for_trade", "5m")
+            )
+
+            if is_open:
+                buy_step = buy_steps.get(asset)
+                if buy_step is None:
+                    continue
+                hold_steps = max(
+                    0,
+                    int(hold_cfg.get(timeframe, {"5m": 6, "1h": 3, "4h": 2}.get(timeframe, 6))),
+                )
+                remaining = hold_steps - (current_step - int(buy_step))
+                if hold_steps <= 0 or remaining <= 0:
+                    buy_steps.pop(asset, None)
+                    continue
+                max_ratio = max(max_ratio, remaining / float(hold_steps))
+                continue
+
+            sell_step = sell_steps.get(asset)
+            if sell_step is None:
+                # A BUY tracker while FLAT is historical, not a live gate.
+                buy_steps.pop(asset, None)
+                continue
+            wait_steps = max(
+                0,
+                int(wait_cfg.get(timeframe, {"5m": 6, "1h": 10, "4h": 20}.get(timeframe, 6))),
+            )
+            remaining = wait_steps - (current_step - int(sell_step))
+            if wait_steps <= 0 or remaining <= 0:
+                sell_steps.pop(asset, None)
+                sell_totals.pop(asset, None)
+                continue
+            total = max(1, int(sell_totals.get(asset, wait_steps)))
+            max_ratio = max(max_ratio, remaining / float(total))
+
+        return float(np.clip(max_ratio, 0.0, 1.0))
+
     def _build_observation(self) -> Dict[str, np.ndarray]:
         """
         Construit l'observation pour le pas de temps actuel en utilisant le StateBuilder.
@@ -6058,21 +6127,12 @@ class MultiAssetChunkedEnv(gym.Env):
             # Sync le step courant sur le portfolio pour steps_in_position
             self.portfolio.current_step = self.current_step
 
-            # ACM: Sync cooldown state to portfolio for Capability Vector [26]
+            # Capability Vector [26]: normalized remaining cooldown, not stale
+            # tracker presence. PortfolioManager already clips this slot to [0, 1].
             try:
-                _any_cooldown = False
-                for _tf in getattr(self, 'timeframes', []):
-                    _cd_wait = getattr(self, '_last_sell_step_by_asset', {})
-                    _cd_buy = getattr(self, '_buy_step_by_asset', {})
-                    for _asset in getattr(self, 'assets', []):
-                        if _asset in _cd_wait or _asset in _cd_buy:
-                            _any_cooldown = True
-                            break
-                    if _any_cooldown:
-                        break
-                self.portfolio._cooldown_active = 1.0 if _any_cooldown else 0.0
+                self.portfolio._cooldown_active = self._cooldown_remaining_ratio()
             except Exception:
-                pass
+                self.portfolio._cooldown_active = 0.0
             # FIX-A (POMDP): expose the ENERGY (decision_budget) to the agent.
             # Root cause found in architecture audit: decision_budget BLOCKED
             # CLOSE actions but was NEVER in the observation -> hidden constraint
@@ -8497,6 +8557,13 @@ class MultiAssetChunkedEnv(gym.Env):
                 # Also reset HOLD_MIN tracker so a stale BUY step doesn't
                 # accidentally allow an immediate re-entry after SL.
                 self._buy_step_by_asset.pop(_closed_asset, None)
+                _wait_cfg = self.config.get("trading_rules", {}).get(
+                    "cooldown", {}).get("wait_steps_post_sell", {})
+                _tf_now = getattr(self, "current_timeframe_for_trade", "5m")
+                _wait_base = int(_wait_cfg.get(
+                    _tf_now, {"5m": 6, "1h": 10, "4h": 20}.get(_tf_now, 6)
+                ))
+                self._sell_cooldown_total_by_asset[_closed_asset] = _wait_base
                 if "stop_loss" in _close_reason.lower():
                     # Trauma penalty: double WAIT after a stop-loss hit.
                     # LOGIC: _steps_since_sell = current_step - _last_sell_step
@@ -8505,16 +8572,11 @@ class MultiAssetChunkedEnv(gym.Env):
                     #   _last_sell_step = current_step + wait_base
                     # So at step N+k: steps_since_sell = k - wait_base
                     # BUY blocked until k >= 2×wait_base (i.e., 2× normal wait).
-                    _wait_cfg = self.config.get("trading_rules", {}).get(
-                        "cooldown", {}).get("wait_steps_post_sell", {})
-                    _tf_now = getattr(self, "current_timeframe_for_trade", "5m")
-                    _wait_base = int(_wait_cfg.get(
-                        _tf_now, {"5m": 6, "1h": 10, "4h": 20}.get(_tf_now, 6)
-                    ))
                     # Register sell step AHEAD by wait_base → effective 2× cooldown
                     self._last_sell_step_by_asset[_closed_asset] = (
                         self.current_step + _wait_base
                     )
+                    self._sell_cooldown_total_by_asset[_closed_asset] = 2 * _wait_base
                     self.logger.info(
                         f"[SL_TRAUMA_WAIT] {_closed_asset} | "
                         f"SL hit at step {self.current_step} | "
@@ -8699,7 +8761,10 @@ class MultiAssetChunkedEnv(gym.Env):
                 )
 
             if i == 0:
-                first_discrete_action_requested = discrete_action  # before gates
+                # Preserve policy intent separately from route and execution.
+                self._last_raw_action0 = float(main_decision)
+                self._last_route_action = int(discrete_action)
+                first_discrete_action_requested = discrete_action  # routed, before gates
                 first_discrete_action = discrete_action
 
             # Log intention (every 50 steps to reduce spam)
@@ -9420,8 +9485,15 @@ class MultiAssetChunkedEnv(gym.Env):
                                             )
                                 except Exception:
                                     pass
-                                # Déclenche WAIT post-SELL pour cet asset
+                                # Déclenche WAIT post-SELL pour cet asset and record
+                                # its total duration for observable normalization.
                                 self._last_sell_step_by_asset[asset] = self.current_step
+                                _wait_cfg = self.config.get("trading_rules", {}).get(
+                                    "cooldown", {}).get("wait_steps_post_sell", {})
+                                _wait_steps = int(_wait_cfg.get(
+                                    _tf, {"5m": 6, "1h": 10, "4h": 20}.get(_tf, 6)
+                                ))
+                                self._sell_cooldown_total_by_asset[asset] = _wait_steps
                                 _wait_map = {"5m": 6, "1h": 10, "4h": 20}
                                 # ── TRADE AUDIT: full chain trace on EVERY close ──
                                 _close_exec_src = "open[t+1]" if (_exec_p is not None and _exec_p > 0) else "close[t]_FALLBACK"
@@ -9821,8 +9893,8 @@ class MultiAssetChunkedEnv(gym.Env):
                 self._action_history.append(int(first_discrete_action))
         except Exception:
             pass
-        # _last_discrete_action_requested = action demandée avant filtrage cooldown
-        # Permet au collecteur de voir si le modèle a été bloqué par WAIT/HOLD_MIN
+        # State-conditioned route before economic/temporal gates. The raw
+        # continuous intent is stored separately in _last_raw_action0.
         self._last_discrete_action_requested = first_discrete_action_requested
 
         # Behavioral penalties are consumed by _calculate_reward and must never
