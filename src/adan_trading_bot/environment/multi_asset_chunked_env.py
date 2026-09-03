@@ -6169,6 +6169,15 @@ class MultiAssetChunkedEnv(gym.Env):
             except Exception:
                 try: self.portfolio._close_energy_ready = 1.0
                 except Exception: pass
+            # V34-BUDGET-OBS: pousse le capital d'action vers le PM AVANT la
+            # construction du vecteur — slot [27] = decision_budget normalise.
+            try:
+                self.portfolio._pending_decision_budget = float(
+                    getattr(self, "decision_budget", 1.0))
+                self.portfolio._pending_decision_budget_max = float(
+                    getattr(self, "decision_budget_max", 1.0))
+            except Exception:
+                pass
             # Récupérer le vecteur d'état du portefeuille
             if hasattr(self.portfolio, "get_state_vector"):
                 portfolio_state = self.portfolio.get_state_vector()
@@ -8533,6 +8542,23 @@ class MultiAssetChunkedEnv(gym.Env):
         
         if _pre_receipts:
             self._step_closed_receipts.extend(_pre_receipts)
+            # V34 t2 FIX: trace market-driven closes (SL/TP/MaxDuration) HERE,
+            # at consumption time — physically they happened in PRE-EXECUTE
+            # (update_market_price), BEFORE any same-step action-phase open.
+            # Tracing them at end-of-step inverted event_sequence and produced
+            # false "2 simultaneous positions" in the invariant harness.
+            # End-of-step trace dedups by position_id -> no double-count.
+            for receipt in _pre_receipts:
+                if isinstance(receipt, dict):
+                    self._trace_action_pipeline(
+                        "trade_executed", str(receipt.get("asset", "")), 0, 2,
+                        str(receipt.get("reason", receipt.get("close_reason", "close"))),
+                        position_id=receipt.get("position_id"),
+                        lifecycle_event="close",
+                        entry_price=receipt.get("entry_price"),
+                        exit_price=receipt.get("exit_price"),
+                        pnl_net=float(receipt.get("pnl_net", receipt.get("pnl", 0.0)) or 0.0),
+                    )
             # Extract PnL from pre-captured SL/TP receipts
             for receipt in _pre_receipts:
                 if isinstance(receipt, dict):

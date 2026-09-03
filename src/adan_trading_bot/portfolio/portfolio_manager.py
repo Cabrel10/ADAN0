@@ -1337,7 +1337,7 @@ class PortfolioManager:
           [24] risk_budget_remaining= 1.0 - drawdown/max_dd             ([0, 1])
           [25] max_size_remaining   = max(0, max_pos_pct - exposure)    ([0, 1])
           [26] cooldown_active      = any cooldown blocking trades      (0 or 1)
-          [27] capital_self_caused  = cash deficit due to own BUYs      ([0, 1])
+          [27] decision_budget_norm = action energy remaining           ([0, 1])
         """
         try:
             metrics = self.get_metrics()
@@ -1497,6 +1497,15 @@ class PortfolioManager:
                     ))
                 else:
                     cap_self_caused = 0.0
+                # V34-BUDGET-OBS: slot [27] expose le capital d'action
+                # (decision_budget normalise [0,1]) DIRECTEMENT a la policy.
+                # Avant : ressource cachee servant de gate -> la policy ne
+                # savait pas combien d'energie il lui restait (V34 diagnostic).
+                # Remplace capital_self_caused (violait la spec "no self-capital
+                # reference in obs") sans changer la taille du vecteur (28).
+                _budget_now = float(getattr(self, "_pending_decision_budget", 1.0))
+                _budget_max = float(getattr(self, "_pending_decision_budget_max", 1.0))
+                cap_budget_norm = (_budget_now / _budget_max) if _budget_max > 1e-9 else 1.0
 
                 state.extend([
                     float(np.clip(cap_can_open, 0.0, 1.0)),       # [20]
@@ -1506,7 +1515,7 @@ class PortfolioManager:
                     float(np.clip(cap_risk_budget, 0.0, 1.0)),    # [24]
                     float(np.clip(cap_size_remaining, 0.0, 1.0)), # [25]
                     float(np.clip(cap_cooldown, 0.0, 1.0)),       # [26]
-                    float(np.clip(cap_self_caused, 0.0, 1.0)),    # [27]
+                    float(np.clip(cap_budget_norm, 0.0, 1.0)),    # [27]
                 ])
             except Exception as _acm_err:
                 logger.warning(f"[ACM] Capability vector error: {_acm_err}")
