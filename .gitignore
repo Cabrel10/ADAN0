@@ -49,3 +49,7 @@ reports/
 .DS_Store
 Thumbs.db
 web/frontend/tsconfig.tsbuildinfo
+
+# Local reconciliation archives + frozen model snapshots (not tracked)
+archives/
+v29_frozen/*.zip
