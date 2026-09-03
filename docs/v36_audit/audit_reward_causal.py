@@ -57,9 +57,9 @@ class Corr:
     def r(self):
         if self.n<2:return float('nan')
         cov=self.sxy-self.sx*self.sy/self.n
-        vx=self.sx2-self.sx*self.sx/self.n
-        vy=self.sy2-self.sy*self.sy/self.n
-        d=math.sqrt(vx*vy)
+        var_x=self.sx2-self.sx*self.sx/self.n
+        var_y=self.sy2-self.sy*self.sy/self.n
+        d=math.sqrt(var_x*var_y)
         return cov/d if d>1e-12 else float('nan')
 
 corr_fc_pnl   = Corr()   # future_contrib vs realized_pnl (clôtures)

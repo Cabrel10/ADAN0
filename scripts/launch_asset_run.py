@@ -88,7 +88,7 @@ def main():
     # DOGE retains its own frozen domain until the same horizon-conditioned
     # matrix is rerun for DOGE; this launch is BTC-only.
     _SLTP = {
-        "BTCUSDT": {"tp_lo": "0.006", "tp_hi": "0.0222", "sl_hi": "0.0235"},
+        "BTCUSDT": {"tp_lo": "0.0135", "tp_hi": "0.0222", "sl_hi": "0.0235"},
         "DOGEUSDT": {"tp_lo": "0.003", "tp_hi": "0.090", "sl_hi": "0.060"},
     }
     _sltp = _SLTP[_asset_tag]

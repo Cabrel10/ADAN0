@@ -346,35 +346,54 @@ def test_hmm_market_data_returns_safe_defaults_without_usable_timeframe() -> Non
     assert snapshot["volume_ratio_20"] == 1.0
 
 
-def test_v20_exit_authority_cannot_override_budget_quota_or_gap() -> None:
-    """A policy exit must not silently bypass the anti-churn hard gate."""
+def test_v20_exit_authority_never_steals_policy_sell() -> None:
+    """exit_authority: energy/gap/quota/barrier are advisory, SELL passes."""
     assert resolve_agent_close_gate(
         exit_authority=True,
-        budget_blocked=True,
-        below_break_even=True,
-    ) == (True, "decision_budget_or_quota")
-
-
-def test_v20_exit_authority_can_cut_risk_after_hard_budget_gate() -> None:
-    """Once structurally eligible, a loss cut may bypass the profit barrier."""
-    assert resolve_agent_close_gate(
-        exit_authority=True,
-        budget_blocked=False,
+        budget_insufficient=True,
+        close_gap_active=True,
+        daily_close_quota=True,
         below_break_even=True,
     ) == (False, "exit_authority")
 
 
-def test_legacy_close_gates_remain_available_when_authority_disabled() -> None:
+def test_v20_close_gate_reports_one_explicit_cause() -> None:
+    """Without authority, each blocking cause is reported separately."""
     assert resolve_agent_close_gate(
         exit_authority=False,
-        budget_blocked=True,
-        below_break_even=False,
-    ) == (True, "decision_budget_or_quota")
-    assert resolve_agent_close_gate(
-        exit_authority=False,
-        budget_blocked=False,
+        budget_insufficient=True,
+        close_gap_active=True,
+        daily_close_quota=True,
         below_break_even=True,
-    ) == (True, "below_break_even_barrier")
+    ) == (True, "budget_insufficient")
+    assert resolve_agent_close_gate(
+        exit_authority=False,
+        budget_insufficient=False,
+        close_gap_active=True,
+        daily_close_quota=False,
+        below_break_even=False,
+    ) == (True, "close_gap_active")
+    assert resolve_agent_close_gate(
+        exit_authority=False,
+        budget_insufficient=False,
+        close_gap_active=False,
+        daily_close_quota=True,
+        below_break_even=False,
+    ) == (True, "daily_close_quota")
+    assert resolve_agent_close_gate(
+        exit_authority=False,
+        budget_insufficient=False,
+        close_gap_active=False,
+        daily_close_quota=False,
+        below_break_even=True,
+    ) == (True, "below_break_even")
+    assert resolve_agent_close_gate(
+        exit_authority=False,
+        budget_insufficient=False,
+        close_gap_active=False,
+        daily_close_quota=False,
+        below_break_even=False,
+    ) == (False, "accepted")
 
 
 def test_portfolio_ledger_open_close_and_reset_uses_real_cash() -> None:
@@ -850,8 +869,12 @@ def test_pipeline_trace_writes_exact_transition(tmp_path) -> None:
         "policy": 0,
         "deadband_reject": 0,
         "routing_reject": 0,
-        "budget_reject": 0,
-        "barrier_reject": 0,
+        "budget_insufficient": 0,
+        "close_gap_active": 0,
+        "daily_close_quota": 0,
+        "hold_min_active": 0,
+        "exposure_below_close_min": 0,
+        "below_break_even": 0,
         "portfolio_reject": 0,
         "trade_executed": 0,
     }

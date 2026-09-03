@@ -223,23 +223,30 @@ def resolve_ev_fee_gate(
 def resolve_agent_close_gate(
     *,
     exit_authority: bool,
-    budget_blocked: bool,
+    budget_insufficient: bool,
+    close_gap_active: bool,
+    daily_close_quota: bool,
     below_break_even: bool,
 ) -> tuple[bool, str]:
-    """Resolve policy-close gates without disabling anti-churn controls.
+    """Resolve an agent-requested close with one explicit gate reason.
 
-    Returns ``(blocked, reason)``. The decision budget, daily quota, and minimum
-    close gap are a hard structural gate. ``exit_authority`` only bypasses the
-    profitability barrier *after* that gate is satisfied, allowing an eligible
-    policy close to cut risk instead of forcing a losing position to remain
-    open. Independent safety exits (SL/TP/MaxDuration) do not use this gate.
+    ``exit_authority`` makes decision energy, close cadence, daily quota, and
+    break-even checks advisory. They remain observable economic state and are
+    still accounted after execution, but they must not transform a policy SELL
+    into HOLD. With authority disabled, the legacy anti-churn contract remains
+    available and each blocking cause is reported separately. Independent
+    physical exits (SL/TP/MaxDuration) do not use this gate.
     """
-    if budget_blocked:
-        return True, "decision_budget_or_quota"
     if exit_authority:
         return False, "exit_authority"
+    if budget_insufficient:
+        return True, "budget_insufficient"
+    if close_gap_active:
+        return True, "close_gap_active"
+    if daily_close_quota:
+        return True, "daily_close_quota"
     if below_break_even:
-        return True, "below_break_even_barrier"
+        return True, "below_break_even"
     return False, "accepted"
 
 

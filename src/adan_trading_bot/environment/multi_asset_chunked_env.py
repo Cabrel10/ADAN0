@@ -406,8 +406,8 @@ class MultiAssetChunkedEnv(gym.Env):
         self.agent_close_consecutive = 0
         self._last_agent_close_step = -10**9
         # DECISION BUDGET (V3): jauge d'energie [0,1]. HOLD recharge, BUY/CLOSE
-        # consomment. Epuise -> HOLD force. Cree une friction structurelle qui
-        # rend le micro-scalping mathematiquement impossible (cf. REWARD_SYSTEM_V3).
+        # consomment. Sous exit_authority, cette ressource reste observable et
+        # comptabilisee mais ne peut jamais transformer un SELL en HOLD.
         _db_cfg = {}
         try:
             _db_cfg = (self.config.get('trading_rules', {}) or {}).get('decision_budget', {}) or {}
@@ -672,10 +672,8 @@ class MultiAssetChunkedEnv(gym.Env):
         # 5m=5 steps, 1h=3 steps, 4h=4 steps in the current config.
         self._last_sell_step_by_asset: Dict[str, int] = {}
 
-        # HOLD_MIN post-BUY cooldown tracking (per asset)
-        # After BUY, SELL is forbidden for N steps (varies by timeframe).
-        # 5m=6 steps, 1h=3 steps, 4h=2 steps.
-        # This prevents immediate BUY→SELL that causes cash to swing wildly.
+        # HOLD_MIN post-BUY tracking (per asset). It remains an advisory
+        # anti-churn signal when exit_authority is enabled; policy exits pass.
         self._buy_step_by_asset: Dict[str, int] = {}
 
         # Total post-SELL cooldown duration used to normalize Capability Vector
@@ -714,7 +712,13 @@ class MultiAssetChunkedEnv(gym.Env):
             "cooldown_hold_min": 0,  # HOLD_MIN post-BUY cooldown active
             "cooldown_omega4e": 0,   # Anti-spam cooldown between BUYs
             "min_notional": 0,  # Cash < min_order_value or notional too small
-            "hysteresis": 0,    # Exposure too small to justify fees on SELL
+            "hysteresis": 0,    # Legacy aggregate, retained for compatibility
+            "budget_insufficient": 0,
+            "close_gap_active": 0,
+            "daily_close_quota": 0,
+            "below_break_even": 0,
+            "exposure_below_close_min": 0,
+            "hold_min_active": 0,
             "anti_spam_hold": 0,# BUY while already open + exposure ~= target
             "daily_limit": 0,   # Daily trade count exceeded
             "pm_rejected": 0,   # Portfolio manager rejected the open
@@ -726,8 +730,12 @@ class MultiAssetChunkedEnv(gym.Env):
             "policy": 0,
             "deadband_reject": 0,
             "routing_reject": 0,
-            "budget_reject": 0,
-            "barrier_reject": 0,
+            "budget_insufficient": 0,
+            "close_gap_active": 0,
+            "daily_close_quota": 0,
+            "hold_min_active": 0,
+            "exposure_below_close_min": 0,
+            "below_break_even": 0,
             "portfolio_reject": 0,
             "trade_executed": 0,
         }
@@ -2780,8 +2788,12 @@ class MultiAssetChunkedEnv(gym.Env):
         self.rejection_reasons = {
             "fee_gate": 0, "risk_gate": 0,
             "cooldown_hold_min": 0, "cooldown_omega4e": 0,
-            "min_notional": 0, "hysteresis": 0, "anti_spam_hold": 0,
-            "daily_limit": 0, "pm_rejected": 0, "sell_no_position": 0,
+            "min_notional": 0, "hysteresis": 0,
+            "budget_insufficient": 0, "close_gap_active": 0,
+            "daily_close_quota": 0, "below_break_even": 0,
+            "exposure_below_close_min": 0, "hold_min_active": 0,
+            "anti_spam_hold": 0, "daily_limit": 0,
+            "pm_rejected": 0, "sell_no_position": 0,
         }
         # DIAGNOSTIC-V5: clear streak/accumulator state at each episode reset.
         if hasattr(self, "_sterile_streak"):
@@ -8835,9 +8847,8 @@ class MultiAssetChunkedEnv(gym.Env):
                 # the minimum notional. If we can't afford $11, we HOLD.
                 if discrete_action == 1:
                     available_cash_for_sizing = float(self.portfolio_manager.cash)
-                if notional_usd > available_cash_for_sizing:
-                    notional_usd = available_cash_for_sizing
-                if discrete_action == 1:
+                    if notional_usd > available_cash_for_sizing:
+                        notional_usd = available_cash_for_sizing
                     # V33 measure-only sizing trace. Records the full policy ->
                     # tier -> cash transform before any sizing rejection.
                     self._trace_action_pipeline(
@@ -9348,7 +9359,13 @@ class MultiAssetChunkedEnv(gym.Env):
                         _min_gap = int(getattr(self, "agent_close_min_gap_steps", 12))
                         _last_ac = int(getattr(self, "_last_agent_close_step", -10**9))
                         _gap_ok = (self.current_step - _last_ac) >= _min_gap
-                        _budget_blocked = (_budget < _cost_close) or (not _gap_ok) or (_ac_today >= _ac_max_day)
+                        # V34: ventilation explicite des causes de blocage CLOSE.
+                        # Sous exit_authority ces causes restent comptabilisees mais
+                        # ne transforment plus un SELL du policy en HOLD.
+                        _budget_insufficient = _budget < _cost_close
+                        _close_gap_active = not _gap_ok
+                        _daily_close_quota = _ac_today >= _ac_max_day
+                        _budget_blocked = _budget_insufficient or _close_gap_active or _daily_close_quota
                         _exit_authority = bool(
                             self.config.get("trading_rules", {}).get("agent_close", {}).get(
                                 "exit_authority", False
@@ -9356,12 +9373,18 @@ class MultiAssetChunkedEnv(gym.Env):
                         )
                         _close_blocked, _close_block_reason = _resolve_agent_close_gate(
                             exit_authority=_exit_authority,
-                            budget_blocked=_budget_blocked,
+                            budget_insufficient=_budget_insufficient,
+                            close_gap_active=_close_gap_active,
+                            daily_close_quota=_daily_close_quota,
                             below_break_even=unrealized_pnl_pct < _barrier,
                         )
-                        if _close_blocked and _close_block_reason == "decision_budget_or_quota":
+                        if _close_blocked and _close_block_reason in (
+                            "budget_insufficient", "close_gap_active", "daily_close_quota"
+                        ):
                             discrete_action = 0
-                            self.rejection_reasons["hysteresis"] += 1
+                            self.rejection_reasons[_close_block_reason] += 1
+                            self.rejection_reasons["hysteresis"] += 1  # legacy aggregate
+                            self.action_pipeline_counts[_close_block_reason] += 1
                             try:
                                 self.sell_lifecycle["rej_budget"] += 1
                             except Exception:
@@ -9377,19 +9400,22 @@ class MultiAssetChunkedEnv(gym.Env):
                             _q_pen = 0.0 if _hygiene_b else (-0.10 - 0.10 * min(1.0, _deficit_b))
                             self._step_invalid_penalty += _q_pen
                             self._trace_action_pipeline(
-                                "budget_reject", asset, 2, 0, "decision_budget_or_quota",
+                                _close_block_reason, asset, 2, 0, _close_block_reason,
                                 budget=_budget, cost_close=_cost_close, gap_ok=_gap_ok,
                                 closes_today=_ac_today, max_closes=_ac_max_day,
+                                exit_authority=_exit_authority,
                             )
                             self.logger.debug(
                                 f"[DECISION_BUDGET] {asset}: AGENT_CLOSE bloque "
                                 f"(budget={_budget:.3f}<{_cost_close}, gap_ok={_gap_ok}, "
                                 f"today={_ac_today}/{_ac_max_day}) -> HOLD, pen={_q_pen:.3f}"
                             )
-                        elif _close_blocked and _close_block_reason == "below_break_even_barrier":
+                        elif _close_blocked and _close_block_reason == "below_break_even":
                             # Reject AGENT_CLOSE - rentabilite insuffisante vs frais.
                             discrete_action = 0
-                            self.rejection_reasons["hysteresis"] += 1
+                            self.rejection_reasons["below_break_even"] += 1
+                            self.rejection_reasons["hysteresis"] += 1  # legacy aggregate
+                            self.action_pipeline_counts["below_break_even"] += 1
                             try:
                                 self.sell_lifecycle["rej_barrier"] += 1
                             except Exception:
@@ -9407,8 +9433,9 @@ class MultiAssetChunkedEnv(gym.Env):
                             _ac_pen = 0.0 if _hygiene_a else (-0.15 * min(1.0, max(0.0, _deficit)))
                             self._step_invalid_penalty += _ac_pen
                             self._trace_action_pipeline(
-                                "barrier_reject", asset, 2, 0, "below_break_even_barrier",
+                                "below_break_even", asset, 2, 0, "below_break_even",
                                 unrealized_pnl_pct=unrealized_pnl_pct, barrier=_barrier,
+                                exit_authority=_exit_authority,
                             )
                             self.logger.debug(
                                 f"[AGENT_CLOSE BLOCKED] {asset}: PnL {unrealized_pnl_pct:.4%} < "
@@ -9929,6 +9956,8 @@ class MultiAssetChunkedEnv(gym.Env):
                 f"[ACTION_DIFF] Step {self.current_step} | "
                 f"Requested={_action_names.get(first_discrete_action_requested, '?')} "
                 f"Executed={_action_names.get(first_discrete_action, '?')} | "
+                f"budget={float(getattr(self, 'decision_budget', 1.0)):.3f}/"
+                f"{float(getattr(self, 'decision_budget_max', 1.0)):.2f} | "
                 f"inv_penalty={self._step_invalid_penalty:.5f} | "
                 f"rejections={self.rejection_reasons} | "
                 f"pipeline={self.action_pipeline_counts}"
