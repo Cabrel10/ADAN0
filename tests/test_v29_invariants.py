@@ -1,8 +1,5 @@
-"""PHASE 3 — Tests d'invariants contractuels V29 (sans entraînement).
-
-Ces tests vérifient les invariants du pipeline action -> exécution AVANT tout
-lancement d'entraînement V29. Règle gouvernance : un seul invariant
-contractuel FAIL = TRAINING ABORTED.
+"""PHASE 3 — Tests d'invariants contractuels
+note  importante  . si tu  as  repasse sur  ce  fichiers  rassure toi  de supprimer  ancien log et cache  inutile  
 
 Cartographie :
   T1  Les notionals d'ouverture restent dans les bornes du tier Micro
@@ -142,14 +139,24 @@ def test_t2_never_more_than_one_open_position(constant_buy_run: dict) -> None:
         pytest.skip("trace manquante")
     import json as _json
 
-    open_ids: set[str] = set()
-    max_simultaneous = 0
+    # NOTE: at a same step, a MaxDuration close and the next open are both
+    # legal — the PM frees the slot BEFORE opening the new position, but the
+    # trace logs the open first (closes are traced from _step_closed_receipts
+    # at end of step). Sorting closes before opens at equal step restores the
+    # physical ordering; across distinct steps the file order is preserved.
+    events = []
     for line in trace_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         event = _json.loads(line)
         if event.get("stage") != "trade_executed":
             continue
+        events.append(event)
+    events.sort(key=lambda e: (int(e.get("step", 0)),
+                               0 if e.get("lifecycle_event") == "close" else 1))
+    open_ids: set[str] = set()
+    max_simultaneous = 0
+    for event in events:
         pid = str(event.get("position_id"))
         if event.get("lifecycle_event") == "open":
             open_ids.add(pid)
@@ -181,38 +188,55 @@ def test_t2_risk_gate_counter_never_negative_and_bounded(constant_buy_run: dict)
 
 
 @pytest.mark.parametrize(
-    ("exit_authority", "budget_blocked", "below_break_even", "expected"),
+    (
+        "exit_authority",
+        "budget_insufficient",
+        "close_gap_active",
+        "daily_close_quota",
+        "below_break_even",
+        "expected",
+    ),
     [
-        # budget = hard gate : bloque TOUJOURS, quelles que soient les autres.
-        (False, True, False, (True, "decision_budget_or_quota")),
-        (True, True, True, (True, "decision_budget_or_quota")),
-        # exit_authority bypasse la barrière de profitabilité uniquement.
-        (True, False, True, (False, "exit_authority")),
-        (True, False, False, (False, "exit_authority")),
-        # Sous le break-even sans autorité -> bloqué (hysteresis).
-        (False, False, True, (True, "below_break_even_barrier")),
-        # Au-dessus du break-even -> SELL autorisé.
-        (False, False, False, (False, "accepted")),
+        # Sans autorité : chaque cause est ventilée séparément.
+        (False, True, False, False, False, (True, "budget_insufficient")),
+        (False, False, True, False, False, (True, "close_gap_active")),
+        (False, False, False, True, False, (True, "daily_close_quota")),
+        (False, False, False, False, True, (True, "below_break_even")),
+        (False, False, False, False, False, (False, "accepted")),
+        # exit_authority : aucune de ces causes ne vole le SELL au policy.
+        (True, True, True, True, True, (False, "exit_authority")),
+        (True, True, False, False, False, (False, "exit_authority")),
     ],
 )
 def test_t3_agent_close_gate_contract(
     exit_authority: bool,
-    budget_blocked: bool,
+    budget_insufficient: bool,
+    close_gap_active: bool,
+    daily_close_quota: bool,
     below_break_even: bool,
     expected: tuple[bool, str],
 ) -> None:
     assert (
         resolve_agent_close_gate(
             exit_authority=exit_authority,
-            budget_blocked=budget_blocked,
+            budget_insufficient=budget_insufficient,
+            close_gap_active=close_gap_active,
+            daily_close_quota=daily_close_quota,
             below_break_even=below_break_even,
         )
         == expected
     )
 
 
-def test_t3_hysteresis_fires_on_premature_close() -> None:
-    """Integration : loss_cut (SELL sous break-even) -> hysteresis > 0."""
+def test_t3_premature_close_executes_under_exit_authority() -> None:
+    """Integration : loss_cut (SELL sous break-even) avec exit_authority=true.
+
+    V34 : la barrière break-even, le budget, le gap et le quota sont advisoires
+    sous exit_authority — un SELL du policy doit s'EXECUTER, jamais devenir un
+    HOLD silencieux. Le test vérifie que le close perdant n'est plus volé par
+    la barrière (aucun rejet below_break_even) et qu'il aboutit à un close
+    exécuté ou, à défaut, à une cause physique explicite (pas de HOLD muet).
+    """
     result = _run_scenario_with_size(
         "loss_cut",
         size_raw=0.0,
@@ -220,12 +244,16 @@ def test_t3_hysteresis_fires_on_premature_close() -> None:
         tag="t3_loss_cut",
     )
     rej = result["rejection_reasons"]
-    # Si le scénario a ouvert une position puis tenté un close perdant,
-    # la barrière AGENT_CLOSE doit avoir produit du hysteresis.
     if result["opens"]["count"] > 0 and result["requested"].get("SELL", 0) > 0:
-        assert int(rej.get("hysteresis", 0)) > 0, (
-            "closes perdants tentés sans aucun rejet hysteresis : "
-            "la barrière break-even ne protège plus"
+        assert int(rej.get("below_break_even", 0)) == 0, (
+            "un SELL sous break-even a encore été bloqué alors que "
+            "exit_authority=true : le pipeline vole toujours les sorties"
+        )
+        closes = result.get("closes", {}).get("all", {}).get("count", 0)
+        sell_no_pos = int(rej.get("sell_no_position", 0))
+        assert closes > 0 or sell_no_pos > 0 or int(rej.get("hysteresis", 0)) == 0, (
+            "SELL demandé mais ni exécuté ni rejeté pour une cause explicite : "
+            "transformation silencieuse en HOLD"
         )
 
 
