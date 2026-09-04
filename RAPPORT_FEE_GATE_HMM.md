@@ -160,3 +160,79 @@ Deux fois dans cette session, une conclusion tirée de la lecture des bornes du
 code a été renversée par la mesure des valeurs à l'exécution. **Mesurer coûte
 moins cher que discuter** — et une conclusion fausse poussée dans git est plus
 coûteuse que pas de conclusion du tout.
+
+---
+
+# ADDENDUM — H-β tranché, et la cause racine se déplace vers les DONNÉES
+
+## A. Discriminant H-α / H-β : verdict **H-β**
+
+`scripts/diag_hmm_regime_discriminant.py` — postérieures HMM confrontées au
+mouvement réalisé de chaque fenêtre (200 steps/fenêtre, seed 330500) :
+
+| split | retour réalisé | part bear > 0.9 | `p_hmm` p50 | part `p_hmm` au plancher |
+|---|---|---|---|---|
+| train | **−17.14 %** | 0.795 | 0.010 | 0.780 |
+| val | **+1.87 %** | 0.435 | **0.333** | 0.435 |
+| test | +0.49 % | 0.620 | 0.010 | 0.605 |
+
+`bear_share_on_falling = 0.795` vs `bear_share_on_rising = 0.5275`.
+
+**Le HMM n'est pas dégénéré : il suit la réalité.** Sur la fenêtre haussière
+(val) il relâche `p_hmm` à 0.333, sur la fenêtre à −17 % il dit bear. H-α est
+**infirmée**.
+
+### Conséquence — renversement d'interprétation
+
+`fee_gate` refuse d'acheter un marché qui baisse de 17 %. C'est **correct**.
+Les 96 % de HOLD exécuté ne sont donc pas un bug de routage : c'est la réponse
+**rationnelle** à la fenêtre de données fournie. Gate C mesurait un
+comportement sain sur un univers malade.
+
+## B. Cause racine réelle : l'univers d'entraînement exposé
+
+`scripts/diag_train_universe_bias.py`, lu directement sur les parquets :
+
+| dataset | lignes 5m | jours | retour total | déciles ↑/↓ | couverture d'1 chunk |
+|---|---|---|---|---|---|
+| `BTCUSDT` ← **utilisé** | 11 417 | 39.6 | **−15.21 %** | 4/5 | **0.700** |
+| `BTCUSDT_binance` | **946 633** | **3 286.9** | **+1 708.64 %** | 7/3 | 0.008 |
+| `DOGEUSDT` ← **utilisé** | 25 000 | 86.8 | −7.34 % | 3/6 | 0.320 |
+| `DOGEUSDT_binance` | **749 774** | **2 603.4** | **+2 012.18 %** | 4/6 | 0.011 |
+
+`config/config.yaml:252` déclare `assets: [BTCUSDT]` — **jamais**
+`BTCUSDT_binance`. L'env rapporte `current_chunk: 1/1`.
+
+**L'agent est entraîné sur 39,6 jours de BTC en baisse de 15 %, alors que
+3 287 jours en hausse de 1 708 % sont présents sur le disque.** Un seul chunk
+couvre 70 % de ce mini-dataset : il n'y a quasiment aucune diversité de régime
+à apprendre.
+
+Cela réconcilie enfin toutes les observations ouvertes :
+
+- capital qui ne dépasse jamais durablement son point de départ (BTC **et**
+  DOGE) → les deux mini-datasets sont baissiers (−15.2 %, −7.3 %)
+- plancher identique 12,30 / retour exact à 20,50 sur deux actifs → même
+  géométrie de dataset court et monotone
+- `explained_variance` négative dès le premier update → une seule fenêtre
+  quasi déterministe, valeur d'état non généralisable
+- 94,8 % d'intention BUY côté DOGE sans croissance → `fee_gate` annule
+  correctement l'achat dans un marché baissier
+- V29/V30/V33 passant les gates synthétiques puis échouant → les gates
+  sondaient la mécanique, jamais l'univers de données
+
+## C. Ce que cela invalide
+
+Aucun correctif sur le reward, le reset, PPO, le cooldown, `tp_lo`, la gSDE ou
+le learning rate ne peut produire de croissance de capital sur un univers
+baissier de 39 jours. Les six « fix » cumulés (gSDE v30, lr v31,
+capacity_reward v33, inaction_penalty v33, cooldown v34, tp_lo v34) opéraient
+tous en aval d'une contrainte de données jamais mesurée.
+
+**Un 500k sur `BTCUSDT` brûlerait le budget sur 39,6 jours de baisse.**
+
+## D. Prochaine action unique
+
+Basculer la config sur les datasets complets (`BTCUSDT_binance` /
+`DOGEUSDT_binance`) et vérifier le chunking (`1/1` → multi-chunks), puis
+**remesurer `p_hmm` et rejouer Gate C canonique**. Tout le reste attend.
