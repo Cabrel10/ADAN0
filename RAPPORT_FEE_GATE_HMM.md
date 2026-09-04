@@ -236,3 +236,118 @@ tous en aval d'une contrainte de données jamais mesurée.
 Basculer la config sur les datasets complets (`BTCUSDT_binance` /
 `DOGEUSDT_binance`) et vérifier le chunking (`1/1` → multi-chunks), puis
 **remesurer `p_hmm` et rejouer Gate C canonique**. Tout le reste attend.
+
+---
+
+# TROISIÈME AUTO-CORRECTION — QUALIFICATION DE `a7f517f`
+
+`a7f517f` a été poussé avec une mesure faite sur les **mauvais fichiers**, et
+sa formulation (« l'agent s'entraîne sur 39 jours de BTC baissier ») confondait
+*ce que mes sondes ont vu* avec *ce que les runs réels ont vu*. Les deux ne sont
+pas la même chose. Correction ci-dessous, mesurée.
+
+## E. L'erreur de chemin
+
+`scripts/diag_train_universe_bias.py` v1 lisait :
+
+    data/processed/<asset>/<asset>_5m_featured.parquet
+
+Or `src/adan_trading_bot/data_processing/data_loader.py` L256-273 résout :
+
+    config.data_dirs[<split>] / <ASSET_VARIANT> / <tf>.parquet
+    → data/processed/indicators/<split>/<ASSET>/5m.parquet
+
+Le script mesurait donc des parquets que le pipeline ne charge jamais.
+`data/processed/indicators/train/` contient quatre variantes :
+`BTCUSDT`, `BTCUSDT_BINANCE`, `DOGEUSDT`, `DOGEUSDT_BINANCE`.
+
+## F. Mesure sur les chemins réels du loader
+
+Source : `logs/validation/train_universe_bias_20260904_235734.json`
+(script repointé, marqueur `ADAN0_LOADER_PATHS`).
+
+| split/asset | rows 5m | jours | retour % | déciles ↑ | déciles ↓ | 1 chunk = |
+|---|---|---|---|---|---|---|
+| train/BTCUSDT | 7 991 | 27,7 | **−17,14** | 5 | 5 | **100,00 %** |
+| train/BTCUSDT_BINANCE | 662 643 | 2 300,8 | **+928,90** | 7 | 3 | 1,21 % |
+| train/DOGEUSDT | 17 500 | 60,8 | −29,17 | 2 | 8 | 45,66 % |
+| train/DOGEUSDT_BINANCE | 524 841 | 1 822,4 | **+2 774,48** | 6 | 4 | 1,52 % |
+| val/BTCUSDT | 1 143 | 4,0 | +1,87 | 5 | 4 | 699,13 % |
+| val/BTCUSDT_BINANCE | 141 994 | 493,0 | +92,54 | 4 | 6 | 5,63 % |
+| test/BTCUSDT | 2 283 | 7,9 | +0,49 | 4 | 5 | 350,02 % |
+| test/BTCUSDT_BINANCE | 141 996 | 493,0 | −8,66 | 4 | 6 | 5,63 % |
+| test/DOGEUSDT_BINANCE | 112 467 | 390,5 | −61,96 | 2 | 8 | 7,11 % |
+
+Verdict machine :
+`H1_parquet_is_large_and_two_sided_but_env_exposes_one_chunk`.
+
+## G. Le fait qui change l'interprétation
+
+`scripts/launch_asset_run.py` L57 :
+
+```python
+ap.add_argument("--asset", required=True,
+                choices=["BTCUSDT_BINANCE", "DOGEUSDT_BINANCE"])
+```
+
+et `derive_config()` L35-43 réécrit `cfg["data"]["assets"]`,
+`cfg["environment"]["assets"]` **et** `wcfg["assets"]` de chaque worker.
+Un run réel **ne peut pas** s'exécuter sur `BTCUSDT` : le choix est contraint
+au niveau de l'argparse. Le commentaire `_SLTP` cite « the actual 662,603-row
+BTC TRAIN parquet », cohérent avec les 662 643 lignes mesurées ici.
+
+Or `logs/validation/gate_c_run_20260904_225928.log` ligne 8 enregistre
+`"asset": "BTCUSDT"`, et mes sondes codaient en dur `assets=["BTCUSDT"]`.
+
+**Conclusion corrigée** : ce n'est pas l'entraînement qui était enfermé dans
+27,7 jours — ce sont **Gate C canonique et toutes mes sondes de cette session**.
+`a7f517f` attribuait au run une pathologie qui est en réalité celle de
+l'instrumentation.
+
+## H. Ce que cela requalifie, chiffre par chiffre
+
+Tous les nombres suivants ont été obtenus sur `train/BTCUSDT`
+(7 991 lignes, 27,7 jours, −17,14 %, un unique chunk) — donc **hors de
+l'univers des runs réels** :
+
+| mesure | valeur | statut après correction |
+|---|---|---|
+| `p_hmm` p50 | 0,010 (plancher) | non transposable |
+| `fee_gate` rejets | 201 / 222 = 90,5 % | non transposable |
+| HOLD exécutés | 96 % | non transposable |
+| Gate B / Gate C | 0,354 FAIL / 0,960 FAIL | **invalide comme verdict de run** |
+| verdict H-bêta | HMM suit le réel | méthode valide, échantillon à refaire |
+| `current_chunk: 1/1` | — | **expliqué** : 7 991 lignes = exactement 1 chunk |
+
+Le `1/1` n'était pas un bug de chunking : `train/BTCUSDT` tient dans un seul
+chunk (`share_of_history_in_one_chunk = 1.0000`, mesuré). Sur
+`train/BTCUSDT_BINANCE` un chunk ne couvre que 1,21 % de l'historique, soit
+~82 chunks. Il n'y a donc **aucun** correctif de chunking à écrire.
+
+## I. Statut des hypothèses
+
+- **CONFIRMÉ** — le loader lit `indicators/<split>/<ASSET>/`, pas
+  `processed/<asset>/*_featured.parquet`.
+- **CONFIRMÉ** — `launch_asset_run.py` interdit `BTCUSDT` par argparse et
+  réécrit les trois clés d'actifs.
+- **CONFIRMÉ** — Gate C canonique a tourné sur `BTCUSDT` (log ligne 8).
+- **CONFIRMÉ** — les gros splits `_BINANCE` sont bilatéraux (7↑/3↓ en train
+  BTC), donc l'argument « univers monotone » tombe pour les runs réels.
+- **INFIRMÉ** — « l'agent s'entraîne sur 39 jours de BTC baissier »
+  (formulation de `a7f517f`). Les runs ne peuvent pas charger ce split.
+- **INFIRMÉ** — « le chunking est cassé (1/1) ». Arithmétique de dataset.
+- **NON RÉSOLU** — la distribution de `p_hmm` sur `BTCUSDT_BINANCE`.
+  Mesure en cours ; c'est elle qui décidera si `fee_gate` est un vrai blocage
+  économique ou un artefact de fenêtre.
+- **NON RÉSOLU** — Gate B / Gate C sur l'univers réel. Le NO_GO reste en
+  vigueur : il n'est pas *réfuté*, il est *non mesuré*.
+
+## J. Ce que cela ne change pas
+
+Le correctif `terminated`/`truncated` (`f38b8c2`) reste valide et indépendant :
+il porte sur la sémantique Gymnasium, pas sur les données. Sa causalité sur
+`explained_variance` reste toutefois **à mesurer après correction**, sur
+`BTCUSDT_BINANCE`.
+
+**500k reste bloqué.** Motif mis à jour : ce n'est plus « univers baissier »,
+c'est « aucun gate n'a jamais été mesuré sur l'univers que le run charge ».

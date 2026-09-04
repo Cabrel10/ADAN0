@@ -38,11 +38,17 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# ADAN0_LOADER_PATHS: the first version of this script measured
+# data/processed/<asset>/<asset>_5m_featured.parquet. That is NOT what the
+# pipeline reads. data_loader.py L256-273 resolves
+#   config.data_dirs[split] / <ASSET_VARIANT> / <tf>.parquet
+# i.e. data/processed/indicators/<split>/<ASSET>/5m.parquet. Measuring the
+# wrong files is what made commit a7f517f mis-state the exposure.
+_IND = REPO_ROOT / "data/processed/indicators"
 TARGETS = {
-    "BTCUSDT_binance": REPO_ROOT / "data/processed/BTCUSDT_binance/BTCUSDT_5m_featured.parquet",
-    "BTCUSDT": REPO_ROOT / "data/processed/BTCUSDT/BTCUSDT_5m_featured.parquet",
-    "DOGEUSDT_binance": REPO_ROOT / "data/processed/DOGEUSDT_binance/DOGEUSDT_5m_featured.parquet",
-    "DOGEUSDT": REPO_ROOT / "data/processed/DOGEUSDT/DOGEUSDT_5m_featured.parquet",
+    f"{split}/{asset}": _IND / split / asset / "5m.parquet"
+    for split in ("train", "val", "test")
+    for asset in ("BTCUSDT", "BTCUSDT_BINANCE", "DOGEUSDT", "DOGEUSDT_BINANCE")
 }
 
 # The env probe loaded 7991 rows of 5m for the train split.
