@@ -3899,6 +3899,9 @@ class MultiAssetChunkedEnv(gym.Env):
             )
             done = False
             termination_reason = ""
+            # ADAN0_TRUNCATION_SEMANTICS: default semantics for this step. Overridden to
+            # "truncated" by pure time-limit boundaries below.
+            self._termination_kind = "terminal"
 
             # Check if we should terminate based on frequency check interval or other conditions
             frequency_check_interval = (
@@ -3939,6 +3942,9 @@ class MultiAssetChunkedEnv(gym.Env):
             # elif self.current_step >= self.max_steps:
             if self.current_step >= self.max_steps:
                 done = True
+                # ADAN0_TRUNCATION_SEMANTICS: time limit, NOT an MDP terminal. SB3 must
+                # bootstrap the value function at this boundary.
+                self._termination_kind = "truncated"
                 termination_reason = (
                     f"Max steps reached ({self.current_step} >= {self.max_steps})"
                 )
@@ -4062,6 +4068,9 @@ class MultiAssetChunkedEnv(gym.Env):
                 if self.current_chunk_idx >= chunks_limit:
                     done = True
                     self.done = True
+                    # ADAN0_TRUNCATION_SEMANTICS: end of the data window, NOT an economic
+                    # death. Bootstrap required.
+                    self._termination_kind = "truncated"
                     termination_reason = f"Max chunks per episode reached ({self.current_chunk_idx} >= {self.max_chunks_per_episode})"
                     logger.info(f"[TERMINATION] {termination_reason}")
                 else:
@@ -4084,6 +4093,8 @@ class MultiAssetChunkedEnv(gym.Env):
                         )
                         done = True
                         self.done = True
+                        # ADAN0_TRUNCATION_SEMANTICS: unrecoverable, genuine terminal.
+                        self._termination_kind = "terminal"
                         termination_reason = (
                             f"Failed to load chunk {self.current_chunk_idx + 1}: {e}"
                         )
@@ -4633,16 +4644,30 @@ class MultiAssetChunkedEnv(gym.Env):
                         f"Erreur lors de la mise à jour des métriques de risque: {str(e)}"
                     )
 
-            # Use local 'done' to signal termination for this step
-            terminated = done
-            truncated = False
+            # Use local 'done' to signal termination for this step.
+            # ADAN0_TRUNCATION_SEMANTICS: split Gymnasium semantics. `_termination_kind`
+            # is "truncated" for pure time/data-window limits and
+            # "terminal" for economic deaths (DRAWDOWN_KILL, BANKRUPT,
+            # explosion, unrecoverable load error). SB3 bootstraps the
+            # value function iff truncated=True and terminated=False,
+            # which is exactly what a window boundary requires.
+            _kind = getattr(self, "_termination_kind", "terminal")
+            terminated = bool(done) and _kind != "truncated"
+            truncated = bool(done) and _kind == "truncated"
 
             max_steps = getattr(self, "_max_episode_steps", float("inf"))
             if self.current_step >= max_steps:
+                # Hard external time limit: truncation, never a terminal.
                 truncated = True
+                terminated = False
                 self.done = True
+            info_termination_kind = "truncated" if truncated else ("terminal" if terminated else "none")
 
             info = self._get_info()
+            # ADAN0_TRUNCATION_SEMANTICS: make the boundary semantics auditable downstream.
+            info["termination_kind"] = info_termination_kind
+            info["terminated"] = bool(terminated)
+            info["truncated"] = bool(truncated)
 
             if hasattr(self, "_last_reward_components"):
                 info.update({"reward_components": self._last_reward_components})
