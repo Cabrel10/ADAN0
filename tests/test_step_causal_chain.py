@@ -314,3 +314,78 @@ class TestCausalRecorderIntegration:
         assert r["capital_before"] is not None
         assert r["capital_after"] is not None
         assert "drawdown_state" in r and "lifetime_id" in r["drawdown_state"]
+
+
+# ============================================================================
+# S12-S15 — Gymnasium terminated/truncated semantics (bootstrap correctness)
+# ============================================================================
+# Root cause fixed by scripts/patch_truncation_semantics.py: `step()` returned
+# terminated=True for pure time-limit boundaries (max_steps,
+# max_chunks_per_episode).  SB3 does NOT bootstrap the value function when
+# terminated=True, so the critic was trained against targets that assume zero
+# future reward at every window boundary -> explained_variance < 0 from the
+# very first update.  These tests lock the corrected semantics in place.
+
+class TestTruncationSemantics:
+    """Window boundaries must be truncations; economic deaths terminals."""
+
+    def test_s12_max_steps_is_truncation_not_terminal(self):
+        env = _make_env()
+        # Force the max_steps boundary on the next step.
+        env.max_steps = int(env.current_step) + 1
+        term = trunc = None
+        for _ in range(3):
+            _, _, term, trunc, info = env.step(_action(0.0))
+            if term or trunc:
+                break
+        assert (term or trunc), "boundary never reached"
+        assert trunc is True, "max_steps must set truncated=True (bootstrap)"
+        assert term is False, "max_steps must NOT set terminated=True"
+        assert info.get("termination_kind") == "truncated"
+
+    def test_s13_termination_kind_defaults_to_terminal(self):
+        env = _make_env()
+        env.step(_action(0.0))
+        assert getattr(env, "_termination_kind", None) in {"terminal",
+                                                           "truncated"}
+
+    def test_s14_flags_are_mutually_exclusive(self):
+        env = _make_env()
+        for _ in range(25):
+            _, _, term, trunc, _ = env.step(_action(0.0))
+            assert not (term and trunc), \
+                "terminated and truncated must never both be True"
+            if term or trunc:
+                break
+
+    def test_s15_info_exposes_boundary_semantics_every_step(self):
+        env = _make_env()
+        for _ in range(5):
+            _, _, term, trunc, info = env.step(_action(0.0))
+            assert "termination_kind" in info
+            assert info["terminated"] == bool(term)
+            assert info["truncated"] == bool(trunc)
+            if term or trunc:
+                break
+
+
+# ============================================================================
+# S16 — the reward invariant must actually RUN, not merely not raise
+# ============================================================================
+
+class TestInvariantActuallyExecutes:
+    """Guard against the silent `except Exception: pass` around the check."""
+
+    def test_s16_invariant_keys_present_on_real_step(self):
+        env = _make_env()
+        env.step(_action(0.0))
+        comps = getattr(env, "_last_reward_components", None) or {}
+        assert comps, "_last_reward_components empty: reward not instrumented"
+        for key in ("invariant_ok", "additive_sum", "invariant_error"):
+            assert key in comps, (
+                f"'{key}' absent from _last_reward_components -> the invariant "
+                f"check did not execute (swallowed exception?). keys={sorted(comps)}"
+            )
+        assert comps["invariant_ok"] is True, (
+            f"invariant violated on a real step: err={comps['invariant_error']}"
+        )
