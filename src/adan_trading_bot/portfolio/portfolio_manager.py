@@ -147,6 +147,19 @@ class PortfolioManager:
         self._last_positions_snapshot: Dict[str, Dict[str, Any]] = {}
         self.last_close_reason: Optional[str] = None
 
+        # ── PORTFOLIO LIFETIME (decoupled from the RL episode) ──────────
+        # These counters/accumulators survive EVERY reset (seasonal AND
+        # economic). They are the economic truth of the whole training run,
+        # never zeroed by episode boundaries.
+        self.portfolio_lifetime_id: int = 0        # incremented on each economic_reset
+        self.portfolio_reset_count: int = 0        # number of DRAWDOWN_KILL resets
+        self.global_peak: float = float(self.initial_equity)  # persistent high-water mark
+        self.cumulative_pnl: float = 0.0           # sum of realized PnL across lifetimes
+        self.cumulative_fees: float = 0.0          # sum of fees across lifetimes
+        self.survival_cycles: int = 0              # episodes survived without economic reset
+        self.time_since_drawdown_reset: int = 0    # env steps since last DRAWDOWN_KILL
+        self._season_reset_done: bool = False      # __init__ path marker
+
         self.reset()
 
     def _resolve_max_duration_steps(self, timeframe: str, default: int = 144) -> int:
@@ -204,12 +217,17 @@ class PortfolioManager:
             logger.critical(
                 f"💥 EXPLOSION DÉTECTÉE: Equity={current_equity:.2f}$ > Max={max_equity_allowed:.2f}$. RESET COMPLET DU PORTFOLIO!"
             )
-            self.cash = base
-            self.equity = base
-            self.portfolio_value = base
-            self.current_value = base
-            self.positions = {}
-            self.trade_log = []
+            # ADAN0: route through the SINGLE economic-reset authority so the
+            # explosion path also increments lifetime counters truthfully.
+            try:
+                self.economic_reset(reason="NUMERIC_EXPLOSION")
+            except Exception:
+                self.cash = base
+                self.equity = base
+                self.portfolio_value = base
+                self.current_value = base
+                self.positions = {}
+                self.trade_log = deque(maxlen=self.max_history_size)
             if hasattr(self, "metrics") and self.metrics:
                 try:
                     self.metrics.returns.clear()
@@ -343,18 +361,38 @@ class PortfolioManager:
         return float(position_units)
 
     def reset(self, **kwargs):
-        """Réinitialise le portefeuille à son état initial."""
-        self.cash = self.initial_equity
-        self.equity = self.initial_equity
-        self.peak_equity = self.initial_equity
-        self.portfolio_value = self.initial_equity
-        self.current_value = self.initial_equity # AJOUT POUR LA SÉCURITÉ
-        self.current_step = 0  # Synced by env before get_state_vector()
+        """SEASONAL reset — invoked at every Gym episode boundary.
 
-        # C8: Realized-only equity tracking (excludes unrealized P&L)
-        self.total_realized_pnl = 0.0
-        self.realized_equity = self.initial_equity  # cash + total_realized_pnl basis
-        self.peak_realized_equity = self.initial_equity
+        DECOUPLING (ADAN0): the portfolio now SURVIVES episodes. Capital,
+        equity, positions, drawdown trackers and cumulative PnL are NOT
+        restored to ``initial_equity`` here. Only per-episode season state
+        (tier hysteresis, SL/TP knobs) is refreshed. The ONLY authority that
+        restores capital to ``initial_capital`` is :meth:`economic_reset`,
+        triggered exclusively by DRAWDOWN_KILL.
+
+        The first call (from ``__init__``) still performs a full economic
+        initialisation so every attribute exists.
+        """
+        if getattr(self, "_season_reset_done", False):
+            # Seasonal reset: economic state (cash/equity/positions/PnL) is
+            # preserved by construction. One more survived cycle.
+            self.survival_cycles = int(getattr(self, "survival_cycles", 0)) + 1
+        else:
+            # First-ever reset: full economic initialisation.
+            self.cash = self.initial_equity
+            self.equity = self.initial_equity
+            self.peak_equity = self.initial_equity
+            self.portfolio_value = self.initial_equity
+            self.current_value = self.initial_equity # AJOUT POUR LA SÉCURITÉ
+            # C8: Realized-only equity tracking (excludes unrealized P&L)
+            self.total_realized_pnl = 0.0
+            self.realized_equity = self.initial_equity  # cash + realized PnL basis
+            self.peak_realized_equity = self.initial_equity
+            self.positions = {asset.upper(): Position() for asset in self.assets}
+            self.trade_log = deque(maxlen=self.max_history_size)
+            self._season_reset_done = True
+
+        self.current_step = 0  # Synced by env before get_state_vector()
         # Paramètres de risque courants (par défaut)
         # FINDING #4: defaults market-aware (SL 1.5% / TP 3%, RR=2) au lieu de
         # 2%/5% qui, gonfles par le DBE, produisaient des TP ~10% impossibles.
@@ -362,30 +400,17 @@ class PortfolioManager:
         self.tp_pct = kwargs.get("take_profit_pct", 0.030)
         self.pos_size_pct = kwargs.get("position_size_pct", 0.1)
 
-        # Force close all open positions to avoid orphan positions missing from logs
-        if getattr(self, "positions", None):
-            for asset in list(self.positions.keys()):
-                if self.positions[asset].is_open:
-                    # Emulate a market close at current price before reset
-                    try:
-                        self.close_position(
-                            asset,
-                            self.positions[asset].current_price,
-                            reason="EpisodeReset"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Error forcefully closing {asset} on reset: {e}")
-
-        self.positions: Dict[str, Position] = {
-            asset.upper(): Position() for asset in self.assets
-        }
-        self.trade_log: deque = deque(maxlen=self.max_history_size)
+        # NOTE (DECOUPLING): positions are NO LONGER force-closed with reason
+        # "EpisodeReset" here — the env already closes every position with an
+        # auditable "EPISODE_END" reason before calling reset(). Recreating
+        # the positions dict on a seasonal reset would also WIPE open
+        # positions; both are now reserved to economic_reset().
 
         self._last_market_timestamp = None
         self._last_positions_snapshot = {}
         self.last_close_reason = None
-        
-        # Tier hysteresis logic
+
+        # Tier hysteresis logic (per-season; economic capital unchanged)
         self.steps_in_tier = 0
         self._current_tier_index = -1
         self._locked_tier_cache = None
@@ -403,11 +428,66 @@ class PortfolioManager:
                 "4h": 0,
                 "daily_total": 0,
             }
-            self.metrics.update_open_positions_metrics([], {})
+            self.metrics.update_open_positions_metrics(
+                self._get_open_positions(), {}
+            )
             self.metrics.record_equity_snapshot(self.equity)
 
         self.log_info(
-            f"Portefeuille réinitialisé. Capital initial: ${self.initial_equity:.2f}"
+            f"Portefeuille: reset SAISONNIER (épisode RL). "
+            f"Capital conservé: ${self.equity:.2f} | "
+            f"lifetime_id={self.portfolio_lifetime_id} | "
+            f"resets={self.portfolio_reset_count} | "
+            f"cum_pnl=${self.cumulative_pnl:+.2f}"
+        )
+
+    def economic_reset(self, reason: str = "DRAWDOWN_KILL") -> None:
+        """ECONOMIC reset — the SINGLE authority that restores capital.
+
+        Called exclusively by the DRAWDOWN_KILL path. Resets cash/equity to
+        ``initial_capital``, force-closes leftover positions (there should be
+        none — the kill-switch already force-closed them), zeroes the
+        per-lifetime realized PnL basis, and updates the lifetime counters:
+        ``portfolio_lifetime_id``, ``portfolio_reset_count``,
+        ``time_since_drawdown_reset``. The persistent high-water mark
+        (``global_peak``), ``cumulative_pnl`` and ``cumulative_fees`` are
+        NEVER reset — they are the global economic truth.
+        """
+        # Fold this lifetime's realized PnL into the global accumulator.
+        self.cumulative_pnl = float(
+            getattr(self, "cumulative_pnl", 0.0)
+        ) + float(getattr(self, "total_realized_pnl", 0.0))
+
+        self.portfolio_lifetime_id = int(getattr(self, "portfolio_lifetime_id", 0)) + 1
+        self.portfolio_reset_count = int(getattr(self, "portfolio_reset_count", 0)) + 1
+        self.time_since_drawdown_reset = 0
+
+        self.cash = self.initial_equity
+        self.equity = self.initial_equity
+        self.peak_equity = self.initial_equity
+        self.portfolio_value = self.initial_equity
+        self.current_value = self.initial_equity
+        self.total_realized_pnl = 0.0
+        self.realized_equity = self.initial_equity
+        self.peak_realized_equity = self.initial_equity
+
+        # Force-close any leftover open position (safety; normally none).
+        if getattr(self, "positions", None):
+            for asset in list(self.positions.keys()):
+                if self.positions[asset].is_open:
+                    try:
+                        self.close_position(
+                            asset,
+                            self.positions[asset].current_price,
+                            reason=f"EconomicReset:{reason}",
+                        )
+                    except Exception as e:
+                        logger.warning(f"Error force-closing {asset} on economic reset: {e}")
+        self.positions = {asset.upper(): Position() for asset in self.assets}
+
+        self.log_info(
+            f"[ECONOMIC_RESET:{reason}] lifetime_id={self.portfolio_lifetime_id} "
+            f"reset_count={self.portfolio_reset_count} capital=${self.initial_equity:.2f}"
         )
 
     def __getstate__(self):
@@ -1090,6 +1170,10 @@ class PortfolioManager:
         self.realized_equity = self.initial_equity + self.total_realized_pnl
         if self.realized_equity > self.peak_realized_equity:
             self.peak_realized_equity = self.realized_equity
+        # LIFETIME: fees accumulate across lifetimes (never zeroed by episodes).
+        self.cumulative_fees = float(getattr(self, "cumulative_fees", 0.0)) + float(
+            total_fees
+        )
 
         log_entry["equity"] = self.equity
         log_entry["realized_equity"] = self.realized_equity
@@ -1338,6 +1422,12 @@ class PortfolioManager:
           [25] max_size_remaining   = max(0, max_pos_pct - exposure)    ([0, 1])
           [26] cooldown_active      = any cooldown blocking trades      (0 or 1)
           [27] decision_budget_norm = action energy remaining           ([0, 1])
+
+        Drawdown persistence vector (ADAN0 decoupling) [28-31]:
+          [28] drawdown_ratio       = (init_cap - equity)/init_cap      ([0, 1])
+          [29] drawdown_active      = drawdown_ratio / max_dd_frac      ([0, 1])
+          [30] drawdown_cooldown_norm = remaining drawdown cooldown     ([0, 1])
+          [31] time_since_reset_norm= steps since DRAWDOWN_KILL / 1000  ([0, 1])
         """
         try:
             metrics = self.get_metrics()
@@ -1521,7 +1611,33 @@ class PortfolioManager:
                 logger.warning(f"[ACM] Capability vector error: {_acm_err}")
                 state.extend([0.0] * 8)
 
-            assert len(state) == 28, f"portfolio_state must be 28 dims, got {len(state)}"
+            # ================================================================
+            # DRAWDOWN PERSISTENCE VECTOR (ADAN0) — dims [28-31]
+            # The economic state that survives episode boundaries MUST be
+            # observable, otherwise the decoupling creates a POMDP: the
+            # policy would be blind to the drawdown/cooldown/reset state that
+            # still constrains its actions. Single authority: equity-based.
+            # ================================================================
+            try:
+                _init_cap = max(float(self.initial_capital), 1e-8)
+                _dd_ratio = float(np.clip(
+                    (_init_cap - float(self.equity)) / _init_cap, 0.0, 1.0
+                ))
+                _max_dd_frac = max(
+                    float(getattr(self, "_pending_max_dd_frac", 0.40)), 1e-8
+                )
+                _dd_active = float(np.clip(_dd_ratio / _max_dd_frac, 0.0, 1.0))
+                _dd_cooldown = float(
+                    np.clip(getattr(self, "_pending_drawdown_cooldown", 0.0), 0.0, 1.0)
+                )
+                _tsr = float(np.clip(
+                    getattr(self, "time_since_drawdown_reset", 0) / 1000.0, 0.0, 1.0
+                ))
+                state.extend([_dd_ratio, _dd_active, _dd_cooldown, _tsr])
+            except Exception:
+                state.extend([0.0, 0.0, 0.0, 0.0])
+
+            assert len(state) == 32, f"portfolio_state must be 32 dims, got {len(state)}"
             return np.array(state, dtype=np.float32)
 
         except Exception as e:
@@ -1529,7 +1645,7 @@ class PortfolioManager:
                 f"Erreur lors de la construction du vecteur d'état du portefeuille: {e}",
                 exc_info=True,
             )
-            return np.zeros(28, dtype=np.float32)
+            return np.zeros(32, dtype=np.float32)
 
     def _update_equity(self, current_prices: Optional[Dict[str, float]] = None):
         """
@@ -1575,6 +1691,14 @@ class PortfolioManager:
 
         if self.equity > self.peak_equity:
             self.peak_equity = self.equity
+
+        # LIFETIME: persistent high-water mark across episodes AND economic
+        # resets + age counter since the last DRAWDOWN_KILL reset.
+        if self.equity > float(getattr(self, "global_peak", self.initial_equity)):
+            self.global_peak = float(self.equity)
+        self.time_since_drawdown_reset = int(
+            getattr(self, "time_since_drawdown_reset", 0)
+        ) + 1
 
         self.metrics.record_equity_snapshot(self.equity)
         self.metrics.update_open_positions_metrics(self._get_open_positions(), prices)

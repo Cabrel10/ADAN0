@@ -48,7 +48,8 @@ if _TRAINING_SILENT:
     logger.setLevel(logging.WARNING)
 
 # Standard portfolio state vector dimension
-DEFAULT_PORTFOLIO_STATE_SIZE = 28
+# 32 = 20 base + 8 ACM Capability Vector + 4 ADAN0 drawdown-persistence slots
+DEFAULT_PORTFOLIO_STATE_SIZE = 32
 # Maximum attempts to reload a data chunk
 MAX_RELOAD_ATTEMPTS = 3
 # Fallback chunk index when primary fails
@@ -738,6 +739,15 @@ class MultiAssetChunkedEnv(gym.Env):
             "below_break_even": 0,
             "portfolio_reject": 0,
             "trade_executed": 0,
+            # ADAN0: routing_reject ventilated by exact reason (real code names)
+            "routing_reject_deadband": 0,
+            "routing_reject_drawdown": 0,
+            "routing_reject_budget": 0,
+            "routing_reject_position": 0,
+            "routing_reject_cooldown": 0,
+            "routing_reject_other": 0,
+            "routing_reject_sell_while_flat": 0,
+            "routing_reject_buy_while_long": 0,
         }
         _trace_path = os.environ.get("ADAN_PIPELINE_TRACE_PATH", "").strip()
         self._action_pipeline_trace_path = (
@@ -745,6 +755,20 @@ class MultiAssetChunkedEnv(gym.Env):
         )
         if self._action_pipeline_trace_path:
             os.makedirs(os.path.dirname(self._action_pipeline_trace_path) or ".", exist_ok=True)
+        # ADAN0: Step Causal Recorder (opt-in via ADAN_STEP_CAUSAL_PATH,
+        # zero cost when disabled). One JSONL record per env step linking the
+        # policy decision to its economic consequences.
+        try:
+            from ..instrumentation.step_causal_recorder import StepCausalRecorder
+            self._step_causal_recorder = StepCausalRecorder.from_env(self.worker_id)
+        except Exception:
+            self._step_causal_recorder = None
+        # ADAN0: drawdown cooldown state (global_step frame -> survives
+        # episode boundaries by construction, never rebased).
+        self._drawdown_cooldown_until_step: int = 0
+        self.drawdown_cooldown_steps: int = int(
+            self.config.get("risk_parameters", {}).get("drawdown_cooldown_steps", 50)
+        )
         # ============================================================
         # DIAGNOSTIC-V5: streak-based sterile penalty state
         # Persistence-indexed (NOT capital-tier). Keyed on rejection
@@ -2712,6 +2736,29 @@ class MultiAssetChunkedEnv(gym.Env):
         super().reset(seed=seed)
 
         # Reset episode-specific variables
+        # ADAN0 DECOUPLING: cooldown trackers are keyed on current_step, which
+        # is about to restart at 0. To let cooldowns SURVIVE the episode
+        # boundary we rebase every absolute timestamp into the new frame
+        # (v - final_step). Remaining cooldown time is preserved exactly.
+        _prev_final_step = int(getattr(self, "current_step", 0))
+        if _prev_final_step > 0:
+            try:
+                for _d_name in ("_last_sell_step_by_asset", "_last_open_step_by_asset"):
+                    _d = getattr(self, _d_name, None)
+                    if isinstance(_d, dict):
+                        for _k in list(_d.keys()):
+                            _d[_k] = int(_d[_k]) - _prev_final_step
+                # _buy_step_by_asset: positions are all closed at the boundary
+                # (finalize_open_positions above) -> tracker is historical only,
+                # cleared by _cooldown_remaining_ratio while FLAT.
+                if isinstance(getattr(self, "_buy_step_by_asset", None), dict):
+                    self._buy_step_by_asset.clear()
+                _lac = int(getattr(self, "_last_agent_close_step", -10**9))
+                if _lac > -10**8:
+                    self._last_agent_close_step = _lac - _prev_final_step
+            except Exception:
+                pass
+
         self.current_step = 0
         self.done = False
         self.episode_reward = 0.0
@@ -2726,13 +2773,13 @@ class MultiAssetChunkedEnv(gym.Env):
         self.current_day = 0
         self._last_trade_count = 0  # Initialize trade count tracking
 
-        # DECISION BUDGET (V3) — reset jauge + compteurs AGENT_CLOSE a chaque
-        # nouvel episode (sinon l'etat fuit d'un episode a l'autre).
+        # DECISION BUDGET (V3) — ADAN0 DECOUPLING: the budget is NOT restored
+        # at episode boundaries anymore. It returns to max ONLY via the
+        # DRAWDOWN_KILL economic reset (single authority). Daily AGENT_CLOSE
+        # quota counters stay per-episode by design; the min-gap tracker was
+        # rebased above so the cooldown survives the boundary.
         self.agent_close_count_today = 0
         self.agent_close_consecutive = 0
-        self._last_agent_close_step = -10**9
-        if hasattr(self, "decision_budget_max"):
-            self.decision_budget = float(self.decision_budget_max)
 
         # Reset trade tracking helpers to avoid negative deltas after episode restart
         self.last_trade_steps_by_tf = {}
@@ -2747,12 +2794,12 @@ class MultiAssetChunkedEnv(gym.Env):
         self._max_capital_reached = float(self.portfolio_manager.initial_capital or 20.5)
         self._tier_entry_capital = float(self.portfolio_manager.initial_capital or 20.5)
 
-        # OMEGA-3/4: Reset episode receipts and per-asset cooldown
+        # OMEGA-3/4: Reset episode receipts. ADAN0 DECOUPLING: the per-asset
+        # cooldown trackers (_last_sell_step_by_asset, _last_open_step_by_asset,
+        # _sell_cooldown_total_by_asset) were REBASED above and SURVIVE the
+        # episode boundary — re-entry friction is an economic constraint, not
+        # an episodic one. No dict reset here anymore.
         self._all_episode_receipts = deque(maxlen=50)  # REDUCED: Cap memory: keep last 50 receipts (was 500)
-        self._last_open_step_by_asset = {}
-        self._last_sell_step_by_asset = {}   # start of post-SELL re-entry friction
-        self._buy_step_by_asset = {}          # hard HOLD_MIN post-BUY guard
-        self._sell_cooldown_total_by_asset = {}  # friction normalization window
 
         # Log and reset rejection reasons from previous episode
         if hasattr(self, 'rejection_reasons') and any(v > 0 for v in self.rejection_reasons.values()):
@@ -3273,6 +3320,14 @@ class MultiAssetChunkedEnv(gym.Env):
         self._step_closed_receipts = []
         self._step_invalid_penalty = 0.0  # Reset per-step penalty
         self._step_realized_pnl = 0.0
+        # ADAN0: step-causal capture — pre-execution economic state.
+        self._budget_before_step = float(getattr(self, "decision_budget", 1.0))
+        try:
+            self._capital_before_step = float(self.portfolio_manager.equity)
+        except Exception:
+            self._capital_before_step = None
+        self._rejection_snapshot_before = dict(getattr(self, "rejection_reasons", {}))
+        self._last_step_decision = {}
         
         # MEMORY FIX: Clear all growing dicts every 1000 steps to prevent unbounded growth
         if self.current_step - self._last_trade_ids_cleared_at > 1000:
@@ -5129,6 +5184,84 @@ class MultiAssetChunkedEnv(gym.Env):
             # Count number of actual trade executions (not rejections)
             self._trades_executed_this_step = int(len(self._step_closed_receipts) if hasattr(self, '_step_closed_receipts') else 0)
 
+            # ADAN0: Step Causal Record — one JSONL row linking the policy
+            # decision of THIS step to its economic consequences. Opt-in,
+            # telemetry never alters the trading trajectory.
+            try:
+                _rec = getattr(self, "_step_causal_recorder", None)
+                if _rec is not None and getattr(_rec, "enabled", False):
+                    _pm = self.portfolio_manager
+                    _dec = getattr(self, "_last_step_decision", {}) or {}
+                    _receipts = getattr(self, "_step_closed_receipts", []) or []
+                    _fees = 0.0
+                    _realized = 0.0
+                    for _r in _receipts:
+                        if isinstance(_r, dict):
+                            _fees += float(_r.get("fees", 0.0) or 0.0)
+                            _realized += float(_r.get("pnl_net", _r.get("pnl", 0.0)) or 0.0)
+                    _rej_after = getattr(self, "rejection_reasons", {}) or {}
+                    _rej_before = getattr(self, "_rejection_snapshot_before", {}) or {}
+                    _rej_fired = [
+                        k for k, v in _rej_after.items()
+                        if int(v) > int(_rej_before.get(k, 0))
+                    ]
+                    _asset0 = _dec.get("asset") or (
+                        str(self.assets[0]) if getattr(self, "assets", None) else None
+                    )
+                    _price = None
+                    try:
+                        _price = float(self._get_current_prices().get(_asset0))
+                    except Exception:
+                        _price = None
+                    _cap_after = float(getattr(_pm, "equity", 0.0))
+                    _cash_after = float(getattr(_pm, "cash", 0.0))
+                    _ic = max(float(getattr(_pm, "initial_capital", 20.5)), 1e-9)
+                    _rec.record(
+                        step_id=int(getattr(self, "global_step", 0)),
+                        episode_id=int(getattr(self, "episode_count", 0)),
+                        asset=_asset0,
+                        policy_decision_id=(
+                            f"w{self.worker_id}:e{int(getattr(self, 'episode_count', 0))}"
+                            f":s{int(getattr(self, 'global_step', 0))}"
+                        ),
+                        raw_action=_dec.get("raw_action"),
+                        action_log_prob=None,  # owned by SB3 rollout buffer
+                        value_estimate=None,   # owned by SB3 rollout buffer
+                        entropy=None,          # owned by SB3 rollout buffer
+                        discrete_action=_dec.get("discrete_action"),
+                        target_weight=_dec.get("target_weight"),
+                        routing_result=_dec.get("routing_result"),
+                        rejection_reason=(_rej_fired[0] if _rej_fired else None),
+                        budget_before=getattr(self, "_budget_before_step", None),
+                        budget_after=float(getattr(self, "decision_budget", 0.0)),
+                        drawdown_state={
+                            "equity": _cap_after,
+                            "drawdown_ratio": max(0.0, (_ic - _cap_after) / _ic),
+                            "cooldown_until_step": int(getattr(self, "_drawdown_cooldown_until_step", 0)),
+                            "lifetime_id": int(getattr(_pm, "portfolio_lifetime_id", 0)),
+                            "reset_count": int(getattr(_pm, "portfolio_reset_count", 0)),
+                        },
+                        cooldown_state={
+                            "ratio": float(self._cooldown_remaining_ratio()),
+                            "agent_close_last_step": int(getattr(self, "_last_agent_close_step", -10**9)),
+                        },
+                        position_before=_dec.get("position_before"),
+                        position_after=any(
+                            getattr(p, "is_open", False)
+                            for p in getattr(_pm, "positions", {}).values()
+                        ),
+                        price=_price,
+                        capital_before=getattr(self, "_capital_before_step", None),
+                        capital_after=_cap_after,
+                        realized_pnl=float(_realized),
+                        unrealized_pnl=float(_cap_after - _cash_after),
+                        fees=float(_fees),
+                        reward=float(reward),
+                        reward_components=dict(getattr(self, "_last_reward_components", {}) or {}),
+                    )
+            except Exception:
+                pass
+
             # Nettoyage explicite des observations precedentes
             if hasattr(self, 'last_observation') and self.last_observation is not None:
                 del self.last_observation
@@ -5284,7 +5417,10 @@ class MultiAssetChunkedEnv(gym.Env):
             return False
 
         warmup = getattr(self, 'warmup_steps', getattr(self, 'warmup_period', 50))
-        if getattr(self, 'current_step', 0) < warmup:
+        # ADAN0 DECOUPLING: warmup is GLOBAL (once per run), not per-episode —
+        # the portfolio now survives episodes, so a per-episode warmup would
+        # blind the kill-switch for 50 steps after every boundary.
+        if getattr(self, 'global_step', 0) < warmup:
             return False
 
         # C4: Read fallback from global config, not hard-coded 4.0%
@@ -5340,6 +5476,37 @@ class MultiAssetChunkedEnv(gym.Env):
                             )
             except Exception as _e:
                 self.logger.warning(f"[DRAWDOWN_KILL] Force-close failed: {_e}")
+            # -- ADAN0: ECONOMIC RESET (single authority) ------------------
+            # The ONLY path that restores capital to initial_capital. Updates
+            # portfolio_lifetime_id / portfolio_reset_count / cumulative_pnl /
+            # time_since_drawdown_reset inside PortfolioManager.economic_reset.
+            try:
+                self.portfolio_manager.economic_reset(reason="DRAWDOWN_KILL")
+            except Exception as _er:
+                self.logger.error(f"[DRAWDOWN_KILL] economic_reset failed: {_er}")
+            # decision_budget restored to max ONLY here (never at episode reset)
+            try:
+                if hasattr(self, "decision_budget_max"):
+                    self.decision_budget = float(self.decision_budget_max)
+            except Exception:
+                pass
+            # Drawdown cooldown in the never-reset global_step frame so it
+            # survives episode boundaries by construction.
+            try:
+                self._drawdown_cooldown_until_step = int(getattr(self, "global_step", 0)) + int(
+                    getattr(self, "drawdown_cooldown_steps", 50)
+                )
+            except Exception:
+                self._drawdown_cooldown_until_step = 0
+            try:
+                _pm = self.portfolio_manager
+                self.logger.warning(
+                    f"[DRAWDOWN_KILL_ECONOMIC_RESET] lifetime={_pm.portfolio_lifetime_id} "
+                    f"resets={_pm.portfolio_reset_count} "
+                    f"cum_pnl={_pm.cumulative_pnl:+.2f} global_peak={_pm.global_peak:.2f}"
+                )
+            except Exception:
+                pass
             return True
         return False
 
@@ -6176,6 +6343,19 @@ class MultiAssetChunkedEnv(gym.Env):
                     getattr(self, "decision_budget", 1.0))
                 self.portfolio._pending_decision_budget_max = float(
                     getattr(self, "decision_budget_max", 1.0))
+            except Exception:
+                pass
+            # ADAN0-OBS: drawdown persistence slots [28-31]. Every constraint
+            # that survives episode boundaries MUST be observable, else the
+            # decoupling silently creates a POMDP.
+            try:
+                _lt = getattr(self, "_locked_tier", None) or {}
+                _mdd = float(_lt.get("max_drawdown_pct", 40.0)) / 100.0
+                self.portfolio._pending_max_dd_frac = max(_mdd, 1e-8)
+                _until = int(getattr(self, "_drawdown_cooldown_until_step", 0))
+                _rem = max(0, _until - int(getattr(self, "global_step", 0)))
+                _tot = max(1, int(getattr(self, "drawdown_cooldown_steps", 50)))
+                self.portfolio._pending_drawdown_cooldown = float(min(1.0, _rem / _tot))
             except Exception:
                 pass
             # Récupérer le vecteur d'état du portefeuille
@@ -7538,6 +7718,8 @@ class MultiAssetChunkedEnv(gym.Env):
             # Keep drawdown risk-management pressure (survival first) but drop
             # the asymmetric realized-PnL / tier / closure terms entirely.
             raw_reward += drawdown_penalty
+            # ADAN0: export the pure MTM equity-delta term for the invariant.
+            _mtm_delta_equity_export = float(self.mtm_scale) * delta_equity_pct
 
         # Use symlog to compress large rewards while preserving small signal
         final_reward = float(_np.sign(raw_reward) * _np.log1p(_np.abs(raw_reward)))
@@ -7611,6 +7793,13 @@ class MultiAssetChunkedEnv(gym.Env):
             "future_contrib":   future_contrib,
             "raw":              raw_reward,
             "final_reward":     final_reward,
+            # ADAN0: additive terms required by the exact per-transition
+            # invariant raw == sum(additive components).
+            "holding_cost":      float(holding_cost),
+            "smart_flat_reward": float(smart_flat_reward),
+            "time_decay_cost":   float(time_decay_cost),
+            "mtm_delta_equity":  float(locals().get("_mtm_delta_equity_export", 0.0)),
+            "mtm_trade_cost":    float(locals().get("_mtm_cost", 0.0) or 0.0),
             # V11 telemetry: components not previously exported
             "symmetry_penalty": symmetry_penalty,
             "action_entropy_penalty": action_entropy_penalty,
@@ -7625,6 +7814,33 @@ class MultiAssetChunkedEnv(gym.Env):
             "behavior_buy_while_open_count": int(
                 getattr(self, "_behavior_penalty_counts", {}).get("buy_while_open", 0)),
         }
+
+        # ADAN0: exact per-transition reward invariant.
+        # raw_reward must equal the sum of the additive (non-aliased)
+        # components within 1e-6 — checked on EVERY transition, never on
+        # means. Violations are counted and logged, never hidden.
+        try:
+            from ..instrumentation.step_causal_recorder import (
+                check_reward_invariant as _check_rinv,
+            )
+            _rinv_ok, _rinv_err, _rinv_sum = _check_rinv(
+                float(raw_reward),
+                self._last_reward_components,
+                mtm=bool(getattr(self, "mtm_reward", False)),
+            )
+            self._last_reward_components["additive_sum"] = float(_rinv_sum)
+            self._last_reward_components["invariant_ok"] = bool(_rinv_ok)
+            self._last_reward_components["invariant_error"] = float(_rinv_err)
+            if not hasattr(self, "_reward_invariant_violations"):
+                self._reward_invariant_violations = 0
+            if not _rinv_ok:
+                self._reward_invariant_violations += 1
+                self.logger.warning(
+                    f"[REWARD_INVARIANT_VIOLATION] step={self.current_step} "
+                    f"raw={float(raw_reward):.8f} sum={_rinv_sum:.8f} err={_rinv_err:.3e}"
+                )
+        except Exception:
+            pass
 
         # ──────────────────────────────────────────────────────────────────
         # V11 REWARD-COMPONENT TELEMETRY (Phase 2) — NON-INVASIVE.
@@ -8742,6 +8958,7 @@ class MultiAssetChunkedEnv(gym.Env):
                 threshold=action_threshold,
                 sell_threshold=_sell_thr,
             )
+            _route_stage, _route_reason = None, None
             if discrete_action == 0:
                 _effective_thr = abs(float(_sell_thr)) if (_in_pos_route and _sell_thr is not None) else abs(float(action_threshold))
                 if not _slot_available and not _in_pos_route:
@@ -8789,6 +9006,24 @@ class MultiAssetChunkedEnv(gym.Env):
                             self._behavior_penalty_counts[_bp_key] = (
                                 self._behavior_penalty_counts.get(_bp_key, 0) + 1
                             )
+                # ADAN0: ventilate routing rejections by exact reason.
+                try:
+                    _apc = self.action_pipeline_counts
+                    if _route_stage == "deadband_reject":
+                        _apc["routing_reject_deadband"] += 1
+                    elif _route_stage == "portfolio_reject":
+                        _apc["routing_reject_position"] += 1
+                    elif _route_stage == "routing_reject":
+                        _apc["routing_reject_position"] += 1
+                        _rk = f"routing_reject_{_route_reason}"
+                        if _rk in _apc:
+                            _apc[_rk] += 1
+                        else:
+                            _apc["routing_reject_other"] += 1
+                    else:
+                        _apc["routing_reject_other"] += 1
+                except Exception:
+                    pass
                 self._trace_action_pipeline(
                     _route_stage, asset, main_decision, 0, _route_reason,
                     in_position=_in_pos_route, slot_available=_slot_available,
@@ -8801,6 +9036,15 @@ class MultiAssetChunkedEnv(gym.Env):
                 self._last_route_action = int(discrete_action)
                 first_discrete_action_requested = discrete_action  # routed, before gates
                 first_discrete_action = discrete_action
+                # ADAN0: step-causal decision snapshot (first asset = primary).
+                self._last_step_decision = {
+                    "asset": str(asset),
+                    "raw_action": float(main_decision),
+                    "discrete_action": int(discrete_action),
+                    "routing_result": (_route_reason if discrete_action == 0 else "routed"),
+                    "target_weight": None,
+                    "position_before": bool(_in_pos_route),
+                }
 
             # Log intention (every 50 steps to reduce spam)
             if self.current_step % 50 == 0:
@@ -8824,6 +9068,11 @@ class MultiAssetChunkedEnv(gym.Env):
             normalized_size = (size_raw + 1.0) / 2.0  # 0..1
             normalized_size = max(0.0, min(1.0, normalized_size))
             target_exposure_pct = min_exp + normalized_size * (max_exp - min_exp)
+            if i == 0:
+                try:
+                    self._last_step_decision["target_weight"] = float(target_exposure_pct)
+                except Exception:
+                    pass
             # ==============================================================
             # HMM confidence : lecture SEULE pour l'EV gate (p_hmm).
             # N'ecrase PLUS le sizing (reste strictement dans les bornes
