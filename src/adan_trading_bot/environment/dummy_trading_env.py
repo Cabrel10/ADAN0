@@ -61,7 +61,7 @@ class TradingEnvDummy(gym.Env):
             'portfolio_state': spaces.Box(
                 low=-np.inf,
                 high=np.inf,
-                shape=(28,),     # DEFAULT_PORTFOLIO_STATE_SIZE = 28 (20 base + 8 ACM Capability Vector)
+                shape=(32,),     # DEFAULT_PORTFOLIO_STATE_SIZE = 32 (20 base + 8 ACM + 4 ADAN0 drawdown persistence)
                 dtype=np.float32,
             ),
         })

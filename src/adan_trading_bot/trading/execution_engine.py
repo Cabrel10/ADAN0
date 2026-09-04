@@ -964,10 +964,26 @@ class ExecutionEngine:
                 float(np.clip(cap_cooldown, 0.0, 1.0)),       # [26]
                 float(np.clip(cap_self_caused, 0.0, 1.0)),    # [27]
             ])
-        except Exception:
-            state.extend([0.0] * 8)
 
-        assert len(state) == 28, f"portfolio_state must be 28 dims, got {len(state)}"
+            # ADAN0: drawdown persistence slots [28-31] — MUST mirror
+            # PortfolioManager.get_state_vector() slot-for-slot so the live
+            # observation stays in-distribution for the trained policy.
+            _dd_ratio_live = float(np.clip(
+                (init_cap - equity) / init_cap, 0.0, 1.0
+            )) if init_cap > 0 else 0.0
+            _max_dd_frac_live = max(
+                float(getattr(self, "max_drawdown_pct", 40.0)) / 100.0, 1e-8
+            )
+            state.extend([
+                _dd_ratio_live,                                          # [28]
+                float(np.clip(_dd_ratio_live / _max_dd_frac_live, 0.0, 1.0)),  # [29]
+                float(np.clip(getattr(self, "_pending_drawdown_cooldown", 0.0), 0.0, 1.0)),  # [30]
+                float(np.clip(getattr(self, "time_since_drawdown_reset", 0) / 1000.0, 0.0, 1.0)),  # [31]
+            ])
+        except Exception:
+            state.extend([0.0] * 12)
+
+        assert len(state) == 32, f"portfolio_state must be 32 dims, got {len(state)}"
         return np.array(state, dtype=np.float32)
 
     def _portfolio_snapshot(self, price: float) -> Dict[str, Any]:
