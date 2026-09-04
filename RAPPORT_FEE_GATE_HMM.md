@@ -351,3 +351,117 @@ il porte sur la sémantique Gymnasium, pas sur les données. Sa causalité sur
 
 **500k reste bloqué.** Motif mis à jour : ce n'est plus « univers baissier »,
 c'est « aucun gate n'a jamais été mesuré sur l'univers que le run charge ».
+
+---
+
+# CAUSE RACINE DU SIGNAL HMM — MESURÉE, CLASSÉE
+
+Mesures sur `BTCUSDT_BINANCE` / `DOGEUSDT_BINANCE` (l'univers que
+`launch_asset_run.py` charge réellement), 300 pas par fenêtre.
+
+## K. La réserve de l'utilisateur était fondée
+
+Sur l'univers réel, la postérieure **n'est pas dégénérée** :
+
+| asset/split | ONE_HOT | NEAR_ONE_HOT | INTERMEDIATE | valeurs `p_hmm` distinctes | Σ p50 |
+|---|---|---|---|---|---|
+| BTC train | 80,7 % | 6,7 % | 12,7 % | 28 | 1,0 |
+| BTC val | 76,7 % | 8,0 % | 15,3 % | 42 | 1,0 |
+| DOGE train | 66,0 % | 16,7 % | 17,3 % | 65 | 1,0 |
+| DOGE val | 67,7 % | 14,7 % | 17,7 % | 61 | 1,0 |
+
+C'est le profil **normal** d'un HMM à forte persistance : postérieures souvent
+saturées, mais graduées (jusqu'à 65 valeurs distinctes) et sommant à 1. Le
+« HMM dégénéré » observé plus tôt était un artefact de la fenêtre de 27,7 jours.
+`0.333333` apparaît **exactement 29 fois dans chaque fenêtre** — c'est le
+warm-up (`_hmm_min_obs = 60`), pas un fallback permanent.
+
+Moteur interrogé sur ses propres compteurs
+(`logs/validation/hmm_engine_health_20260905_003032.json`) :
+`_hmm_fit_count = 5`, `_hmm_fit_failures = 0`,
+`_hmm_last_fallback_reason = None`, features vivantes
+(`log_return` 300 valeurs distinctes, `rsi_norm` ∈ [0,26 ; 0,90]).
+Classification : **NI entraînement, NI calibration, NI données, NI mapping.**
+
+## L. Mais le compteur a révélé une anomalie dure
+
+`get_regime_probabilities` est appelée **599 fois pour 300 pas**, et
+`observation_id` est `None` dans **49,92 %** des appels, avec `log_return`
+présent seulement 300 fois sur 599.
+
+Il existe deux appelants :
+
+- **A** `multi_asset_chunked_env.py` L6315 → `_get_current_market_data_for_hmm()`
+  → vraies features + `observation_id`.
+- **B** `dynamic_behavior_engine.py` L915 (`detect_market_regime`), atteint
+  depuis `update_risk_parameters` L986 et depuis env L1357 avec
+  `market_conditions` — un dict qui **ne contient aucune** des 4 features HMM.
+
+Sur le chemin B, `get_regime_probabilities` L631+ retombe sur ses défauts
+`log_ret=0.0, atr_pct=0.0, rsi_norm=0.5, volume_ratio=1.0`, et
+`observation_id=None` **désactive aussi le cache de déduplication** L636-639
+(`if observation_id is not None and ...`). L'appel n'est donc jamais
+court-circuité, et `_update_hmm` exécute inconditionnellement :
+
+```python
+self._hmm_obs_buffer.append([log_return, atr_pct, rsi_norm, volume_ratio])
+self._hmm_total_obs += 1
+```
+
+## M. Contamination confirmée, chiffrée
+
+`logs/validation/hmm_buffer_contamination_20260905_003847.json` :
+
+| mesure | valeur |
+|---|---|
+| `buffer_len` | 500 |
+| `buffer_synthetic_rows` | **250** |
+| `buffer_synthetic_share` | **0,5000** |
+| `buffer_distinct_points` | **251** (250 réels + 1 point faux répété) |
+| `share_calls_synthetic` | 0,4992 |
+| `share_posterior_computed_on_synthetic_last_row` | **0,4992** |
+| `engine_total_obs` | 600 pour 300 pas |
+| `final_probs` | [0,999906 ; 0,0 ; 0,000094] |
+
+Deux conséquences distinctes, toutes deux mesurées :
+
+1. **Le fit est empoisonné.** La fenêtre glissante de 500 points ne contient que
+   251 points distincts : la moitié est un unique point constant répété 250
+   fois. Un composant gaussien se verrouille dessus (variance → 0), ce qui
+   explique mécaniquement la saturation et `sideways_max = 0.333333` sur trois
+   fenêtres sur quatre — l'état « sideways » est capturé par le point mort.
+2. **La postérieure retournée décrit parfois une observation fictive.**
+   `_update_hmm` renvoie `predict_proba(X)[-1]`, soit la postérieure de la
+   **dernière ligne ajoutée**. Dans 49,92 % des appels cette dernière ligne est
+   le vecteur synthétique. Une fois sur deux, `p_hmm` ne parle pas du marché.
+
+Classification finale, dans la taxonomie demandée :
+**TRANSFORMATION / PLUMBING** — un second appelant sans features partage le
+même buffer de fit et le même chemin de retour que le calcul de marché.
+Ce n'est ni un problème d'entraînement, ni de calibration, ni de données, ni de
+régime réellement observé, ni de mapping bull/bear, ni de normalisation.
+
+## N. Conséquence économique, mesurée sur l'univers réel
+
+Avec `p_min_required` p50 ≈ 0,466 (sain, et `p_min_min` ≈ 0,328) :
+
+| asset/split | invocations | block_rate |
+|---|---|---|
+| BTC train | 92 | 0,7065 |
+| BTC val | 115 | 0,8435 |
+| DOGE train | 112 | 0,8125 |
+| DOGE val | 84 | 0,6429 |
+
+Le `fee_gate` bloque 64-84 % même sur l'univers réel. `p_min` n'est pas le
+terme fautif : `p_hmm` l'est, et une moitié de ses valeurs est calculée sur une
+observation synthétique. **Hypothèse de mécanisme partagé DOGE/BTC : CONFIRMÉE**
+(même signature sur les deux actifs), ce qui répond au point 2 de l'utilisateur.
+
+## O. Ce que ce résultat impose
+
+Aucun correctif de reward, PPO, cooldown ou SL/TP n'est pertinent tant que
+`p_hmm` est calculé une fois sur deux sur un point mort. C'est un défaut de
+plomberie à corriger avant toute remesure de Gate B / Gate C, et avant tout
+jugement sur `explained_variance`.
+
+**500k reste bloqué.**
