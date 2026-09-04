@@ -1,0 +1,925 @@
+{
+  "assets": {
+    "test/BTCUSDT": {
+      "approx_days_5m": 7.9,
+      "decile_segments": [
+        {
+          "direction": "DOWN",
+          "part": 0,
+          "return_pct": -1.585,
+          "rows": 228
+        },
+        {
+          "direction": "DOWN",
+          "part": 1,
+          "return_pct": -0.381,
+          "rows": 228
+        },
+        {
+          "direction": "UP",
+          "part": 2,
+          "return_pct": 3.206,
+          "rows": 228
+        },
+        {
+          "direction": "UP",
+          "part": 3,
+          "return_pct": 1.495,
+          "rows": 228
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -1.859,
+          "rows": 228
+        },
+        {
+          "direction": "DOWN",
+          "part": 5,
+          "return_pct": -1.132,
+          "rows": 228
+        },
+        {
+          "direction": "UP",
+          "part": 6,
+          "return_pct": 0.739,
+          "rows": 228
+        },
+        {
+          "direction": "UP",
+          "part": 7,
+          "return_pct": 0.874,
+          "rows": 228
+        },
+        {
+          "direction": "FLAT",
+          "part": 8,
+          "return_pct": -0.055,
+          "rows": 228
+        },
+        {
+          "direction": "DOWN",
+          "part": 9,
+          "return_pct": -0.8,
+          "rows": 228
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 5,
+      "first_close": 63851.88,
+      "full_history_return_pct": 0.488,
+      "last_close": 64163.41,
+      "one_sided": false,
+      "rising_deciles": 4,
+      "rows_5m": 2283,
+      "share_of_history_in_one_chunk": 3.5002
+    },
+    "test/BTCUSDT_BINANCE": {
+      "approx_days_5m": 493.0,
+      "decile_segments": [
+        {
+          "direction": "UP",
+          "part": 0,
+          "return_pct": 23.955,
+          "rows": 14199
+        },
+        {
+          "direction": "UP",
+          "part": 1,
+          "return_pct": 13.549,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 2,
+          "return_pct": -3.654,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 3,
+          "return_pct": -4.457,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -19.143,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 5,
+          "return_pct": -21.13,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 6,
+          "return_pct": -5.323,
+          "rows": 14199
+        },
+        {
+          "direction": "UP",
+          "part": 7,
+          "return_pct": 18.54,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 8,
+          "return_pct": -19.948,
+          "rows": 14199
+        },
+        {
+          "direction": "UP",
+          "part": 9,
+          "return_pct": 22.409,
+          "rows": 14199
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 6,
+      "first_close": 84385.24,
+      "full_history_return_pct": -8.663,
+      "last_close": 77074.93,
+      "one_sided": false,
+      "rising_deciles": 4,
+      "rows_5m": 141996,
+      "share_of_history_in_one_chunk": 0.0563
+    },
+    "test/DOGEUSDT": {
+      "approx_days_5m": 17.4,
+      "decile_segments": [
+        {
+          "direction": "DOWN",
+          "part": 0,
+          "return_pct": -0.595,
+          "rows": 500
+        },
+        {
+          "direction": "DOWN",
+          "part": 1,
+          "return_pct": -0.37,
+          "rows": 500
+        },
+        {
+          "direction": "UP",
+          "part": 2,
+          "return_pct": 0.971,
+          "rows": 500
+        },
+        {
+          "direction": "DOWN",
+          "part": 3,
+          "return_pct": -0.494,
+          "rows": 500
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -2.029,
+          "rows": 500
+        },
+        {
+          "direction": "UP",
+          "part": 5,
+          "return_pct": 1.549,
+          "rows": 500
+        },
+        {
+          "direction": "UP",
+          "part": 6,
+          "return_pct": 0.727,
+          "rows": 500
+        },
+        {
+          "direction": "DOWN",
+          "part": 7,
+          "return_pct": -0.58,
+          "rows": 500
+        },
+        {
+          "direction": "UP",
+          "part": 8,
+          "return_pct": 0.228,
+          "rows": 500
+        },
+        {
+          "direction": "FLAT",
+          "part": 9,
+          "return_pct": -0.099,
+          "rows": 500
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 5,
+      "first_close": 0.07063,
+      "full_history_return_pct": -0.411,
+      "last_close": 0.07034,
+      "one_sided": false,
+      "rising_deciles": 4,
+      "rows_5m": 5000,
+      "share_of_history_in_one_chunk": 1.5982
+    },
+    "test/DOGEUSDT_BINANCE": {
+      "approx_days_5m": 390.5,
+      "decile_segments": [
+        {
+          "direction": "DOWN",
+          "part": 0,
+          "return_pct": -9.021,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 1,
+          "return_pct": -10.017,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 2,
+          "return_pct": -30.036,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 3,
+          "return_pct": -12.804,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -20.268,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 5,
+          "return_pct": -4.074,
+          "rows": 11246
+        },
+        {
+          "direction": "UP",
+          "part": 6,
+          "return_pct": 5.717,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 7,
+          "return_pct": -15.348,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 8,
+          "return_pct": -10.639,
+          "rows": 11246
+        },
+        {
+          "direction": "UP",
+          "part": 9,
+          "return_pct": 23.598,
+          "rows": 11246
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 8,
+      "first_close": 0.24154,
+      "full_history_return_pct": -61.961,
+      "last_close": 0.09188,
+      "one_sided": false,
+      "rising_deciles": 2,
+      "rows_5m": 112467,
+      "share_of_history_in_one_chunk": 0.0711
+    },
+    "train/BTCUSDT": {
+      "approx_days_5m": 27.7,
+      "decile_segments": [
+        {
+          "direction": "UP",
+          "part": 0,
+          "return_pct": 4.756,
+          "rows": 799
+        },
+        {
+          "direction": "DOWN",
+          "part": 1,
+          "return_pct": -5.06,
+          "rows": 799
+        },
+        {
+          "direction": "DOWN",
+          "part": 2,
+          "return_pct": -18.144,
+          "rows": 799
+        },
+        {
+          "direction": "UP",
+          "part": 3,
+          "return_pct": 1.961,
+          "rows": 799
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -6.342,
+          "rows": 799
+        },
+        {
+          "direction": "DOWN",
+          "part": 5,
+          "return_pct": -2.383,
+          "rows": 799
+        },
+        {
+          "direction": "UP",
+          "part": 6,
+          "return_pct": 6.558,
+          "rows": 799
+        },
+        {
+          "direction": "UP",
+          "part": 7,
+          "return_pct": 3.004,
+          "rows": 799
+        },
+        {
+          "direction": "DOWN",
+          "part": 8,
+          "return_pct": -2.743,
+          "rows": 799
+        },
+        {
+          "direction": "UP",
+          "part": 9,
+          "return_pct": 1.911,
+          "rows": 799
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 5,
+      "first_close": 77134.63,
+      "full_history_return_pct": -17.141,
+      "last_close": 63913.06,
+      "one_sided": false,
+      "rising_deciles": 5,
+      "rows_5m": 7991,
+      "share_of_history_in_one_chunk": 1.0
+    },
+    "train/BTCUSDT_BINANCE": {
+      "approx_days_5m": 2300.8,
+      "decile_segments": [
+        {
+          "direction": "UP",
+          "part": 0,
+          "return_pct": 59.452,
+          "rows": 66264
+        },
+        {
+          "direction": "DOWN",
+          "part": 1,
+          "return_pct": -34.84,
+          "rows": 66264
+        },
+        {
+          "direction": "UP",
+          "part": 2,
+          "return_pct": 153.88,
+          "rows": 66264
+        },
+        {
+          "direction": "DOWN",
+          "part": 3,
+          "return_pct": -21.402,
+          "rows": 66264
+        },
+        {
+          "direction": "UP",
+          "part": 4,
+          "return_pct": 27.63,
+          "rows": 66264
+        },
+        {
+          "direction": "UP",
+          "part": 5,
+          "return_pct": 239.661,
+          "rows": 66264
+        },
+        {
+          "direction": "UP",
+          "part": 6,
+          "return_pct": 8.991,
+          "rows": 66264
+        },
+        {
+          "direction": "DOWN",
+          "part": 7,
+          "return_pct": -53.438,
+          "rows": 66264
+        },
+        {
+          "direction": "UP",
+          "part": 8,
+          "return_pct": 38.557,
+          "rows": 66264
+        },
+        {
+          "direction": "UP",
+          "part": 9,
+          "return_pct": 60.09,
+          "rows": 66264
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 3,
+      "first_close": 4261.48,
+      "full_history_return_pct": 928.905,
+      "last_close": 43846.59,
+      "one_sided": false,
+      "rising_deciles": 7,
+      "rows_5m": 662643,
+      "share_of_history_in_one_chunk": 0.0121
+    },
+    "train/DOGEUSDT": {
+      "approx_days_5m": 60.8,
+      "decile_segments": [
+        {
+          "direction": "DOWN",
+          "part": 0,
+          "return_pct": -11.406,
+          "rows": 1750
+        },
+        {
+          "direction": "DOWN",
+          "part": 1,
+          "return_pct": -5.073,
+          "rows": 1750
+        },
+        {
+          "direction": "UP",
+          "part": 2,
+          "return_pct": 3.762,
+          "rows": 1750
+        },
+        {
+          "direction": "DOWN",
+          "part": 3,
+          "return_pct": -4.251,
+          "rows": 1750
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -11.326,
+          "rows": 1750
+        },
+        {
+          "direction": "UP",
+          "part": 5,
+          "return_pct": 3.967,
+          "rows": 1750
+        },
+        {
+          "direction": "DOWN",
+          "part": 6,
+          "return_pct": -4.055,
+          "rows": 1750
+        },
+        {
+          "direction": "DOWN",
+          "part": 7,
+          "return_pct": -0.365,
+          "rows": 1750
+        },
+        {
+          "direction": "DOWN",
+          "part": 8,
+          "return_pct": -0.461,
+          "rows": 1750
+        },
+        {
+          "direction": "DOWN",
+          "part": 9,
+          "return_pct": -3.759,
+          "rows": 1750
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 8,
+      "first_close": 0.09977,
+      "full_history_return_pct": -29.167,
+      "last_close": 0.07067,
+      "one_sided": false,
+      "rising_deciles": 2,
+      "rows_5m": 17500,
+      "share_of_history_in_one_chunk": 0.4566
+    },
+    "train/DOGEUSDT_BINANCE": {
+      "approx_days_5m": 1822.4,
+      "decile_segments": [
+        {
+          "direction": "DOWN",
+          "part": 0,
+          "return_pct": -52.929,
+          "rows": 52484
+        },
+        {
+          "direction": "UP",
+          "part": 1,
+          "return_pct": 12.875,
+          "rows": 52484
+        },
+        {
+          "direction": "UP",
+          "part": 2,
+          "return_pct": 452.326,
+          "rows": 52484
+        },
+        {
+          "direction": "UP",
+          "part": 3,
+          "return_pct": 1799.55,
+          "rows": 52484
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -29.382,
+          "rows": 52484
+        },
+        {
+          "direction": "DOWN",
+          "part": 5,
+          "return_pct": -59.161,
+          "rows": 52484
+        },
+        {
+          "direction": "UP",
+          "part": 6,
+          "return_pct": 3.116,
+          "rows": 52484
+        },
+        {
+          "direction": "DOWN",
+          "part": 7,
+          "return_pct": -4.452,
+          "rows": 52484
+        },
+        {
+          "direction": "UP",
+          "part": 8,
+          "return_pct": 33.416,
+          "rows": 52484
+        },
+        {
+          "direction": "UP",
+          "part": 9,
+          "return_pct": 36.59,
+          "rows": 52484
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 4,
+      "first_close": 0.00435,
+      "full_history_return_pct": 2774.483,
+      "last_close": 0.12504,
+      "one_sided": false,
+      "rising_deciles": 6,
+      "rows_5m": 524841,
+      "share_of_history_in_one_chunk": 0.0152
+    },
+    "val/BTCUSDT": {
+      "approx_days_5m": 4.0,
+      "decile_segments": [
+        {
+          "direction": "UP",
+          "part": 0,
+          "return_pct": 1.587,
+          "rows": 114
+        },
+        {
+          "direction": "UP",
+          "part": 1,
+          "return_pct": 0.503,
+          "rows": 114
+        },
+        {
+          "direction": "UP",
+          "part": 2,
+          "return_pct": 1.87,
+          "rows": 114
+        },
+        {
+          "direction": "DOWN",
+          "part": 3,
+          "return_pct": -0.684,
+          "rows": 114
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -0.64,
+          "rows": 114
+        },
+        {
+          "direction": "FLAT",
+          "part": 5,
+          "return_pct": -0.165,
+          "rows": 114
+        },
+        {
+          "direction": "DOWN",
+          "part": 6,
+          "return_pct": -0.348,
+          "rows": 114
+        },
+        {
+          "direction": "DOWN",
+          "part": 7,
+          "return_pct": -0.913,
+          "rows": 114
+        },
+        {
+          "direction": "UP",
+          "part": 8,
+          "return_pct": 0.207,
+          "rows": 114
+        },
+        {
+          "direction": "UP",
+          "part": 9,
+          "return_pct": 0.245,
+          "rows": 114
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 4,
+      "first_close": 64197.67,
+      "full_history_return_pct": 1.874,
+      "last_close": 65400.66,
+      "one_sided": false,
+      "rising_deciles": 5,
+      "rows_5m": 1143,
+      "share_of_history_in_one_chunk": 6.9913
+    },
+    "val/BTCUSDT_BINANCE": {
+      "approx_days_5m": 493.0,
+      "decile_segments": [
+        {
+          "direction": "DOWN",
+          "part": 0,
+          "return_pct": -3.848,
+          "rows": 14199
+        },
+        {
+          "direction": "UP",
+          "part": 1,
+          "return_pct": 62.119,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 2,
+          "return_pct": -7.536,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 3,
+          "return_pct": -3.072,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -4.341,
+          "rows": 14199
+        },
+        {
+          "direction": "UP",
+          "part": 5,
+          "return_pct": 4.9,
+          "rows": 14199
+        },
+        {
+          "direction": "UP",
+          "part": 6,
+          "return_pct": 49.073,
+          "rows": 14199
+        },
+        {
+          "direction": "UP",
+          "part": 7,
+          "return_pct": 3.786,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 8,
+          "return_pct": -8.134,
+          "rows": 14199
+        },
+        {
+          "direction": "DOWN",
+          "part": 9,
+          "return_pct": -3.637,
+          "rows": 14199
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 6,
+      "first_close": 43866.03,
+      "full_history_return_pct": 92.542,
+      "last_close": 84460.43,
+      "one_sided": false,
+      "rising_deciles": 4,
+      "rows_5m": 141994,
+      "share_of_history_in_one_chunk": 0.0563
+    },
+    "val/DOGEUSDT": {
+      "approx_days_5m": 8.7,
+      "decile_segments": [
+        {
+          "direction": "DOWN",
+          "part": 0,
+          "return_pct": -1.108,
+          "rows": 250
+        },
+        {
+          "direction": "UP",
+          "part": 1,
+          "return_pct": 0.503,
+          "rows": 250
+        },
+        {
+          "direction": "UP",
+          "part": 2,
+          "return_pct": 0.6,
+          "rows": 250
+        },
+        {
+          "direction": "DOWN",
+          "part": 3,
+          "return_pct": -0.384,
+          "rows": 250
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -0.227,
+          "rows": 250
+        },
+        {
+          "direction": "UP",
+          "part": 5,
+          "return_pct": 7.336,
+          "rows": 250
+        },
+        {
+          "direction": "UP",
+          "part": 6,
+          "return_pct": 8.506,
+          "rows": 250
+        },
+        {
+          "direction": "UP",
+          "part": 7,
+          "return_pct": 11.565,
+          "rows": 250
+        },
+        {
+          "direction": "UP",
+          "part": 8,
+          "return_pct": 0.965,
+          "rows": 250
+        },
+        {
+          "direction": "UP",
+          "part": 9,
+          "return_pct": 0.271,
+          "rows": 250
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 3,
+      "first_close": 0.07041,
+      "full_history_return_pct": 31.302,
+      "last_close": 0.09245,
+      "one_sided": false,
+      "rising_deciles": 7,
+      "rows_5m": 2500,
+      "share_of_history_in_one_chunk": 3.1964
+    },
+    "val/DOGEUSDT_BINANCE": {
+      "approx_days_5m": 390.5,
+      "decile_segments": [
+        {
+          "direction": "DOWN",
+          "part": 0,
+          "return_pct": -15.338,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 1,
+          "return_pct": -1.921,
+          "rows": 11246
+        },
+        {
+          "direction": "UP",
+          "part": 2,
+          "return_pct": 40.23,
+          "rows": 11246
+        },
+        {
+          "direction": "UP",
+          "part": 3,
+          "return_pct": 198.41,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 4,
+          "return_pct": -20.962,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 5,
+          "return_pct": -29.12,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 6,
+          "return_pct": -30.614,
+          "rows": 11246
+        },
+        {
+          "direction": "UP",
+          "part": 7,
+          "return_pct": 36.204,
+          "rows": 11246
+        },
+        {
+          "direction": "DOWN",
+          "part": 8,
+          "return_pct": -25.818,
+          "rows": 11246
+        },
+        {
+          "direction": "UP",
+          "part": 9,
+          "return_pct": 41.385,
+          "rows": 11246
+        }
+      ],
+      "env_chunk_rows_observed": 7991,
+      "exists": true,
+      "falling_deciles": 6,
+      "first_close": 0.12505,
+      "full_history_return_pct": 92.627,
+      "last_close": 0.24088,
+      "one_sided": false,
+      "rising_deciles": 4,
+      "rows_5m": 112466,
+      "share_of_history_in_one_chunk": 0.0711
+    }
+  },
+  "candidates_large_and_two_sided": [
+    "train/BTCUSDT_BINANCE",
+    "train/DOGEUSDT_BINANCE",
+    "val/BTCUSDT_BINANCE",
+    "val/DOGEUSDT_BINANCE",
+    "test/BTCUSDT_BINANCE",
+    "test/DOGEUSDT_BINANCE"
+  ],
+  "generated_at": "2026-09-04 23:57:34",
+  "question": "Given H_BETA (the HMM tracks reality), is the agent's 96% HOLD a rational response to a one-sided training universe? And is that universe small because of the loader or because of the data?",
+  "upstream_evidence": {
+    "env_reported_chunks": "1/1",
+    "hmm_discriminant_verdict": "H_BETA_regime_call_tracks_realized_direction",
+    "train_bear_share": 0.795,
+    "train_p_hmm_p50": 0.01,
+    "train_window_return_pct": -17.1409,
+    "val_bear_share": 0.435,
+    "val_p_hmm_p50": 0.333333,
+    "val_window_return_pct": 1.8739
+  },
+  "verdict": "H1_parquet_is_large_and_two_sided_but_env_exposes_one_chunk -> data exposure problem, not a model problem"
+}

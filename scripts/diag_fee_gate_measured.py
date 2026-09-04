@@ -47,6 +47,29 @@ os.environ.setdefault("ADAN_RICH_STEP_EVERY", "999999")
 STEPS = int(os.environ.get("DIAG_STEPS", "500"))
 SEED = int(os.environ.get("DIAG_SEED", "330500"))
 
+# ADAN0_ASSET_PARAM: the first run of this probe hardcoded assets=["BTCUSDT"],
+# which is the 7,991-row / -17.14% split. scripts/launch_asset_run.py restricts
+# --asset to BTCUSDT_BINANCE / DOGEUSDT_BINANCE and rewrites every asset key in
+# the config, so real training runs never saw the small split. Parameterise so
+# the gate can be measured on the universe the runs actually use.
+ASSET = os.environ.get("DIAG_ASSET", "BTCUSDT")
+SPLIT = os.environ.get("DIAG_SPLIT", "train")
+
+# Mirror scripts/launch_asset_run.py::_SLTP so p_min_required is computed from
+# the same action box the real run exports, not from config defaults.
+_SLTP = {
+    "BTCUSDT_BINANCE": {"ADAN_TP_LO": "0.0135", "ADAN_TP_HI": "0.0222",
+                        "ADAN_SL_HI": "0.0235"},
+    "BTCUSDT": {"ADAN_TP_LO": "0.0135", "ADAN_TP_HI": "0.0222",
+                "ADAN_SL_HI": "0.0235"},
+    "DOGEUSDT_BINANCE": {"ADAN_TP_LO": "0.003", "ADAN_TP_HI": "0.090",
+                         "ADAN_SL_HI": "0.060"},
+    "DOGEUSDT": {"ADAN_TP_LO": "0.003", "ADAN_TP_HI": "0.090",
+                 "ADAN_SL_HI": "0.060"},
+}
+for _k, _v in _SLTP.get(ASSET, {}).items():
+    os.environ.setdefault(_k, _v)
+
 SAMPLES: list[dict] = []
 
 
@@ -83,9 +106,13 @@ def build_env():
     cfg.setdefault("environment", {})["rich_display_interval"] = 999999
     wc = copy.deepcopy(cfg.get("workers", {}).get("w1", {}))
     wc.update({
-        "worker_id": 0, "data_split": "train", "data_split_override": "train",
-        "timeframes": ["5m", "1h", "4h"], "assets": ["BTCUSDT"],
+        "worker_id": 0, "data_split": SPLIT, "data_split_override": SPLIT,
+        "timeframes": ["5m", "1h", "4h"], "assets": [ASSET],
     })
+    # launch_asset_run.py rewrites these too; do the same so the loader and the
+    # env agree on the single-asset universe.
+    cfg.setdefault("data", {})["assets"] = [ASSET]
+    cfg.setdefault("environment", {})["assets"] = [ASSET]
     data = ChunkedDataLoader(config=cfg, worker_config=wc,
                              worker_id=0).load_chunk(0)
     env = MultiAssetChunkedEnv(data=data, config=cfg, worker_config=wc,
@@ -148,6 +175,10 @@ def main() -> None:
             "tp_hi=0.0222 gives p_min=0.278, so the gate IS satisfiable inside "
             "the action box. This run measures which term actually blocks."
         ),
+        "asset": ASSET,
+        "split": SPLIT,
+        "sltp_box_env": {k: os.environ.get(k)
+                         for k in ("ADAN_SL_HI", "ADAN_TP_LO", "ADAN_TP_HI")},
         "steps": STEPS,
         "seed": SEED,
         "gate_invocations": len(SAMPLES),

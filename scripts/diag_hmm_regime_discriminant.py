@@ -65,11 +65,16 @@ def build_env(cfg, asset: str, split: str, chunk: int):
     from adan_trading_bot.environment.multi_asset_chunked_env import (
         MultiAssetChunkedEnv,
     )
+    cfg = copy.deepcopy(cfg)
     wc = copy.deepcopy(cfg.get("workers", {}).get("w1", {}))
     wc.update({
         "worker_id": 0, "data_split": split, "data_split_override": split,
         "timeframes": ["5m", "1h", "4h"], "assets": [asset],
     })
+    # ADAN0_ASSET_PARAM: launch_asset_run.py::derive_config rewrites all three
+    # asset keys. Mirror it so the probe sees the same universe as a real run.
+    cfg.setdefault("data", {})["assets"] = [asset]
+    cfg.setdefault("environment", {})["assets"] = [asset]
     loader = ChunkedDataLoader(config=cfg, worker_config=wc, worker_id=0)
     data = loader.load_chunk(chunk)
     env = MultiAssetChunkedEnv(data=data, config=cfg, worker_config=wc,
