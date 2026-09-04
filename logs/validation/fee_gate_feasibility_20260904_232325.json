@@ -1,0 +1,192 @@
+{
+  "configured_pairs": {
+    "sl_hi__tp_hi (best configured pair)": {
+      "excess_win_rate_needed_over_50pct": 0.1018,
+      "gate_open_for_uninformative_hmm": false,
+      "p_min_required": 0.6018,
+      "rr_ratio": 0.9447,
+      "sl": 0.0235,
+      "tp": 0.0222
+    },
+    "sl_hi__tp_lo (worst configured pair)": {
+      "excess_win_rate_needed_over_50pct": 0.2432,
+      "gate_open_for_uninformative_hmm": false,
+      "p_min_required": 0.7432,
+      "rr_ratio": 0.5745,
+      "sl": 0.0235,
+      "tp": 0.0135
+    }
+  },
+  "feasible_sl_tp_pairs_at_p_hmm_0.55": [
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.4865,
+      "rr_ratio": 2.7,
+      "sl": 0.005,
+      "tp": 0.0135
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.36,
+      "rr_ratio": 4.0,
+      "sl": 0.005,
+      "tp": 0.02
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.3309,
+      "rr_ratio": 4.44,
+      "sl": 0.005,
+      "tp": 0.0222
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.2571,
+      "rr_ratio": 6.0,
+      "sl": 0.005,
+      "tp": 0.03
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.2,
+      "rr_ratio": 8.0,
+      "sl": 0.005,
+      "tp": 0.04
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.4286,
+      "rr_ratio": 2.5,
+      "sl": 0.008,
+      "tp": 0.02
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.3974,
+      "rr_ratio": 2.775,
+      "sl": 0.008,
+      "tp": 0.0222
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.3158,
+      "rr_ratio": 3.75,
+      "sl": 0.008,
+      "tp": 0.03
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.25,
+      "rr_ratio": 5.0,
+      "sl": 0.008,
+      "tp": 0.04
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.4667,
+      "rr_ratio": 2.0,
+      "sl": 0.01,
+      "tp": 0.02
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.4348,
+      "rr_ratio": 2.22,
+      "sl": 0.01,
+      "tp": 0.0222
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.35,
+      "rr_ratio": 3.0,
+      "sl": 0.01,
+      "tp": 0.03
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.28,
+      "rr_ratio": 4.0,
+      "sl": 0.01,
+      "tp": 0.04
+    },
+    {
+      "open_at_p_hmm_0.50": false,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.5224,
+      "rr_ratio": 1.481,
+      "sl": 0.0135,
+      "tp": 0.02
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.4902,
+      "rr_ratio": 1.644,
+      "sl": 0.0135,
+      "tp": 0.0222
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.4023,
+      "rr_ratio": 2.222,
+      "sl": 0.0135,
+      "tp": 0.03
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.3271,
+      "rr_ratio": 2.963,
+      "sl": 0.0135,
+      "tp": 0.04
+    },
+    {
+      "open_at_p_hmm_0.50": false,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.514,
+      "rr_ratio": 1.277,
+      "sl": 0.0235,
+      "tp": 0.03
+    },
+    {
+      "open_at_p_hmm_0.50": true,
+      "open_at_p_hmm_0.55": true,
+      "p_min_required": 0.4331,
+      "rr_ratio": 1.702,
+      "sl": 0.0235,
+      "tp": 0.04
+    }
+  ],
+  "formula": "p_min_required = (sl + round_trip_fees) / (sl + tp)",
+  "generated_at": "2026-09-04 23:23:25",
+  "hypothesis": "The EV fee gate is closed by construction under the configured SL/TP, so BUY intent cannot reach execution and executed HOLD saturates near 96% (Gate C FAIL).",
+  "measured_corroboration": {
+    "executed_hold_rate_gate_c": 0.96,
+    "fee_gate_rejections": 201,
+    "requested_buy": 222,
+    "requested_hold_rate_gate_c": 0.548,
+    "share_of_buy_intent_killed_by_fee_gate": 0.9054,
+    "source": "logs/validation/routing_ventilation_20260904_232121.json",
+    "steps": 500,
+    "trade_executed": 18
+  },
+  "p_hmm_uninformative_baseline": 0.5,
+  "recommended_minimal_change": "Do NOT bypass the gate (ADAN_DISABLE_EV_FEE_GATE only hides it as advisory telemetry). Fix the economics: require TP > SL so RR > 1. With fees=0.004, sl=0.0135 and tp=0.0222 gives p_min=0.4902, still above 0.5; sl=0.010/tp=0.030 gives 0.3500, which an informative signal can clear.",
+  "round_trip_fees": 0.004,
+  "verdict": "CONFIRMED_STRUCTURALLY_CLOSED",
+  "why_gate_E_missed_it": "Gate E compares round_trip_fees to mean TP (0.224 < 0.3 PASS). It never computes the break-even win rate, so an SL wider than TP passes E while making the EV gate unsatisfiable."
+}
