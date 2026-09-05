@@ -37,6 +37,11 @@ HOLD_LIMIT = 0.80
 REWARD_STD_MIN = 0.01
 FEES_TO_TP_LIMIT = 0.30
 
+# ADAN0_GATE_ASSET_SOURCE_FIX: the assets scripts/launch_asset_run.py L57 allows.
+# A gate that measures anything else is not measuring the training universe.
+LAUNCHER_ASSETS = ("BTCUSDT_BINANCE", "DOGEUSDT_BINANCE")
+DEFAULT_ASSET = "BTCUSDT_BINANCE"
+
 
 def _finite_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -111,13 +116,34 @@ def _apply_btc_launcher_runtime(contract: dict[str, float]) -> dict[str, str]:
     return {key: os.environ[key] for key in requested}
 
 
-def build_environment(split: str, seed: int):
+def build_environment(split: str, seed: int, asset: str = DEFAULT_ASSET):
     from adan_trading_bot.common.config_loader import ConfigLoader
     from adan_trading_bot.data_processing.data_loader import ChunkedDataLoader
     from adan_trading_bot.environment.multi_asset_chunked_env import MultiAssetChunkedEnv
 
+    # ADAN0_GATE_ASSET_SOURCE_FIX: this function used to hardcode
+    # assets=["BTCUSDT"]. data_loader.py L256-273 resolves
+    # data_dirs[split]/<ASSET>/<tf>.parquet, and data/processed/indicators/train
+    # holds BOTH "BTCUSDT" (7,991 rows / 27.7 d / -17.14%, one single chunk) and
+    # "BTCUSDT_BINANCE" (662,643 rows / 2,300.8 d / +928.90%). Meanwhile
+    # launch_asset_run.py L57 restricts --asset to the _BINANCE variants, so
+    # every real training run loads the big split while this canonical gate
+    # silently measured the small one -- which is how the current NO_GO verdict
+    # (gate_c_run_20260904_225928.log, line 8: "asset": "BTCUSDT") was produced
+    # on 27.7 unrepresentative days. The asset is now an explicit parameter
+    # defaulting to the universe the runs actually use, and it is echoed into
+    # the report so no verdict can ever again hide which universe it measured.
+    if asset not in LAUNCHER_ASSETS:
+        raise RuntimeError(
+            f"asset {asset!r} is not one of the launcher's assets "
+            f"{sorted(LAUNCHER_ASSETS)}; a gate must measure the universe the "
+            f"run actually loads"
+        )
     cfg = ConfigLoader.load_config(str(REPO_ROOT / "config" / "config.yaml"))
     cfg.setdefault("environment", {})["rich_display_interval"] = 999999
+    # Mirror launch_asset_run.py::derive_config, which rewrites all three keys.
+    cfg.setdefault("data", {})["assets"] = [asset]
+    cfg.setdefault("environment", {})["assets"] = [asset]
     worker_config = copy.deepcopy(cfg.get("workers", {}).get("w1", {}))
     worker_config.update(
         {
@@ -125,7 +151,7 @@ def build_environment(split: str, seed: int):
             "data_split": split,
             "data_split_override": split,
             "timeframes": ["5m", "1h", "4h"],
-            "assets": ["BTCUSDT"],
+            "assets": [asset],
         }
     )
     data = ChunkedDataLoader(
@@ -156,7 +182,9 @@ def _overall_verdict(gates: dict[str, dict[str, Any]]) -> str:
     return "GO"
 
 
-def run_check(*, steps: int, split: str, seed: int) -> dict[str, Any]:
+def run_check(
+    *, steps: int, split: str, seed: int, asset: str = DEFAULT_ASSET
+) -> dict[str, Any]:
     if steps != FINANCIAL_STEPS:
         raise ValueError(
             f"A/C/D protocol requires exactly {FINANCIAL_STEPS} steps; B always uses "
@@ -166,7 +194,7 @@ def run_check(*, steps: int, split: str, seed: int) -> dict[str, Any]:
     np.random.seed(seed)
     contract = _load_btc_financial_contract()
     launcher_runtime = _apply_btc_launcher_runtime(contract)
-    env = build_environment(split, seed)
+    env = build_environment(split, seed, asset)
     capacity_rewards: list[float] = []
     financial_rewards: list[float] = []
     winning_trade_rewards: list[float] = []
@@ -360,7 +388,7 @@ def run_check(*, steps: int, split: str, seed: int) -> dict[str, Any]:
     }
     return {
         "protocol": "real_environment_uniform_random_policy_strict_A_to_E",
-        "asset": "BTCUSDT",
+        "asset": asset,
         "split": split,
         "seed": seed,
         "measurement_windows": {
@@ -408,9 +436,16 @@ def main() -> int:
     parser.add_argument("--split", choices=("train", "val", "test"), default="train")
     parser.add_argument("--seed", type=int, default=330500)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUTPUT)
+    # ADAN0_GATE_ASSET_SOURCE_FIX: explicit, and restricted to the launcher's
+    # assets so the gate can no longer silently fall back to the small split.
+    parser.add_argument(
+        "--asset", choices=LAUNCHER_ASSETS, default=DEFAULT_ASSET
+    )
     args = parser.parse_args()
 
-    report = run_check(steps=args.steps, split=args.split, seed=args.seed)
+    report = run_check(
+        steps=args.steps, split=args.split, seed=args.seed, asset=args.asset
+    )
     output = args.out if args.out.is_absolute() else REPO_ROOT / args.out
     write_report_atomic(report, output)
     print(json.dumps(report, indent=2, sort_keys=True))
