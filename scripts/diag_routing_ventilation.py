@@ -37,6 +37,22 @@ os.environ.setdefault("ADAN_RICH_STEP_EVERY", "999999")
 STEPS = int(os.environ.get("DIAG_STEPS", "500"))
 SEED = int(os.environ.get("DIAG_SEED", "330500"))
 
+# ADAN0_ASSET_PARAM: this probe used to hardcode assets=["BTCUSDT"], i.e. the
+# 7,991-row / 27.7-day split that launch_asset_run.py can never load. Default
+# to the universe the runs actually use, and mirror the launcher's SL/TP box so
+# p_min_required is computed on the same action domain.
+ASSET = os.environ.get("DIAG_ASSET", "BTCUSDT_BINANCE")
+SPLIT = os.environ.get("DIAG_SPLIT", "train")
+
+_SLTP = {
+    "BTCUSDT_BINANCE": {"ADAN_TP_LO": "0.0135", "ADAN_TP_HI": "0.0222",
+                        "ADAN_SL_HI": "0.0235"},
+    "DOGEUSDT_BINANCE": {"ADAN_TP_LO": "0.003", "ADAN_TP_HI": "0.090",
+                         "ADAN_SL_HI": "0.060"},
+}
+for _k, _v in _SLTP.get(ASSET, {}).items():
+    os.environ.setdefault(_k, _v)
+
 
 def build_env():
     from adan_trading_bot.common.config_loader import ConfigLoader
@@ -49,9 +65,11 @@ def build_env():
     cfg.setdefault("environment", {})["rich_display_interval"] = 999999
     wc = copy.deepcopy(cfg.get("workers", {}).get("w1", {}))
     wc.update({
-        "worker_id": 0, "data_split": "train", "data_split_override": "train",
-        "timeframes": ["5m", "1h", "4h"], "assets": ["BTCUSDT"],
+        "worker_id": 0, "data_split": SPLIT, "data_split_override": SPLIT,
+        "timeframes": ["5m", "1h", "4h"], "assets": [ASSET],
     })
+    cfg.setdefault("data", {})["assets"] = [ASSET]
+    cfg.setdefault("environment", {})["assets"] = [ASSET]
     data = ChunkedDataLoader(config=cfg, worker_config=wc,
                              worker_id=0).load_chunk(0)
     env = MultiAssetChunkedEnv(data=data, config=cfg, worker_config=wc,

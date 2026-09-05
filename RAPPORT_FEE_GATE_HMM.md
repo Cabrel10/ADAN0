@@ -553,3 +553,64 @@ phase. Je ne le touche pas.
 Le 500k n'est **pas** autorisé par le protocole canonique : `launch_authorized:
 false`, B FAIL, C FAIL. Les trois correctifs de cette session sont acquis et
 commités ; le blocage restant est le routage requested→executed, pas le signal.
+
+---
+
+# T. VENTILATION DU BLOCAGE RÉSIDUEL — LE FEE GATE N'EST PLUS DOMINANT
+
+`logs/validation/routing_ventilation_20260905_081834.json`,
+`BTCUSDT_BINANCE`/train, 500 pas, politique uniforme aléatoire (protocole Gate C).
+
+| cause du HOLD exécuté | n | % des 500 | nature |
+|---|---|---|---|
+| SELL demandé alors que FLAT | **182** | 36,4 % | **structurel** |
+| `fee_gate` (EV) sur BUY | 153 | 30,6 % | économique |
+| `deadband` (\|action\| trop faible) | 39 | 7,8 % | seuil |
+| BUY demandé alors que déjà LONG | **38** | 7,6 % | **structurel** |
+| `cooldown_hold_min` | 20 | 4,0 % | temporel |
+| `daily_limit` | 4 | 0,8 % | quota |
+
+`requested_buckets` : BUY 222 | SELL 225 | HOLD 53.
+
+## Le point qui change l'interprétation de Gate C
+
+**182 des 225 SELL demandés (80,9 %) le sont alors que le portefeuille est
+flat.** C'est une propriété de la *politique de mesure*, pas du code : une
+politique uniforme aléatoire demande SELL dans ~45 % des pas sans tenir compte
+de l'état des positions. Ces pas ne peuvent structurellement **pas** s'exécuter,
+quel que soit l'état du système.
+
+Plancher structurel du HOLD exécuté sous politique aléatoire :
+
+    (182 SELL-while-flat + 38 BUY-while-long) / 500 = 0,440
+
+Le seuil de Gate C est `executed_hold_rate <= 0,80`. Il ne reste donc que
+**0,360** de marge pour *tout* le reste, alors que le `fee_gate` seul en
+consomme 0,306 et le `deadband` 0,078 : 0,440 + 0,306 + 0,078 = 0,824 > 0,80.
+
+Autrement dit, **Gate C tel que spécifié est quasi inatteignable sous une
+politique aléatoire**, indépendamment de la qualité du signal. Le passer
+exigerait soit de relâcher le seuil, soit de désactiver le `fee_gate` — les deux
+étant explicitement exclus (« cela améliorerait Gate B/C sans améliorer aucune
+décision économique »).
+
+## Ce que cela implique pour la décision 500k
+
+Je ne peux pas produire un GO honnête :
+
+- `launch_authorized: false`, `overall_verdict: NO_GO` sur l'univers réel
+- Gate B 0,334 (seuil < 0,05) et Gate C 0,868 (seuil ≤ 0,80) : FAIL
+- Gate A tranche sur une télémétrie à contribution PPO **exactement 0,0**
+- les faire passer demanderait de toucher le reward, le seuil, ou le fee gate —
+  les trois interdits dans cette phase
+
+Ce qui a été gagné, mesuré et commité : le signal `p_hmm` est réparé
+(0,080 → 0,229 de moyenne, BUY acceptés ×3,6), la sémantique
+`terminated`/`truncated` est correcte, et les gates mesurent enfin le bon
+univers. Ce qui reste : Gate B/C ne sont pas franchissables sous le protocole
+actuel sans modifier ce protocole.
+
+**Décision : NO-GO sur 500k, pour raisons précises et mesurées** — pas par
+prudence, mais parce que les deux conditions posées (« B PASS et C PASS ») sont
+mesurées FAIL et que les seuls chemins pour les faire passer sont ceux
+explicitement interdits.
