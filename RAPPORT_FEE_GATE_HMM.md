@@ -465,3 +465,91 @@ plomberie à corriger avant toute remesure de Gate B / Gate C, et avant tout
 jugement sur `explained_variance`.
 
 **500k reste bloqué.**
+
+---
+
+# VALIDATION CAUSALE POST-CORRECTIF
+
+## P. Test critique du correctif HMM — les 4 critères sont remplis
+
+Protocole identique avant/après : `BTCUSDT_BINANCE`/train, 300 pas, seed 330500.
+
+| métrique | AVANT | APRÈS | critère exigé |
+|---|---|---|---|
+| `buffer_synthetic_rows` | 250 | **0** | = 0 ✅ |
+| `buffer_synthetic_share` | 0,50 | **0,0** | = 0 ✅ |
+| `buffer_distinct_points` | 251 / 500 | **301 / 301** | ≈ `buffer_len` ✅ |
+| `engine_total_obs` (300 pas) | 600 | **301** | ~1 update/pas ✅ |
+| `share_posterior_on_synthetic_last_row` | 0,4992 | **0,0** | = 0 ✅ |
+| `engine_fit_failures` | 0 | 0 | inchangé |
+| `final_probs` | [0,999906 ; 0 ; 9,4e-05] | **[0,0 ; 0,980776 ; 0,019223]** | — |
+
+Le correctif couvre bien **les deux** conséquences : le retour anticipé
+`return self._hmm_probs.copy()` intervient **avant** `_update_hmm`, donc ni
+insertion dans le buffer (a), ni écrasement de l'état persistant `_hmm_probs`
+lu par `context_vector[3,5]` (b). Vérifié sur le diff, pas supposé.
+
+`calls_total` reste 599 et `share_calls_synthetic` reste 0,4992 : le second
+appelant **continue de tourner** et reçoit toujours une postérieure — il est
+devenu read-only, exactement la chaîne demandée :
+
+```
+observation réelle t
+      ├── HMM update UNE SEULE FOIS  (301 obs / 300 steps)
+      ├── posterior(t)
+      │      ├── state builder
+      │      └── risk / regime consumer  (lecture cache, 0 ingestion)
+      └── PPO reçoit observation(t)
+```
+
+## Q. Effet économique mesuré — le fee gate n'a PAS été touché
+
+`ADAN_DISABLE_EV_FEE_GATE` reste désactivé, volontairement, pour mesurer si un
+`p_hmm` propre restaure le passage BUY de lui-même.
+
+| métrique | AVANT (petit univers) | APRÈS (univers réel + fix) |
+|---|---|---|
+| `p_hmm` mean | 0,080308 | **0,229418** (×2,9) |
+| `p_hmm` p90 | 0,333333 | **0,99** |
+| BUY acceptés | 9 | **32** (×3,6) |
+| `block_rate` | 0,9571 | **0,827** |
+| `p_min_required` p50 | 0,470 | 0,468841 (sain, inchangé) |
+
+`p_min` n'a pas bougé : c'est bien `p_hmm` qui portait le défaut. Le terme
+dominant reste `H-A_signal_p_hmm_too_low`, mais l'amplitude a été divisée.
+
+## R. Gate C canonique rejoué sur le VRAI univers
+
+`logs/validation/gate_c_binance_hmmfix.json`, `asset: BTCUSDT_BINANCE`
+(la source est corrigée : `financial_stability_check.py` ne peut plus retomber
+silencieusement sur le petit split).
+
+| gate | avant (petit univers) | après (univers réel + fix HMM) |
+|---|---|---|
+| A capacity vs winning trade | FAIL | FAIL (`effective_ppo_ratio = 0.0`) |
+| B action_diff | 0,354 FAIL | **0,334 FAIL** |
+| C random_hold | 0,960 FAIL | **0,868 FAIL** |
+| D reward_std | PASS | **PASS** |
+| E fees vs mean TP | PASS | **PASS** |
+| **overall** | NO_GO | **NO_GO** |
+
+Progrès réel et mesuré (B −0,020, C −0,092), mais **B et C ne passent pas**.
+La condition posée était « exiger B PASS et C PASS ». Elle n'est pas remplie.
+
+Détail décisif de Gate C : `requested_hold_rate = 0,514` mais
+`executed_hold_rate = 0,868`. L'agent demande à trader dans ~49 % des pas et le
+routage convertit la moitié de ces intentions en HOLD. Le fee gate n'explique
+plus tout (block_rate 0,827 sur 185 invocations seulement) : il reste un second
+mécanisme de routage à ventiler.
+
+Gate A est un cas à part : il tranche sur une télémétrie dont la contribution
+PPO réelle est **exactement 0,0** (`capacity_reward_in_optimized_raw_reward:
+false`, `inaction_penalty_runtime_call_sites: 0`). Le faire passer demanderait
+de modifier le reward — précisément ce que la consigne interdit dans cette
+phase. Je ne le touche pas.
+
+## S. Décision
+
+Le 500k n'est **pas** autorisé par le protocole canonique : `launch_authorized:
+false`, B FAIL, C FAIL. Les trois correctifs de cette session sont acquis et
+commités ; le blocage restant est le routage requested→executed, pas le signal.
