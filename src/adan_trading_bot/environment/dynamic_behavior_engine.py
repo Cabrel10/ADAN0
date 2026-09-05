@@ -364,6 +364,9 @@ class DynamicBehaviorEngine:
             # 0.01 clamp, which starved the EV gate and collapsed the critic.
             self._hmm_total_obs = 0       # total observations ever ingested
             self._hmm_last_refit_obs = 0  # value of _hmm_total_obs at last fit attempt
+            # ADAN0_HMM_READONLY_CONSUMERS: count consumer calls served from
+            # cache (they used to poison the fit buffer). Auditable at runtime.
+            self._hmm_readonly_calls = 0
             if HMM_AVAILABLE:
                 # Use auto-init (k-means) for means/covars — avoids PD matrix issues
                 # Multiple random restarts are done in _update_hmm by creating fresh models
@@ -642,7 +645,6 @@ class DynamicBehaviorEngine:
         observation_id = market_data.get("observation_id")
         if observation_id is not None and observation_id == self._hmm_last_observation_id:
             return self._hmm_probs.copy()
-        self._hmm_last_observation_id = observation_id
 
         # Extract 4D feature vector
         log_ret = market_data.get("log_return", 0.0)
@@ -657,6 +659,27 @@ class DynamicBehaviorEngine:
             if prev_close > 0 and close > 0:
                 log_ret = float(np.log(close / prev_close))
 
+        # ADAN0_HMM_READONLY_CONSUMERS: separate READ from WRITE.
+        # Measured before this guard (hmm_buffer_contamination_20260905_003847):
+        #   599 calls for 300 env steps; observation_id None in 49.92% of them;
+        #   250 of the 500 rolling-fit rows were ONE repeated synthetic point
+        #   (0.0, 0.0, 0.5, 1.0), leaving 251 distinct points out of 500; and
+        #   49.92% of returned posteriors were predict_proba(X)[-1] of that
+        #   fake row, i.e. p_hmm did not describe the market at all.
+        # Cause: detect_market_regime() (L915) is a CONSUMER. It is reached with
+        # `market_conditions` (env L874 = {"close", "asset"} + indicators, no
+        # prev_close, no observation_id), so every feature fell back to its
+        # default and got appended to the fit buffer.
+        # A caller that supplies neither an observation_id nor a usable
+        # log_return cannot be the producer, so serve it the cached posterior
+        # and ingest nothing.
+        _is_producer = (observation_id is not None) or (log_ret != 0.0)
+        if not _is_producer:
+            self._hmm_readonly_calls = getattr(
+                self, "_hmm_readonly_calls", 0) + 1
+            return self._hmm_probs.copy()
+
+        self._hmm_last_observation_id = observation_id
         return self._update_hmm(log_ret, atr_pct, rsi_norm, volume_ratio)
 
     def get_hmm_diagnostics(self) -> Dict[str, Any]:
