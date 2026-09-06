@@ -1,0 +1,6 @@
+lines=500224 sampled=100044
+ bucket |           reward |       behavior |        invalid | sell_flat% |   capacity |        pnl_rew |  dir>0% | dir>0.33% | dir<-0.33%
+    0k+ |     -0.117/0.124 |   -0.077/0.124 |   -0.075/0.124 |     100.0% | -0.470/1.595 |   -0.002/0.039 |   98.8% |     97.5% |       0.4%
+
+action.type distribution per bucket:
+      0k+: hold=95.9% buy=2.4% force_close=1.1% stop_loss=0.3% take_profit=0.2% sell=0.0%

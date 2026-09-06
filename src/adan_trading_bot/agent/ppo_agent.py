@@ -571,16 +571,25 @@ class PPOAgent:
             log_file=self.config.get('log_file', 'training_log.txt')
         )
 
+        # ADAN0: PPO EV radar — one CSV row per PPO update, explicitly linked
+        # to the rollout window (update_id, rollout_start_step,
+        # rollout_end_step) that produced it. Never alters training.
+        from ..instrumentation.ppo_radar import PPORadarCallback
+        radar_csv = self.config.get(
+            'ppo_radar_csv', 'logs/ppo_radar/ppo_radar.csv'
+        )
+        radar_callback = PPORadarCallback(csv_path=radar_csv)
+
         # Combiner avec d'autres callbacks si fournis
+        from stable_baselines3.common.callbacks import CallbackList
         if callback is not None:
-            from stable_baselines3.common.callbacks import CallbackList
             if isinstance(callback, list):
-                all_callbacks = [hierarchical_callback] + callback
+                all_callbacks = [hierarchical_callback, radar_callback] + callback
             else:
-                all_callbacks = [hierarchical_callback, callback]
+                all_callbacks = [hierarchical_callback, radar_callback, callback]
             final_callback = CallbackList(all_callbacks)
         else:
-            final_callback = hierarchical_callback
+            final_callback = CallbackList([hierarchical_callback, radar_callback])
 
         # Lancer l'entraînement
         self.model.learn(

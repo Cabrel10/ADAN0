@@ -19,3 +19,4 @@ websocket-client>=1.6.0
 filelock>=3.12.0
 pyarrow>=14.0.0
 streamlit>=1.28.0
+matplotlib>=3.8.0

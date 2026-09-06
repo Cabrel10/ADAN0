@@ -1,0 +1,49 @@
+=== PROGRESSION (derniers steps) ===
+Starting step 6929
+=== PPO TABLES COUNT ===
+43
+=== DERNIÈRES MÉTRIQUES PPO ===
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    anchor_loss             | 8.59e-05     |
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    approx_kl               | 0.0025688498 |
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    entropy_loss            | -2.13        |
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss    | -0.000896    |
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    value_loss              | 0.0256       |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    anchor_loss             | 4.45e-05    |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    approx_kl               | 0.004756275 |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    entropy_loss            | -2.14       |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss    | -0.00696    |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    value_loss              | 0.0195      |
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    anchor_loss          | 0.000137     |
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    approx_kl            | 0.0074613364 |
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    entropy_loss         | -2.13        |
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    policy_gradient_loss | -0.00739     |
+[36m(ADAN_PBT_Worker pid=1023867)[0m |    value_loss           | 0.0327       |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    anchor_loss          | 5.88e-05     |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    approx_kl            | 0.0038508251 |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    entropy_loss         | -2.14        |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    policy_gradient_loss | -0.00358     |
+[36m(ADAN_PBT_Worker pid=1023868)[0m |    value_loss           | 0.0136       |
+=== ANCHOR_DEBUG ===
+[36m(ADAN_PBT_Worker pid=1023867)[0m [ANCHOR_DEBUG] upd=220 n_upd=220 a0_mean=-0.0206 a0_std=0.3708 anchor=0.0001 | adv_BUY=0.0099 adv_SELL=0.0231 adv_HOLD=-0.0786 | v_BUY=-0.2660 v_SELL=-0.2583 | nB=3660 nS=4540 nH=1800
+[36m(ADAN_PBT_Worker pid=1023868)[0m [ANCHOR_DEBUG] upd=220 n_upd=220 a0_mean=-0.0105 a0_std=0.3701 anchor=0.0000 | adv_BUY=-0.0879 adv_SELL=0.0725 adv_HOLD=0.0473 | v_BUY=-0.3886 v_SELL=-0.3988 | nB=4240 nS=3720 nH=2040
+[36m(ADAN_PBT_Worker pid=1023867)[0m [ANCHOR_DEBUG] upd=240 n_upd=240 a0_mean=-0.0025 a0_std=0.3713 anchor=0.0001 | adv_BUY=0.0135 adv_SELL=-0.0485 adv_HOLD=0.0870 | v_BUY=-0.3306 v_SELL=-0.3392 | nB=3540 nS=4480 nH=1980
+[36m(ADAN_PBT_Worker pid=1023868)[0m [ANCHOR_DEBUG] upd=240 n_upd=240 a0_mean=0.0020 a0_std=0.3699 anchor=0.0001 | adv_BUY=-0.0120 adv_SELL=0.0499 adv_HOLD=-0.0225 | v_BUY=-0.3445 v_SELL=-0.3400 | nB=3620 nS=4160 nH=2220
+[36m(ADAN_PBT_Worker pid=1023867)[0m [ANCHOR_DEBUG] upd=260 n_upd=260 a0_mean=0.0016 a0_std=0.3713 anchor=0.0002 | adv_BUY=-0.0765 adv_SELL=0.0223 adv_HOLD=0.0953 | v_BUY=-0.3292 v_SELL=-0.3244 | nB=4060 nS=3800 nH=2140
+[36m(ADAN_PBT_Worker pid=1023868)[0m [ANCHOR_DEBUG] upd=260 n_upd=260 a0_mean=0.0004 a0_std=0.3697 anchor=0.0001 | adv_BUY=-0.0647 adv_SELL=-0.0231 adv_HOLD=0.1287 | v_BUY=-0.2621 v_SELL=-0.2635 | nB=3540 nS=4100 nH=2360
+=== METRICS_SYNC ===
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 10:03:19 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 5500 | Worker 1 | Sharpe=1.2737, Sortino=2.4673, WinRate=21.24%, Trades=113
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 10:03:30 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 5500 | Worker 0 | Sharpe=-0.3999, Sortino=-0.9057, WinRate=16.15%, Trades=130
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 10:11:28 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 6000 | Worker 1 | Sharpe=1.0680, Sortino=2.0065, WinRate=18.90%, Trades=127
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 10:11:54 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 6000 | Worker 0 | Sharpe=-0.2092, Sortino=-0.4618, WinRate=15.11%, Trades=139
+[36m(ADAN_PBT_Worker pid=1023867)[0m 2026-08-18 10:19:31 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 6500 | Worker 1 | Sharpe=1.1482, Sortino=2.1448, WinRate=19.42%, Trades=139
+[36m(ADAN_PBT_Worker pid=1023868)[0m 2026-08-18 10:20:17 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [METRICS_SYNC] Step 6500 | Worker 0 | Sharpe=0.3771, Sortino=0.8531, WinRate=15.75%, Trades=146
+=== SATGUARD EVENTS ===
+0
+=== RAISONS CLÔTURE ===
+     10 Raison: AGENT_CLOSE
+    219 Raison: MaxDuration
+     45 Raison: stop_loss
+     17 Raison: take_profit
+     10 reason=AGENT_CLOSE
+     45 reason=SL_HIT
+     17 reason=TP_HIT

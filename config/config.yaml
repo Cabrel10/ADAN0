@@ -642,29 +642,31 @@ environment:
   # to choose between BUY/SELL with no safe HOLD zone.
   # Agent learned to output negative values (SELL) to avoid trading costs.
   # New thresholds give 20% of action space to HOLD (safe zone).
+  # V17-Fix D (deadband): lowered so deterministic mu (kept near 0 by L2 anchor)
+  # can cross the threshold and trigger real BUY/SELL at inference. 0.05 is a
+  # compromise: demands a genuine directional impulse but stays reachable by the
+  # anchor (NOT near-zero, to avoid over-trading noise). Was {1h:0.15,4h:0.20,5m:0.10}.
   action_thresholds:
-    1h: 0.15
-    4h: 0.20
-    5m: 0.10
+    1h: 0.08
+    4h: 0.10
+    5m: 0.05
   assets:
   - btcusdt
   base_currency: USDT
-  commission: 0.001
-  features_config:
-    indicators:
-    - rsi_14
-    - macd_hist
-    - atr_14
-    - bb_upper
-    - bb_middle
-    - bb_lower
-    price:
-    - open
-    - high
-    - low
-    - close
-    volume:
-    - volume
+  # FINDING #4 (2026-06-25) : frais SPOT 0.50 % ALLER-RETOUR (etait 0.80%).
+  # fee_pct est applique PAR COTE (entry_fee a l'ouverture + exit_fee a la
+  # cloture, cf. portfolio_manager l.764/920-921) donc 0.0025 x 2 = 0.005 = 0.50%.
+  # Decision utilisateur: le 0.80% gonflait artificiellement le TP_min, forcant
+  # des TP 8-12% impossibles (mouvement reel ~1-2% / 30 steps). 0.50% permet des
+  # TP serres et donc 15-20 trades/jour capturables.
+  # V17-Fix B (fees, NON-NEGOTIABLE user decision): 0.0025 -> 0.0020.
+  # 0.20% per side => 0.40% round-trip (was 0.50%). With the old 0.5% R/T the
+  # static break-even wall sat at 0.75% (1.5x), unreachable in a scalper window
+  # (20 candles) => 95% of SELLs rejected. At 0.40% R/T a ~2-candle BTC move
+  # nets a profit and the dynamic barrier (Fix A) becomes crossable.
+  commission: 0.0020
+  # V29: environment.features_config SUPPRIME (doublon de
+  # data.features_config, zero consommateur dans src/ — verifie PHASE 1).
   frequency_validation:
     force_trade:
       enabled: false
@@ -718,16 +720,24 @@ environment:
       skip_validation_after_retries: 3
   hard_constraints:
     max_drawdown_pct: 40.0    # C3: aligned with Tier Micro (was 0.25)
-    max_position_size_pct: 0.5
-    max_risk_per_trade_pct: 0.02
-    min_order_value_usdt: 11.0
+    # V29: DEAD CONFIG — aucun consommateur dans src/ (verifie PHASE 1).
+    # Le domaine d'exposition est dicte EXCLUSIVEMENT par capital_tiers.
+    # max_position_size_pct: 0.5
+    # max_risk_per_trade_pct: 0.02
+    min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
     min_position_size_pct: 0.01
+    # FINDING #4: HARD caps TIGHTENED to the real BTC wick distribution.
+    # These are the AUTHORITATIVE final clamps (applied by PortfolioManager
+    # ._calculate_dynamic_sltp). The old TP max=0.50 / SL max=0.20 let trades
+    # open at TP=10% (impossible vs ~1-2% real move / 30 steps) -> 84% SL_HIT.
+    # New caps keep TP capturable so the agent can do 15-20 trades/day; the
+    # Future Arena reward then teaches WHERE inside the band to place TP/SL.
     stop_loss_pct:
-      max: 0.2
-      min: 0.005
+      max: 0.06      # was 0.20 (position profile upper bound)
+      min: 0.003
     take_profit_pct:
-      max: 0.5
-      min: 0.01
+      max: 0.12      # was 0.50 (position profile upper bound)
+      min: 0.005
   initial_balance: 20.5
   max_chunks_per_episode: 10
   max_steps: 25000
@@ -821,42 +831,31 @@ environment:
         SOLUSDT: 0.3
         XRPUSDT: 0.2
       initial_position_size: 0.1
-      initial_sl_pct: 0.1
-      initial_tp_pct: 0.15
+      # DEPRECATED (FINDING #4 / revue): valeurs realistes pour eviter qu'un futur
+      # refactor reactive un SL/TP 10-15%. Le chemin runtime = _BOUNDS (env) +
+      # workers.*.trading_parameters. Ces cles ne sont PLUS la source de verite.
+      initial_sl_pct: 0.015
+      initial_tp_pct: 0.030
       max_asset_allocation_pct: 1.0
       max_position_size: 0.9
       max_risk_per_trade_pct: 0.01
       min_trade_value: 11.0
-      risk_parameters:
-        base_sl_pct: 0.1
-        base_tp_pct: 0.15
+      risk_parameters:                 # DEPRECATED -> voir workers.*.trading_parameters
+        base_sl_pct: 0.015
+        base_tp_pct: 0.030
         daily_loss_limit: 0.1
         max_risk_level: 2.0
-        max_sl_pct: 0.1
+        max_sl_pct: 0.06
         min_risk_level: 0.5
-        min_sl_pct: 0.01
+        min_sl_pct: 0.003
         weekly_loss_limit: 0.2
       take_profit:
         enabled: true
         risk_reward_ratio: 1.5
         trailing_deviation_pct: 0.01
         trailing_enabled: false
-  timeframe_trading_config:
-    1h:
-      action_threshold: 0.02   # Session 9: was 0.08 — see action_thresholds note
-      description: Medium-term trading optimized
-      force_trade_steps: 120
-      min_magnitude: 0.08  # SESSION 15: Increased from 0.05 to filter weak signals
-    4h:
-      action_threshold: 0.03   # Session 9: was 0.10
-      description: Long-term trading enabled
-      force_trade_steps: 240
-      min_magnitude: 0.12  # SESSION 15: Increased from 0.08 to require stronger setups
-    5m:
-      action_threshold: 0.01   # Session 9: was 0.05
-      description: High-frequency trading enabled
-      force_trade_steps: 72
-      min_magnitude: 0.06  # SESSION 15: Increased from 0.03 to avoid micro-trades
+  # V29: timeframe_trading_config SUPPRIME (fantome, zero consommateur —
+  # environment.action_thresholds l.649 est la source de verite).
   trading_mode: backtest
   volatility_handling:
     cache_calculations: true
@@ -1130,7 +1129,7 @@ portfolio:
   default_position_pct: 0.7
   include_portfolio_state: true
   initial_balance: 20.5
-  min_order_value_usdt: 11.0
+  min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
   portfolio_state_features: 20
 preprocessing:
   normalization:
@@ -1188,10 +1187,10 @@ production:
     context_vector_dim: 12
     cyclical_time_encoding: true
     feature_extractor: ContextualTemporalFusionExtractor
-    hmm_min_obs: 30
+    hmm_min_obs: 60
     hmm_n_states: 3
     hmm_regime_detection: true
-    hmm_window: 120
+    hmm_window: 500
     ppo_class: WorldModelPPO
     symlog_rewards: true
     world_model_prediction: true
@@ -1213,7 +1212,7 @@ production:
     audit_verdict: PASS
     context_vector_dim: 12
     initial_balance: 20.5
-    min_order_value_usdt: 11.0
+    min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
     tier: Micro Capital
     unit_tests_failed: 0
     unit_tests_passed: 62
@@ -1230,6 +1229,48 @@ reset_parameters:
   min_capital_before_reset: 11.0
   reset_mode: soft
 reward_shaping:
+  # ── FUTURE ARENA / ORACLE-CRITIC (FINDING #4) ───────────────────────────────
+  # Active le RewardBridge : pendant l'entrainement, l'env lit le FUTUR du chunk
+  # (tout le dataset est en RAM) et calcule MFE/MAE (meche haute/basse futures)
+  # pour NOTER la qualite des TP/SL choisis par l'agent. Reward shaping UNIQUEMENT
+  # (anti-oracle §10.10 : le futur n'entre JAMAIS dans l'observation de l'acteur).
+  #   enabled            : pont actif ?
+  #   mode               : classic | future_guided | stochastic_hybrid
+  #   round_trip_fees    : contrat économique A/R (0.40% = 0.004), partagé par
+  #                         Future Arena, gate EV et friction de réentrée
+  #   max_future_contrib : plafond de la contribution (<= 0.60) -> le PnL reste roi
+  future_reward:
+    enabled: true
+    mode: future_guided
+    round_trip_fees: 0.004   # V17-Fix B: aligned with commission 0.0020 (0.40% R/T)
+    max_future_contrib: 0.60
+    # ── PHILOSOPHIE (revue utilisateur 2026-06-26) ──────────────────────────
+    # Le Future Arena juge le TP/SL contre le POTENTIEL REELLEMENT OBSERVE
+    # (MFE/MAE = capture-ratio), PAS contre une cible fixe. Le marche n'a pas de
+    # TP maximum : en bullrun MFE peut etre +35%, en marche plat +1.5%. Le FA
+    # doit pouvoir dire "tu as laisse de l'argent sur la table" SANS etre bride
+    # par les bornes d'execution (qui restent serrees, elles, dans l'env).
+    #   -> targets / tf_scale ci-dessous ne sont qu'un FALLBACK (mode classic,
+    #      ou futur indisponible). Ils ne plafonnent JAMAIS la recompense.
+    #   -> weights : ponderations des termes de qualite (anti-dette: plus de
+    #      constante metier codee en dur dans reward_service.py).
+    targets:            # (sl_target, tp_target) base 5m, FALLBACK uniquement
+      scalper:  [0.008, 0.015]
+      intraday: [0.012, 0.030]
+      swing:    [0.025, 0.060]
+      position: [0.045, 0.110]
+    tf_scale:           # elargissement temporel du FALLBACK (pas du MFE reel)
+      "5m": 1.0
+      "1h": 1.8
+      "4h": 3.0
+    weights:
+      w_pnl: 1.0
+      w_eqs: 0.35
+      w_sl: 0.20
+      w_tp: 0.20
+      w_sizing: 0.25
+      w_missed_green: 0.30
+      w_lost_potential: 0.40
   # Session 10 calibration — dense baseline signal for the PPO critic.
   # Session 9 used -1e-4: empirically too weak (over a 500-step episode,
   # cumulative drag ≈ -0.05, lost in symlog noise). explained_variance got
@@ -1280,30 +1321,35 @@ reward_shaping:
       min_capital: 11.0
       max_capital: 30.0
       max_steps_in_tier: 500
-      stagnation_penalty_per_step: -0.00025  # was -0.0005 (÷2 further) — SESSION 15
+      # FIX B (2026-06-27): stagnation CROISSANTE x1.6/palier (était ÷2 décroissante,
+      # ce qui rendait l'inaction de plus en plus gratuite en haut). Base Micro inchangée.
+      stagnation_penalty_per_step: -0.00025  # k=0 base
       drawdown_penalty_factor: 2.0
-      promotion_bonus: 5.0  # was 0.5 (×10)
+      promotion_bonus: 1.0  # V4 (2026-06-27): rescale 5.0->1.0. Le bonus de promotion
+      # ETAIT la root-cause du reward hacking (5/10/20/40 cumules = +75, ~100-750x
+      # plus fort que les penalites anti-SL). One-shot, proportionnel au palier
+      # franchi, ne doit JAMAIS dominer le PnL (croissance log/decroissante).
     Small:
       min_capital: 30.0
       max_capital: 100.0
       max_steps_in_tier: 1000
-      stagnation_penalty_per_step: -0.000125  # was -0.00025 (÷2 further) — SESSION 15
+      stagnation_penalty_per_step: -0.0004  # k=1 : -0.00025 * 1.6 (FIX B croissante)
       drawdown_penalty_factor: 1.5
-      promotion_bonus: 10.0  # was 1.0 (×10)
+      promotion_bonus: 1.3  # V4: rescale 10.0->1.3 (log, proportionnel decroissant)
     Medium:
       min_capital: 100.0
       max_capital: 300.0
       max_steps_in_tier: 2000
-      stagnation_penalty_per_step: -0.0000625  # was -0.000125 (÷2 further) — SESSION 15
+      stagnation_penalty_per_step: -0.00064  # k=2 : -0.00025 * 1.6^2 (FIX B croissante)
       drawdown_penalty_factor: 1.0
-      promotion_bonus: 20.0  # was 2.0 (×10)
+      promotion_bonus: 1.6  # V4: rescale 20.0->1.6 (log, proportionnel decroissant)
     High:
       min_capital: 300.0
       max_capital: 1000.0
       max_steps_in_tier: 3000
-      stagnation_penalty_per_step: -0.000025  # was -0.00005 (÷2 further) — SESSION 15
+      stagnation_penalty_per_step: -0.001024  # k=3 : -0.00025 * 1.6^3 (FIX B croissante)
       drawdown_penalty_factor: 0.5
-      promotion_bonus: 40.0  # was 4.0 (×10)
+      promotion_bonus: 1.9  # V4: rescale 40.0->1.9 (log, proportionnel decroissant)
     Enterprise:
       min_capital: 1000.0
       max_capital: 999999.0
@@ -1312,7 +1358,85 @@ reward_shaping:
       drawdown_penalty_factor: 0.1
       promotion_bonus: 0.0  # No higher tier
   # At 0.005, a 5-step HOLD_MIN violation costs -0.025 reward.
-  invalid_trade_penalty_weight: 0.005
+  # DIAGNOSTIC-V4 (2026-06-30): 0.005 -> 0.02. This is now the BASE of the
+  # SYMMETRIC sterile penalty applied to BOTH SELL-flat AND BUY-illegal
+  # (anti_spam / min_notional). At Micro tier (k=0) the penalty is 0.02,
+  # capped at 0.10. The 28k diagnostic proved that with a near-zero penalty
+  # the agent saturated BUY (illegal_ratio 97%). 0.02 makes the invalid
+  # intent clearly visible to the PPO gradient without dominating real PnL.
+  invalid_trade_penalty_weight: 0.02
+  # ── FIX A+B (2026-06-27): coût GEOMETRIQUE de l'action stérile ──
+  # SELL-sans-position était GRATUIT (aucune branche) → PPO a collapsé sur
+  # action[0]=-1 (point fixe sans douleur). La pénalité croît géométriquement
+  # avec le palier (Micro=0..High=3): pen = invalid_trade_penalty_weight * r^k,
+  # bornée par cap. Neutralise le gain géométrique de la lâcheté aux paliers hauts.
+  # DIAGNOSTIC-V3 (2026-06-29): cap 0.05 -> 0.10. The forensic confusion matrix
+  # showed sterile/illegal action requests at ~0.5/step that the env mostly
+  # neutralises to HOLD at ZERO cost (so saturation at action0=+-1 was free).
+  # Doubling the cap makes the agent FEEL the cost of sterile SELL-no-position
+  # without exploding the reward (kept well below the +-1.2% SL magnitude).
+  sterile_action_geom_ratio: 1.6     # r > 1 : friction croissante par palier
+  sterile_action_penalty_cap: 0.30   # DIAGNOSTIC-V5: was 0.10. Streak-escalated
+                                     #   penalty now reaches ~15x base on a
+                                     #   persistent collapse -> PPO feels it.
+  # DIAGNOSTIC-V5 (2026-06-30): persistence-indexed sterile penalty.
+  #   acc_t = sterile_acc_decay*acc_{t-1} + severity(reason)
+  #   pen   = invalid_trade_penalty_weight * min(cap/base, 1 + alpha*acc) * window_mult
+  #   Replaces capital-tier indexing (flat at Micro k=0). Keyed on rejection
+  #   reason so any collapse mode (SELL-flat, BUY-open) escalates automatically.
+  sterile_acc_decay: 0.97            # relaxation per legal action / decay
+  sterile_acc_alpha: 0.45            # accumulator -> penalty multiplier slope
+  # DIAGNOSTIC-V6: warmup ramp. Sterile penalty scales 0->1 over the first
+  #   N env steps so PPO can explore BEFORE being punished (user: penalty
+  #   was "trop agressive trop tot"). After N steps full penalty applies.
+  sterile_warmup_steps: 50000
+  # DIAGNOSTIC-C1 (2026-07-01): warmup PLUS COURT pour la faute auto-infligée
+  # (Cas B min_notional_self_caused = sur-exposition = chemin de collapse prouvé).
+  # Le calcul C1 montre qu'à 50k le frein ne bat le carburant latent MAX qu'à ~50k
+  # steps, laissant une fenêtre de biais BUY. À 15k le frein est plein bien avant
+  # 128k. On ne touche NI aux frais NI au reward, juste à la rampe temporelle.
+  sterile_warmup_steps_self_caused: 15000
+  # ──────────────────────────────────────────────────────────────────
+  # V28 REWARD FIX (2026-08-10) — pénalités d'invalidité ADDITIVES.
+  #   Architecture: R = R_eco + R_action + R_invalid  (ADDITIF, jamais
+  #   multiplicatif — l'invalidité est une contrainte comportementale,
+  #   PAS une deuxième fonction économique).
+  #   Calibration sur valeurs RÉELLES mesurées du run 320k
+  #   (adan_500k_v27_hmm_semantic_20260809T123040Z) :
+  #     |R_base|_ref = mean |pnl_base| sur les 112 événements de clôture
+  #     non-nuls = 0.2312  ->  bande prescrite [1.0x, 1.5x] = [0.23, 0.35]
+  #   Appliqué au call-site du routing (là où l'intention brute a0 et
+  #   l'état du portefeuille sont simultanément visibles, AVANT que
+  #   route_action_by_state ne neutralise l'intention en HOLD).
+  #   Jamais hardcodé dans l'env — modifier UNIQUEMENT ici.
+  behavior_penalties:
+    enabled: true
+    # SELL intent alors que FLAT (stérile = HOLD déguisé; mode de collapse
+    # V27 prouvé: 3000/3000 SELL stériles sur le bras F contrefactuel).
+    # V31 FIX (2026-08-17) — RÉFUTATION AUTOPSIE V30 : cette pénalité est le
+    # VRAI driver du collapse (RC1 révisé). Preuve carte causale
+    # forensics/v30_autopsy_20260817/timeline/causal_map_state_intent.txt :
+    # FLAT+SELL reward=-0.2331 vs FLAT+BUY=-0.0149 vs FLAT+HOLD=-0.0143.
+    # Le gradient PPO pousse a0 vers +1 dans les DEUX états (delta ~0.22)
+    # dès le step 0 -> verrou a0=+1.0 à ~27502 -> 472k steps post-mortem.
+    # Justification C6 (env:8349-8353) : pénaliser une intention REJETÉE
+    # (SELL-flat = aucune transition d'état, rien n'est exécuté) viole
+    # l'équation de Bellman Q(s,a) qui exige s->s'. SELL-flat est une
+    # simple intention "ne rien faire" -> NEUTRE (0.0), comme HOLD.
+    # L'anti-spam SELL réel est déjà porté par le cooldown/force_cooldown.
+    sell_while_flat: 0.0   # V31: NEUTRE (était -0.28). Voir addendum rapport.
+    # BUY intent alors qu'une position est OUVERTE (renforcement interdit).
+    # V31 FIX (2026-08-17) : même classe d'invalidité que sell_while_flat =
+    # intention REJETÉE par le gate (ActExec=HOLD, aucune transition d'état)
+    # -> C6 impose 0.0. Prouvé par test déterministe 6 combinaisons :
+    # OPEN+BUY reward=-0.2424 vs OPEN+SELL=+0.0056 créait une pression
+    # directionnelle artificielle vers SELL en position. L'anti-spam réel
+    # est porté par force_cooldown_steps / HOLD_MIN, pas par cette pénalité.
+    buy_while_open: 0.0      # V31: NEUTRE (était -0.28). C6: rejet = 0 reward.
+    # BUY ouvrant (FLAT -> open): VALIDE. Le coût d'engagement du capital
+    # est porté par le PnL ensuite, JAMAIS par une pénalité d'entrée
+    # ("BUY-flat ne doit pas être puni simplement parce qu'il ouvre un risque").
+    buy_flat_opening: 0.0
   logging:
     disable_existing_loggers: false
     formatters:
@@ -1351,7 +1475,7 @@ reward_shaping:
     version: 1
   # Alias de trading_rules.cooldown.hold_min_steps[5m].
   # Fallback si la config cooldown n'est pas disponible. 6 steps = 30 min en 5m.
-  min_holding_period_steps: 6
+  min_holding_period_steps: 3   # V32 C4 (etait 6)
   missed_penalty: -0.5
   multi_traque_bonus: 1.5
   overstay_penalty: -1.0
@@ -1443,47 +1567,147 @@ reward_shaping:
     stop_loss_multiplier: 0.05
     take_profit_multiplier: 0.6
 risk_parameters:
-  base_sl_pct: 0.1
-  base_tp_pct: 0.15
+  # DEPRECATED (FINDING #4 / revue utilisateur): ce bloc top-level n'est lu QUE
+  # par DBE._compute_risk_parameters, qui est CODE MORT (0 appelant). Valeurs
+  # realignees sur les bandes realistes pour neutraliser tout piege 10-20% si la
+  # fonction etait reactivee. Source de verite runtime = workers.*.trading_parameters.
+  base_sl_pct: 0.015
+  base_tp_pct: 0.030
   daily_loss_limit: 0.1
   drawdown_risk_multiplier: 1.5
   max_drawdown_pct: 40.0    # C3: aligned with Tier Micro (was 0.25)
   max_risk_level: 2.0
-  max_sl_pct: 0.1
-  max_tp_pct: 0.2
+  max_sl_pct: 0.06
+  max_tp_pct: 0.12
   min_risk_level: 0.5
-  min_sl_pct: 0.01
-  min_tp_pct: 0.01
+  min_sl_pct: 0.003
+  min_tp_pct: 0.005
   risk_step: 0.1
   volatility_impact: 0.5
   volatility_sl_factor: 1.2
   weekly_loss_limit: 0.2
   winrate_tp_factor: 1.1
 trading_rules:
-  commission_pct: 0.001
+  # FINDING #4: aligne sur environment.commission. V17-Fix B: 0.40 % A/R.
+  commission_pct: 0.0020
+  # 🔴 CRITICAL FIX (2026-06-25): enforce the per-tier exposure cap on EVERY
+  # open (was only enforced at hour==4). Without this, the agent ignored
+  # max_position_size_pct / exposure_range and sized positions arbitrarily.
+  enable_position_cap: true
+  # 🔴 AGENT_CLOSE quota (2026-06-25): l'agent ne peut interrompre manuellement
+  # qu'un nombre limité de positions par jour, et jamais trop d'affilée. Au-delà
+  # du quota, l'AGENT_CLOSE est converti en HOLD + pénalité (laisse jouer SL/TP).
+  # Les sorties SL / TP / MAX_DURATION ne comptent PAS dans ce quota.
+  agent_close:
+    # V20: after HOLD_MIN, a policy SELL is executable even below break-even or
+    # when the advisory decision budget is depleted. V19 logs prove 99.3% of
+    # legal SELL intents were blocked, mechanically producing MaxDuration.
+    exit_authority: true
+    max_per_day: 7        # advisory telemetry under exit_authority; no forced HOLD
+    max_consecutive: 3    # advisory telemetry under exit_authority; no forced HOLD
+    min_gap_steps: 12     # advisory telemetry under exit_authority; no forced HOLD
+  # 🔵 DECISION BUDGET (V3, 2026-06-25) — friction structurelle continue.
+  # Jauge d'energie [0,1]. HOLD recharge (+recharge_hold), BUY/CLOSE coutent.
+  # Quand budget < cost_close => AGENT_CLOSE converti en HOLD + penalite douce.
+  # Effet mecanique : apres ~3 closes (3*0.30) le budget est quasi vide ; il
+  # faut ~15 HOLD (15*0.02=0.30) pour pouvoir refermer -> cooldown NATUREL.
+  # Les murs rigides (if/else) ne s'apprennent pas bien ; un cout continu
+  # modifie la geometrie de l'espace d'apprentissage du PPO.
+  decision_budget:
+    enabled: true
+    max: 1.0              # jauge pleine
+    cost_buy: 0.15        # ouvrir une position consomme 0.15
+    cost_close: 0.30      # AGENT_CLOSE consomme 0.30 (cher: tue le micro-scalping)
+    recharge_hold: 0.02   # chaque HOLD recharge +0.02 (recompense la patience)
+  # 🔵 SYMMETRY & VOLATILITY ENFORCEMENT (V3) — penalite latente (par step
+  # tant que la position est ouverte) contre la triche SL/TP.
+  #  - rr_penalty   : penalise |RR_effectif - target_RR| (asymetrie risque/gain)
+  #  - sl_atr_penalty: penalise un SL trop large vs la volatilite (ATR) = "lachete"
+  symmetry_enforcement:
+    enabled: true
+    target_rr: 1.5            # ratio risque/recompense cible (profil intraday)
+    rr_tolerance: 0.5         # zone morte : pas de penalite si |RR-target| <= 0.5
+    rr_lambda: 0.02           # poids penalite asymetrie (par step, latent)
+    sl_atr_mult_max: 2.0      # SL acceptable jusqu'a 2.0 x ATR ; au-dela = lachete
+    sl_atr_lambda: 0.02       # poids penalite SL-trop-large-vs-ATR (par step)
+    max_step_penalty: 0.15    # plafond de la penalite de symetrie par step
+  # 🔵 CLOSE INTENTION PENALTY (V3) — un AGENT_CLOSE precoce / non rentable
+  # coute proportionnellement a sa nuisance (duree trop courte + PnL faible).
+  close_intention_penalty:
+    enabled: true
+    min_hold_steps: 3         # V32 C4 (etait 6): reduit close_intent penalty sur exits legitimes
+    lambda_duration: 0.05     # poids du deficit de duree
+  # 🔵 ACTION ENTROPY CONSTRAINT (V3) — penalise une frequence de switch
+  # d'action (HOLD<->BUY<->SELL) trop elevee sur une fenetre glissante.
+  action_entropy:
+    enabled: true
+    window: 20                # taille de la fenetre glissante (steps)
+    switch_threshold: 0.5     # part de switches au-dela de laquelle on penalise
+    lambda_switch: 0.0        # V32 C5 (etait 0.03): neutralise l'anti-diversite (switch penalty). CAUSAL §3: alt/random deja penalises vs hold.
+  # 🟢 LATENT PnL SHAPING (V4, 2026-06-27) — la "ligne imaginaire" (cf. user).
+  # Des qu'une position est REELLEMENT ouverte, le PnL courant (non realise)
+  # est positif (au-dessus de l'entree) ou negatif (en-dessous). Le modele doit
+  # ressentir cette ligne a CHAQUE phase de detention, pas seulement a la
+  # cloture. Sinon il ne peut pas apprendre la gestion de portefeuille.
+  # Applique TOUTES LES every_n_steps (def 3) tant qu'une position est ouverte:
+  #   PnL_courant > 0 -> +reward (borne, attenue: on ne paie pas le non-realise plein)
+  #   PnL_courant < 0 -> -penalite (asymetrique: la perte fait plus mal)
+  # Compression log pour eviter la domination ; plafonne par |cap|.
+  latent_pnl_shaping:
+    enabled: true
+    every_n_steps: 3          # cadence (toutes les 3 steps de detention)
+    lambda_gain: 0.10         # poids du PnL latent POSITIF
+    lambda_loss: 0.15         # poids du PnL latent NEGATIF (asymetrie: perte > gain)
+    cap: 0.30                 # plafond absolu de la contribution latente par application
+  # 🟢 SATURATION PENALTY (V4, 2026-06-27) — penalise (log, plafonnee) le SPAM
+  # de SL/TP qui saturent les bornes du profil. Le clip masque le probleme ;
+  # si la policy sature les bornes en permanence, elle n'a pas appris a doser.
+  # Croissance LOGARITHMIQUE (pas exponentielle) avec un PLAFOND (cf. user).
+  saturation_penalty:
+    enabled: true
+    window: 50                # fenetre glissante (nb de trades/decisions SL-TP)
+    threshold: 0.5            # part de saturation au-dela de laquelle on penalise
+    lambda: 0.02              # V29 PATCH2: was 0.10 — dominait le reward
+                              #   (mean -0.1249 = 14x behavior_invalid -0.0087)
+    cap: 0.05                 # V29 PATCH2: was 0.20 — plafond aligne lambda
   duration_tracking:
+    # PortfolioManager is the only close authority. Base limits reproduce the
+    # effective V19 limits for non-scalper profiles; explicit profile overrides
+    # avoid inferring profiles from Ray worker/sub-env identifiers.
+    # ── V30 MaxDuration x2 (2026-08-26, autonomous audit) ─────────────────
+    # DELIBERATE experimental hypothesis (user mandate): give trades TWICE the
+    # holding budget so the (now shorter, reachable) TP has time to be hit
+    # BEFORE MaxDuration force-closes the position. Paired with the reduced
+    # data-driven TP ceiling: shorter target + longer runway = the TP head can
+    # actually resolve winners instead of every trade dying on the timeout.
+    #   1h 20->40 | 4h 15->30 | 5m 50->100 | scalper 5m 20->40
     1h:
-      max_duration_steps: 20
+      max_duration_steps: 40
     4h:
-      max_duration_steps: 15
+      max_duration_steps: 30
     5m:
-      max_duration_steps: 50
+      max_duration_steps: 100
       optimal_duration: 25
+    profile_overrides:
+      scalper:
+        5m:
+          max_duration_steps: 40
   # ============================================================================
-  # COOLDOWN RULES — Empêchent les cycles BUY→SELL trop rapides
-  # Cycle : BUY → HOLD (position ouverte) → SELL → WAIT → BUY → ...
+  # TEMPORAL RULES — Encadrent les cycles BUY→SELL trop rapides
+  # Cycle : BUY → HOLD (position ouverte) → SELL → fenêtre de réentrée → BUY → ...
   #
   # hold_min_steps : Nombre minimum de steps entre BUY et SELL autorisé.
   #   Pendant ce délai, le modèle est en HOLD (position ouverte, SL/TP actifs).
   #   Si SELL tenté avant → pénalité proportionnelle + action ignorée.
   #   Logique : plus la timeframe est haute, plus on tient longtemps.
-  #   5m = 6 steps (30 min), 1h = 3 steps (3h), 4h = 2 steps (8h)
+  #   Runtime : 5m = 3 steps (15 min), 1h = 2 steps (2h), 4h = 2 steps (8h)
   #
-  # wait_steps_post_sell : Nombre minimum de steps entre SELL et BUY autorisé.
-  #   Pendant ce délai, le modèle est en WAIT (en USDT, cherche point d'entrée).
-  #   Si BUY tenté avant → pénalité proportionnelle + action ignorée.
-  #   Logique : calé sur force_trade_steps (1 journée / nb_trades_cibles).
-  #   5m = 72 steps (≈6h), 1h = 100 steps, 4h = 200 steps
+  # wait_steps_post_sell : Fenêtre de friction après SELL.
+  #   Pendant ce délai, le modèle observe le ratio restant dans portfolio[26].
+  #   Un BUY reste exécutable mais reçoit une pénalité économique décroissante,
+  #   maximale à un aller-retour de frais sur l'échelle du reward PnL.
+  #   Logique : décourager le churn sans transformer l'intention BUY en HOLD.
+  #   Runtime : 5m = 5 steps, 1h = 3 steps, 4h = 4 steps
   #
   # omega4e_cooldown : Cooldown anti-spam par profil worker (steps entre 2 BUY).
   #   Empêche le modèle d'ouvrir plusieurs positions en rafale.
@@ -1496,12 +1720,12 @@ trading_rules:
       5m: 3    # 15 min minimum hold after BUY
       1h: 2    # 2h minimum hold
       4h: 2    # 8h minimum hold
-    # WAIT post-SELL: minimum steps between SELL and next BUY.
-    # SELL at step N -> BUY allowed from step N + wait_steps_post_sell.
+    # Post-SELL re-entry friction window (BUY is not blocked).
+    # SELL at step N -> penalty decays to zero at N + wait_steps_post_sell.
     wait_steps_post_sell:
-      5m: 2    # 10 min wait after SELL (~2 x 5min candles) - REDUCED from 6
-      1h: 3    # 3h wait after SELL - REDUCED from 10
-      4h: 4    # ~16h wait after SELL - REDUCED from 20
+      5m: 5    # 25 min observable friction window after SELL
+      1h: 3    # 3h observable friction window
+      4h: 4    # ~16h observable friction window
     # Anti-spam cooldown between consecutive BUY signals per worker profile.
     omega4e_cooldown_by_profile:
       scalper: 2    # 2 steps between BUY attempts
@@ -1530,7 +1754,7 @@ trading_rules:
   futures_enabled: false
   leverage: 1
   max_position_steps: 144
-  min_order_value_usdt: 11.0
+  min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
   slippage_pct: 0.0005
   stop_loss_pct: 0.02
   take_profit_pct: 0.04
@@ -1580,6 +1804,7 @@ workers:
   # ============================================================================
   w1:
     name: W1 Scalper
+    profile: scalper      # explicite (revue utilisateur: pas de detection implicite)
     specialization:
       timeframe: 5m
       tracking_periods:
@@ -1597,8 +1822,15 @@ workers:
       take_profit_pct: 0.030
       trailing_stop: true
       trailing_delta: 0.005
+    # EXPLICIT source-of-truth read by the DBE (_get_tier_based_parameters).
+    # Revue utilisateur: les fallbacks doivent etre des securites, PAS le mode normal.
+    trading_parameters:
+      stop_loss_pct: 0.008
+      take_profit_pct: 0.015
+      position_size_pct: 0.70
   w2:
     name: W2 Intraday
+    profile: intraday     # explicite
     specialization:
       timeframe: 1h
       tracking_periods:
@@ -1610,8 +1842,13 @@ workers:
     assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
+    trading_parameters:
+      stop_loss_pct: 0.012
+      take_profit_pct: 0.030
+      position_size_pct: 0.70
   w3:
     name: W3 Swing
+    profile: swing        # explicite
     specialization:
       timeframe: 4h
       tracking_periods:
@@ -1623,8 +1860,13 @@ workers:
     assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
+    trading_parameters:
+      stop_loss_pct: 0.025
+      take_profit_pct: 0.060
+      position_size_pct: 0.70
   w4:
     name: W4 Position
+    profile: position     # explicite
     specialization:
       timeframe: 4h
       tracking_periods:
@@ -1636,6 +1878,10 @@ workers:
     assets: [BTCUSDT]
     timeframes: [5m, 1h, 4h]
     data_split: train
+    trading_parameters:
+      stop_loss_pct: 0.045
+      take_profit_pct: 0.110
+      position_size_pct: 0.70
 
 # ============================================================================
 # SANDBOX / CI TRAINING PARAMETERS
@@ -1657,11 +1903,61 @@ sandbox:
   # 10000 steps / 512 = ~19 PPO updates × 10 epochs = 190 gradient passes.
   n_steps: 512                # Safe for 7GB CI (512 × obs ≈ 2.5 MB)
   batch_size: 64              # 512/64 = 8 minibatches per epoch
-  n_epochs: 20                # Standard PPO
+  n_epochs: 4                 # DIAGNOSTIC-V6: was 10. KL exploded on the FIRST
+                              #   minibatch ("Early stopping at step 0" x68) =>
+                              #   even 10 passes was too many. 4 passes lets a
+                              #   real (small) update land before KL early-stop.
   max_training_steps: 10000   # CI: ~4 min on 2-CPU runner
   ci_training_steps: 10000    # Relay segment size
-  learning_rate: 0.0003       # Standard
-  ent_coef: 0.01              # Standard PPO for continuous control
+  learning_rate: 0.00003      # V31 (2026-08-27): was 8e-5 (V30). SEULE variable
+                              #   modifiee vs V30. Preuve: V30 BTC 500k dose-reponse
+                              #   monotone clip_fraction vs NIVEAU de LR (parse
+                              #   total_timesteps, 196 updates): clip<0.30 tant que
+                              #   LR<=4.15e-5, flip a 4.23e-5, pic 0.938 @ LR 7.47e-5.
+                              #   A LR~3e-5 V30 a mesure clip max 0.036 / kl max 0.0022.
+                              #   Confond LR/temps (warmup) leve par TEST B: au flip
+                              #   std+0.3% entropy-0.6% PLATS => cause=magnitude update
+                              #   (LR), pas regime data ni TP band. Docs: SB3 "clipping
+                              #   is not enough to prevent large update"; EmbersArc LR
+                              #   1e-5-1e-3 "decrease if unstable". Voir
+                              #   logs/v30_500k/V31_LR_DECISION.md.
+  clip_range: 0.12            # DIAGNOSTIC-V6: tighter trust region (was 0.15)
+  target_kl: 0.15             # V30: was 0.04 (V29). Autopsie V29: 902/976 updates
+                              #   avortees (92%), 878 au minibatch 0, KL au stop
+                              #   median 0.12 (seuil SB3 1.5x0.04=0.06). Le critic
+                              #   aveugle (EV=0.024) rend les ratios volatils d'ou
+                              #   un KL eleve des le 1er minibatch. 0.15 (seuil
+                              #   0.225 > p75 KL=0.196) laisse les updates se
+                              #   completer. Combine a ADAN_LOG_STD_INIT=-1.0.
+  max_grad_norm: 0.3          # DIAGNOSTIC-V6: was 0.5. Tighter gradient clip to
+                              #   prevent the violent first-batch KL jump.
+  ent_coef: 0.03              # DIAGNOSTIC-V3 (2026-06-29): was 0.01. The sandbox
+                              #   path reads ent_coef from sandbox_cfg (NOT
+                              #   WORKER_PROFILES), so this is the value that
+                              #   reaches the 50k diagnostic. Tripled to fight the
+                              #   measured entropy collapse (action0 bimodal at +-1,
+                              #   HOLD=0%, 99.7% in-position). Can be overridden at
+                              #   launch via ADAN_ENT_COEF. Fees held at 0.5%.
+  # ── V30 EXPLORATION FIX (2026-08-26, autonomous audit) ──────────────────
+  # ROOT CAUSE of the 245k degradation: gSDE was ACTIVE despite this config
+  # declaring use_sde:false. The training path read ADAN_USE_SDE (default "1")
+  # and ADAN_LOG_STD_INIT (default "-2.0") from the ENVIRONMENT, ignoring config.
+  # With gSDE, σ_eff ≈ ||features||_2(≈11.4) × exp(log_std_init) → exploration
+  # blew up then collapsed (KL 7→12, clip_frac 0.9, log_std pinned -2.0). We now
+  # make the sandbox block the SINGLE SOURCE OF TRUTH: env vars only override
+  # when EXPLICITLY set. Plain DiagGaussian (use_sde:false) → σ independent of
+  # features, cannot diverge. log_std_init=-1.0 → std0≈0.37 (nuanced but alive).
+  use_sde: false              # gSDE OFF: plain diagonal Gaussian policy.
+  use_expln: false            # only relevant for gSDE; kept for completeness.
+  log_std_init: -1.0          # std0 = exp(-1.0) ≈ 0.368 — alive exploration,
+                              #   no feature-coupled blow-up (was env-forced -2.0).
+  sde_sample_freq: -1         # unused when use_sde:false.
+  # ── V30 CHECKPOINT SEPARATION ───────────────────────────────────────────
+  # Both BTC and DOGE runs previously wrote name_prefix=ppo_adan0_sandbox_checkpoint
+  # into the SAME checkpoints/ dir → weights were physically mixed across the two
+  # independent per-asset brains. The launcher now sets a per-asset ADAN_CKPT_PREFIX
+  # (ppo_adan0_BTCUSDT / ppo_adan0_DOGEUSDT); this default is the flat fallback only.
+  checkpoint_prefix: ppo_adan0_sandbox_checkpoint
   # Session 6 fixes:
   # A8 FIX: Reward is now scaled by 100/initial_capital (percentage-based).
   #   On $20.50 capital, a $0.05 PnL → 0.244% → symlog(0.244) = 0.219

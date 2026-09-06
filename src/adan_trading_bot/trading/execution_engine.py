@@ -106,14 +106,20 @@ class ExecutionEngine:
     """
 
     # ── SL/TP bounds per profile — MUST stay IDENTICAL to the training env ──
-    # multi_asset_chunked_env.py:7009-7014 (single source of truth for SL/TP).
-    # Sizing in training is fee-aware (0.80% train fee); live uses 0.10% real,
-    # so identical bounds remain valid (live is strictly cheaper to trade).
+    # SINGLE SOURCE OF TRUTH = multi_asset_chunked_env.py `_BOUNDS` (line ~7451).
+    # SYNC 2026-06-26 (FINDING #4 / capture-ratio): these were stale at the OLD
+    # 8-40% bands (pre-FINDING#4). A tp_raw=0 used to decode to ~5% TP in live vs
+    # ~1.25% in training -> total divergence. Re-aligned to the tight, real-wick
+    # bands the PPO actually trained on. DO NOT EDIT without editing the env too.
+    #   scalper : SL 0.3-1.2%  TP 0.5-2.0%
+    #   intraday: SL 0.5-2.0%  TP 0.8-4.0%
+    #   swing   : SL 1.0-3.5%  TP 1.5-7.0%
+    #   position: SL 2.0-6.0%  TP 3.0-12.0%
     _PROFILE_BOUNDS = {
-        "scalper":  {"sl": (0.020, 0.030), "tp": (0.040, 0.060)},
-        "intraday": {"sl": (0.040, 0.060), "tp": (0.080, 0.120)},
-        "swing":    {"sl": (0.070, 0.100), "tp": (0.140, 0.200)},
-        "position": {"sl": (0.150, 0.200), "tp": (0.300, 0.400)},
+        "scalper":  {"sl": (0.003, 0.012), "tp": (0.005, 0.020)},
+        "intraday": {"sl": (0.005, 0.020), "tp": (0.008, 0.040)},
+        "swing":    {"sl": (0.010, 0.035), "tp": (0.015, 0.070)},
+        "position": {"sl": (0.020, 0.060), "tp": (0.030, 0.120)},
     }
 
     def __init__(
@@ -130,6 +136,8 @@ class ExecutionEngine:
         action_threshold: float = 0.01,
         capital_tiers: list = None,   # capital_tiers from config.yaml
         profile: str = "intraday",    # worker profile → SL/TP bounds (train coherence)
+        stochastic_sltp: bool = False,  # if True, SL/TP come from ATR×regime calibrator
+                                        # instead of the (collapsed) model action[3]/[4]
     ):
         self.mode = mode
         self.exchange_id = exchange_id
@@ -154,6 +162,21 @@ class ExecutionEngine:
 
         # Last HMM confidence (bull_prob from context_vector[3]); 0.5 == train default
         self._last_confidence = 0.5
+
+        # STOCHASTIC SL/TP CALIBRATOR (separation of responsibilities) ──────
+        # The PPO `tp` head collapsed (raw≈-10 → always TP=tp_lo) due to training
+        # entropy collapse (see docs/SIZING_COHESION_AUDIT.md §12-§13). The `dir`
+        # head is healthy (66% WR backtest). So when stochastic_sltp=True we KEEP
+        # the model's direction/confidence but DERIVE SL/TP from market state
+        # (ATR + HMM regime) instead of the saturated action[3]/action[4].
+        self.stochastic_sltp = bool(stochastic_sltp)
+        # Last derived SL/TP source for logging ("model" | "stochastic")
+        self._last_sltp_source = "model"
+        if self.stochastic_sltp:
+            logger.info(
+                "[ExecutionEngine] STOCHASTIC SL/TP calibrator ENABLED — "
+                "SL/TP derived from ATR×regime (model tp/sl heads bypassed)."
+            )
 
         # Portfolio state
         self.cash = initial_capital
@@ -298,6 +321,36 @@ class ExecutionEngine:
         if tp_pct < sl_pct * 1.5:
             tp_pct = float(min(sl_pct * 1.5, tp_hi))
 
+        # ── ATR scalper SL floor — IDENTICAL to env:7523-7540 (N2 sync) ──
+        # On scalper, SL must never sit below 3× market noise (~0.2% ATR),
+        # else it is stopped out by noise. context_vector[0] = ATR/close ratio.
+        if self.profile == "scalper":
+            atr_pct_estimate = 0.002  # default 0.2% ATR (env default)
+            try:
+                if context_vector is not None:
+                    cv = np.asarray(context_vector, dtype=np.float32).flatten()
+                    if cv.shape[0] >= 1:
+                        atr_pct_estimate = max(0.001, float(cv[0]))
+            except Exception:
+                pass
+            min_scalp_sl = max(0.006, 3.0 * atr_pct_estimate)  # 3× ATR floor (env:7535)
+            if sl_pct < min_scalp_sl:
+                sl_pct = min_scalp_sl
+                if tp_pct < sl_pct * 1.5:   # re-enforce R/R after SL bump
+                    tp_pct = float(min(sl_pct * 1.5, tp_hi))
+
+        # ── STOCHASTIC OVERRIDE ────────────────────────────────────────
+        # When enabled, replace the (collapsed) model SL/TP with an
+        # ATR×regime-derived pair. Direction & sizing stay model/HMM-driven.
+        self._last_sltp_source = "model"
+        model_sl_pct, model_tp_pct = sl_pct, tp_pct
+        if self.stochastic_sltp:
+            sl_pct, tp_pct = self._compute_stochastic_sltp(
+                context_vector=context_vector, sl_lo=sl_lo, sl_hi=sl_hi,
+                tp_lo=tp_lo, tp_hi=tp_hi, confidence=confidence,
+            )
+            self._last_sltp_source = "stochastic"
+
         return {
             "direction": direction,
             "size_pct": size_pct,
@@ -308,8 +361,71 @@ class ExecutionEngine:
             "tf_pref": tf_pref,
             "sl_pct": sl_pct,
             "tp_pct": tp_pct,
+            "sltp_source": self._last_sltp_source,
+            "model_sl_pct": model_sl_pct,   # what the model WOULD have produced
+            "model_tp_pct": model_tp_pct,   # (logged for A/B comparison)
             "raw_action": action.tolist(),
         }
+
+    def _compute_stochastic_sltp(
+        self, context_vector: np.ndarray, sl_lo: float, sl_hi: float,
+        tp_lo: float, tp_hi: float, confidence: float,
+    ) -> tuple:
+        """Derive (sl_pct, tp_pct) from market state instead of the model.
+
+        Rationale (docs/SIZING_COHESION_AUDIT.md §13): the PPO `tp` head
+        collapsed to -1.0 (always min TP). The `dir` head is healthy. We keep
+        direction/sizing from the model but compute risk from observable market
+        state, separating "where to trade" (model) from "how to size risk"
+        (this calibrator).
+
+        Logic:
+          ATR  = context_vector[0]  (ATR/close ratio, same index as env:7044)
+          regime (bull_prob) = context_vector[3]  (HMM, same index as env:6901)
+
+          SL  = clip(ATR_MULT × ATR, sl_lo, sl_hi)      # volatility-scaled stop
+          RR  = target risk/reward chosen by regime:
+                  bull  (bull_prob ≥ 0.65) → RR = 2.5   (let winners run)
+                  neutral                  → RR = 1.8
+                  bear  (bull_prob ≤ 0.35) → RR = 1.5   (cut quickly)
+          TP  = clip(SL × RR, tp_lo, tp_hi)
+
+        SL/TP stay clamped to the SAME profile bands used in training/backtest,
+        so the calibrator can only re-position WITHIN the validated envelope
+        (never produce out-of-band risk). R/R≥1.5 is still enforced.
+        """
+        ATR_MULT = 2.0          # SL = 2× ATR (3× is the noise floor used for scalper)
+        atr_pct = 0.005         # neutral default ≈ 0.5% if context unavailable
+        bull_prob = float(confidence)  # already clipped [0.01, 0.99]
+
+        if context_vector is not None:
+            try:
+                cv = np.asarray(context_vector, dtype=np.float32).flatten()
+                if cv.shape[0] >= 1:
+                    # context[0] = ATR/close ratio (env:7043-7044)
+                    atr_pct = float(max(0.0005, min(0.10, abs(cv[0]))))
+                if cv.shape[0] >= 4:
+                    bull_prob = float(np.clip(cv[3], 0.01, 0.99))
+            except Exception:
+                pass
+
+        # Regime → target risk/reward
+        if bull_prob >= 0.65:
+            target_rr = 2.5
+        elif bull_prob <= 0.35:
+            target_rr = 1.5
+        else:
+            target_rr = 1.8
+
+        # SL scaled by volatility, clamped to profile band
+        sl_pct = float(np.clip(ATR_MULT * atr_pct, sl_lo, sl_hi))
+        # TP = SL × RR, clamped to profile band
+        tp_pct = float(np.clip(sl_pct * target_rr, tp_lo, tp_hi))
+        # Always keep R/R ≥ 1.5 (same invariant as the env)
+        if tp_pct < sl_pct * 1.5:
+            tp_pct = float(min(sl_pct * 1.5, tp_hi))
+
+        return sl_pct, tp_pct
 
     # ── Kill switch checks ─────────────────────────────────────────────
 
@@ -689,7 +805,7 @@ class ExecutionEngine:
         return eq
 
     def get_portfolio_state(self, current_price: float) -> np.ndarray:
-        """Build portfolio_state vector (20,) — MUST mirror, slot-for-slot, the
+        """Build portfolio_state vector (28,) — MUST mirror, slot-for-slot, the
         training layout produced by PortfolioManager.get_state_vector(), because
         the PPO policy was trained on that exact stationary-ratio layout.
 
@@ -703,8 +819,11 @@ class ExecutionEngine:
           [2] trading_pnl_pct (clip ±5)       [3] exposure_ratio (0-1)
           [4] drawdown (0-1)                  [5] sharpe/3 (-1..1)
           [6] open_positions_norm (0-1)       [7] win_rate (0-1)
-          [8] profit_factor/5 (0-1)           [9] reserved (0)
+          [8] profit_factor/5 (0-1)           [9] can_buy_now (0-1)
           [10-14] position 1 features         [15-19] position 2 features
+          [20-27] ACM Capability Vector (can_open, can_close, free_slots_ratio,
+                  cash_ratio_for_trade, risk_budget_remaining, max_size_remaining,
+                  cooldown_active, capital_self_caused)
         """
         equity = self.get_equity(current_price)
         init_cap = max(self.initial_capital, 1e-8)
@@ -740,8 +859,18 @@ class ExecutionEngine:
             float(min(open_count / max_positions, 1.0)),          # [6] positions_norm
             win_rate,                                              # [7] win_rate
             profit_factor_norm,                                    # [8] profit_factor_norm
-            0.0,                                                   # [9] reserved
+            0.0,  # [9] PLACEHOLDER -> can_buy_now (mirrors training)
         ]
+        # DIAGNOSTIC-V7: slot [9] = can_buy_now. MUST mirror, slot-for-slot,
+        # portfolio_manager.get_state_vector() so live obs == train obs.
+        try:
+            _min_notional = float(getattr(self, "min_trade_value", 11.0))
+            _free_slot = 1.0 if open_count < max_positions else 0.0
+            _cash_margin = (cash - _min_notional) / max(_min_notional, 1e-8)
+            _cash_ok = float(np.clip(_cash_margin, 0.0, 1.0))
+            state[9] = float(np.clip(_free_slot * _cash_ok, 0.0, 1.0))
+        except Exception:
+            state[9] = 0.0
 
         # Position slots (2 × 5). The paper engine holds at most one position;
         # slot 0 = current position, slot 1 = zeros.
@@ -758,6 +887,10 @@ class ExecutionEngine:
                 # Derive SL/TP pct from stored prices.
                 sl_pct = abs(entry_p - pos.sl_price) / entry_p
                 tp_pct = abs(pos.tp_price - entry_p) / entry_p
+                # NOTE (FINDING #4 / revue): ces clips 0.2 / 0.5 ne FIXENT PAS le TP/SL
+                # d'un ordre — ils NORMALISENT une feature SL/TP pour le vecteur d'etat
+                # (live trading uniquement; execution_engine n'est PAS importe en training).
+                # La source de verite d'execution = _BOUNDS (env). Ne pas confondre.
                 state.extend([
                     float(np.clip((current_price - entry_p) / entry_p * direction, -0.5, 0.5)),
                     float(np.clip(notional / total_value, 0.0, 1.0)),
@@ -768,7 +901,89 @@ class ExecutionEngine:
             else:
                 state.extend([0.0, 0.0, 0.0, 0.0, 0.0])
 
-        assert len(state) == 20, f"portfolio_state must be 20 dims, got {len(state)}"
+        # ================================================================
+        # CAPABILITY VECTOR (ACM) — dims [20-27]
+        # MUST mirror, slot-for-slot, PortfolioManager.get_state_vector()
+        # so that LIVE/PAPER obs == TRAIN obs. The PPO policy was trained on
+        # the full 28-dim layout (20 base + 8 ACM). Omitting these would feed
+        # the network an out-of-distribution shape.
+        #   Policy -> Capability Layer -> Legal Actions -> Execution
+        # ================================================================
+        try:
+            _min_notional = float(getattr(self, "min_trade_value", 11.0))
+            _open_count = open_count  # paper engine holds at most 1 position
+            _free_slots = max(0, max_positions - _open_count)
+            _has_position = 1.0 if _open_count > 0 else 0.0
+
+            # [20] can_open: free slot AND cash available
+            _slot_ok = 1.0 if _free_slots > 0 else 0.0
+            _cash_margin = (cash - _min_notional) / max(_min_notional, 1e-8)
+            _cash_ok = float(np.clip(_cash_margin, 0.0, 1.0))
+            cap_can_open = _slot_ok * _cash_ok
+
+            # [21] can_close: at least one position to close
+            cap_can_close = _has_position
+
+            # [22] free_slots_ratio
+            cap_free_slots = float(_free_slots) / float(max(max_positions, 1))
+
+            # [23] cash_ratio_for_trade: how much cash is tradable
+            cap_cash_trade = float(np.clip(
+                (cash - _min_notional) / max(cash, 1e-8), 0.0, 1.0
+            )) if cash > _min_notional else 0.0
+
+            # [24] risk_budget_remaining: 1 - drawdown/max_dd
+            _max_dd_pct = float(getattr(self, "max_drawdown_pct", 25.0))
+            _dd_ratio = drawdown / max(_max_dd_pct / 100.0, 1e-8)
+            cap_risk_budget = float(np.clip(1.0 - _dd_ratio, 0.0, 1.0))
+
+            # [25] max_size_remaining: room for exposure
+            _max_exp = float(getattr(self, "max_position_size_pct", 20.0)) / 100.0
+            _total_max_exp = _max_exp * max_positions
+            cap_size_remaining = float(np.clip(_total_max_exp - exposure_ratio, 0.0, 1.0))
+
+            # [26] cooldown_active: flagged externally if any cooldown blocks trades
+            cap_cooldown = float(getattr(self, "_cooldown_active", 0.0))
+
+            # [27] capital_self_caused: cash deficit caused by own open positions
+            _notional_in_positions = abs(self.position.size_usd) if self.position is not None else 0.0
+            if cash < _min_notional and _notional_in_positions > 0:
+                cap_self_caused = float(np.clip(
+                    _notional_in_positions / max(total_value, 1e-8), 0.0, 1.0
+                ))
+            else:
+                cap_self_caused = 0.0
+
+            state.extend([
+                float(np.clip(cap_can_open, 0.0, 1.0)),       # [20]
+                float(np.clip(cap_can_close, 0.0, 1.0)),      # [21]
+                float(np.clip(cap_free_slots, 0.0, 1.0)),     # [22]
+                float(np.clip(cap_cash_trade, 0.0, 1.0)),     # [23]
+                float(np.clip(cap_risk_budget, 0.0, 1.0)),    # [24]
+                float(np.clip(cap_size_remaining, 0.0, 1.0)), # [25]
+                float(np.clip(cap_cooldown, 0.0, 1.0)),       # [26]
+                float(np.clip(cap_self_caused, 0.0, 1.0)),    # [27]
+            ])
+
+            # ADAN0: drawdown persistence slots [28-31] — MUST mirror
+            # PortfolioManager.get_state_vector() slot-for-slot so the live
+            # observation stays in-distribution for the trained policy.
+            _dd_ratio_live = float(np.clip(
+                (init_cap - equity) / init_cap, 0.0, 1.0
+            )) if init_cap > 0 else 0.0
+            _max_dd_frac_live = max(
+                float(getattr(self, "max_drawdown_pct", 40.0)) / 100.0, 1e-8
+            )
+            state.extend([
+                _dd_ratio_live,                                          # [28]
+                float(np.clip(_dd_ratio_live / _max_dd_frac_live, 0.0, 1.0)),  # [29]
+                float(np.clip(getattr(self, "_pending_drawdown_cooldown", 0.0), 0.0, 1.0)),  # [30]
+                float(np.clip(getattr(self, "time_since_drawdown_reset", 0) / 1000.0, 0.0, 1.0)),  # [31]
+            ])
+        except Exception:
+            state.extend([0.0] * 12)
+
+        assert len(state) == 32, f"portfolio_state must be 32 dims, got {len(state)}"
         return np.array(state, dtype=np.float32)
 
     def _portfolio_snapshot(self, price: float) -> Dict[str, Any]:

@@ -43,14 +43,41 @@ _SRC_DIR = _SCRIPT_DIR.parent / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
+# ── GARDE-FOU ANTI-DEADLOCK (2026-06-27) ──────────────────────────────────
+# Le run fa_500k_v4 a gelé à step 12417 (= fin du 6e rollout, 6*2048=12288)
+# pendant l'update PPO (n_epochs=20 + CNN+Attention) : thread contention
+# OpenMP/MKL sur un VPS 4 cœurs -> deadlock silencieux de PyTorch.
+# On borne les threads AVANT d'importer torch/numpy (lus à l'import).
+# Surchargeable via ADAN_NUM_THREADS (défaut: nproc-1, min 1).
+try:
+    _ncpu = os.cpu_count() or 2
+    _nthreads = int(os.environ.get("ADAN_NUM_THREADS", max(1, _ncpu - 1)))
+except Exception:
+    _nthreads = 1
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, str(_nthreads))
+# Évite l'oversubscription / les blocages de pool OpenMP imbriqués.
+os.environ.setdefault("OMP_DYNAMIC", "FALSE")
+os.environ.setdefault("KMP_BLOCKTIME", "0")
+
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 
+# Borne aussi le thread-pool interne de PyTorch (intra-op) : la vraie cause
+# du deadlock pendant backward(). 1 thread inter-op pour éviter le contention.
+try:
+    torch.set_num_threads(_nthreads)
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
+from stable_baselines3.common.utils import FloatSchedule, update_learning_rate
 
 # SOTA 2026: WorldModelPPO with auxiliary forward-prediction loss
 try:
@@ -85,6 +112,24 @@ try:
     from adan_trading_bot.utils.ppo_safety import PpoStdSafetyCallback
 except ImportError:
     PpoStdSafetyCallback = None
+
+# ActionSaturationGuard: anti-collapse par tete (V31-500k FIX).
+# Le forensic V31-DIAG (forensics/v31_diag_collapse_20260817/) a demontre un
+# boundary-lock tanh: 62-72% des actions a |a0|>=0.999, std=0.136, KL 0.58-0.96.
+# Ce callback RELEVE le plancher log_std des tetes saturees (PpoStdSafetyCallback
+# ne clampe que la borne HAUTE). Active via ADAN_SATGUARD (defaut ON pour V31).
+try:
+    from adan_trading_bot.utils.action_saturation_guard import ActionSaturationGuard
+except ImportError:
+    ActionSaturationGuard = None
+
+# ActionDimMonitor: instrumentation par tête (MESURE SEULE — ne modifie rien).
+# Active via ADAN_ACTIONDIM=1 (par défaut OFF pour ne pas alourdir les runs
+# de production). Le run diagnostique V2 l'active pour suivre μ(size)/σ(size).
+try:
+    from adan_trading_bot.utils.action_dim_monitor import ActionDimMonitor
+except ImportError:
+    ActionDimMonitor = None
 
 try:
     from adan_trading_bot.utils.seed_manager import SeedManager
@@ -284,6 +329,13 @@ class MetricsMonitor(BaseCallback):
                 "total_rewards": [],
                 "portfolio_values": [],
                 "realized_pnls": [],
+                "realized_pnl_steps": [],
+                "realized_pnl_episodes": [],
+                "realized_pnl_episode_currents": [],
+                "realized_pnl_cumulatives": [],
+                "cash_values": [],
+                "equity_values": [],
+                "realized_equity_values": [],
                 "sharpe_ratios": [],
                 "drawdowns": [],
                 "trade_counts": [],
@@ -318,6 +370,17 @@ class MetricsMonitor(BaseCallback):
                 try:
                     total_value = float(pm_metrics.get("total_value", 0.0))
                     realized_pnl = float(pm_metrics.get("total_realized_pnl", 0.0))
+                    realized_pnl_step = float(pm_metrics.get("realized_pnl_step", 0.0))
+                    realized_pnl_episode = float(pm_metrics.get("realized_pnl_episode", 0.0))
+                    realized_pnl_episode_current = float(
+                        pm_metrics.get("realized_pnl_episode_current", 0.0)
+                    )
+                    realized_pnl_cumulative = float(
+                        pm_metrics.get("realized_pnl_cumulative", 0.0)
+                    )
+                    cash = float(pm_metrics.get("cash", 0.0))
+                    equity = float(pm_metrics.get("equity", total_value))
+                    realized_equity = float(pm_metrics.get("realized_equity", 0.0))
                     initial = float(pm_metrics.get("initial_capital", 20.5))
                     
                     # current_balance = total equity (Cash + Unrealized positions)
@@ -335,6 +398,13 @@ class MetricsMonitor(BaseCallback):
                 except Exception:
                     current_balance = float(self.config.get("portfolio", {}).get("initial_balance", 20.5))
                     realized_pnl = 0.0
+                    realized_pnl_step = 0.0
+                    realized_pnl_episode = 0.0
+                    realized_pnl_episode_current = 0.0
+                    realized_pnl_cumulative = 0.0
+                    cash = current_balance
+                    equity = current_balance
+                    realized_equity = current_balance
                     unrealized = 0.0
                     open_count = 0
                     initial = current_balance
@@ -344,6 +414,19 @@ class MetricsMonitor(BaseCallback):
                 self.worker_metrics[worker_id]["total_steps"] = self.step_count
                 self.worker_metrics[worker_id]["portfolio_values"].append(current_balance)
                 self.worker_metrics[worker_id]["realized_pnls"].append(realized_pnl)
+                self.worker_metrics[worker_id]["realized_pnl_steps"].append(realized_pnl_step)
+                self.worker_metrics[worker_id]["realized_pnl_episodes"].append(realized_pnl_episode)
+                self.worker_metrics[worker_id]["realized_pnl_episode_currents"].append(
+                    realized_pnl_episode_current
+                )
+                self.worker_metrics[worker_id]["realized_pnl_cumulatives"].append(
+                    realized_pnl_cumulative
+                )
+                self.worker_metrics[worker_id]["cash_values"].append(cash)
+                self.worker_metrics[worker_id]["equity_values"].append(equity)
+                self.worker_metrics[worker_id]["realized_equity_values"].append(
+                    realized_equity
+                )
                 # Defensive: ensure pm_metrics is still a dict before calling .get()
                 if not isinstance(pm_metrics, dict):
                     pm_metrics = {}
@@ -355,6 +438,12 @@ class MetricsMonitor(BaseCallback):
                 if worker_id == 0 or self.step_count % (self.log_interval * 5) == 0:
                     self.logger.record(f"worker_{worker_id}/cash_balance", current_balance)
                     self.logger.record(f"worker_{worker_id}/realized_pnl", realized_pnl)
+                    self.logger.record(f"worker_{worker_id}/realized_pnl_step", realized_pnl_step)
+                    self.logger.record(f"worker_{worker_id}/realized_pnl_episode", realized_pnl_episode)
+                    self.logger.record(f"worker_{worker_id}/realized_pnl_cumulative", realized_pnl_cumulative)
+                    self.logger.record(f"worker_{worker_id}/cash", cash)
+                    self.logger.record(f"worker_{worker_id}/equity", equity)
+                    self.logger.record(f"worker_{worker_id}/realized_equity", realized_equity)
                     self.logger.record(f"worker_{worker_id}/unrealized_info", unrealized)
                     self.logger.record(f"worker_{worker_id}/open_positions", open_count)
                     self.logger.record(f"worker_{worker_id}/tier", self.tier_trackers[worker_id].current_tier)
@@ -443,6 +532,400 @@ class MetricsMonitor(BaseCallback):
 
 
 # ===========================================================================
+# DIAGNOSTIC-V3 (2026-06-29) — Entropy-collapse instrumentation
+# ===========================================================================
+# Measure-only callback. Reads, never writes, the env/policy state. Logs the
+# four numbers the decision tree needs, every `log_every` steps, to a CSV:
+#   - action0 histogram + mean/std (collapse signature = bimodal at +-1)
+#   - HOLD/BUY/SELL share of REQUESTED discrete actions
+#   - steps_flat / steps_open share (collapse = 99.7% open)
+#   - illegal_ratio (rejected actions / steps)
+#   - policy entropy (mean of policy distribution entropy on the rollout batch)
+# Activated by env ADAN_DIAG_COLLAPSE=1 so it never perturbs normal CI runs.
+# It is purely additive: failures are swallowed so training can never break.
+class DiagnosticCollapseCallback(BaseCallback):
+    """Per-window collapse telemetry (action0 histo, HOLD%, flat/open, illegal,
+    entropy). Measure-only — does NOT touch reward, gradient or env state."""
+
+    def __init__(self, csv_path: str, log_every: int = 10000, verbose: int = 1):
+        super().__init__(verbose)
+        self.csv_path = csv_path
+        self.log_every = max(500, int(log_every))
+        self._reset_window()
+        self._prev_rej_total = None
+        self._header_written = False
+        self._next_flush = self.log_every  # first flush at exactly log_every steps
+        # Returns/advantages are finalized only after collect_rollouts ends.
+        # Defer CSV writes so critic telemetry never reads zero-filled tensors.
+        self._flush_pending = False
+        # DIAGNOSTIC-V8 circuit-breaker state. Auto-stop training the moment a
+        # policy collapse is detected (proven pattern from v8 500k run: pct_buy
+        # -> 1.0 and a0_mean -> +inf at ~124k-128k). Stops wasting compute on a
+        # dead policy and preserves the last healthy checkpoint.
+        self._collapse_tripped = False
+        # need N consecutive collapsed windows to avoid a false positive on a
+        # transient spike (2 windows = 2*log_every steps of sustained collapse).
+        self._collapse_streak = 0
+        # V13: require more consecutive windows (env-configurable, default 4 instead
+        # of 2) so a transient degenerate window never trips the (opt-in) breaker.
+        self._collapse_needed = int(os.environ.get("ADAN_COLLAPSE_WINDOWS", "4") or 4)
+        # DIAGNOSTIC-V13 (2026-07-04): the hard-stop breaker is now OPT-IN.
+        # Rationale (user): killing a 500k run at first collapse (~40-70k) destroys
+        # the wide visual range needed to study the FULL collapse trajectory across
+        # sessions. Default OFF = telemetry-only ("measure -> observe, never kill").
+        # Set ADAN_COLLAPSE_BREAKER=1 to re-arm the hard stop (e.g. cost-saving runs).
+        self._breaker_enabled = (
+            os.environ.get("ADAN_COLLAPSE_BREAKER", "0").strip() in ("1", "true", "True")
+        )
+        # Opt-in critic circuit breaker for long instrumented runs.
+        self._critic_breaker_enabled = (
+            os.environ.get("ADAN_CRITIC_BREAKER", "0").strip() in ("1", "true", "True")
+        )
+        self._critic_ev_threshold = float(os.environ.get("ADAN_CRITIC_EV_MIN", "-0.2"))
+        self._critic_ev_windows = max(
+            1, int(os.environ.get("ADAN_CRITIC_EV_WINDOWS", "10"))
+        )
+        self._critic_value_loss_max = float(
+            os.environ.get("ADAN_CRITIC_VALUE_LOSS_MAX", "1000000")
+        )
+        self._critic_bad_ev_streak = 0
+        self._critic_breaker_reason = ""
+
+    @staticmethod
+    def _numeric_stats(values):
+        """Finite distribution summary used for critic health telemetry."""
+        array = np.asarray(values, dtype=np.float64).reshape(-1)
+        finite = array[np.isfinite(array)]
+        if not finite.size:
+            return {"min": 0.0, "max": 0.0, "mean": 0.0, "std": 0.0,
+                    "p01": 0.0, "p50": 0.0, "p99": 0.0,
+                    "nonfinite_frac": 1.0 if array.size else 0.0}
+        return {"min": float(finite.min()), "max": float(finite.max()),
+                "mean": float(finite.mean()), "std": float(finite.std()),
+                "p01": float(np.quantile(finite, 0.01)),
+                "p50": float(np.quantile(finite, 0.50)),
+                "p99": float(np.quantile(finite, 0.99)),
+                "nonfinite_frac": float(1.0 - finite.size / max(array.size, 1))}
+
+    def _rollout_health(self):
+        """Read completed rollout tensors without modifying PPO state."""
+        buffer = getattr(self.model, "rollout_buffer", None)
+        if buffer is None:
+            return {}
+        arrays = {name: np.asarray(getattr(buffer, name), dtype=np.float64)
+                  for name in ("rewards", "returns", "advantages", "values")}
+        returns = arrays["returns"].reshape(-1)
+        values = arrays["values"].reshape(-1)
+        variance = float(np.var(returns))
+        explained_var = (float(1.0 - np.var(returns - values) / variance)
+                         if variance > 1e-12 else float("nan"))
+        observations = getattr(buffer, "observations", {})
+        if not isinstance(observations, dict):
+            observations = {"observation": observations}
+        obs_stats = {}
+        for key, obs in sorted(observations.items()):
+            stats = self._numeric_stats(obs)
+            flat = np.asarray(obs, dtype=np.float64).reshape(-1)
+            finite = flat[np.isfinite(flat)]
+            stats["abs_ge_10_frac"] = (
+                float(np.mean(np.abs(finite) >= 9.999)) if finite.size else 0.0
+            )
+            obs_stats[str(key)] = stats
+        return {
+            "critic_explained_variance": explained_var,
+            "reward_stats": json.dumps(self._numeric_stats(arrays["rewards"]), sort_keys=True),
+            "return_stats": json.dumps(self._numeric_stats(arrays["returns"]), sort_keys=True),
+            "advantage_stats": json.dumps(self._numeric_stats(arrays["advantages"]), sort_keys=True),
+            "value_stats": json.dumps(self._numeric_stats(arrays["values"]), sort_keys=True),
+            "observation_stats": json.dumps(obs_stats, sort_keys=True),
+            "episode_starts": int(np.sum(getattr(buffer, "episode_starts", 0))),
+        }
+
+    def _reset_window(self):
+        self._a0 = []                 # continuous action0 seen this window
+        self._req = {0: 0, 1: 0, 2: 0}  # HOLD / BUY / SELL requested
+        self._flat = 0
+        self._open = 0
+        self._ent = []                # entropy samples this window
+        self._rej_delta = 0           # rejections accumulated this window
+
+    @staticmethod
+    def _is_open(env) -> bool:
+        try:
+            pm = getattr(env, "portfolio_manager", None)
+            positions = getattr(pm, "positions", None)
+            if isinstance(positions, dict):
+                for p in positions.values():
+                    if bool(getattr(p, "is_open", False)):
+                        return True
+            elif isinstance(positions, (list, tuple)):
+                for p in positions:
+                    if bool(getattr(p, "is_open", False)):
+                        return True
+        except Exception:
+            pass
+        return False
+
+    def _on_step(self) -> bool:
+        try:
+            # 1) continuous action0 from the rollout (already sampled by PPO)
+            acts = self.locals.get("actions", None)
+            if acts is not None:
+                arr = np.asarray(acts, dtype=np.float32).reshape(len(acts), -1) \
+                    if hasattr(acts, "__len__") else None
+                if arr is not None and arr.shape[1] >= 1:
+                    for v in arr[:, 0]:
+                        self._a0.append(float(v))
+
+            # 2) per-env requested discrete action + position state + rejections
+            try:
+                reqs = self.training_env.get_attr("_last_discrete_action_requested")
+            except Exception:
+                reqs = []
+            try:
+                envs = self.training_env.get_attr("rejection_reasons")
+            except Exception:
+                envs = []
+            # position state via env_method is unsafe (pickling); read per-env attr
+            for i in range(len(reqs)):
+                r = int(reqs[i] or 0)
+                if r in self._req:
+                    self._req[r] += 1
+                # in-position flag — read via get_attr on the unwrapped env
+                try:
+                    pm_list = self.training_env.get_attr("portfolio_manager")
+                    is_open = False
+                    if i < len(pm_list):
+                        positions = getattr(pm_list[i], "positions", None)
+                        if isinstance(positions, dict):
+                            is_open = any(bool(getattr(p, "is_open", False))
+                                          for p in positions.values())
+                    if is_open:
+                        self._open += 1
+                    else:
+                        self._flat += 1
+                except Exception:
+                    pass
+
+            # 3) rejection delta (illegal actions) summed across envs
+            cur_total = 0
+            for rd in envs:
+                if isinstance(rd, dict):
+                    cur_total += sum(int(v) for v in rd.values())
+            if self._prev_rej_total is not None and cur_total >= self._prev_rej_total:
+                self._rej_delta += (cur_total - self._prev_rej_total)
+            self._prev_rej_total = cur_total
+
+            # 4) policy entropy estimate (cheap: from log_std of the policy)
+            try:
+                pol = self.model.policy
+                if hasattr(pol, "log_std"):
+                    log_std = pol.log_std.detach().cpu().numpy().reshape(-1)
+                    # diagonal-Gaussian differential entropy per dim
+                    ent = float(np.mean(0.5 * np.log(2 * np.pi * np.e) + log_std))
+                    self._ent.append(ent)
+            except Exception:
+                pass
+
+            # Mark the window ready, but do not read returns/advantages here:
+            # SB3 computes them only after the final _on_step of the rollout.
+            if self.num_timesteps >= self._next_flush:
+                self._flush_pending = True
+        except Exception:
+            pass
+        # DIAGNOSTIC-V8: hard stop if collapse confirmed over consecutive windows.
+        # V13: only stops when the breaker is explicitly enabled (opt-in). Otherwise
+        # the collapse is logged but training continues so the FULL trajectory is
+        # captured for cross-session analysis.
+        if self._collapse_tripped and self._breaker_enabled:
+            logging.getLogger(__name__).critical(
+                "[COLLAPSE-BREAKER] Training STOPPED at %d timesteps — policy "
+                "collapse confirmed. Inspect the diagnostic CSV; resume from the "
+                "last healthy checkpoint, NOT this one.", int(self.num_timesteps))
+            return False  # SB3 stops learning when a callback returns False
+        if self._critic_breaker_reason and self._critic_breaker_enabled:
+            logging.getLogger(__name__).critical(
+                "[CRITIC-BREAKER] Training STOPPED at %d timesteps — %s. "
+                "Inspect the diagnostic CSV and resume only from a healthy checkpoint.",
+                int(self.num_timesteps), self._critic_breaker_reason,
+            )
+            return False
+        return True
+
+    def _on_rollout_end(self) -> None:
+        """Flush only after SB3 has finalized returns and advantages."""
+        if not self._flush_pending and self.num_timesteps < self._next_flush:
+            return
+        self._flush()
+        self._flush_pending = False
+        while self._next_flush <= self.num_timesteps:
+            self._next_flush += self.log_every
+
+    def _flush(self):
+        try:
+            import csv
+            a0 = np.asarray(self._a0, dtype=np.float32) if self._a0 else np.zeros(1)
+            total_req = sum(self._req.values()) or 1
+            total_state = (self._flat + self._open) or 1
+            bins = np.linspace(-1.0, 1.0, 11)
+            histo, _ = np.histogram(np.clip(a0, -1, 1), bins=bins)
+            row = {
+                "timesteps": int(self.num_timesteps),
+                "a0_mean": round(float(a0.mean()), 4),
+                "a0_std": round(float(a0.std()), 4),
+                "a0_pct_buy": round(float((a0 > 0.01).mean()), 4),
+                "a0_pct_sell": round(float((a0 < -0.01).mean()), 4),
+                "a0_pct_hold_band": round(float((np.abs(a0) <= 0.01).mean()), 4),
+                "req_HOLD_pct": round(self._req[0] / total_req, 4),
+                "req_BUY_pct": round(self._req[1] / total_req, 4),
+                "req_SELL_pct": round(self._req[2] / total_req, 4),
+                "steps_flat_pct": round(self._flat / total_state, 4),
+                "steps_open_pct": round(self._open / total_state, 4),
+                "illegal_ratio": round(self._rej_delta / total_state, 4),
+                "policy_entropy": round(float(np.mean(self._ent)), 4) if self._ent else 0.0,
+                "a0_histo": "|".join(str(int(x)) for x in histo),
+            }
+            row.update(self._rollout_health())
+
+            # Surface the previous completed PPO update beside the current finalized
+            # rollout. SB3 exposes `value_loss` (the critic loss) under train/*.
+            logger_values = getattr(
+                getattr(self.model, "logger", None), "name_to_value", {}
+            ) or {}
+            ppo_metrics_available = False
+            for metric in (
+                "approx_kl",
+                "clip_fraction",
+                "entropy_loss",
+                "policy_gradient_loss",
+                "value_loss",
+            ):
+                raw_value = logger_values.get(
+                    f"train/{metric}", logger_values.get(metric)
+                )
+                ppo_metrics_available = ppo_metrics_available or raw_value is not None
+                try:
+                    row[metric] = float(raw_value)
+                except (TypeError, ValueError):
+                    row[metric] = float("nan")
+            row["critic_loss"] = row["value_loss"]
+            row["policy_loss"] = row["policy_gradient_loss"]
+            row["ppo_metrics_available"] = ppo_metrics_available
+            row["step"] = row["timesteps"]
+            row["explained_variance"] = row.get(
+                "critic_explained_variance", float("nan")
+            )
+            row["value_std"] = json.loads(row.get("value_stats", "{}")).get(
+                "std", float("nan")
+            )
+            row["advantages_std"] = json.loads(
+                row.get("advantage_stats", "{}")
+            ).get("std", float("nan"))
+
+            # Long-run critic breaker: sustained EV failure, any non-finite rollout
+            # tensor, non-finite PPO metrics once available, or exploding value loss.
+            ev = float(row.get("critic_explained_variance", float("nan")))
+            if np.isfinite(ev) and ev < self._critic_ev_threshold:
+                self._critic_bad_ev_streak += 1
+            else:
+                self._critic_bad_ev_streak = 0
+            reasons = []
+            for stats_name in (
+                "reward_stats", "return_stats", "advantage_stats", "value_stats"
+            ):
+                stats = json.loads(row.get(stats_name, "{}"))
+                if float(stats.get("nonfinite_frac", 0.0)) > 0.0:
+                    reasons.append(f"non-finite {stats_name.removesuffix('_stats')}")
+            if not np.isfinite(ev):
+                reasons.append("non-finite explained variance")
+            if ppo_metrics_available:
+                for metric in (
+                    "approx_kl", "clip_fraction", "entropy_loss",
+                    "policy_gradient_loss", "value_loss",
+                ):
+                    if not np.isfinite(row[metric]):
+                        reasons.append(f"non-finite {metric}")
+                if row["value_loss"] > self._critic_value_loss_max:
+                    reasons.append(
+                        f"value_loss {row['value_loss']:.6g} > "
+                        f"{self._critic_value_loss_max:.6g}"
+                    )
+            if self._critic_bad_ev_streak >= self._critic_ev_windows:
+                reasons.append(
+                    f"explained_variance < {self._critic_ev_threshold:g} for "
+                    f"{self._critic_bad_ev_streak} rollouts"
+                )
+            if reasons and not self._critic_breaker_reason:
+                self._critic_breaker_reason = "; ".join(reasons)
+                logging.getLogger(__name__).critical(
+                    "[CRITIC-DETECT %d] %s -> BREAKER ARMED=%s",
+                    row["timesteps"], self._critic_breaker_reason,
+                    self._critic_breaker_enabled,
+                )
+            row["critic_bad_ev_streak"] = self._critic_bad_ev_streak
+            row["critic_breaker_reason"] = self._critic_breaker_reason
+
+            # DIAGNOSTIC-V8 collapse detection (measure -> decide, no reward touch).
+            # Trip if ANY of the proven collapse signatures holds for this window:
+            #   - a0_pct_buy >= 0.97  (near-total BUY, histo degenerate)
+            #   - a0_pct_sell >= 0.97 (symmetric guard for the SELL attractor)
+            #   - |a0_mean| >= 5.0    (continuous output diverging to +/-inf)
+            # Require self._collapse_needed consecutive windows before stopping.
+            try:
+                _pb = row["a0_pct_buy"]; _ps = row["a0_pct_sell"]
+                _am = abs(row["a0_mean"])
+                # V13: detector relaxed (user). Thresholds env-configurable and set
+                # to NEAR-TOTAL degeneracy so a merely-drifting policy is NOT flagged;
+                # only a truly dead one is. Combined with the opt-in breaker (default
+                # OFF), the run is never killed prematurely.
+                _thr_pb = float(os.environ.get("ADAN_COLLAPSE_PCT", "0.99") or 0.99)
+                _thr_am = float(os.environ.get("ADAN_COLLAPSE_A0", "8.0") or 8.0)
+                _collapsed = (_pb >= _thr_pb) or (_ps >= _thr_pb) or (_am >= _thr_am)
+                if _collapsed:
+                    self._collapse_streak += 1
+                else:
+                    self._collapse_streak = 0
+                if self._collapse_streak >= self._collapse_needed:
+                    self._collapse_tripped = True
+                    logging.getLogger(__name__).critical(
+                        "[COLLAPSE-DETECT %d] pct_buy=%.3f pct_sell=%.3f "
+                        "a0_mean=%.3f streak=%d -> BREAKER ARMED",
+                        row["timesteps"], _pb, _ps, row["a0_mean"],
+                        self._collapse_streak)
+                elif _collapsed:
+                    logging.getLogger(__name__).warning(
+                        "[COLLAPSE-WARN %d] pct_buy=%.3f a0_mean=%.3f streak=%d/%d",
+                        row["timesteps"], _pb, row["a0_mean"],
+                        self._collapse_streak, self._collapse_needed)
+            except Exception:
+                pass
+
+            os.makedirs(os.path.dirname(self.csv_path), exist_ok=True)
+            write_header = not self._header_written and not os.path.exists(self.csv_path)
+            with open(self.csv_path, "a", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=list(row.keys()))
+                if write_header:
+                    w.writeheader()
+                w.writerow(row)
+            self._header_written = True
+            if self.verbose:
+                logging.getLogger(__name__).info(
+                    "[DIAG-V3 %d] HOLD=%.1f%% BUY=%.1f%% SELL=%.1f%% | "
+                    "flat=%.1f%% open=%.1f%% | illegal=%.3f | a0 mu=%.3f sd=%.3f | "
+                    "ent=%.3f | histo=%s",
+                    row["timesteps"], row["req_HOLD_pct"] * 100,
+                    row["req_BUY_pct"] * 100, row["req_SELL_pct"] * 100,
+                    row["steps_flat_pct"] * 100, row["steps_open_pct"] * 100,
+                    row["illegal_ratio"], row["a0_mean"], row["a0_std"],
+                    row["policy_entropy"], row["a0_histo"],
+                )
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[DIAG-V3] flush failed: {e}")
+        finally:
+            self._reset_window()
+
+
+# ===========================================================================
 # OMEGA Worker Profiles
 # ===========================================================================
 
@@ -450,14 +933,19 @@ WORKER_PROFILES: Dict[str, Dict[str, Any]] = {
     # ── W0 Scalper 5m ────────────────────────────────────────────────────────
     # Horizon: gamma=0.95 -> ~20 steps = ~1.7h of 5m candles
     # n_steps=512: small rollout, fast learning on noisy 5m signal
-    # ent_coef=0.01: moderate exploration, enough to escape local optima
+    # ent_coef=0.03 (DIAGNOSTIC-V3 2026-06-29): was 0.01. Forensic confusion
+    # matrix (430k/480k/500k) proved ENTROPY COLLAPSE: action0 is bimodal at
+    # +-1 (std=0.995), HOLD=0%, agent in-position 99.7% of steps. 0.01 was too
+    # low to keep exploration alive once the policy found the "always max long"
+    # attractor. Tripling ent_coef is the #1 anti-collapse lever (fees held at
+    # 0.5% by user decision, so entropy + sterile penalty must carry the fix).
     "scalper": {
         "name": "Scalper",
         "specialization": {"timeframe": "5m"},
         "n_steps": 512,
         "batch_size": 64,
         "learning_rate": 3e-5,
-        "ent_coef": 0.01,
+        "ent_coef": 0.03,
         "gamma": 0.95,
         "clip_range": 0.15,
     },
@@ -504,6 +992,23 @@ WORKER_PROFILES: Dict[str, Dict[str, Any]] = {
         "clip_range": 0.30,
     },
 }
+
+
+def _resolve_exact_rollout_steps(preferred_steps: int, iteration_steps: int) -> int:
+    """Choose the largest profile-compatible rollout that divides an iteration.
+
+    Stable-Baselines3 always completes a full rollout. If ``n_steps`` exceeds or
+    does not divide Ray's per-iteration budget, ``learn()`` silently overshoots
+    (the 8,192-step smoke produced 16,384 steps for the Position profile).
+    Keeping a divisor makes Ray, SB3, checkpoints, and progress.csv agree.
+    """
+    preferred = max(1, int(preferred_steps))
+    budget = max(1, int(iteration_steps))
+    upper = min(preferred, budget)
+    for candidate in range(upper, 0, -1):
+        if budget % candidate == 0:
+            return candidate
+    return 1
 
 
 def _inject_worker_profile(worker_config: dict, profile_name: str) -> dict:
@@ -633,6 +1138,7 @@ class ADAN_PBT_Worker(_TrainableBase):
         self.use_subproc = config.get("use_subproc", False)
         self.interval_timesteps = config.get("interval_timesteps", 5_000)  # Reduced from 15k to avoid hangs
         self._total_timesteps = 0
+        self._completed_iterations = 0
         self._max_iterations = config.get("_max_iterations", 100)
 
         # Checkpoint directory: use Ray's trial logdir for per-worker checkpoints
@@ -734,10 +1240,29 @@ class ADAN_PBT_Worker(_TrainableBase):
         # tripling memory usage and compute for no benefit.
         policy_kwargs["share_features_extractor"] = True
 
-        # gSDE exploration: initial std ≈ exp(-0.5) ≈ 0.61
-        # Produces nuanced actions inside [-1, 1] without saturating at extremes.
-        # Must match sandbox mode for checkpoint compatibility.
-        policy_kwargs["log_std_init"] = -0.5
+        # gSDE STABILITY (V2 execution audit, 2026-06-24 — MEASURED):
+        # σ_eff ≈ ||features||_2 * exp(log_std_init). With the real extractor
+        # (features_dim=256) ||features||_2≈11.4 (scripts/diag_gsde_latent.py),
+        # so the historical log_std_init=-0.5 gave σ_eff≈6.9 AT INIT -> gSDE
+        # diverged and the net defended by saturating size to μ=-7. We now
+        # default to -2.0 (σ_eff≈1.5) + use_expln=True (bounds growth). This is
+        # the SAME fix as sandbox so a 500k run does not repeat the collapse.
+        # Override via ADAN_LOG_STD_INIT / ADAN_USE_EXPLN if needed.
+        _use_sde = os.environ.get("ADAN_USE_SDE", "1") == "1"
+        _default_log_std = "-2.0" if _use_sde else "-1.0"
+        _log_std_init = float(os.environ.get("ADAN_LOG_STD_INIT", _default_log_std))
+        policy_kwargs["log_std_init"] = _log_std_init
+        if _use_sde and os.environ.get("ADAN_USE_EXPLN", "1") == "1":
+            policy_kwargs["use_expln"] = True
+        logger.info(
+            f"Worker {self.worker_idx}: exploration="
+            f"{'gSDE' if _use_sde else 'DiagGaussian'} "
+            f"log_std_init={_log_std_init:+.3f} "
+            f"(std0≈{float(np.exp(_log_std_init)):.3f}) use_expln="
+            f"{policy_kwargs.get('use_expln', False)}"
+            + (f" -> σ_eff≈{11.4*float(np.exp(_log_std_init)):.2f} at init."
+               if _use_sde else " -> variance decoupled from feature norm.")
+        )
 
         # Seed
         seed = self.adan_config.get("general", {}).get("random_seed", 42) + self.worker_idx
@@ -747,7 +1272,23 @@ class ADAN_PBT_Worker(_TrainableBase):
         # PPO model – profile may override n_steps/batch_size
         device = "cuda" if torch.cuda.is_available() else "cpu"
         prof_cfg = WORKER_PROFILES.get(self.profile, {}) if self.profile else {}
-        n_steps = prof_cfg.get("n_steps", agent_cfg.get("n_steps", 2048))
+        preferred_n_steps = int(
+            prof_cfg.get("n_steps", agent_cfg.get("n_steps", 2048))
+        )
+        n_steps = _resolve_exact_rollout_steps(
+            preferred_n_steps,
+            self.interval_timesteps,
+        )
+        if n_steps != preferred_n_steps:
+            logger.warning(
+                "Worker %s (%s): n_steps adjusted %s -> %s so the %s-step "
+                "Ray iteration is exact",
+                self.worker_idx,
+                self.profile,
+                preferred_n_steps,
+                n_steps,
+                self.interval_timesteps,
+            )
         batch_size = prof_cfg.get("batch_size", agent_cfg.get("batch_size", 64))
         # Ensure batch_size divides n_steps * envs_per_worker
         total_rollout = n_steps * self.envs_per_worker
@@ -759,6 +1300,16 @@ class ADAN_PBT_Worker(_TrainableBase):
         clip_range_final= prof_cfg.get("clip_range", agent_cfg.get("clip_range", 0.2))
         ent_coef_final  = prof_cfg.get("ent_coef",   self.ent_coef)
         lr_final        = prof_cfg.get("learning_rate", self.learning_rate)
+        # Override V2: ADAN_ENT_COEF force l'entropie pour TOUS les profils (run
+        # diagnostique). Pousse l'agent hors du plateau ; ne réveille pas SIZE à
+        # lui seul (cause μ) mais aide TP/SL et augmente la variance des rollouts.
+        _ent_override = os.environ.get("ADAN_ENT_COEF")
+        if _ent_override is not None:
+            ent_coef_final = float(_ent_override)
+            logger.info(
+                f"Worker {self.worker_idx}: ent_coef={ent_coef_final:.4f} "
+                f"(override V2 via ADAN_ENT_COEF)."
+            )
 
         logger.info(
             f"Worker {self.worker_idx} ({self.profile}): "
@@ -788,10 +1339,10 @@ class ADAN_PBT_Worker(_TrainableBase):
             max_grad_norm=agent_cfg.get("max_grad_norm", 0.5),
             policy_kwargs=policy_kwargs if policy_kwargs else None,
             tensorboard_log=tb_log_dir,
-            # CRITICAL: gSDE for continuous action exploration (Session 8 fix)
-            # Without use_sde, Xavier init produces actions ≈ N(0, 0.01) which
-            # NEVER cross action_threshold. gSDE learns state-dependent noise.
-            use_sde=True,
+            # Heavy mode must honor the same measured exploration switch as
+            # sandbox mode. ADAN_USE_SDE=0 selects the stable DiagGaussian path
+            # recommended for the production 500k run.
+            use_sde=_use_sde,
             sde_sample_freq=4,  # Resample exploration noise every 4 steps
             verbose=1,
             seed=seed,
@@ -811,44 +1362,212 @@ class ADAN_PBT_Worker(_TrainableBase):
         self._callbacks.append(metrics_monitor)
 
         if PpoStdSafetyCallback is not None:
+            # V29 PATCH 1 (2026-08-12): log_std borne dans [-2, 0] au lieu de
+            # [-5, +2]. Le clamp precedent autorisait sigma jusqu'a exp(2)=7.39
+            # -> rupture mesuree V28 a step 90112 (a0_std median 0.62 -> 8.64,
+            # x14, direction_sat_frac 1.00). Avec [-2,0], sigma <= 1.0 par
+            # construction (gate smoke 2048: a0_std < 1.0). Overridable via
+            # ADAN_LOG_STD_MIN / ADAN_LOG_STD_MAX pour diagnostics.
             ppo_safety = PpoStdSafetyCallback(
-                min_log_std=-5.0,
-                max_log_std=2.0,
-                std_warn_threshold=100.0,
+                min_log_std=float(os.environ.get("ADAN_LOG_STD_MIN", "-2.0")),
+                max_log_std=float(os.environ.get("ADAN_LOG_STD_MAX", "0.0")),
+                std_warn_threshold=1.0,
                 verbose=0,
             )
             self._callbacks.append(ppo_safety)
+
+        # V31-500k FIX: ActionSaturationGuard — anti-collapse par tete.
+        # PpoStdSafetyCallback ne clampe que la borne HAUTE de log_std; ce guard
+        # RELEVE le plancher quand une tete se verrouille a +-1 (boundary lock).
+        # Defaut ON pour V31; desactivable via ADAN_SATGUARD=0.
+        if ActionSaturationGuard is not None and \
+                os.environ.get("ADAN_SATGUARD", "1") == "1":
+            sat_guard = ActionSaturationGuard(
+                sat_edge=0.98,
+                sat_threshold=float(os.environ.get("ADAN_SATGUARD_THR", "0.95")),
+                patience=int(os.environ.get("ADAN_SATGUARD_PATIENCE", "2")),
+                bump_log_std=float(os.environ.get("ADAN_SATGUARD_BUMP", "0.5")),
+                max_log_std=float(os.environ.get("ADAN_SATGUARD_MAXLS", "2.0")),
+                intervene=os.environ.get("ADAN_SATGUARD_INTERVENE", "1") == "1",
+                verbose=1,
+            )
+            self._callbacks.append(sat_guard)
+            logger.info(
+                f"Worker {self.worker_idx}: ActionSaturationGuard ACTIF "
+                f"(thr={sat_guard.sat_threshold}, bump={sat_guard.bump_log_std}, "
+                f"intervene={sat_guard.intervene})"
+            )
+
+        # ActionDimMonitor (MESURE SEULE) — suit μ/σ pré-tanh + post-tanh par tête.
+        # Activé seulement si ADAN_ACTIONDIM=1 (run diagnostique V2). NE MODIFIE
+        # RIEN ; permet d'observer si μ(size)=-7.2 remonte au fil de l'entraînement.
+        if ActionDimMonitor is not None and os.environ.get("ADAN_ACTIONDIM", "0") == "1":
+            _ad_csv = os.environ.get(
+                "ADAN_ACTIONDIM_CSV",
+                str(TRAIN_OUTPUT_DIR / f"actiondim_worker_{self.worker_idx}_{profile_tag}.csv"),
+            )
+            _ad_every = int(os.environ.get("ADAN_ACTIONDIM_EVERY", "1"))
+            action_dim_monitor = ActionDimMonitor(
+                log_every=_ad_every,
+                pre_tanh_batch=int(os.environ.get("ADAN_ACTIONDIM_BATCH", "256")),
+                csv_path=_ad_csv,
+                verbose=1,
+            )
+            self._callbacks.append(action_dim_monitor)
+            logger.info(
+                f"Worker {self.worker_idx}: ActionDimMonitor ACTIF "
+                f"(every={_ad_every}, csv={_ad_csv}) — mesure seule, ne modifie rien."
+            )
 
         self._metrics_monitor = metrics_monitor
         
         # Initialize checkpoint tracking for robust 2500-step saves
         self._last_checkpoint_step = 0
 
-    def step(self):
-        """Run one training iteration (interval_timesteps steps of PPO.learn)."""
-        # Apply mutable hyperparameters (PBT perturbs these between iterations)
+    def _sync_mutable_hyperparameters(self) -> None:
+        """Synchronize PBT values across every SB3/VecNormalize consumer."""
         self.model.learning_rate = self.learning_rate
+        self.model.lr_schedule = FloatSchedule(self.learning_rate)
+        optimizer = getattr(getattr(self.model, "policy", None), "optimizer", None)
+        if optimizer is not None:
+            update_learning_rate(optimizer, self.learning_rate)
         self.model.ent_coef = self.ent_coef
         self.model.gamma = self.gamma
-
-        # CRITICAL FIX: Sync VecNormalize gamma with PPO gamma.
-        # PBT perturbs self.gamma but VecNormalize maintains its own gamma
-        # for reward discount computation. Without this sync, reward normalization
-        # uses stale gamma → critic signal diverges from actual discounting.
-        if hasattr(self.vec_env, 'gamma'):
+        if hasattr(self.model, "rollout_buffer"):
+            self.model.rollout_buffer.gamma = self.gamma
+        if hasattr(self.vec_env, "gamma"):
             self.vec_env.gamma = self.gamma
 
+    def reset_config(self, new_config: Dict[str, Any]) -> bool:
+        """Apply PBT mutations while safely reusing this trial actor.
+
+        Ray calls this method before restoring the exploited checkpoint.  Worker
+        identity and the environment stay attached to the target actor: PBT may
+        clone a source trial whose ``worker_config`` names another temporal
+        profile, but rebuilding or silently switching the target environment
+        here would invalidate its data/profile assignment.  Only the parameters
+        declared in ``hyperparam_mutations`` are updated.
+
+        Capital tiers are immutable runtime configuration.  Actor reuse is
+        rejected loudly if a future scheduler ever attempts to alter them.
+        """
+        incoming_adan_config = new_config.get("adan_config", self.adan_config)
+        if incoming_adan_config.get("capital_tiers") != self.adan_config.get("capital_tiers"):
+            raise ValueError("PBT actor reuse cannot mutate capital_tiers")
+
+        old_worker_idx = self.worker_idx
+        old_profile = self.profile
+        incoming_worker_config = new_config.get("worker_config", {})
+        if incoming_worker_config:
+            new_config["worker_config"] = {
+                **incoming_worker_config,
+                "worker_idx": old_worker_idx,
+                "profile": old_profile,
+            }
+        else:
+            new_config["worker_idx"] = old_worker_idx
+            new_config["profile"] = old_profile
+
+        self.learning_rate = float(new_config.get("learning_rate", self.learning_rate))
+        self.ent_coef = float(new_config.get("ent_coef", self.ent_coef))
+        self.gamma = float(new_config.get("gamma", self.gamma))
+        self.sl_pct = float(new_config.get("sl_pct", self.sl_pct))
+        self.tp_pct = float(new_config.get("tp_pct", self.tp_pct))
+        self.interval_timesteps = int(
+            new_config.get("interval_timesteps", self.interval_timesteps)
+        )
+        self._max_iterations = int(new_config.get("_max_iterations", self._max_iterations))
+        # Ray restores the exploited source checkpoint after reset_config(). Keep
+        # the target mutations explicitly so source metadata cannot overwrite them.
+        self._pbt_pending_mutations = {
+            "learning_rate": self.learning_rate,
+            "ent_coef": self.ent_coef,
+            "gamma": self.gamma,
+            "sl_pct": self.sl_pct,
+            "tp_pct": self.tp_pct,
+            "worker_idx": old_worker_idx,
+            "profile": old_profile,
+        }
+
+        # SB3 consumes lr_schedule during train(), not model.learning_rate.
+        self._sync_mutable_hyperparameters()
+
+        logger.info(
+            "Worker %s (%s): PBT actor reset applied: lr=%.2e ent=%.4f "
+            "gamma=%.4f SL=%.2f%% TP=%.2f%%; capital tiers unchanged",
+            self.worker_idx,
+            self.profile,
+            self.learning_rate,
+            self.ent_coef,
+            self.gamma,
+            self.sl_pct * 100.0,
+            self.tp_pct * 100.0,
+        )
+        return True
+
+    def step(self):
+        """Run one training iteration (interval_timesteps steps of PPO.learn)."""
+        # Apply mutable hyperparameters (PBT perturbs these between iterations).
+        self._sync_mutable_hyperparameters()
+
+        model_steps_before = int(getattr(self.model, "num_timesteps", 0))
         self.model.learn(
             total_timesteps=self.interval_timesteps,
             callback=self._callbacks,
             reset_num_timesteps=False,
         )
-        self._total_timesteps += self.interval_timesteps
+        model_steps_after = int(getattr(self.model, "num_timesteps", 0))
+        learned_steps = model_steps_after - model_steps_before
+        if learned_steps <= 0:
+            raise RuntimeError(
+                f"PPO learned no steps: before={model_steps_before}, "
+                f"after={model_steps_after}"
+            )
+        self._total_timesteps += learned_steps
+        if learned_steps != self.interval_timesteps:
+            raise RuntimeError(
+                "PPO/Ray timestep contract violated: requested "
+                f"{self.interval_timesteps}, learned {learned_steps}"
+            )
 
         # EXPERT FIX: Explicit GC after each iteration to prevent memory accumulation
         # that causes Ray GCS crashes after ~4000 steps (ObjectRef retention + metadata growth)
         import gc
         gc.collect()
+
+        # Ray results must describe the environment *after* this learn() call,
+        # never the last periodic callback sample. On the final iteration, close
+        # positions before taking that snapshot so terminal receipts, episode/run
+        # PnL, cash and equity all reach result.json/progress.csv atomically.
+        final_iteration = (
+            self._completed_iterations + 1 >= self._max_iterations
+        )
+        if final_iteration:
+            terminal_receipts_by_env = self.vec_env.env_method(
+                "finalize_open_positions",
+                reason="TRAINING_END",
+            )
+            for env_index, terminal_receipts in enumerate(
+                terminal_receipts_by_env
+            ):
+                terminal_pnl = sum(
+                    float(
+                        receipt.get(
+                            "pnl_net",
+                            receipt.get("pnl", 0.0),
+                        )
+                        or 0.0
+                    )
+                    for receipt in (terminal_receipts or [])
+                    if isinstance(receipt, dict)
+                )
+                self.vec_env.env_method(
+                    "_finalize_episode_financial_telemetry",
+                    reset_close_pnl=terminal_pnl,
+                    indices=env_index,
+                )
+
+        self._metrics_monitor._collect_worker_metrics()
 
         # CHECKPOINT: Save every 15k steps for crash recovery
         # Verify vec_env obs_rms consistency (detect NaN corruption from divergence)
@@ -889,6 +1608,13 @@ class ADAN_PBT_Worker(_TrainableBase):
         mean_balance = 0.0
         open_positions = 0
         realized_pnl = 0.0
+        realized_pnl_step = 0.0
+        realized_pnl_episode = 0.0
+        realized_pnl_episode_current = 0.0
+        realized_pnl_cumulative = 0.0
+        cash = 0.0
+        equity = 0.0
+        realized_equity = 0.0
         try:
             ep_rewards = self.model.ep_info_buffer
             if ep_rewards and len(ep_rewards) > 0:
@@ -901,21 +1627,69 @@ class ADAN_PBT_Worker(_TrainableBase):
             if wm.get("sharpe_ratios"):
                 mean_sharpe = wm["sharpe_ratios"][-1]
             if wm.get("portfolio_values"):
-                mean_balance = wm["portfolio_values"][-1]  # Now = cash only
+                mean_balance = wm["portfolio_values"][-1]  # Latest total equity snapshot
             if wm.get("realized_pnls"):
                 realized_pnl = wm["realized_pnls"][-1]
+            if wm.get("realized_pnl_steps"):
+                realized_pnl_step = wm["realized_pnl_steps"][-1]
+            if wm.get("realized_pnl_episodes"):
+                realized_pnl_episode = wm["realized_pnl_episodes"][-1]
+            if wm.get("realized_pnl_episode_currents"):
+                realized_pnl_episode_current = wm["realized_pnl_episode_currents"][-1]
+            if wm.get("realized_pnl_cumulatives"):
+                realized_pnl_cumulative = wm["realized_pnl_cumulatives"][-1]
+            if wm.get("cash_values"):
+                cash = wm["cash_values"][-1]
+            if wm.get("equity_values"):
+                equity = wm["equity_values"][-1]
+            if wm.get("realized_equity_values"):
+                realized_equity = wm["realized_equity_values"][-1]
         except Exception:
             pass
 
-        # Check if we've exceeded max iterations (self-stop for Ray >= 2.54)
-        _iter = getattr(self, "training_iteration", 0)
-        done = _iter >= self._max_iterations
+        # Surface PPO health in Ray result.json/progress.csv. SB3 already
+        # computes these values; exporting them is measurement-only and lets the
+        # supervisor detect critic/policy drift per trial instead of relying on
+        # a population average or scraping terminal tables.
+        _logger_values = getattr(getattr(self.model, "logger", None), "name_to_value", {}) or {}
+        _ppo_health = {}
+        for _metric in (
+            "approx_kl",
+            "clip_fraction",
+            "entropy_loss",
+            "explained_variance",
+            "policy_gradient_loss",
+            "value_loss",
+            "std",
+        ):
+            _value = _logger_values.get(f"train/{_metric}", _logger_values.get(_metric))
+            try:
+                _ppo_health[_metric] = float(_value)
+            except (TypeError, ValueError):
+                _ppo_health[_metric] = float("nan")
+
+        # Ray's Trainable.training_iteration is owned by Tune and is incremented
+        # only after step() returns, so reading it here is always one iteration
+        # behind (and may be absent). Track completed learn() calls locally to
+        # stop exactly at the requested per-trial budget.
+        self._completed_iterations += 1
+        done = self._completed_iterations >= self._max_iterations
 
         return {
             "mean_reward": mean_reward,
+            **_ppo_health,
             "mean_sharpe": mean_sharpe,
-            "mean_balance": mean_balance,       # = cash only (realized)
-            "realized_pnl": realized_pnl,       # = cash - initial
+            # Keep historical semantics: latest portfolio total-value snapshot.
+            "mean_balance": mean_balance,
+            "realized_pnl": realized_pnl,
+            "realized_pnl_step": realized_pnl_step,
+            # Most recently completed episode; current episode is explicit too.
+            "realized_pnl_episode": realized_pnl_episode,
+            "realized_pnl_episode_current": realized_pnl_episode_current,
+            "realized_pnl_cumulative": realized_pnl_cumulative,
+            "cash": cash,
+            "equity": equity,
+            "realized_equity": realized_equity,
             "learning_rate": self.learning_rate,
             "ent_coef": self.ent_coef,
             "gamma": self.gamma,
@@ -983,8 +1757,13 @@ class ADAN_PBT_Worker(_TrainableBase):
                         pass
             raise
 
-    def load_checkpoint(self, checkpoint_dir: str):
-        """Restore PPO model + VecNormalize stats with integrity verification."""
+    def load_checkpoint(
+        self,
+        checkpoint_dir: str,
+        *,
+        restore_hyperparameters: bool = True,
+    ):
+        """Restore model state, optionally preserving current PBT mutations."""
         model_path = os.path.join(checkpoint_dir, "model.zip")
         vec_path = os.path.join(checkpoint_dir, "vecnormalize.pkl")
         state_path = os.path.join(checkpoint_dir, "worker_state.json")
@@ -1015,14 +1794,16 @@ class ADAN_PBT_Worker(_TrainableBase):
             self.model.set_env(self.vec_env)
             logger.info(f"✅ VecNormalize loaded: {vec_path} (gamma synced to {self.gamma:.4f}, norm_obs=False)")
             
-            # Load state
+            # Load temporal state. During PBT exploit, source hyperparameters are
+            # deliberately excluded: reset_config() already applied target values.
             if os.path.exists(state_path):
                 with open(state_path) as f:
                     state = json.load(f)
                 self._total_timesteps = state.get("total_timesteps", 0)
-                self.learning_rate = state.get("learning_rate", self.learning_rate)
-                self.ent_coef = state.get("ent_coef", self.ent_coef)
-                self.gamma = state.get("gamma", self.gamma)
+                if restore_hyperparameters:
+                    self.learning_rate = state.get("learning_rate", self.learning_rate)
+                    self.ent_coef = state.get("ent_coef", self.ent_coef)
+                    self.gamma = state.get("gamma", self.gamma)
                 logger.info(f"✅ State restored: steps={self._total_timesteps}, "
                            f"lr={self.learning_rate:.2e}, ent_coef={self.ent_coef:.4f}")
             else:
@@ -1096,35 +1877,49 @@ class ADAN_PBT_Worker(_TrainableBase):
             with open(meta_path) as f:
                 metadata = json.load(f)
             
-            # Restore hyperparameters
-            self._total_timesteps = metadata.get("total_timesteps", 0)
-            self.learning_rate = metadata.get("learning_rate", self.learning_rate)
-            self.ent_coef = metadata.get("ent_coef", self.ent_coef)
-            self.gamma = metadata.get("gamma", self.gamma)
-            self.sl_pct = metadata.get("sl_pct", self.sl_pct)
-            self.tp_pct = metadata.get("tp_pct", self.tp_pct)
-            
-            # Find and load the latest model checkpoint
-            model_checkpoint_dir = metadata.get("checkpoint_dir", self.checkpoint_dir)
+            source_timesteps = int(metadata.get("total_timesteps", 0))
+            pending = getattr(self, "_pbt_pending_mutations", None)
+            if pending is None:
+                # Normal resume (not PBT exploit): checkpoint hyperparameters apply.
+                self.learning_rate = metadata.get("learning_rate", self.learning_rate)
+                self.ent_coef = metadata.get("ent_coef", self.ent_coef)
+                self.gamma = metadata.get("gamma", self.gamma)
+                self.sl_pct = metadata.get("sl_pct", self.sl_pct)
+                self.tp_pct = metadata.get("tp_pct", self.tp_pct)
+
+            model_checkpoint_dir = metadata.get(
+                "checkpoint_dir", getattr(self, "checkpoint_dir", "")
+            )
             if os.path.exists(model_checkpoint_dir):
-                checkpoint_dirs = sorted([
-                    d for d in os.listdir(model_checkpoint_dir)
-                    if d.startswith("checkpoint_") and os.path.isdir(
-                        os.path.join(model_checkpoint_dir, d)
+                exact_checkpoint = os.path.join(
+                    model_checkpoint_dir,
+                    f"checkpoint_{source_timesteps:08d}",
+                )
+                if os.path.isdir(exact_checkpoint):
+                    self.load_checkpoint(
+                        exact_checkpoint,
+                        restore_hyperparameters=pending is None,
                     )
-                ])
-                if checkpoint_dirs:
-                    latest_checkpoint = os.path.join(
-                        model_checkpoint_dir,
-                        checkpoint_dirs[-1]
-                    )
-                    self.load_checkpoint(latest_checkpoint)
-                    logger.info(f"✅ Ray Tune restore: loaded model from {latest_checkpoint}")
+                    if pending is not None:
+                        self.learning_rate = pending["learning_rate"]
+                        self.ent_coef = pending["ent_coef"]
+                        self.gamma = pending["gamma"]
+                        self.sl_pct = pending["sl_pct"]
+                        self.tp_pct = pending["tp_pct"]
+                        self.worker_idx = pending["worker_idx"]
+                        self.profile = pending["profile"]
+                    self._total_timesteps = source_timesteps
+                    self._sync_mutable_hyperparameters()
+                    self._pbt_pending_mutations = None
+                    logger.info(f"✅ Ray Tune restore: loaded model from {exact_checkpoint}")
                     logger.info(f"   Restored state: steps={self._total_timesteps}, "
                                f"lr={self.learning_rate:.2e}, "
                                f"SL%={self.sl_pct:.2%}, TP%={self.tp_pct:.2%}")
                 else:
-                    logger.warning(f"⚠️  No checkpoint_* dirs found in {model_checkpoint_dir}")
+                    raise FileNotFoundError(
+                        "Exact PBT checkpoint not found for "
+                        f"total_timesteps={source_timesteps}: {exact_checkpoint}"
+                    )
             else:
                 logger.warning(f"⚠️  Checkpoint dir not found: {model_checkpoint_dir}")
                 
@@ -1133,12 +1928,24 @@ class ADAN_PBT_Worker(_TrainableBase):
             raise
 
     def cleanup(self):
-        """Close environments."""
+        """Finalize auditable positions before closing vector environments."""
+        vec_env = getattr(self, "vec_env", None)
+        if vec_env is None:
+            return
         try:
-            if hasattr(self, "vec_env") and self.vec_env is not None:
-                self.vec_env.close()
-        except Exception:
-            pass
+            vec_env.env_method(
+                "finalize_open_positions",
+                reason="TRAINING_END",
+            )
+        except Exception as exc:
+            logger.error(
+                "Worker %s failed to finalize positions during cleanup: %s",
+                getattr(self, "worker_idx", "unknown"),
+                exc,
+                exc_info=True,
+            )
+        finally:
+            vec_env.close()
 
 
 # ===========================================================================
@@ -1174,6 +1981,10 @@ def run_pbt(
     """
     if storage_path is None:
         storage_path = str((TRAIN_OUTPUT_DIR / "ray_results").resolve())
+    else:
+        # Ray 2.56 routes storage_path through pyarrow.fs and rejects relative
+        # paths as URIs with an empty scheme.
+        storage_path = str(Path(storage_path).expanduser().resolve())
 
     max_iterations = max(1, total_steps // interval_timesteps)
 
@@ -1186,7 +1997,7 @@ def run_pbt(
         hyperparam_mutations={
             # PPO hyperparams
             "learning_rate": tune.loguniform(1e-6, 1e-3),
-            "ent_coef": tune.uniform(0.0, 0.1),
+            "ent_coef": tune.uniform(0.02, 0.1),   # V31 FIX: floor 0.02 anti-collapse
             "gamma": tune.uniform(0.9, 0.999),
             # Trading hyperparams (Ray PBT will auto-evolve these)
             "sl_pct": tune.uniform(0.01, 0.08),   # Stop-Loss: 1% to 8%
@@ -1215,7 +2026,7 @@ def run_pbt(
             "interval_timesteps": interval_timesteps,
             # PPO hyperparams
             "learning_rate": tune.loguniform(1e-4, 1e-3),
-            "ent_coef": tune.uniform(0.0, 0.05),
+            "ent_coef": tune.uniform(0.02, 0.05),  # V31 FIX: floor 0.02 anti-collapse
             "gamma": tune.uniform(0.95, 0.999),
             # Trading hyperparams (PBT auto-evolves these)
             "sl_pct": tune.uniform(0.01, 0.08),
@@ -1233,7 +2044,7 @@ def run_pbt(
             "interval_timesteps": interval_timesteps,
             # PPO hyperparams
             "learning_rate": tune.loguniform(1e-4, 1e-3),
-            "ent_coef": tune.uniform(0.0, 0.05),
+            "ent_coef": tune.uniform(0.02, 0.05),  # V31 FIX: floor 0.02 anti-collapse
             "gamma": tune.uniform(0.95, 0.999),
             # Trading hyperparams (PBT auto-evolves these)
             "sl_pct": tune.uniform(0.01, 0.08),
@@ -1301,15 +2112,17 @@ def run_pbt(
         _max_concurrent = min(num_samples, 2)
         tune_config_kwargs["max_concurrent_trials"] = _max_concurrent
 
-        # Resource allocation: distribute CPUs across concurrent trials
-        _avail_cpus = os.cpu_count() or 4
+        # Resource allocation must use the capacity explicitly exposed to Ray,
+        # not os.cpu_count(): the host may have more CPUs than this run owns.
+        _avail_cpus = max(1, int(num_cpus))
+        trial_resources = None
         if _is_colab:
             import torch as _torch
             if _torch.cuda.is_available():
                 # Colab: distribute GPU evenly across ALL trials (4 trials → 0.25 each)
                 _cpu_per_trial = max(0.5, (_avail_cpus - 1) / max(num_samples, 1))
                 _gpu_per_trial = 1.0 / max(num_samples, 1)
-                tune_config_kwargs["trial_resources"] = {
+                trial_resources = {
                     "cpu": _cpu_per_trial,
                     "gpu": _gpu_per_trial,
                 }
@@ -1319,7 +2132,7 @@ def run_pbt(
             # Reserve 1 CPU for Ray overhead, split rest among concurrent trials
             # Example: 8 cores, 2 concurrent → (8-1)/2 = 3.5 CPUs per trial
             _cpu_per_trial = max(1.0, (_avail_cpus - 1) / max(_max_concurrent, 1))
-            tune_config_kwargs["trial_resources"] = {
+            trial_resources = {
                 "cpu": _cpu_per_trial,
                 "gpu": 0,
             }
@@ -1329,21 +2142,37 @@ def run_pbt(
                 f"total_cpus={_avail_cpus}"
             )
 
-        # Configure checkpointing: save every iteration monitored by our robust interval logic
-        # (see step() for 2500-step saves). Keep more checkpoints for recovery options.
-        # ray.air.CheckpointConfig deprecated in Ray >= 2.6; use ray.train if available
-        try:
-            from ray.train import CheckpointConfig
-        except ImportError:
-            from ray.air import CheckpointConfig
-        checkpoint_config = CheckpointConfig(
+        # Configure checkpointing: the Train and Tune variants are no longer
+        # interchangeable in Ray 2.56.  ray.train.CheckpointConfig uses the
+        # string sentinel "DEPRECATED" for checkpoint_frequency; Tune copies
+        # that value into Trial.checkpoint_freq and later evaluates
+        # training_iteration % checkpoint_freq, which raises TypeError.
+        # Always use Tune's public config and pin the disabled iteration-based
+        # frequency to an integer. ADAN's step-based save_checkpoint() remains
+        # the sole checkpoint trigger.
+        checkpoint_config = tune.CheckpointConfig(
             num_to_keep=10,  # Keep 10 most recent checkpoints (covers ~25k steps at 2500-step interval)
             checkpoint_score_attribute="timesteps_total",
             checkpoint_score_order="max",
+            checkpoint_frequency=0,
         )
+        if not isinstance(checkpoint_config.checkpoint_frequency, int):
+            raise TypeError(
+                "Ray Tune checkpoint_frequency must be int, got "
+                f"{type(checkpoint_config.checkpoint_frequency).__name__}: "
+                f"{checkpoint_config.checkpoint_frequency!r}"
+            )
 
+        # Ray's Tuner API does not accept trial_resources/resources_per_trial
+        # (Ray 2.56), and TuneConfig never owned that parameter. Annotating the
+        # trainable is the public cross-version scheduling API.
+        scheduled_trainable = (
+            tune.with_resources(ADAN_PBT_Worker, resources=trial_resources)
+            if trial_resources
+            else ADAN_PBT_Worker
+        )
         tuner = tune.Tuner(
-            ADAN_PBT_Worker,
+            scheduled_trainable,
             tune_config=tune.TuneConfig(**tune_config_kwargs),
             run_config=tune.RunConfig(
                 name="adan_pbt_training",
@@ -1449,9 +2278,18 @@ def main(
     # Strategy: Bridge RAM with fast M.2 NVMe spilling to prevent GCS asphyxiation
     # ============================================================================
 
-    # 1. Paths
-    _ray_spill_dir = "/mnt/new_data/ray_spill"      # M.2 NVMe partition (11GB free)
-    _ray_tmp = os.environ.get("RAY_TMPDIR", "/mnt/new_data/ray_tmp")
+    # 1. Paths — portable and workspace-local by default. The historical
+    # /mnt/new_data path does not exist on the production VPS and made Ray fail
+    # before initialization. Operators may still override both paths explicitly.
+    # Keep Ray's AF_UNIX socket path below Linux's 107-byte limit. A runtime
+    # directory nested under PROJECT_ROOT produced a 120+ byte plasma socket on
+    # this VPS. The workspace-level default is short, persistent and writable.
+    _default_ray_root = PROJECT_ROOT.parents[1] / ".adan_ray"
+    _ray_runtime_root = os.environ.get("ADAN_RAY_RUNTIME_ROOT", str(_default_ray_root))
+    _ray_spill_dir = os.environ.get(
+        "ADAN_RAY_SPILL_DIR", os.path.join(_ray_runtime_root, "spill")
+    )
+    _ray_tmp = os.environ.get("RAY_TMPDIR", os.path.join(_ray_runtime_root, "tmp"))
     os.makedirs(_ray_spill_dir, exist_ok=True)
     os.makedirs(_ray_tmp, exist_ok=True)
 
@@ -1524,7 +2362,7 @@ def main(
     logger.info("=" * 90)
     logger.info("🔥 ADAN PBT ULTIMATE CONFIG (SESSION 15 + FIX)")
     logger.info(f"   💾 Object Store: {OBJECT_STORE_GB // (1024**3):.1f}GB (25% of {total_memory // (1024**3):.1f}GB RAM) + SSD Spilling")
-    logger.info(f"   📁 Spill Dir: {_ray_spill_dir} (11GB free on M.2 NVMe)")
+    logger.info(f"   📁 Spill Dir: {_ray_spill_dir}")
     logger.info(f"   🛡️  Memory Threshold: 88% (Kill workers before GCS asphyxiation)")
     logger.info(f"   ⏱️  GCS Reconnect: 600s (10 min patience for network hiccups)")
     logger.info(f"   📊 CPUs: {num_cpus}, Samples: {num_samples}, Envs/worker: {envs_per_worker}")
@@ -1580,7 +2418,7 @@ def main(
 # ===========================================================================
 def sandbox_train(steps: int = None, initial_capital: float = None,
                   config_path: str = None, resume_ckpt: str = None,
-                  checkpoint_out: str = None):
+                  checkpoint_out: str = None, worker_key: str = None):
     """Run training in sandbox/CI mode — no Ray, no GPU, single-process.
 
     Uses the REAL MultiAssetChunkedEnv from src/adan_trading_bot with all
@@ -1617,8 +2455,31 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     config["environment"]["initial_capital"] = initial_capital
     logger.info(f"[SANDBOX] Config: steps={steps}, initial_capital={initial_capital}")
 
-    # Worker config: use w1 (scalper) as default sandbox worker
-    worker_config = _copy.deepcopy(config.get("workers", {}).get("w1", {}))
+    # Worker config: use w1 (scalper) as default sandbox worker.
+    # worker_key allows validating other profiles (w2=intraday, w3=swing,
+    # w4=position) — accepts either the worker key ("w2") or a profile name
+    # ("intraday"). Falls back to w1 when unknown.
+    _workers = config.get("workers", {})
+    _wkey = "w1"
+    if worker_key:
+        wk = str(worker_key).strip().lower()
+        if wk in _workers:
+            _wkey = wk
+        else:
+            # match by profile name
+            _profile_map = {
+                str(cfg.get("profile", "")).strip().lower(): k
+                for k, cfg in _workers.items() if isinstance(cfg, dict)
+            }
+            if wk in _profile_map:
+                _wkey = _profile_map[wk]
+            else:
+                logger.warning(
+                    f"[SANDBOX] worker_key='{worker_key}' unknown — falling back to w1"
+                )
+    logger.info(f"[SANDBOX] Using worker_config key='{_wkey}' "
+                f"(profile={_workers.get(_wkey, {}).get('profile', '?')})")
+    worker_config = _copy.deepcopy(_workers.get(_wkey, {}))
     worker_config["worker_id"] = 0
     worker_config.setdefault("data_split_override", "train")
     worker_config.setdefault("timeframes", config.get("data", {}).get("timeframes", ["5m", "1h", "4h"]))
@@ -1646,9 +2507,51 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     # causing progressive OOM after ~6900 steps. Using raw observations instead.
     vec_env = DummyVecEnv([lambda: env])
     gamma = config.get("agent", {}).get("gamma", 0.99)
-    
-    # Skip VecNormalize entirely - observations are already normalized in StateBuilder
-    logger.info("[SANDBOX] VecNormalize DISABLED to prevent OOM crashes (using raw observations)")
+
+    # ==========================================================================
+    # V34 CRITIC FIX (ADAN_NORM_REWARD=1) - REWARD-ONLY RETURN NORMALIZATION.
+    # --------------------------------------------------------------------------
+    # ROOT CAUSE (confirmed by code + V33 log, NOT guessed):
+    #   The sandbox path builds NO VecNormalize at all -> the PPO return (value
+    #   target) is the raw discounted symlog-reward on $20.50 capital: tiny,
+    #   poorly-scaled magnitudes. The critic value-loss gradient is therefore
+    #   minuscule and it never fits even the mean -> explained_variance goes
+    #   NEGATIVE (V33 log: EV=-0.80/-2.04/-1.19). A blind critic yields noisy /
+    #   nan advantages (V33: adv_BUY=nan, nB=0) -> mu drifts negative -> the
+    #   directional FLAT/SELL absorption (collapse upd~439). This matches
+    #   hypothesis #2 of docs/V16_FINAL_GATE_REPORT.md (value targets mal
+    #   calibres), the one lever never yet tested in isolation.
+    #
+    # MINIMAL CORRECTION (ONE variable): standardize the RETURN (reward running
+    # std) so the critic receives a unit-variance value target. Everything else
+    # (MTM/anchor/thresholds/PPO hp) is held identical so V34 vs V33 is a clean
+    # A/B on critic EV.
+    #
+    # MEMORY SAFETY: the historic OOM came from norm_obs (per-key obs-sized
+    # running buffers). norm_reward keeps only SCALAR return running stats
+    # -> negligible memory, no OOM path. obs stays raw.
+    # OFF by default (ADAN_NORM_REWARD unset) => byte-for-byte V33 behavior.
+    # ==========================================================================
+    _norm_reward_v34 = os.environ.get("ADAN_NORM_REWARD", "0") == "1"
+    if _norm_reward_v34:
+        _clip_rew = float(os.environ.get("ADAN_NORM_REWARD_CLIP", "10.0") or 10.0)
+        vec_env = VecNormalize(
+            vec_env,
+            norm_obs=False,       # StateBuilder already normalizes obs (no OOM)
+            norm_reward=True,     # V34: standardize the return -> critic target
+            clip_obs=10.0,
+            clip_reward=_clip_rew,
+            gamma=gamma,
+            training=True,
+        )
+        logger.info(
+            "[SANDBOX][V34] VecNormalize ENABLED norm_reward=True "
+            "(norm_obs=False, clip_reward=%.1f, gamma=%.3f) - critic value-target "
+            "standardization to fix EV<0 blind critic.", _clip_rew, gamma
+        )
+    else:
+        # Skip VecNormalize entirely - observations are already normalized in StateBuilder
+        logger.info("[SANDBOX] VecNormalize DISABLED to prevent OOM crashes (using raw observations)")
 
     # Read hyperparams from config (NEVER hardcode)
     agent_cfg = config.get("agent", {})
@@ -1661,15 +2564,106 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     # 2. log_std_init=-0.5: Initial std ≈ exp(-0.5) ≈ 0.61, so actions
     #    start with nuanced variance inside [-1, 1], learning fine position sizing
     #    instead of saturating at extremes (previous 0.5 gave std≈1.65 → epilepsy).
+    # V2 override : ADAN_LOG_STD_INIT (def -0.5, compat checkpoints). Le run
+    # diagnostique le relève (0.0 -> std0≈1.0) pour rouvrir l'exploration.
+    # gSDE STABILITY FIX (V2 execution audit, 2026-06-24 — MEASURED, not guessed):
+    # gSDE variance = (latent_sde**2) @ (get_std(log_std)**2), i.e. for ~uniform
+    # std,  σ_eff ≈ ||features||_2 * exp(log_std_init).
+    # scripts/diag_gsde_latent.py MEASURED ||features||_2 ≈ 11.4 with the real
+    # ContextualTemporalFusionExtractor (features_dim=256). So log_std_init=-0.5
+    # gives σ_eff ≈ 6.9 AT INIT (chaotic) and PPO then drives log_std up further
+    # -> σ explodes (3.4->13->41->110 observed). The old "frozen size μ=-7" was
+    # the network DEFENDING against this chaos by saturating tanh.
+    # Fixes (both SB3-documented, no architecture surgery):
+    #   - log_std_init=-2.0  -> std≈0.135 -> σ_eff ≈ 1.5 (sane exploration)
+    #   - use_expln=True     -> SB3: "keeps variance above zero and prevents it
+    #                           from growing too fast" (bounds the blow-up)
+    # NOTE: VecNormalize(norm_obs) is NOT the fix here — StateBuilder already
+    # normalizes+clips obs to [-10,10] (measured), and heavy/500k_FIXED used
+    # norm_obs=False too. LayerNorm on features makes it WORSE (||.||_2->16).
+    # V30 EXPLORATION FIX (2026-08-26, autonomous audit): the sandbox CONFIG
+    # block is now the SINGLE SOURCE OF TRUTH for the exploration knobs. Env
+    # vars override ONLY when explicitly set — otherwise the config value wins.
+    # Previously these read hardcoded defaults ("1"/"-2.0") that IGNORED the
+    # config's use_sde:false, silently re-enabling gSDE (root cause of the 245k
+    # KL explosion + log_std collapse). See config.yaml sandbox block comment.
+    def _cfg_or_env(env_key, cfg_key, cfg_default, cast):
+        _env_val = os.environ.get(env_key)
+        if _env_val is not None and str(_env_val).strip() != "":
+            return cast(_env_val)
+        return cast(sandbox_cfg.get(cfg_key, cfg_default))
+
+    _sb_log_std_init = _cfg_or_env(
+        "ADAN_LOG_STD_INIT", "log_std_init", -1.0, float)
+    _sb_use_expln = _cfg_or_env(
+        "ADAN_USE_EXPLN", "use_expln", False,
+        lambda v: str(v).strip().lower() in ("1", "true", "yes"))
+    _sb_use_sde = _cfg_or_env(
+        "ADAN_USE_SDE", "use_sde", False,
+        lambda v: str(v).strip().lower() in ("1", "true", "yes"))
     policy_kwargs = {
         "share_features_extractor": True,
-        "log_std_init": -0.5,  # exp(-0.5) ≈ 0.61 std
+        "log_std_init": _sb_log_std_init,
     }
+    if _sb_use_sde:
+        # use_expln only matters for gSDE
+        policy_kwargs["use_expln"] = _sb_use_expln
+
+    # ------------------------------------------------------------------
+    # CRITICAL FIX (V2 execution audit, 2026-06-24):
+    # The sandbox mode previously built policy_kwargs WITHOUT
+    # features_extractor_class, so SB3 silently fell back to its default
+    # CombinedExtractor (a 0-parameter flatten of the Dict obs). That means
+    # the CNN / cross-attention / FiLM context / aux forward-predictor NEVER
+    # ran in sandbox training — only a bare MLP was trained. This made
+    # sandbox checkpoints architecturally DIFFERENT from heavy-mode (Ray)
+    # checkpoints and invalidated any μ/σ comparison against the 500K model.
+    # We now wire the SAME ContextualTemporalFusionExtractor as heavy mode so
+    # sandbox trains the real architecture (proof: scripts/audit_execution.py).
+    # ------------------------------------------------------------------
+    fe_kwargs = agent_cfg.get("features_extractor_kwargs", {})
+    _cfg_pk = copy.deepcopy(fe_kwargs.get("policy_kwargs", {}))
+    _activation_fn_map = {"ReLU": nn.ReLU, "Tanh": nn.Tanh, "LeakyReLU": nn.LeakyReLU}
+    if "activation_fn" in _cfg_pk:
+        _act_name = str(_cfg_pk["activation_fn"]).split(".")[-1]
+        _cfg_pk["activation_fn"] = _activation_fn_map.get(_act_name, nn.ReLU)
+    # carry over net_arch / activation_fn from config policy_kwargs (if any)
+    for _k, _v in _cfg_pk.items():
+        policy_kwargs.setdefault(_k, _v)
+
+    if ContextualTemporalFusionExtractor is not None:
+        policy_kwargs["features_extractor_class"] = ContextualTemporalFusionExtractor
+        _valid_fe_keys = {"features_dim", "context_dim", "cnn_hidden", "dropout"}
+        _safe_fe_kwargs = {k: v for k, v in fe_kwargs.items() if k in _valid_fe_keys}
+        _safe_fe_kwargs.setdefault("context_dim", 14)
+        policy_kwargs["features_extractor_kwargs"] = _safe_fe_kwargs
+        logger.info(
+            "[SANDBOX] features_extractor=ContextualTemporalFusionExtractor "
+            f"(CNN+cross-attn+FiLM+aux) | fe_kwargs={_safe_fe_kwargs}"
+        )
+    else:
+        logger.warning(
+            "[SANDBOX] ContextualTemporalFusionExtractor UNAVAILABLE — falling "
+            "back to SB3 CombinedExtractor (bare MLP). Architecture will NOT "
+            "match heavy mode. Check the import at the top of this file."
+        )
+
+    logger.info(
+        f"[SANDBOX] gSDE: use_sde={_sb_use_sde} use_expln={_sb_use_expln} "
+        f"log_std_init={_sb_log_std_init:+.3f} (std0≈{float(np.exp(_sb_log_std_init)):.3f}) "
+        f"-> expected σ_eff≈{11.4*float(np.exp(_sb_log_std_init)):.2f} at init "
+        f"(target <~1.5)."
+    )
 
     # S15 HARD RESET: Use config values (512/64/10) — safe for 7GB CI
     sandbox_n_steps = int(sandbox_cfg.get("n_steps", 512))
     sandbox_batch_size = int(sandbox_cfg.get("batch_size", 64))
-    sandbox_n_epochs = int(sandbox_cfg.get("n_epochs", 10))
+    # GARDE-FOU (2026-06-27): n_epochs surchargeable via ADAN_N_EPOCHS.
+    # Le gel a step 12417 s'est produit pendant un update PPO ; reduire
+    # n_epochs (20->10) raccourcit la fenetre de backward intensif ou le
+    # deadlock OpenMP/CPU se manifeste (test recommande utilisateur).
+    sandbox_n_epochs = int(os.environ.get("ADAN_N_EPOCHS",
+                                          sandbox_cfg.get("n_epochs", 10)))
     logger.info(f"[SANDBOX] PPO: n_steps={sandbox_n_steps}, batch_size={sandbox_batch_size}, "
                 f"n_epochs={sandbox_n_epochs}")
 
@@ -1683,50 +2677,190 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         prior_steps = int(getattr(model, "num_timesteps", 0))
         logger.info(f"[SANDBOX] Prior cumulative timesteps: {prior_steps}")
     else:
-        model = PPO(
+        # DIAGNOSTIC-V6.1: learning-rate WARMUP schedule. The FIRST PPO updates on
+        # random init produced approx_kl 0.17 (>1.5*target_kl) -> "Early stopping
+        # at step 0", almost no gradient applied. A warmup ramps lr from 10% ->
+        # 100% of target over the first 20% of training, so the violent first
+        # updates are tiny and KL stays under control; full lr afterwards.
+        _lr_target = float(sandbox_cfg.get("learning_rate",
+                           agent_cfg.get("learning_rate", 3e-4)))
+        _warmup_frac = float(sandbox_cfg.get("lr_warmup_frac", 0.20))
+        # FIX V32 (2026-08-29) - LR DECAY apres warmup.
+        # BUG V31 : le schedule montait 10%->100% sur les 20% premiers pas PUIS
+        # restait PLAT a _lr_target jusqu'a la fin. Sur PPO, un LR constant en
+        # fin de run (quand la policy se durcit) produit des updates de plus en
+        # plus violents -> clip_fraction a grimpe de ~0 a ~0.9 et KL 0.4-0.65,
+        # bien au-dessus de target_kl (0.03). On ajoute une decroissance cosine
+        # de _lr_target vers un plancher apres le warmup : la region de confiance
+        # se resserre naturellement quand l'entrainement avance.
+        import math as _math_lr
+        _lr_floor_frac = float(sandbox_cfg.get("lr_floor_frac", 0.10))  # 10% du LR cible
+        _lr_floor = _lr_target * _lr_floor_frac
+        def _lr_schedule(progress_remaining: float) -> float:
+            # SB3 passes progress_remaining: 1.0 at start -> 0.0 at end.
+            done = 1.0 - float(progress_remaining)
+            if _warmup_frac > 0 and done < _warmup_frac:
+                ramp = 0.10 + 0.90 * (done / _warmup_frac)  # 0.10 -> 1.0
+                return _lr_target * ramp
+            # Decroissance cosine de _lr_target -> _lr_floor sur la phase post-warmup.
+            span = max(1e-9, 1.0 - _warmup_frac)
+            t = min(1.0, max(0.0, (done - _warmup_frac) / span))  # 0 -> 1
+            cos = 0.5 * (1.0 + _math_lr.cos(_math_lr.pi * t))     # 1 -> 0
+            return _lr_floor + (_lr_target - _lr_floor) * cos
+        logger.info(f"[SANDBOX] LR schedule: warmup->{_lr_target:.2e} sur {_warmup_frac:.0%}, "
+                    f"puis cosine decay ->{_lr_floor:.2e} (start={_lr_target*0.10:.2e})")
+        # V15 (2026-07-07): when the L2 action anchor is requested
+        # (ADAN_L2_ANCHOR_LAMBDA>0), the sandbox path MUST instantiate
+        # WorldModelPPO — its overridden train() is the ONLY place the anchor
+        # loss + Critic probes live. Vanilla PPO silently ignores the anchor.
+        # aux_loss_coef defaults to 0.0 here so the diagnosis isolates the
+        # anchor effect (no forward-prediction MSE confounding a0_mean).
+        _anchor_lambda_env = float(os.environ.get("ADAN_L2_ANCHOR_LAMBDA", "0.0") or 0.0)
+        _use_wmppo = (_anchor_lambda_env > 0.0) and (WorldModelPPO is not None)
+        _SandboxPPOClass = WorldModelPPO if _use_wmppo else PPO
+        _extra_ppo_kwargs = {}
+        if _use_wmppo:
+            _aux_coef = float(os.environ.get("ADAN_AUX_LOSS_COEF", "0.0") or 0.0)
+            _extra_ppo_kwargs["aux_loss_coef"] = _aux_coef
+            logger.warning(
+                "[SANDBOX][V15] Using WorldModelPPO (anchor lambda=%.4f, "
+                "aux_loss_coef=%.3f) — L2 action anchor + Critic probes ACTIVE.",
+                _anchor_lambda_env, _aux_coef)
+        else:
+            logger.info("[SANDBOX] Using vanilla PPO (no L2 anchor requested).")
+        model = _SandboxPPOClass(
             "MultiInputPolicy",
             vec_env,
-            learning_rate=float(sandbox_cfg.get("learning_rate",
-                                agent_cfg.get("learning_rate", 3e-4))),
+            learning_rate=_lr_schedule,
             n_steps=sandbox_n_steps,
             batch_size=sandbox_batch_size,
             n_epochs=sandbox_n_epochs,
             gamma=float(agent_cfg.get("gamma", 0.99)),
             gae_lambda=float(agent_cfg.get("gae_lambda", 0.95)),
-            clip_range=float(agent_cfg.get("clip_range", 0.2)),
-            ent_coef=float(sandbox_cfg.get("ent_coef",
-                           agent_cfg.get("ent_coef", 0.01))),
+            # DIAGNOSTIC-V5: read clip_range/target_kl/max_grad_norm from the
+            # sandbox block FIRST (that is the path that runs) so the PPO
+            # stabilisation knobs actually take effect. clip_fraction was 0.73
+            # and approx_kl 0.58 on the V4 run -> stricter trust region + KL
+            # early-stop are required.
+            clip_range=float(sandbox_cfg.get("clip_range",
+                             agent_cfg.get("clip_range", 0.2))),
+            target_kl=float(sandbox_cfg.get("target_kl",
+                            agent_cfg.get("target_kl", 0.035))),
+            ent_coef=float(os.environ.get(
+                "ADAN_ENT_COEF",
+                sandbox_cfg.get("ent_coef", agent_cfg.get("ent_coef", 0.01)))),
             vf_coef=float(agent_cfg.get("vf_coef", 0.5)),
-            max_grad_norm=float(agent_cfg.get("max_grad_norm", 0.5)),
-            use_sde=True,              # Session 8: State-Dependent Exploration
-            sde_sample_freq=4,         # Resample noise every 4 steps
+            max_grad_norm=float(sandbox_cfg.get("max_grad_norm",
+                                agent_cfg.get("max_grad_norm", 0.5))),
+            use_sde=_sb_use_sde,       # gSDE (set ADAN_USE_SDE=0 to fall back to
+                                       # plain DiagGaussian — σ then independent of
+                                       # features, cannot diverge).
+            sde_sample_freq=int(os.environ.get("ADAN_SDE_SAMPLE_FREQ", "4")),
             verbose=1,
             device="cpu",
             policy_kwargs=policy_kwargs,
+            **_extra_ppo_kwargs,
         )
         reset_num_timesteps = True
         prior_steps = 0
 
     # Checkpoints directory
-    ckpt_dir = PROJECT_ROOT / "checkpoints"
+    # V31 CHECKPOINT PATH FIX (2026-08-27): the intermediate SB3 CheckpointCallback
+    # and the final --checkpoint-out MUST land in the same directory. Previously
+    # ckpt_dir was hardcoded to PROJECT_ROOT/"checkpoints" (root) while
+    # checkpoint_out pointed to checkpoints/v31_BTC/ -> intermediates written to
+    # root, final to v31_BTC/ (split). Now: when checkpoint_out is given, derive
+    # ckpt_dir from ITS parent so callback intermediates + final share one folder.
+    if checkpoint_out:
+        ckpt_dir = Path(checkpoint_out).expanduser().resolve().parent
+    else:
+        ckpt_dir = PROJECT_ROOT / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"[SANDBOX] checkpoint dir (intermediates + final) = {ckpt_dir}")
 
     # MEMORY FIX: Add frequent checkpoints to recover from OOM crashes
+    # GARDE-FOU (2026-06-27): fréquence pilotable par ADAN_CKPT_FREQ (défaut 10k)
+    # pour récupérer si re-gel à 12k-20k sans tout perdre.
+    try:
+        _ckpt_freq = int(os.environ.get("ADAN_CKPT_FREQ", "10000"))
+    except Exception:
+        _ckpt_freq = 10000
+    _ckpt_freq = max(1000, min(_ckpt_freq, max(1000, steps)))
+    # V30 CHECKPOINT SEPARATION: env var (set per-asset by launch_asset_run.py)
+    # wins; config sandbox.checkpoint_prefix is the fallback; flat literal last.
+    _ckpt_prefix_default = str(
+        sandbox_cfg.get("checkpoint_prefix", "ppo_adan0_sandbox_checkpoint")
+    ).strip() or "ppo_adan0_sandbox_checkpoint"
+    _ckpt_prefix = os.environ.get(
+        "ADAN_CKPT_PREFIX", _ckpt_prefix_default
+    ).strip() or _ckpt_prefix_default
     checkpoint_callback = CheckpointCallback(
-        save_freq=max(1000, steps // 10),  # Save every 1000 steps or 10% of total
+        save_freq=_ckpt_freq,  # Save every ADAN_CKPT_FREQ steps (default 10k)
         save_path=str(ckpt_dir),
-        name_prefix="ppo_adan0_sandbox_checkpoint",
+        name_prefix=_ckpt_prefix,
         save_replay_buffer=False,  # Don't save replay buffer to save memory
-        save_vecnormalize=False,  # VecNormalize is disabled, don't save it
+        save_vecnormalize=_norm_reward_v34,  # V34: save vecnorm stats when norm_reward is enabled
     )
+    logger.info(
+        "[SANDBOX] Checkpoints every %d steps with prefix=%s",
+        _ckpt_freq,
+        _ckpt_prefix,
+    )
+
+    # V2 instrumentation (MESURE SEULE) — suit μ/σ pré-tanh par tête pour voir si
+    # μ(size)=-7.2 remonte. Activé via ADAN_ACTIONDIM=1. NE MODIFIE RIEN.
+    _sb_callbacks = [checkpoint_callback]
+
+    # DIAGNOSTIC-V3 (2026-06-29): entropy-collapse telemetry. Activated by
+    # ADAN_DIAG_COLLAPSE=1. Measure-only — logs action0 histo / HOLD% /
+    # flat-open / illegal_ratio / entropy every ADAN_DIAG_EVERY (default 10k)
+    # steps to a CSV. Feeds the post-50k decision tree.
+    if os.environ.get("ADAN_DIAG_COLLAPSE", "0") == "1":
+        _diag_csv = os.environ.get(
+            "ADAN_DIAG_CSV",
+            str(PROJECT_ROOT / "logs" / "training" / "diagnostic_collapse_v3.csv"),
+        )
+        _diag_every = int(os.environ.get("ADAN_DIAG_EVERY", "10000"))
+        _sb_callbacks.append(DiagnosticCollapseCallback(
+            csv_path=_diag_csv, log_every=_diag_every, verbose=1,
+        ))
+        logger.info(
+            "[SANDBOX] DiagnosticCollapseCallback ACTIF "
+            f"(every={_diag_every}, csv={_diag_csv}, "
+            f"critic_breaker={os.environ.get('ADAN_CRITIC_BREAKER', '0')})"
+        )
+
+    if ActionDimMonitor is not None and os.environ.get("ADAN_ACTIONDIM", "0") == "1":
+        _sb_ad_csv = os.environ.get(
+            "ADAN_ACTIONDIM_CSV",
+            str(ckpt_dir.parent / "logs" / "training" / "actiondim_sandbox.csv"),
+        )
+        _sb_callbacks.append(ActionDimMonitor(
+            log_every=int(os.environ.get("ADAN_ACTIONDIM_EVERY", "1")),
+            pre_tanh_batch=int(os.environ.get("ADAN_ACTIONDIM_BATCH", "256")),
+            csv_path=_sb_ad_csv,
+            verbose=1,
+        ))
+        logger.info(f"[SANDBOX] ActionDimMonitor ACTIF (csv={_sb_ad_csv}) — "
+                    f"mesure seule, ne modifie rien.")
 
     t0 = time.time()
     model.learn(
         total_timesteps=steps,
         reset_num_timesteps=reset_num_timesteps,
-        callback=checkpoint_callback,  # Enable frequent checkpoints
+        callback=_sb_callbacks,  # checkpoints + instrumentation V2
     )
     elapsed = time.time() - t0
+
+    # Training is a lifecycle boundary. Close financially first, publish the
+    # receipt-backed CLOSE, and include terminal PnL in run telemetry before
+    # saving or producing the sandbox summary.
+    final_receipts = env.finalize_open_positions(reason="TRAINING_END")
+    terminal_pnl = sum(
+        float(receipt.get("pnl_net", receipt.get("pnl", 0.0)) or 0.0)
+        for receipt in final_receipts
+    )
+    env._finalize_episode_financial_telemetry(reset_close_pnl=terminal_pnl)
 
     # EXPERT FIX: Explicit GC after training to prevent memory accumulation
     import gc
@@ -1746,25 +2880,43 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     else:
         logger.info("[SANDBOX] VecNormalize disabled — skipping vecnorm save")
 
-    # FIX: Save StateBuilder scalers for live/backtest consistency
-    # These scalers were fitted on the training data (first chunk) and must be
-    # used by LiveStateBuilder and deterministic_backtest to avoid distribution shift.
-    try:
-        if hasattr(env, 'state_builder') and env.state_builder is not None:
-            scalers_dir = str(PROJECT_ROOT / "prod_scalers")
-            env.state_builder.save_scalers(scalers_dir)
-            logger.info(f"[SANDBOX] ✅ Training scalers saved to {scalers_dir}")
-    except Exception as e:
-        logger.warning(f"[SANDBOX] ⚠️ Could not save training scalers: {e}")
+    # Persist scalers only when explicitly allowed. Production runs load the
+    # already-fitted prod_scalers and must not rewrite their pickles/manifest at
+    # shutdown (even a metadata-only timestamp rewrite obscures provenance).
+    _save_scalers = os.environ.get("ADAN_SAVE_SCALERS", "1").strip().lower() in (
+        "1", "true", "yes"
+    )
+    if _save_scalers:
+        try:
+            if hasattr(env, 'state_builder') and env.state_builder is not None:
+                scalers_dir = str(PROJECT_ROOT / "prod_scalers")
+                env.state_builder.save_scalers(scalers_dir)
+                logger.info(f"[SANDBOX] Training scalers saved to {scalers_dir}")
+        except Exception as e:
+            logger.warning(f"[SANDBOX] Could not save training scalers: {e}")
+    else:
+        logger.info(
+            "[SANDBOX] Persisted scalers kept read-only "
+            "(ADAN_SAVE_SCALERS=0; no refit/save at shutdown)"
+        )
 
     size = os.path.getsize(ckpt_path + ".zip")
     logger.info(f"[SANDBOX] Training done: +{steps} steps (cum={cumulative_steps}) "
                 f"in {elapsed:.0f}s, checkpoint={ckpt_path}.zip ({size:,} bytes)")
 
-    # Log key training stats
+    # Log key training and terminal financial stats after forced liquidation.
     info = env.get_info() if hasattr(env, 'get_info') else {}
-    n_trades = info.get("total_trades", info.get("n_trades", "unknown"))
-    logger.info(f"[SANDBOX] Trades executed: {n_trades}")
+    metric_rows = env.get_portfolio_metrics_dict() if hasattr(env, "get_portfolio_metrics_dict") else []
+    financial_metrics = metric_rows[0] if metric_rows and isinstance(metric_rows[0], dict) else {}
+    n_trades = info.get("run_completed_cycles", info.get("total_trades", "unknown"))
+    logger.info(
+        "[SANDBOX] Completed trade cycles: %s "
+        "(opens=%s closes=%s open_positions=%s)",
+        n_trades,
+        info.get("run_opens", "unknown"),
+        info.get("run_closes", "unknown"),
+        info.get("run_open_positions", "unknown"),
+    )
 
     return {
         "steps": steps,
@@ -1774,6 +2926,16 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
         "vecnorm": ckpt_path + "_vecnorm.pkl",
         "size": size,
         "trades": n_trades,
+        "terminal_cash": float(financial_metrics.get("cash", info.get("cash", 0.0))),
+        "terminal_equity": float(financial_metrics.get("equity", info.get("portfolio_value", 0.0))),
+        "terminal_realized_pnl": float(financial_metrics.get(
+            "realized_pnl_cumulative", info.get("total_realized_pnl", 0.0)
+        )),
+        "run_opens": int(financial_metrics.get("run_opens", info.get("run_opens", 0))),
+        "run_closes": int(financial_metrics.get("run_closes", info.get("run_closes", 0))),
+        "run_open_positions": int(financial_metrics.get(
+            "run_open_positions", info.get("run_open_positions", 0)
+        )),
         "resumed_from": resume_ckpt,
     }
 
@@ -1797,7 +2959,13 @@ if __name__ == "__main__":
     parser.add_argument("--envs-per-worker", type=int, default=2, help="Sub-envs per worker (SubprocVecEnv)")
     parser.add_argument("--use-subproc", action="store_true", default=False, help="Use SubprocVecEnv (default: off)")
     parser.add_argument("--no-subproc", action="store_true", help="Use DummyVecEnv (default behaviour)")
-    parser.add_argument("--steps", type=int, default=1_000_000, help="Total training timesteps")
+    parser.add_argument("--steps", type=int, default=None,
+                        help="Total training timesteps. In sandbox mode, if omitted "
+                             "falls back to config [sandbox.max_training_steps]. "
+                             "In heavy mode, defaults to 1_000_000. An explicit value "
+                             "(incl. 1000000) is ALWAYS honored (bugfix v13: the old "
+                             "default 1_000_000 collided with the 'use config' sentinel, "
+                             "silently truncating explicit 1M runs to 10k).")
     parser.add_argument("--steps-per-iter", type=int, default=10_000, help="Timesteps per PBT iteration")
     parser.add_argument("--log-level", type=str, default="INFO", help="Logging level")
     parser.add_argument("--checkpoint-dir", type=str, default=None, help="Override checkpoint dir")
@@ -1822,12 +2990,16 @@ if __name__ == "__main__":
     if args.mode == "sandbox":
         # ─── SANDBOX MODE ───
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-        # steps=None means "read from config.yaml [sandbox.max_training_steps]"
+        # steps=None means "read from config.yaml [sandbox.max_training_steps]".
+        # v13 bugfix: pass args.steps VERBATIM. --steps default is now None (not
+        # 1_000_000), so an explicit --steps 1000000 is honored instead of being
+        # silently reinterpreted as "unspecified -> use config (10000)".
         result = sandbox_train(
-            steps=args.steps if args.steps != 1_000_000 else None,
+            steps=args.steps,
             config_path=args.config if args.config != "config/config.yaml" else None,
             resume_ckpt=args.resume_from,
             checkpoint_out=args.checkpoint_out,
+            worker_key=(args.profiles[0] if args.profiles else None),
         )
         print(json.dumps(result, indent=2, default=str))
     else:
@@ -1841,7 +3013,7 @@ if __name__ == "__main__":
             num_samples=args.num_samples,
             envs_per_worker=args.envs_per_worker,
             use_subproc=not args.no_subproc,
-            total_steps=args.steps,
+            total_steps=(args.steps if args.steps is not None else 1_000_000),
             interval_timesteps=args.steps_per_iter,
             log_level=args.log_level,
             checkpoint_dir=args.checkpoint_dir,

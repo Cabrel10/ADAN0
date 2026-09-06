@@ -1,0 +1,94 @@
+2026-08-18 10:37:30 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.414 (RR=1.56, SL=0.0081) -- EV<0, trade cancelled
+2026-08-18 10:37:30,967 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.414 (RR=1.56, SL=0.0081) -- EV<0, trade cancelled
+2026-08-18 10:39:06 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.410 (RR=1.56, SL=0.0085) -- EV<0, trade cancelled
+2026-08-18 10:39:06,096 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.410 (RR=1.56, SL=0.0085) -- EV<0, trade cancelled
+2026-08-18 10:43:39 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.348 (RR=2.15, SL=0.0069) -- EV<0, trade cancelled
+2026-08-18 10:43:39,211 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.348 (RR=2.15, SL=0.0069) -- EV<0, trade cancelled
+2026-08-18 10:43:56 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.384 (RR=1.72, SL=0.0087) -- EV<0, trade cancelled
+2026-08-18 10:43:56,605 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.384 (RR=1.72, SL=0.0087) -- EV<0, trade cancelled
+2026-08-18 10:44:34 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.413 (RR=1.50, SL=0.0093) -- EV<0, trade cancelled
+2026-08-18 10:44:34,767 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.413 (RR=1.50, SL=0.0093) -- EV<0, trade cancelled
+2026-08-18 10:44:53 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.425 (RR=1.50, SL=0.0080) -- EV<0, trade cancelled
+2026-08-18 10:44:53,062 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.425 (RR=1.50, SL=0.0080) -- EV<0, trade cancelled
+2026-08-18 10:49:03 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=2.13, SL=0.0062) -- EV<0, trade cancelled
+2026-08-18 10:49:03,390 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=2.13, SL=0.0062) -- EV<0, trade cancelled
+2026-08-18 10:52:06 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.366 (RR=1.92, SL=0.0079) -- EV<0, trade cancelled
+2026-08-18 10:52:06,265 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.366 (RR=1.92, SL=0.0079) -- EV<0, trade cancelled
+2026-08-18 10:54:53 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.388 (RR=1.68, SL=0.0089) -- EV<0, trade cancelled
+2026-08-18 10:54:53,741 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.388 (RR=1.68, SL=0.0089) -- EV<0, trade cancelled
+2026-08-18 10:55:27 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.021 <= p_min=0.336 (RR=2.28, SL=0.0067) -- EV<0, trade cancelled
+2026-08-18 10:55:27,738 INFO [EV_GATE] BTCUSDT W=0.021 <= p_min=0.336 (RR=2.28, SL=0.0067) -- EV<0, trade cancelled
+2026-08-18 10:55:52 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.038 <= p_min=0.291 (RR=2.75, SL=0.0070) -- EV<0, trade cancelled
+2026-08-18 10:55:52,250 INFO [EV_GATE] BTCUSDT W=0.038 <= p_min=0.291 (RR=2.75, SL=0.0070) -- EV<0, trade cancelled
+2026-08-18 10:57:07 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.352 (RR=2.22, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 10:57:07,240 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.352 (RR=2.22, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 10:57:36 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.372 (RR=1.67, SL=0.0120) -- EV<0, trade cancelled
+2026-08-18 10:57:36,266 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.372 (RR=1.67, SL=0.0120) -- EV<0, trade cancelled
+2026-08-18 11:00:32 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.015 <= p_min=0.408 (RR=1.50, SL=0.0101) -- EV<0, trade cancelled
+2026-08-18 11:00:32,314 INFO [EV_GATE] BTCUSDT W=0.015 <= p_min=0.408 (RR=1.50, SL=0.0101) -- EV<0, trade cancelled
+2026-08-18 11:01:04 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.354 (RR=2.20, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 11:01:04,197 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.354 (RR=2.20, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 11:02:39 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.300 (RR=2.76, SL=0.0061) -- EV<0, trade cancelled
+2026-08-18 11:02:39,917 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.300 (RR=2.76, SL=0.0061) -- EV<0, trade cancelled
+2026-08-18 11:08:20 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.409 (RR=1.61, SL=0.0078) -- EV<0, trade cancelled
+2026-08-18 11:08:20,791 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.409 (RR=1.61, SL=0.0078) -- EV<0, trade cancelled
+2026-08-18 11:08:36 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.94, SL=0.0082) -- EV<0, trade cancelled
+2026-08-18 11:08:36,876 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.94, SL=0.0082) -- EV<0, trade cancelled
+2026-08-18 11:13:38 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.410 (RR=1.50, SL=0.0097) -- EV<0, trade cancelled
+2026-08-18 11:13:38,031 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.410 (RR=1.50, SL=0.0097) -- EV<0, trade cancelled
+2026-08-18 11:14:08 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.420 (RR=1.50, SL=0.0085) -- EV<0, trade cancelled
+2026-08-18 11:14:08,924 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.420 (RR=1.50, SL=0.0085) -- EV<0, trade cancelled
+2026-08-18 11:15:08 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.059 <= p_min=0.401 (RR=1.72, SL=0.0071) -- EV<0, trade cancelled
+2026-08-18 11:15:08,678 INFO [EV_GATE] BTCUSDT W=0.059 <= p_min=0.401 (RR=1.72, SL=0.0071) -- EV<0, trade cancelled
+2026-08-18 11:15:28 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.055 <= p_min=0.422 (RR=1.56, SL=0.0074) -- EV<0, trade cancelled
+2026-08-18 11:15:28,033 INFO [EV_GATE] BTCUSDT W=0.055 <= p_min=0.422 (RR=1.56, SL=0.0074) -- EV<0, trade cancelled
+2026-08-18 11:23:57 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.320 (RR=2.53, SL=0.0061) -- EV<0, trade cancelled
+2026-08-18 11:23:57,109 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.320 (RR=2.53, SL=0.0061) -- EV<0, trade cancelled
+2026-08-18 11:25:10 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.376 (RR=2.01, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 11:25:10,463 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.376 (RR=2.01, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 11:26:34 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.419 (RR=1.50, SL=0.0086) -- EV<0, trade cancelled
+2026-08-18 11:26:34,653 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.419 (RR=1.50, SL=0.0086) -- EV<0, trade cancelled
+2026-08-18 11:27:41 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.377 (RR=1.93, SL=0.0066) -- EV<0, trade cancelled
+2026-08-18 11:27:41,332 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.377 (RR=1.93, SL=0.0066) -- EV<0, trade cancelled
+2026-08-18 11:30:30 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.367 (RR=1.87, SL=0.0084) -- EV<0, trade cancelled
+2026-08-18 11:30:30,298 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.367 (RR=1.87, SL=0.0084) -- EV<0, trade cancelled
+2026-08-18 11:34:08 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.052 <= p_min=0.334 (RR=2.39, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 11:34:08,856 INFO [EV_GATE] BTCUSDT W=0.052 <= p_min=0.334 (RR=2.39, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 11:38:50 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.441 (RR=1.50, SL=0.0067) -- EV<0, trade cancelled
+2026-08-18 11:38:50,582 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.441 (RR=1.50, SL=0.0067) -- EV<0, trade cancelled
+2026-08-18 11:41:21 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.428 (RR=1.58, SL=0.0067) -- EV<0, trade cancelled
+2026-08-18 11:41:21,720 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.428 (RR=1.58, SL=0.0067) -- EV<0, trade cancelled
+2026-08-18 11:42:15 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.327 (RR=2.40, SL=0.0065) -- EV<0, trade cancelled
+2026-08-18 11:42:15,606 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.327 (RR=2.40, SL=0.0065) -- EV<0, trade cancelled
+2026-08-18 11:43:39 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.405 (RR=1.50, SL=0.0104) -- EV<0, trade cancelled
+2026-08-18 11:43:39,838 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.405 (RR=1.50, SL=0.0104) -- EV<0, trade cancelled
+2026-08-18 11:43:58 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.083 <= p_min=0.336 (RR=2.23, SL=0.0073) -- EV<0, trade cancelled
+2026-08-18 11:43:58,785 INFO [EV_GATE] BTCUSDT W=0.083 <= p_min=0.336 (RR=2.23, SL=0.0073) -- EV<0, trade cancelled
+2026-08-18 11:45:17 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.407 (RR=1.50, SL=0.0102) -- EV<0, trade cancelled
+2026-08-18 11:45:17,200 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.407 (RR=1.50, SL=0.0102) -- EV<0, trade cancelled
+2026-08-18 11:48:49 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.339 (RR=2.20, SL=0.0072) -- EV<0, trade cancelled
+2026-08-18 11:48:49,771 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.339 (RR=2.20, SL=0.0072) -- EV<0, trade cancelled
+2026-08-18 11:49:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.322 (RR=2.48, SL=0.0062) -- EV<0, trade cancelled
+2026-08-18 11:49:18,484 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.322 (RR=2.48, SL=0.0062) -- EV<0, trade cancelled
+2026-08-18 11:49:47 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.399 (RR=1.68, SL=0.0078) -- EV<0, trade cancelled
+2026-08-18 11:49:47,215 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.399 (RR=1.68, SL=0.0078) -- EV<0, trade cancelled
+2026-08-18 11:55:25 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.381 (RR=1.97, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 11:55:25,920 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.381 (RR=1.97, SL=0.0060) -- EV<0, trade cancelled
+2026-08-18 11:55:44 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.388 (RR=1.70, SL=0.0087) -- EV<0, trade cancelled
+2026-08-18 11:55:44,243 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.388 (RR=1.70, SL=0.0087) -- EV<0, trade cancelled
+2026-08-18 11:56:38 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.373 (RR=2.02, SL=0.0062) -- EV<0, trade cancelled
+2026-08-18 11:56:38,471 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.373 (RR=2.02, SL=0.0062) -- EV<0, trade cancelled
+2026-08-18 12:05:01 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.039 <= p_min=0.414 (RR=1.55, SL=0.0083) -- EV<0, trade cancelled
+2026-08-18 12:05:01,087 INFO [EV_GATE] BTCUSDT W=0.039 <= p_min=0.414 (RR=1.55, SL=0.0083) -- EV<0, trade cancelled
+2026-08-18 12:07:30 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.90, SL=0.0087) -- EV<0, trade cancelled
+2026-08-18 12:07:30,481 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.90, SL=0.0087) -- EV<0, trade cancelled
+2026-08-18 12:07:46 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.390 (RR=1.67, SL=0.0088) -- EV<0, trade cancelled
+2026-08-18 12:07:46,985 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.390 (RR=1.67, SL=0.0088) -- EV<0, trade cancelled
+2026-08-18 12:13:28 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.404 (RR=1.50, SL=0.0106) -- EV<0, trade cancelled
+2026-08-18 12:13:28,158 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.404 (RR=1.50, SL=0.0106) -- EV<0, trade cancelled
+2026-08-18 12:16:46 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.352 (RR=2.07, SL=0.0074) -- EV<0, trade cancelled
+2026-08-18 12:16:46,354 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.352 (RR=2.07, SL=0.0074) -- EV<0, trade cancelled
+2026-08-18 12:17:03 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.341 (RR=2.18, SL=0.0073) -- EV<0, trade cancelled
+2026-08-18 12:17:03,800 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.341 (RR=2.18, SL=0.0073) -- EV<0, trade cancelled
+2026-08-18 12:23:15 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.89, SL=0.0089) -- EV<0, trade cancelled
+2026-08-18 12:23:15,157 INFO [EV_GATE] BTCUSDT W=0.010 <= p_min=0.360 (RR=1.89, SL=0.0089) -- EV<0, trade cancelled

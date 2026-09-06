@@ -1,0 +1,53 @@
+CARTE CAUSALE ETAT x INTENTION -> REWARD  (fenetre de derive, steps 0-27502, n=27502)
+====================================================================================
+Threshold action = 0.05. Buckets: SELL a0<-0.05 | HOLD |a0|<=0.05 | BUY a0>0.05.
+Source: logs/rewards/worker_0_rewards_20260815_193056.jsonl
+
+state  intent             n      fin_rew     pnl     behav   latent   future  closure      dd
+FLAT   SELL(<-0.05)      3540    -0.2331  -0.0046  -0.2511   0.0000  -0.0063  -0.0040  -0.0016
+FLAT   HOLD(|a|<=0.05)   1173    -0.0143  -0.0026  -0.0047   0.0000  -0.0055  -0.0036  -0.0014
+FLAT   BUY(>0.05)       14105    -0.0149  -0.0037  -0.0046   0.0000  -0.0054  -0.0035  -0.0014
+OPEN   SELL(<-0.05)      1683    -0.0052   0.0000  -0.0046  -0.0000   0.0000   0.0000  +0.0015
+OPEN   HOLD(|a|<=0.05)    581    -0.0066   0.0000  -0.0047  -0.0000   0.0000   0.0000  +0.0005
+OPEN   BUY(>0.05)        6420    -0.2287   0.0000  -0.2534  -0.0000   0.0000   0.0000  -0.0045
+
+CHAMP DE DERIVE: mean delta_a0[t+1] par (etat, intention[t])
+  FLAT  SELL   n= 3540   mean_da0 = +0.417962   <- forte poussee vers +1 (fuite de la penalite)
+  FLAT  HOLD   n= 1173   mean_da0 = +0.152611
+  FLAT  BUY    n=14105   mean_da0 = -0.108990   <- penalise une fois en position -> retombe
+  OPEN  SELL   n= 1683   mean_da0 = +0.402345
+  OPEN  HOLD   n=  581   mean_da0 = +0.140768
+  OPEN  BUY    n= 6419   mean_da0 = -0.136995
+
+LECTURE CAUSALE (R3: OBSERVATION->TEST->RESULTAT->CONCLUSION)
+-----------------------------------------------------------------
+Q(a0>0, FLAT)  = -0.0149   vs   Q(a0<0, FLAT)  = -0.2331   => delta = +0.2182
+Q(a0<0, OPEN)  = -0.0052   vs   Q(a0>0, OPEN)  = -0.2287   => delta = +0.2235
+Dans les DEUX etats, a0>0 domine a0<0 de ~0.22. Le gradient PPO (advantage-weighted
+log-prob) pousse donc a0 vers +1 a CHAQUE update, quel que soit l'etat du portefeuille.
+
+Le levier est la penalite d'INTENTION INVALIDE asymetrique (behavior_penalty=-0.28):
+  - FLAT+SELL intent  -> sell_while_flat  (V28, config behavior_penalties.sell_while_flat=-0.28)
+  - OPEN+BUY  intent  -> buy_while_open   (V28, config behavior_penalties.buy_while_open=-0.28)
+  - FLAT+BUY  intent  -> VALIDE (execute) -> pas de penalite
+  - OPEN+SELL intent  -> VALIDE (execute) -> pas de penalite
+Comme le portefeuille passe ~70% du temps FLAT, le chemin dominant de penalite est
+FLAT+SELL. La seule facon d'eviter -0.28 en etat FLAT est d'emettre a0>0 (BUY) ou |a0|<=0.05
+(HOLD). Mais HOLD-flat a une variance nulle (reward ~ -0.014 constant) tandis que BUY
+recoit du signal (pnl/future). PPO converge donc vers a0>0 SYSTEMATIQUEMENT.
+
+CONCLUSION (CONFIANCE HAUTE):
+  RC1-REVISE = asymetrie de la penalite d'intention invalide V28 (behavior_penalty),
+               PAS capacity_reward (prouve hors du gradient: regression b1=0.000000).
+  Mecanisme: gradient oriente +1 dans les deux etats -> derive monotone des le step 0
+             -> verrou a +1.0000 a ~27502 -> 472k steps post-mortem.
+  RC2 (ADAN_ANCHOR_LAMBDA=0 jamais active) demeure un facteur CONTRIBUTING confirme:
+     l'anchor etait concu EXACTEMENT pour contrer cette derive et etait OFF.
+
+CORRECTION MINIMALE JUSTIFIEE PAR LES DONNEES (une variable a la fois):
+  Rendre la penalite d'intention invalide SYMETRIQUE par rapport a la direction, i.e.
+  ne penaliser QUE l'invalidite structurelle reelle (action impossible), pas la direction.
+  Concretement: sell_while_flat penalise une intention qui, dans un marche long-only spot,
+  est simplement "ne rien faire". La remplacer par un cout HOLD neutre et faible, OU
+  appliquer la MEME penalite a buy_while_flat-quand-deja-expose. A trancher par test A/B
+  sur les 6 combinaisons etat x action AVANT tout run (gate obligatoire).

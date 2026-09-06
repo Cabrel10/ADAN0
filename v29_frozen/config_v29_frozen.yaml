@@ -1,0 +1,1912 @@
+# ============================================================================
+# ADAN Trading Bot - Master Configuration
+# ============================================================================
+# ARCHITECTURE RULE: Capital Tiers define ALL risk/exposure parameters.
+# Workers define ONLY temporal specialization (timeframes, trade duration).
+# A Scalper at 20$ (Micro) exposes 90%; the same Scalper at 10000$ (Enterprise)
+# exposes only 15%. The TIER dictates risk, not the worker profile.
+# ============================================================================
+
+action:
+  action_scale: 1.0
+  min_action_threshold: 0.01
+agent:
+  algorithm: PPO
+  batch_size: 128
+  buffer_size: 100000
+  checkpoint_freq: 1000
+  clip_range: 0.2
+  clip_range_vf: null
+  confidence:
+    enabled: true
+    min_confidence: 0.6
+    update_frequency: 100
+  custom_log_freq_rollouts: 1
+  debug: false
+  deterministic_inference: false
+  early_stopping:
+    enabled: true
+    min_delta: 0.001
+    patience: 50000
+  ent_coef: 0.05
+  ent_coef_schedule:
+    end: 0.005
+    start: 0.05
+    type: linear
+  eval_episodes: 10
+  eval_freq: 10000
+  exploration:
+    exploration_fraction: 0.1
+    final_eps: 0.01
+    initial_eps: 1.0
+    noise_sigma: 0.2
+    noise_std: 0.1
+    noise_theta: 0.15
+    strategy: epsilon_greedy
+  features_extractor_kwargs:
+    attention:
+      dropout: 0.1
+      num_heads: 4
+      use_relative_positions: true
+    # C13-v2: 16 orthogonal indicators + 5 OHLCV = 21 features per TF
+    cnn_configs:
+      1h:
+        channel_groups: 3
+        groups:
+          indicators:
+            indices: [5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+            kernel_size: 3
+            out_channels: 32
+            padding: 1
+          price:
+            indices: [0,1,2,3]
+            kernel_size: 3
+            out_channels: 16
+            padding: 1
+          volume:
+            indices: [4]
+            kernel_size: 3
+            out_channels: 8
+            padding: 1
+        input_shape: [1, 20, 21]
+      4h:
+        activation: relu
+        batch_norm: true
+        channel_groups: 3
+        conv_blocks: 2
+        final_dropout: 0.3
+        groups:
+          indicators:
+            indices: [5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+            kernel_size: 3
+            out_channels: 32
+            padding: 1
+          price:
+            indices: [0,1,2,3]
+            kernel_size: 3
+            out_channels: 16
+            padding: 1
+          volume:
+            indices: [4]
+            kernel_size: 3
+            out_channels: 8
+            padding: 1
+        input_shape: [1, 20, 21]
+        temporal_attention_heads: 4
+        use_channel_attention: true
+        use_temporal_attention: true
+      5m:
+        channel_groups: 3
+        groups:
+          indicators:
+            indices: [5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+            kernel_size: 3
+            out_channels: 32
+            padding: 1
+          price:
+            indices: [0,1,2,3]
+            kernel_size: 3
+            out_channels: 16
+            padding: 1
+          volume:
+            indices: [4]
+            kernel_size: 3
+            out_channels: 8
+            padding: 1
+        input_shape: [1, 20, 21]
+    fc_layers:
+    - 256
+    - 128
+    initialization:
+      bias: zeros
+      conv: xavier_uniform
+      dense: xavier_uniform
+    normalization:
+      use_batch_norm: true
+      use_layer_norm: false
+    policy_kwargs:
+      activation_fn: torch.nn.ReLU
+      net_arch:
+        pi:
+        - 128
+        - 64
+        shared:
+        - 256
+        vf:
+        - 128
+        - 64
+    ppo:
+      batch_size: 64
+      clip_range: 0.2
+      clip_range_vf: null
+      ent_coef: 0.01
+      gae_lambda: 0.95
+      max_grad_norm: 0.5
+      n_epochs: 20
+      n_steps: 2048
+      normalize_advantage: true
+      sde_sample_freq: -1
+      use_reparameterization: false
+      use_sde: false
+      vf_coef: 0.5
+  gae_lambda: 0.95
+  gamma: 0.9523222699352663
+  learning_rate: 0.0003
+  learning_rate_schedule:
+    end: 1.0e-04
+    start: 0.0003
+    type: linear
+  log_level: INFO
+  logging_level: INFO
+  max_grad_norm: 0.5
+  n_envs: 4
+  n_epochs: 20
+  n_steps: 2048
+  numpy_log_level: ERROR
+  policy: MultiInputPolicy
+  save_best_model: true
+  seed: 42
+  target_kl: 0.03
+  tensorflow_log_level: 3
+  torch_log_level: ERROR
+  verbose: 1
+  vf_coef: 0.5
+  window_size: 20
+capital_tiers:
+# ============================================================================
+# CAPITAL TIERS — Définissent TOUS les paramètres de risque et d'exposition.
+# Les workers définissent UNIQUEMENT la spécialisation temporelle.
+#
+# exposure_range    : [min%, max%] du capital à exposer par trade.
+#                     Utilisé par LINEAR_EXPO : exposure = min + (max-min) × bull_prob_HMM
+# max_concurrent_positions : Nombre max de positions ouvertes simultanément.
+#                     Micro=1, Small=2, Medium=3, High=4, Enterprise=5
+# max_drawdown_pct  : Seuil de drawdown (sur equity) déclenchant le kill-switch.
+#                     TRAINING : valeur élevée (40%) pour permettre l'exploration.
+#                     PRODUCTION : revenir à 4% pour Micro Capital.
+# risk_per_trade_pct: % du capital risqué par trade (pour SL sizing).
+# ============================================================================
+- exposure_range:
+  - 70
+  - 90
+  leverage: 1.0
+  max_capital: 30.0
+  max_concurrent_positions: 1
+  max_drawdown_pct: 40.0   # Training: 40% = ~130 losing trades before kill. Allows full exploration.
+  max_position_size_pct: 90
+  min_capital: 11.0
+  name: Micro Capital
+  risk_per_trade_pct: 4.0
+- exposure_range:
+  - 35
+  - 75
+  leverage: 1.0
+  max_capital: 100.0
+  max_concurrent_positions: 2
+  max_drawdown_pct: 3.75
+  max_position_size_pct: 65
+  min_capital: 30.0
+  name: Small Capital
+  risk_per_trade_pct: 2.0
+- exposure_range:
+  - 45
+  - 60
+  leverage: 1.0
+  max_capital: 300.0
+  max_concurrent_positions: 3
+  max_drawdown_pct: 3.25
+  max_position_size_pct: 48
+  min_capital: 100.0
+  name: Medium Capital
+  risk_per_trade_pct: 2.25
+- exposure_range:
+  - 20
+  - 35
+  leverage: 1.0
+  max_capital: 1000.0
+  max_concurrent_positions: 4
+  max_drawdown_pct: 2.75
+  max_position_size_pct: 28
+  min_capital: 300.0
+  name: High Capital
+  risk_per_trade_pct: 2.75
+- exposure_range:
+  - 5
+  - 15
+  leverage: 1.0
+  max_capital: null
+  max_concurrent_positions: 5
+  max_drawdown_pct: 2.5
+  max_position_size_pct: 20
+  min_capital: 1000.0
+  name: Enterprise
+  risk_per_trade_pct: 3.0
+chunk_carry_over:
+  keep_recent_avg_pnl_pct: 0.0
+  keep_unrealized_pct: 0.02
+  max_allowed_loss_pct: 0.1
+  min_steps_left_to_allow_carry: 6
+  recent_closed_window: 8
+data:
+  assets:
+  - BTCUSDT
+  - XRPUSDT
+  data_dirs:
+    base: data/processed/indicators
+    test: data/processed/indicators/test
+    train: data/processed/indicators/train
+    val: data/processed/indicators/val
+  # C13-v2: 16 orthogonal indicators per TF — must match TRAIN_COLUMNS in feature_engineer.py
+  features_config:
+    timeframes:
+      1h:
+        indicators:
+        - ema_50_ratio
+        - macdh_21_42_9
+        - rsi_21
+        - adx_14
+        - di_delta
+        - atr_pct
+        - bb_percent_b_20_2
+        - obv_slope
+        - volume_ratio_20
+        - volatility_ratio_14_50
+        - fib_ratio
+        - price_action
+        - vwap_ratio
+        - market_structure
+        - bb_width_20_2
+        - log_return
+        price:
+        - open
+        - high
+        - low
+        - close
+        volume:
+        - volume
+      4h:
+        indicators:
+        - ema_100_ratio
+        - macdh_26_52_18
+        - rsi_28
+        - adx_14
+        - di_delta
+        - atr_pct
+        - bb_percent_b_20_2
+        - obv_slope
+        - volume_ratio_20
+        - volatility_ratio_14_50
+        - fib_ratio
+        - price_action
+        - vwap_ratio
+        - market_structure
+        - bb_width_20_2
+        - log_return
+        price:
+        - open
+        - high
+        - low
+        - close
+        volume:
+        - volume
+      5m:
+        indicators:
+        - ema_20_ratio
+        - macdh_12_26_9
+        - rsi_14
+        - adx_14
+        - di_delta
+        - atr_pct
+        - bb_percent_b_20_2
+        - obv_slope
+        - volume_ratio_20
+        - volatility_ratio_14_50
+        - fib_ratio
+        - price_action
+        - vwap_ratio
+        - market_structure
+        - bb_width_20_2
+        - log_return
+        price:
+        - open
+        - high
+        - low
+        - close
+        volume:
+        - volume
+  include:
+  - BTCUSDT
+  - XRPUSDT
+  processed_data:
+    test: data/processed/indicators/test
+    train: data/processed/indicators/train
+    validation: data/processed/validation
+  timeframes:
+  - 5m
+  - 1h
+  - 4h
+  timestamp:
+    column_name: timestamp
+    format: auto
+    set_as_index: true
+    timezone: UTC
+data_augmentation:
+  apply_order:
+  - time_warping
+  - gaussian_noise
+  enabled: false
+  gaussian_noise:
+    enabled: true
+    exclude_columns: []
+    std: 0.01
+  partial_shuffle:
+    enabled: true
+    exclude_columns: []
+    segment_size: 10
+  random_impulses:
+    enabled: false
+    exclude_columns: []
+    max_impulse: 0.1
+    probability: 0.01
+  random_scaling:
+    enabled: false
+    exclude_columns: []
+    scale_range:
+    - 0.9
+    - 1.1
+  time_warping:
+    enabled: true
+    exclude_columns: []
+    sigma: 0.2
+    window: 5
+  trend_augmentation:
+    enabled: false
+    exclude_columns: []
+    max_trend: 0.05
+  window_permutation:
+    enabled: false
+    exclude_columns: []
+    n_permutations: 3
+    window_size: 10
+data_processing:
+  max_lookahead: 24
+  temporal_transforms:
+    bollinger_std: 2
+    bollinger_window: 20
+    diffs:
+    - 1
+    - 2
+    enabled: true
+    macd_fast: 12
+    macd_signal: 9
+    macd_slow: 26
+    moving_averages:
+    - 5
+    - 10
+    rolling_windows:
+    - 5
+    - 10
+    rsi_window: 14
+dbe:
+  aggressiveness_by_tier:
+    Enterprise:
+      bear:
+        position_size_multiplier: 0.6
+        sl_multiplier: 0.7
+        tp_multiplier: 0.8
+      bull:
+        position_size_multiplier: 0.8
+        sl_multiplier: 0.9
+        tp_multiplier: 1.1
+      sideways:
+        position_size_multiplier: 1.0
+        sl_multiplier: 1.0
+        tp_multiplier: 1.0
+      volatile:
+        position_size_multiplier: 0.4
+        sl_multiplier: 0.8
+        tp_multiplier: 0.7
+    High:
+      bear:
+        position_size_multiplier: 0.7
+        sl_multiplier: 0.75
+        tp_multiplier: 0.85
+      bull:
+        position_size_multiplier: 0.9
+        sl_multiplier: 1.0
+        tp_multiplier: 1.2
+      sideways:
+        position_size_multiplier: 1.0
+        sl_multiplier: 1.0
+        tp_multiplier: 1.0
+      volatile:
+        position_size_multiplier: 0.5
+        sl_multiplier: 0.9
+        tp_multiplier: 0.8
+    Medium:
+      bear:
+        position_size_multiplier: 0.9
+        sl_multiplier: 0.8
+        tp_multiplier: 0.9
+      bull:
+        position_size_multiplier: 1.1
+        sl_multiplier: 1.1
+        tp_multiplier: 1.3
+      sideways:
+        position_size_multiplier: 1.0
+        sl_multiplier: 1.0
+        tp_multiplier: 1.0
+      volatile:
+        position_size_multiplier: 0.6
+        sl_multiplier: 1.0
+        tp_multiplier: 0.9
+    Micro:
+      bear:
+        position_size_multiplier: 1.2
+        sl_multiplier: 0.9
+        tp_multiplier: 1.1
+      bull:
+        position_size_multiplier: 1.4
+        sl_multiplier: 1.3
+        tp_multiplier: 1.6
+      sideways:
+        position_size_multiplier: 1.0
+        sl_multiplier: 1.0
+        tp_multiplier: 1.0
+      volatile:
+        position_size_multiplier: 0.8
+        sl_multiplier: 1.2
+        tp_multiplier: 1.1
+    Small:
+      bear:
+        position_size_multiplier: 1.0
+        sl_multiplier: 0.85
+        tp_multiplier: 1.0
+      bull:
+        position_size_multiplier: 1.2
+        sl_multiplier: 1.2
+        tp_multiplier: 1.4
+      sideways:
+        position_size_multiplier: 1.0
+        sl_multiplier: 1.0
+        tp_multiplier: 1.0
+      volatile:
+        position_size_multiplier: 0.7
+        sl_multiplier: 1.1
+        tp_multiplier: 1.0
+  aggressiveness_decay:
+    enterprise: 0.6
+    high: 0.85
+    medium: 1.0
+    micro: 1.1
+    small: 1.03
+  default_reset_capital: 20.5
+  logging:
+    disable_existing_loggers: true
+    level: INFO
+    performance_metrics: false
+    save_interval: 1000
+    save_trade_history: false
+  market_regime_detection:
+    adx_threshold: 25
+    atr_multiplier: 2.0
+    ema_fast: 12
+    ema_slow: 26
+    macd_signal: 9
+    rsi_overbought: 70
+    rsi_oversold: 30
+  performance:
+    adaptation:
+      learning_rate: 0.01
+      max_risk_level: 2.0
+      min_risk_level: 0.5
+      risk_decrement: 0.1
+      risk_increment: 0.1
+      use_dynamic_sizing: true
+      volatility_smoothing: 14
+    lookback_window: 100
+    min_trades_for_metrics: 10
+    profit_factor_target: 1.5
+    winrate_target: 0.6
+  regime_parameters:
+    bear:
+      position_size_multiplier: 0.9
+      sl_multiplier: 0.8
+      tp_multiplier: 0.9
+    bull:
+      position_size_multiplier: 1.1
+      sl_multiplier: 1.2
+      tp_multiplier: 1.5
+    sideways:
+      position_size_multiplier: 1.0
+      sl_multiplier: 1.0
+      tp_multiplier: 1.0
+    volatile:
+      position_size_multiplier: 0.8
+      sl_multiplier: 1.5
+      tp_multiplier: 1.2
+  risk_management:
+    max_consecutive_losses: 5
+    max_leverage: 1
+    min_trade_value: 11.0
+  take_profit:
+    atr_period: 14
+    enabled: true
+    max_volatility: 0.1
+    min_volatility: 0.01
+    risk_reward_ratio: 2.0
+    trailing_deviation_pct: 1.5
+    trailing_enabled: true
+    volatility_adjustment: true
+  volatility_calculation:
+    atr_based:
+      multiplier: 1.0
+      period: 14
+      use_when_available: true
+    fallback_handling:
+      default_volatility: 0.025
+      max_volatility: 0.2
+      min_volatility: 0.005
+      smoothing_factor: 0.1
+      zero_volatility_replacement: 0.015
+    logging:
+      detailed_debug: false
+      log_calculations: true
+      log_fallback_usage: true
+      log_method_switches: true
+    price_range:
+      high_low_ratio: true
+      lookback_periods: 10
+    primary_method: rolling_std
+    rolling_std:
+      center: false
+      ddof: 1
+      min_periods: 5
+      window: 21
+    secondary_methods:
+    - atr_based
+    - price_range
+    timeframe_specific:
+      1h:
+        fallback_volatility: 0.025
+        min_periods: 6
+        window: 24
+      4h:
+        fallback_volatility: 0.03
+        min_periods: 5
+        window: 21
+      5m:
+        fallback_volatility: 0.02
+        min_periods: 3
+        window: 20
+    validation:
+      cap_extreme_values: true
+      log_outliers: true
+      log_zero_volatility: true
+      outlier_threshold_std: 3.0
+      remove_outliers: true
+  volatility_guard:
+    atr_pct_threshold: 0.035
+    enabled: true
+    exposure_multiplier_on_high_vol: 0.6
+    risk_multiplier_on_high_vol: 0.7
+diagnostics:
+  action_threshold_monitoring:
+    alert_on_no_trades: true
+    enabled: true
+    log_rejected_actions: true
+    report_threshold_effectiveness: true
+    track_action_magnitudes: true
+  frequency_monitoring:
+    alert_on_inactive_timeframes: true
+    enabled: true
+    log_validation_results: true
+    monitor_timeframe_balance: true
+    track_force_trade_events: true
+  performance_monitoring:
+    generate_activity_reports: true
+    log_trading_patterns: true
+    monitor_action_success_rates: true
+    track_trades_per_timeframe: true
+  volatility_monitoring:
+    enabled: true
+    log_zero_volatility_events: true
+    monitor_fallback_usage: true
+    track_calculation_methods: true
+    validate_volatility_range: true
+environment:
+  # Action thresholds: tanh output must exceed |threshold| for BUY/SELL.
+  # Lower values = more trading activity; higher = more conservative.
+  # FIXED: Widened thresholds to give agent more room for HOLD
+  # Previous thresholds (0.01/0.02/0.03) were too tight, forcing agent
+  # to choose between BUY/SELL with no safe HOLD zone.
+  # Agent learned to output negative values (SELL) to avoid trading costs.
+  # New thresholds give 20% of action space to HOLD (safe zone).
+  # V17-Fix D (deadband): lowered so deterministic mu (kept near 0 by L2 anchor)
+  # can cross the threshold and trigger real BUY/SELL at inference. 0.05 is a
+  # compromise: demands a genuine directional impulse but stays reachable by the
+  # anchor (NOT near-zero, to avoid over-trading noise). Was {1h:0.15,4h:0.20,5m:0.10}.
+  action_thresholds:
+    1h: 0.08
+    4h: 0.10
+    5m: 0.05
+  assets:
+  - btcusdt
+  base_currency: USDT
+  # FINDING #4 (2026-06-25) : frais SPOT 0.50 % ALLER-RETOUR (etait 0.80%).
+  # fee_pct est applique PAR COTE (entry_fee a l'ouverture + exit_fee a la
+  # cloture, cf. portfolio_manager l.764/920-921) donc 0.0025 x 2 = 0.005 = 0.50%.
+  # Decision utilisateur: le 0.80% gonflait artificiellement le TP_min, forcant
+  # des TP 8-12% impossibles (mouvement reel ~1-2% / 30 steps). 0.50% permet des
+  # TP serres et donc 15-20 trades/jour capturables.
+  # V17-Fix B (fees, NON-NEGOTIABLE user decision): 0.0025 -> 0.0020.
+  # 0.20% per side => 0.40% round-trip (was 0.50%). With the old 0.5% R/T the
+  # static break-even wall sat at 0.75% (1.5x), unreachable in a scalper window
+  # (20 candles) => 95% of SELLs rejected. At 0.40% R/T a ~2-candle BTC move
+  # nets a profit and the dynamic barrier (Fix A) becomes crossable.
+  commission: 0.0020
+  # V29: environment.features_config SUPPRIME (doublon de
+  # data.features_config, zero consommateur dans src/ — verifie PHASE 1).
+  frequency_validation:
+    force_trade:
+      enabled: false
+      escalation_steps:
+      - 30
+      - 50
+      - 75
+      max_consecutive_holds: 25
+      max_daily_forced_trades: 10
+      methods:
+      - lower_thresholds
+      - mandatory_action
+      - bypass_validation
+      progressive_forcing: false
+    global_rules:
+      allow_episodes_with_few_trades: true
+      emergency_trade_forcing: true
+      max_total_trades_per_episode: 50
+      min_total_trades_per_episode: 1
+    monitoring:
+      detailed_failure_logging: true
+      log_frequency_stats: true
+      track_timeframe_activity: true
+      track_validation_success_rate: true
+    timeframe_rules:
+      1h:
+        force_threshold: 35
+        ideal_range:
+        - 1
+        - 6
+        max_trades: 15
+        min_trades: 3
+      4h:
+        force_threshold: 25
+        ideal_range:
+        - 1
+        - 4
+        max_trades: 10
+        min_trades: 1
+      5m:
+        force_threshold: 50
+        ideal_range:
+        - 2
+        - 8
+        max_trades: 20
+        min_trades: 5
+    validation_failure_handling:
+      emergency_trade_execution: true
+      log_validation_failures: true
+      retry_with_lower_thresholds: true
+      skip_validation_after_retries: 3
+  hard_constraints:
+    max_drawdown_pct: 40.0    # C3: aligned with Tier Micro (was 0.25)
+    # V29: DEAD CONFIG — aucun consommateur dans src/ (verifie PHASE 1).
+    # Le domaine d'exposition est dicte EXCLUSIVEMENT par capital_tiers.
+    # max_position_size_pct: 0.5
+    # max_risk_per_trade_pct: 0.02
+    min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
+    min_position_size_pct: 0.01
+    # FINDING #4: HARD caps TIGHTENED to the real BTC wick distribution.
+    # These are the AUTHORITATIVE final clamps (applied by PortfolioManager
+    # ._calculate_dynamic_sltp). The old TP max=0.50 / SL max=0.20 let trades
+    # open at TP=10% (impossible vs ~1-2% real move / 30 steps) -> 84% SL_HIT.
+    # New caps keep TP capturable so the agent can do 15-20 trades/day; the
+    # Future Arena reward then teaches WHERE inside the band to place TP/SL.
+    stop_loss_pct:
+      max: 0.06      # was 0.20 (position profile upper bound)
+      min: 0.003
+    take_profit_pct:
+      max: 0.12      # was 0.50 (position profile upper bound)
+      min: 0.005
+  initial_balance: 20.5
+  max_chunks_per_episode: 10
+  max_steps: 25000
+  memory:
+    aggressive_cleanup: true
+    batch_size: 64
+    chunk_size: 1000
+    drop_last: true
+    force_gc_after_chunk: true
+    include_portfolio_state: true
+    max_chunks_in_memory: 5
+    memory_critical_threshold_mb: 1024
+    memory_warning_threshold_mb: 512
+    num_workers: 4
+    pin_memory: true
+    prefetch_factor: 2
+    shuffle: true
+  observation:
+    features:
+      base:
+      - OPEN
+      - HIGH
+      - LOW
+      - CLOSE
+      - VOLUME
+      indicators:
+        1h:
+        - RSI_21
+        - MACD_21_42_9
+        - MACD_SIGNAL_21_42_9
+        - MACD_HIST_21_42_9
+        - BB_WIDTH_20_2
+        - ADX_14
+        - OBV_RATIO_20
+        - EMA_50_RATIO
+        - ICHIMOKU_BASE
+        - FIB_RATIO
+        - PRICE_EMA_RATIO_50
+        4h:
+        - RSI_28
+        - MACD_26_52_18
+        - MACD_SIGNAL_26_52_18
+        - MACD_HIST_26_52_18
+        - SUPERTREND_10_3
+        - VOLUME_SMA_20_RATIO
+        - EMA_100_RATIO
+        - PIVOT_LEVEL
+        - DONCHIAN_WIDTH_20
+        - MARKET_STRUCTURE
+        - VOLATILITY_RATIO_14_50
+        5m:
+        - RSI_14
+        - MACD_12_26_9
+        - MACD_SIGNAL_12_26_9
+        - MACD_HIST_12_26_9
+        - BB_PERCENT_B_20_2
+        - ATR_14
+        - VOLUME_RATIO_20
+        - EMA_20_RATIO
+        - STOCH_K_14_3_3
+        - VWAP_RATIO
+        - PRICE_ACTION
+    shape:
+    - 3
+    - 20
+    - 16
+    timeframes:
+    - 5m
+    - 1h
+    - 4h
+    # Warmup steps: number of steps at episode start where the model observes
+    # but does not trade. Reduced from 500 to 50 to maximize usable episode length.
+    warmup_steps: 50
+    window_sizes:
+      1h: 20
+      4h: 20
+      5m: 20
+  penalties:
+    base_inaction_penalty: -0.001
+    inaction_freq_threshold: 10
+    inaction_pnl_threshold: -0.001
+    invalid_action: -1.0
+    order_rejection: -0.5
+  reward_scaling: 1.0
+  risk_management:
+    position_sizing:
+      concentration_limits:
+        ADAUSDT: 0.2
+        BTCUSDT: 1.0
+        ETHUSDT: 0.5
+        SOLUSDT: 0.3
+        XRPUSDT: 0.2
+      initial_position_size: 0.1
+      # DEPRECATED (FINDING #4 / revue): valeurs realistes pour eviter qu'un futur
+      # refactor reactive un SL/TP 10-15%. Le chemin runtime = _BOUNDS (env) +
+      # workers.*.trading_parameters. Ces cles ne sont PLUS la source de verite.
+      initial_sl_pct: 0.015
+      initial_tp_pct: 0.030
+      max_asset_allocation_pct: 1.0
+      max_position_size: 0.9
+      max_risk_per_trade_pct: 0.01
+      min_trade_value: 11.0
+      risk_parameters:                 # DEPRECATED -> voir workers.*.trading_parameters
+        base_sl_pct: 0.015
+        base_tp_pct: 0.030
+        daily_loss_limit: 0.1
+        max_risk_level: 2.0
+        max_sl_pct: 0.06
+        min_risk_level: 0.5
+        min_sl_pct: 0.003
+        weekly_loss_limit: 0.2
+      take_profit:
+        enabled: true
+        risk_reward_ratio: 1.5
+        trailing_deviation_pct: 0.01
+        trailing_enabled: false
+  # V29: timeframe_trading_config SUPPRIME (fantome, zero consommateur —
+  # environment.action_thresholds l.649 est la source de verite).
+  trading_mode: backtest
+  volatility_handling:
+    cache_calculations: true
+    cache_duration_steps: 10
+    force_recalculation_on_zero: true
+    validate_on_step: true
+  window_size: 50
+exchange:
+  binance:
+    live:
+      api_key: ${BINANCE_API_KEY}
+      rest_url: https://api.binance.com
+      secret_key: ${BINANCE_SECRET_KEY}
+      ws_url: wss://stream.binance.com:9443/ws
+    testnet:
+      api_key: ${BINANCE_TESTNET_API_KEY}
+      rest_url: https://testnet.binance.vision/api
+      secret_key: ${BINANCE_TESTNET_SECRET_KEY}
+      ws_url: wss://stream.testnet.binance.vision/ws
+  bitget:
+    live:
+      api_key: ${BITGET_API_KEY}
+      passphrase: ${BITGET_PASSPHRASE}
+      rest_url: https://api.bitget.com/api/v2
+      secret_key: ${BITGET_SECRET_KEY}
+      ws_url: wss://ws.bitget.com/v2/ws
+    testnet:
+      api_key: ${BITGET_TESTNET_API_KEY}
+      passphrase: ${BITGET_TESTNET_PASSPHRASE}
+      rest_url: https://api.bitget.com/api/v2
+      secret_key: ${BITGET_TESTNET_SECRET_KEY}
+      ws_url: wss://ws.bitget.com/v2/ws
+  bybit:
+    live:
+      api_key: ${BYBIT_API_KEY}
+      rest_url: https://api.bybit.com
+      secret_key: ${BYBIT_SECRET_KEY}
+      ws_url: wss://stream.bybit.com/v5/public/spot
+    testnet:
+      api_key: ${BYBIT_TESTNET_API_KEY}
+      rest_url: https://api-testnet.bybit.com
+      secret_key: ${BYBIT_TESTNET_SECRET_KEY}
+      ws_url: wss://stream-testnet.bybit.com/v5/public/spot
+  default: binance
+feature_engineering:
+  columns_to_normalize:
+  - OPEN
+  - HIGH
+  - LOW
+  - CLOSE
+  - VOLUME
+  indicators:
+    common:
+      atr:
+        window: 14
+      bollinger:
+        window: 20
+        window_dev: 2
+      macd:
+        fast: 12
+        signal: 9
+        slow: 26
+      psar:
+        max_step: 0.2
+        step: 0.02
+      rsi:
+        window: 14
+      supertrend:
+        multiplier: 3
+        window: 10
+    # C13-v2: 16 orthogonal indicators per TF (hedge-fund grade)
+    # Axes: trend(4), momentum(3), volatility(4), volume(2), structure(3)
+    timeframes:
+      1h:
+        momentum:
+        - rsi_21
+        - fib_ratio
+        - stoch_k_14_3_3
+        - price_action
+        trend:
+        - macd_21_42_9
+        - adx_14
+        - ema_50_ratio
+        - ichimoku_base
+        - price_ema_ratio_50
+        volatility:
+        - bb_width_20_2
+        - bb_percent_b_20_2
+        - atr_14
+        - atr_20
+        - atr_50
+        volume:
+        - obv_ratio_20
+        - volume_ratio_20
+        - vwap_ratio
+      4h:
+        momentum:
+        - rsi_28
+        - market_structure
+        - fib_ratio
+        - price_action
+        trend:
+        - macd_26_52_18
+        - adx_14
+        - supertrend_10_3
+        - ema_100_ratio
+        - pivot_level
+        volatility:
+        - donchian_width_20
+        - volatility_ratio_14_50
+        - bb_width_20_2
+        - bb_percent_b_20_2
+        - atr_14
+        - atr_20
+        - atr_50
+        volume:
+        - volume_sma_20_ratio
+        - obv_ratio_20
+        - vwap_ratio
+      5m:
+        momentum:
+        - rsi_14
+        - stoch_k_14_3_3
+        - price_action
+        - fib_ratio
+        trend:
+        - macd_12_26_9
+        - adx_14
+        - ema_20_ratio
+        - vwap_ratio
+        volatility:
+        - bb_percent_b_20_2
+        - bb_width_20_2
+        - atr_14
+        - atr_20
+        - atr_50
+        - volatility_ratio_14_50
+        volume:
+        - volume_ratio_20
+        - obv_ratio_20
+  performance:
+    cache_indicators: true
+    chunk_size: 1000
+    n_jobs: -1
+    parallel_timeframes: true
+  preprocessing:
+    fillna: mean
+    min_data_points: 100
+    normalize: minmax
+    remove_outliers: true
+  timeframes:
+  - 5m
+  - 1h
+  - 4h
+  validation:
+    check_feature_correlation: true
+    check_nan_percentage: true
+    max_correlation_threshold: 0.98
+    max_nan_percentage: 0.01
+general:
+  debug_mode: false
+  n_jobs: -1
+  project_name: ADAN_Trading_Bot
+  random_seed: 42
+  timezone: UTC
+model:
+  architecture:
+    attention:
+      dropout: 0.1
+      num_heads: 8
+      use_residual: true
+    block_a:
+      dropout: 0.2
+      kernel_size: 3
+      leaky_relu_negative_slope: 0.01
+      out_channels: 64
+      padding: 1
+    block_b:
+      dropout: 0.3
+      multi_scale:
+      - 3
+      - 5
+      - 7
+      se_ratio: 8
+    head:
+      activation: LeakyReLU
+      dropout: 0.5
+      hidden_units:
+      - 256
+      - 128
+  diagnostics:
+    attention_map_dir: ./models/attention_maps
+    background: '#1e1e1e'
+    bollinger_band: rgba(41, 98, 255, 0.1)
+    bollinger_mid: '#2962ff'
+    grid: rgba(255, 255, 255, 0.05)
+    histogram_down: '#e57373'
+    histogram_up: '#81c784'
+    ma_long: '#9c27b0'
+    ma_medium: '#2196f3'
+    ma_short: '#ff9800'
+    macd_line: '#4caf50'
+    rsi_line: '#ffc107'
+    rsi_overbought: rgba(255, 193, 7, 0.2)
+    rsi_oversold: rgba(255, 193, 7, 0.2)
+    save_attention_maps: false
+    signal_line: '#f44336'
+    target_layer: model.cnn.2
+    use_grad_cam: false
+    use_integrated_gradients: false
+    volume_down: '#ef5350'
+    volume_up: '#26a69a'
+  style:
+    axes_facecolor: '#1e1e1e'
+    bottom_margin: 0.1
+    candle_width: 0.8
+    figure_facecolor: '#121212'
+    font_family: sans-serif
+    font_size: 10
+    grid_alpha: 0.1
+    hspace: 0.1
+    left_margin: 0.05
+    legend_edgecolor: '#555555'
+    legend_facecolor: '#2c2c2c'
+    legend_frameon: true
+    legend_loc: upper left
+    line_width: 1.5
+    right_margin: 0.95
+    top_margin: 0.95
+    volume_alpha: 0.7
+model_fusion:
+  enabled: true
+  ensemble_params:
+    consistency_threshold: 0.7
+    diversity_bonus: 0.1
+    max_worker_contribution: 0.35
+    min_worker_contribution: 0.15
+  method: weighted_ensemble
+  rebalancing:
+    enabled: true
+    frequency: weekly
+    min_trials_for_update: 50
+    performance_window: 168
+  strategy: performance_based
+  weights:
+    0: 0.25
+    1: 0.27
+    2: 0.3
+    3: 0.18
+paper_trading:
+  exchange_id: bitget
+  use_testnet: true
+paths:
+  base_dir: .
+  data_dir: ./data
+  figures_dir: ./reports/figures
+  final_data_dir: ./data/final
+  indicators_data_dir: data/processed/indicators
+  log_dir: ./logs
+  logs_dir: logs
+  metrics_dir: reports/metrics
+  models_dir: models
+  oracle_model: models/exog_oracle.pkl
+  processed_data_dir: data/processed
+  raw_data_dir: data/raw
+  reports_dir: reports
+  reward_log_dir: ./logs/rewards
+  checkpoint_dir: ./checkpoints
+  trained_models_dir: models/rl_agents
+portfolio:
+  default_position_pct: 0.7
+  include_portfolio_state: true
+  initial_balance: 20.5
+  min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
+  portfolio_state_features: 20
+preprocessing:
+  normalization:
+    clip_values: true
+    method: minmax
+    scale_per_asset: true
+    scale_per_timeframe: true
+  stationarity:
+    price_transform: diff
+    volume_transform: log
+  technical_indicators:
+    price_indicators:
+    - rsi
+    - macd
+    - atr
+    - bb
+    use_price_indicators: true
+    use_volatility_indicators: true
+    use_volume_indicators: true
+    volatility_indicators:
+    - atr
+    volume_indicators:
+    - obv
+  window_config:
+    min_window_size: 20
+    step_size: 1
+    window_sizes:
+      1h: 20
+      4h: 20
+      5m: 20
+production:
+  hardware:
+    cpu_cores: 8
+    cpu_model: Intel 11th Gen (8 cores)
+    gpu: false
+    ram_gb: 10
+    swap_gb: 8
+  memory:
+    gc_collect_every_n_steps: 500
+    max_rollout_buffer_mb: 4096
+    vecnormalize_clip_obs: 10.0
+    vecnormalize_clip_reward: 10.0
+  simple_ppo:
+    aux_loss_coef: 0.1
+    batch_size: 256
+    clip_range: 0.2
+    ent_coef: 0.01
+    gae_lambda: 0.95
+    gamma: 0.99
+    learning_rate: 0.0003
+    n_epochs: 20
+    n_steps: 1024
+    steps: 500000
+  sota_architecture:
+    context_vector_dim: 12
+    cyclical_time_encoding: true
+    feature_extractor: ContextualTemporalFusionExtractor
+    hmm_min_obs: 60
+    hmm_n_states: 3
+    hmm_regime_detection: true
+    hmm_window: 500
+    ppo_class: WorldModelPPO
+    symlog_rewards: true
+    world_model_prediction: true
+  training:
+    envs_per_worker: 2
+    interval_timesteps: 10000
+    num_cpus: 8
+    num_samples: 4
+    profiles:
+    - Scalper
+    - Intraday
+    - Swing
+    - Position
+    total_steps: 1000000
+    use_subproc: true
+  validated:
+    action_space_dim: 25
+    anti_spam_threshold: 0.1
+    audit_verdict: PASS
+    context_vector_dim: 12
+    initial_balance: 20.5
+    min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
+    tier: Micro Capital
+    unit_tests_failed: 0
+    unit_tests_passed: 62
+regularization:
+  batch_norm_epsilon: 1.0e-05
+  batch_norm_momentum: 0.99
+  dropout_rate: 0.3
+  gradient_clip: 1.0
+  use_batch_norm: true
+  weight_decay: 0.0001
+reset_parameters:
+  check_interval: 100
+  max_consecutive_losses: 5
+  min_capital_before_reset: 11.0
+  reset_mode: soft
+reward_shaping:
+  # ── FUTURE ARENA / ORACLE-CRITIC (FINDING #4) ───────────────────────────────
+  # Active le RewardBridge : pendant l'entrainement, l'env lit le FUTUR du chunk
+  # (tout le dataset est en RAM) et calcule MFE/MAE (meche haute/basse futures)
+  # pour NOTER la qualite des TP/SL choisis par l'agent. Reward shaping UNIQUEMENT
+  # (anti-oracle §10.10 : le futur n'entre JAMAIS dans l'observation de l'acteur).
+  #   enabled            : pont actif ?
+  #   mode               : classic | future_guided | stochastic_hybrid
+  #   round_trip_fees    : frais A/R reels (0.50% = 0.005) pour les cibles SL/TP
+  #   max_future_contrib : plafond de la contribution (<= 0.60) -> le PnL reste roi
+  future_reward:
+    enabled: true
+    mode: future_guided
+    round_trip_fees: 0.004   # V17-Fix B: aligned with commission 0.0020 (0.40% R/T)
+    max_future_contrib: 0.60
+    # ── PHILOSOPHIE (revue utilisateur 2026-06-26) ──────────────────────────
+    # Le Future Arena juge le TP/SL contre le POTENTIEL REELLEMENT OBSERVE
+    # (MFE/MAE = capture-ratio), PAS contre une cible fixe. Le marche n'a pas de
+    # TP maximum : en bullrun MFE peut etre +35%, en marche plat +1.5%. Le FA
+    # doit pouvoir dire "tu as laisse de l'argent sur la table" SANS etre bride
+    # par les bornes d'execution (qui restent serrees, elles, dans l'env).
+    #   -> targets / tf_scale ci-dessous ne sont qu'un FALLBACK (mode classic,
+    #      ou futur indisponible). Ils ne plafonnent JAMAIS la recompense.
+    #   -> weights : ponderations des termes de qualite (anti-dette: plus de
+    #      constante metier codee en dur dans reward_service.py).
+    targets:            # (sl_target, tp_target) base 5m, FALLBACK uniquement
+      scalper:  [0.008, 0.015]
+      intraday: [0.012, 0.030]
+      swing:    [0.025, 0.060]
+      position: [0.045, 0.110]
+    tf_scale:           # elargissement temporel du FALLBACK (pas du MFE reel)
+      "5m": 1.0
+      "1h": 1.8
+      "4h": 3.0
+    weights:
+      w_pnl: 1.0
+      w_eqs: 0.35
+      w_sl: 0.20
+      w_tp: 0.20
+      w_sizing: 0.25
+      w_missed_green: 0.30
+      w_lost_potential: 0.40
+  # Session 10 calibration — dense baseline signal for the PPO critic.
+  # Session 9 used -1e-4: empirically too weak (over a 500-step episode,
+  # cumulative drag ≈ -0.05, lost in symlog noise). explained_variance got
+  # WORSE (-2.36 vs -1.09 in session 8). Now -1e-3:
+  #   - 500-step episode → -0.5 baseline (clearly learnable V(s))
+  #   - still 5-50× smaller than a typical trade reward (~0.01-0.1)
+  # Override at runtime via env var ADAN_TIME_DECAY (read in reward_calculator).
+  # FIXED: Increased from -0.001 to -0.01 to force exploration
+  # Previous value was too weak - agent preferred inaction over trading.
+  # New value makes HOLD cost 5 steps worth of reward, forcing agent to trade.
+  time_decay: -0.01
+  # S15+ FIX: Reactivated capacity_weight with light value (+0.1)
+  # S15 disabled capacity_reward entirely (was +2.0), killing exploration.
+  # S15+ uses +0.1 to encourage being invested (60-90% portfolio in positions)
+  # while still letting realized_pnl be the primary signal.
+  capacity_weight: 0.1
+  # S15+ FIX: Reactivated frequency_weight with light value (+0.05 per trade)
+  # S15 disabled frequency_reward entirely, removing explore incentive.
+  # S15+ uses +0.05 per executed trade to encourage trying actions
+  # while pure PnL remains the main reward signal.
+  frequency_weight: 0.05
+  duration_penalty_weight: 0.01
+  early_close_bonus: 0.3
+  early_exit_bonus: 0.5
+  exploration_tutor:
+    discovery_bonus: 0.5
+    enabled: true
+    exit_on_successful_trades:
+      4h: 10
+      5m: 15
+  frequency_weights:
+    in_range: 0.05
+    out_of_range: 0.02
+  # Poids de la pénalité par step de violation de cooldown.
+  # Formule : pénalité = -weight × steps_manquants
+  # SELL avant hold_min_steps → pénalité. BUY avant wait_steps_post_sell → pénalité.
+  # Penalty per cooldown-violation step or per gate rejection.
+  # Applied additively before symlog: -weight per step of violation.
+  
+  # ── TIER-BASED CAPITAL PROGRESSION ──
+  # Prop Firm model: agent gets progressively more time to reach next tier.
+  # Promotion bonus 10× increases at each tier (was 0.5, now 5.0 for Micro).
+  # Stagnation penalty further reduced to prevent panic-trading.
+  # Goal: Allow agent to WAIT for quality setups instead of forced micro-trades.
+  # ADJUSTED (Session 15): Additional 50% reduction + higher min_magnitude threshold
+  capital_tier_rewards:
+    Micro:
+      min_capital: 11.0
+      max_capital: 30.0
+      max_steps_in_tier: 500
+      # FIX B (2026-06-27): stagnation CROISSANTE x1.6/palier (était ÷2 décroissante,
+      # ce qui rendait l'inaction de plus en plus gratuite en haut). Base Micro inchangée.
+      stagnation_penalty_per_step: -0.00025  # k=0 base
+      drawdown_penalty_factor: 2.0
+      promotion_bonus: 1.0  # V4 (2026-06-27): rescale 5.0->1.0. Le bonus de promotion
+      # ETAIT la root-cause du reward hacking (5/10/20/40 cumules = +75, ~100-750x
+      # plus fort que les penalites anti-SL). One-shot, proportionnel au palier
+      # franchi, ne doit JAMAIS dominer le PnL (croissance log/decroissante).
+    Small:
+      min_capital: 30.0
+      max_capital: 100.0
+      max_steps_in_tier: 1000
+      stagnation_penalty_per_step: -0.0004  # k=1 : -0.00025 * 1.6 (FIX B croissante)
+      drawdown_penalty_factor: 1.5
+      promotion_bonus: 1.3  # V4: rescale 10.0->1.3 (log, proportionnel decroissant)
+    Medium:
+      min_capital: 100.0
+      max_capital: 300.0
+      max_steps_in_tier: 2000
+      stagnation_penalty_per_step: -0.00064  # k=2 : -0.00025 * 1.6^2 (FIX B croissante)
+      drawdown_penalty_factor: 1.0
+      promotion_bonus: 1.6  # V4: rescale 20.0->1.6 (log, proportionnel decroissant)
+    High:
+      min_capital: 300.0
+      max_capital: 1000.0
+      max_steps_in_tier: 3000
+      stagnation_penalty_per_step: -0.001024  # k=3 : -0.00025 * 1.6^3 (FIX B croissante)
+      drawdown_penalty_factor: 0.5
+      promotion_bonus: 1.9  # V4: rescale 40.0->1.9 (log, proportionnel decroissant)
+    Enterprise:
+      min_capital: 1000.0
+      max_capital: 999999.0
+      max_steps_in_tier: 50000
+      stagnation_penalty_per_step: 0.0  # No penalty for staying profitable
+      drawdown_penalty_factor: 0.1
+      promotion_bonus: 0.0  # No higher tier
+  # At 0.005, a 5-step HOLD_MIN violation costs -0.025 reward.
+  # DIAGNOSTIC-V4 (2026-06-30): 0.005 -> 0.02. This is now the BASE of the
+  # SYMMETRIC sterile penalty applied to BOTH SELL-flat AND BUY-illegal
+  # (anti_spam / min_notional). At Micro tier (k=0) the penalty is 0.02,
+  # capped at 0.10. The 28k diagnostic proved that with a near-zero penalty
+  # the agent saturated BUY (illegal_ratio 97%). 0.02 makes the invalid
+  # intent clearly visible to the PPO gradient without dominating real PnL.
+  invalid_trade_penalty_weight: 0.02
+  # ── FIX A+B (2026-06-27): coût GEOMETRIQUE de l'action stérile ──
+  # SELL-sans-position était GRATUIT (aucune branche) → PPO a collapsé sur
+  # action[0]=-1 (point fixe sans douleur). La pénalité croît géométriquement
+  # avec le palier (Micro=0..High=3): pen = invalid_trade_penalty_weight * r^k,
+  # bornée par cap. Neutralise le gain géométrique de la lâcheté aux paliers hauts.
+  # DIAGNOSTIC-V3 (2026-06-29): cap 0.05 -> 0.10. The forensic confusion matrix
+  # showed sterile/illegal action requests at ~0.5/step that the env mostly
+  # neutralises to HOLD at ZERO cost (so saturation at action0=+-1 was free).
+  # Doubling the cap makes the agent FEEL the cost of sterile SELL-no-position
+  # without exploding the reward (kept well below the +-1.2% SL magnitude).
+  sterile_action_geom_ratio: 1.6     # r > 1 : friction croissante par palier
+  sterile_action_penalty_cap: 0.30   # DIAGNOSTIC-V5: was 0.10. Streak-escalated
+                                     #   penalty now reaches ~15x base on a
+                                     #   persistent collapse -> PPO feels it.
+  # DIAGNOSTIC-V5 (2026-06-30): persistence-indexed sterile penalty.
+  #   acc_t = sterile_acc_decay*acc_{t-1} + severity(reason)
+  #   pen   = invalid_trade_penalty_weight * min(cap/base, 1 + alpha*acc) * window_mult
+  #   Replaces capital-tier indexing (flat at Micro k=0). Keyed on rejection
+  #   reason so any collapse mode (SELL-flat, BUY-open) escalates automatically.
+  sterile_acc_decay: 0.97            # relaxation per legal action / decay
+  sterile_acc_alpha: 0.45            # accumulator -> penalty multiplier slope
+  # DIAGNOSTIC-V6: warmup ramp. Sterile penalty scales 0->1 over the first
+  #   N env steps so PPO can explore BEFORE being punished (user: penalty
+  #   was "trop agressive trop tot"). After N steps full penalty applies.
+  sterile_warmup_steps: 50000
+  # DIAGNOSTIC-C1 (2026-07-01): warmup PLUS COURT pour la faute auto-infligée
+  # (Cas B min_notional_self_caused = sur-exposition = chemin de collapse prouvé).
+  # Le calcul C1 montre qu'à 50k le frein ne bat le carburant latent MAX qu'à ~50k
+  # steps, laissant une fenêtre de biais BUY. À 15k le frein est plein bien avant
+  # 128k. On ne touche NI aux frais NI au reward, juste à la rampe temporelle.
+  sterile_warmup_steps_self_caused: 15000
+  # ──────────────────────────────────────────────────────────────────
+  # V28 REWARD FIX (2026-08-10) — pénalités d'invalidité ADDITIVES.
+  #   Architecture: R = R_eco + R_action + R_invalid  (ADDITIF, jamais
+  #   multiplicatif — l'invalidité est une contrainte comportementale,
+  #   PAS une deuxième fonction économique).
+  #   Calibration sur valeurs RÉELLES mesurées du run 320k
+  #   (adan_500k_v27_hmm_semantic_20260809T123040Z) :
+  #     |R_base|_ref = mean |pnl_base| sur les 112 événements de clôture
+  #     non-nuls = 0.2312  ->  bande prescrite [1.0x, 1.5x] = [0.23, 0.35]
+  #   Appliqué au call-site du routing (là où l'intention brute a0 et
+  #   l'état du portefeuille sont simultanément visibles, AVANT que
+  #   route_action_by_state ne neutralise l'intention en HOLD).
+  #   Jamais hardcodé dans l'env — modifier UNIQUEMENT ici.
+  behavior_penalties:
+    enabled: true
+    # SELL intent alors que FLAT (stérile = HOLD déguisé; mode de collapse
+    # V27 prouvé: 3000/3000 SELL stériles sur le bras F contrefactuel).
+    sell_while_flat: -0.28   # 1.21 x |R_base|_ref (0.2312), milieu de bande
+    # BUY intent alors qu'une position est OUVERTE (renforcement interdit).
+    buy_while_open: -0.28    # symétrique: même classe d'invalidité
+    # BUY ouvrant (FLAT -> open): VALIDE. Le coût d'engagement du capital
+    # est porté par le PnL ensuite, JAMAIS par une pénalité d'entrée
+    # ("BUY-flat ne doit pas être puni simplement parce qu'il ouvre un risque").
+    buy_flat_opening: 0.0
+  logging:
+    disable_existing_loggers: false
+    formatters:
+      console:
+        datefmt: '%Y-%m-%d %H:%M:%S'
+        format: '[%(levelname)s] %(asctime)s - %(name)s - %(message)s'
+      json:
+        (): pythonjsonlogger.jsonlogger.JsonFormatter
+        format: '%(asctime)s %(name)s %(levelname)s %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: console
+        level: INFO
+        stream: ext://sys.stdout
+      main_file:
+        backupCount: 5
+        class: logging.handlers.RotatingFileHandler
+        encoding: utf-8
+        filename: ./logs/adan_trading_bot.jsonl
+        formatter: json
+        level: INFO
+        maxBytes: 10485760
+    loggers:
+      matplotlib:
+        level: WARNING
+      pyarrow:
+        level: WARNING
+      urllib3:
+        level: WARNING
+    root:
+      handlers:
+      - console
+      - main_file
+      level: INFO
+    version: 1
+  # Alias de trading_rules.cooldown.hold_min_steps[5m].
+  # Fallback si la config cooldown n'est pas disponible. 6 steps = 30 min en 5m.
+  min_holding_period_steps: 6
+  missed_penalty: -0.5
+  multi_traque_bonus: 1.5
+  overstay_penalty: -1.0
+  pnl_normalization: 1.0
+  pnl_weight: 1.0
+  profiles:
+    Adaptive:
+      duration_penalty_weight: 0.01
+      early_exit_bonus: 0.15
+      missed_opportunity_penalty: -0.25
+      stop_loss_penalty: -1.0
+      take_profit_bonus: 0.5
+    Aggressive:
+      duration_penalty_weight: 0.005
+      early_exit_bonus: 0.3
+      missed_opportunity_penalty: -0.3
+      stop_loss_penalty: -0.8
+      take_profit_bonus: 0.8
+    Conservative:
+      duration_penalty_weight: 0.02
+      early_exit_bonus: 0.0
+      missed_opportunity_penalty: -0.1
+      stop_loss_penalty: -1.5
+      take_profit_bonus: 0.4
+    Moderate:
+      duration_penalty_weight: 0.015
+      early_exit_bonus: 0.1
+      missed_opportunity_penalty: -0.2
+      stop_loss_penalty: -1.0
+      take_profit_bonus: 0.6
+  progressive_difficulty: true
+  risk_formulas:
+    capital_protection:
+      bonus_weight: 0.3
+      enabled: true
+      threshold: 0.7
+    entry_quality:
+      bonus_weight: 0.15
+      enabled: true
+      max_ratio: 3.0
+      min_ratio: 2.0
+    liquidity:
+      enabled: true
+      max_position_volume_ratio: 0.05
+      penalty_weight: -0.2
+    market_timing:
+      bonus_weight: 0.1
+      enabled: true
+      optimal_range:
+      - 0.3
+      - 0.4
+    portfolio_concentration:
+      enabled: true
+      max_concentration: 0.7
+      penalty_weight: -0.1
+    risk_score:
+      bonus_weight: 0.2
+      enabled: true
+      max_risk_per_trade: 0.02
+      threshold: 80
+    trade_performance:
+      bonus_weight: 0.25
+      enabled: true
+      min_ratio: 2.0
+    volatility:
+      bonus_weight: 0.1
+      enabled: true
+      high_threshold: 0.03
+      optimal_range:
+      - 0.01
+      - 0.02
+      penalty_weight: -0.15
+  spot_trading:
+    capital_management:
+      efficiency_bonus: 0.2
+      idle_capital_penalty: -0.1
+      max_utilization: 0.9
+      min_utilization: 0.3
+    key_levels:
+      support_resistance_bonus: 0.3
+      trend_alignment_bonus: 0.2
+    liquidity_zones:
+      avoidance_bonus: 0.3
+      proximity_penalty: -0.4
+    order_efficiency:
+      efficient_execution_bonus: 0.15
+      slippage_penalty_per_pct: -0.2
+  trade_outcome:
+    stop_loss_multiplier: 0.05
+    take_profit_multiplier: 0.6
+risk_parameters:
+  # DEPRECATED (FINDING #4 / revue utilisateur): ce bloc top-level n'est lu QUE
+  # par DBE._compute_risk_parameters, qui est CODE MORT (0 appelant). Valeurs
+  # realignees sur les bandes realistes pour neutraliser tout piege 10-20% si la
+  # fonction etait reactivee. Source de verite runtime = workers.*.trading_parameters.
+  base_sl_pct: 0.015
+  base_tp_pct: 0.030
+  daily_loss_limit: 0.1
+  drawdown_risk_multiplier: 1.5
+  max_drawdown_pct: 40.0    # C3: aligned with Tier Micro (was 0.25)
+  max_risk_level: 2.0
+  max_sl_pct: 0.06
+  max_tp_pct: 0.12
+  min_risk_level: 0.5
+  min_sl_pct: 0.003
+  min_tp_pct: 0.005
+  risk_step: 0.1
+  volatility_impact: 0.5
+  volatility_sl_factor: 1.2
+  weekly_loss_limit: 0.2
+  winrate_tp_factor: 1.1
+trading_rules:
+  # FINDING #4: aligne sur environment.commission. V17-Fix B: 0.40 % A/R.
+  commission_pct: 0.0020
+  # 🔴 CRITICAL FIX (2026-06-25): enforce the per-tier exposure cap on EVERY
+  # open (was only enforced at hour==4). Without this, the agent ignored
+  # max_position_size_pct / exposure_range and sized positions arbitrarily.
+  enable_position_cap: true
+  # 🔴 AGENT_CLOSE quota (2026-06-25): l'agent ne peut interrompre manuellement
+  # qu'un nombre limité de positions par jour, et jamais trop d'affilée. Au-delà
+  # du quota, l'AGENT_CLOSE est converti en HOLD + pénalité (laisse jouer SL/TP).
+  # Les sorties SL / TP / MAX_DURATION ne comptent PAS dans ce quota.
+  agent_close:
+    # V20: after HOLD_MIN, a policy SELL is executable even below break-even or
+    # when the advisory decision budget is depleted. V19 logs prove 99.3% of
+    # legal SELL intents were blocked, mechanically producing MaxDuration.
+    exit_authority: true
+    max_per_day: 7        # advisory telemetry under exit_authority; no forced HOLD
+    max_consecutive: 3    # advisory telemetry under exit_authority; no forced HOLD
+    min_gap_steps: 12     # advisory telemetry under exit_authority; no forced HOLD
+  # 🔵 DECISION BUDGET (V3, 2026-06-25) — friction structurelle continue.
+  # Jauge d'energie [0,1]. HOLD recharge (+recharge_hold), BUY/CLOSE coutent.
+  # Quand budget < cost_close => AGENT_CLOSE converti en HOLD + penalite douce.
+  # Effet mecanique : apres ~3 closes (3*0.30) le budget est quasi vide ; il
+  # faut ~15 HOLD (15*0.02=0.30) pour pouvoir refermer -> cooldown NATUREL.
+  # Les murs rigides (if/else) ne s'apprennent pas bien ; un cout continu
+  # modifie la geometrie de l'espace d'apprentissage du PPO.
+  decision_budget:
+    enabled: true
+    max: 1.0              # jauge pleine
+    cost_buy: 0.15        # ouvrir une position consomme 0.15
+    cost_close: 0.30      # AGENT_CLOSE consomme 0.30 (cher: tue le micro-scalping)
+    recharge_hold: 0.02   # chaque HOLD recharge +0.02 (recompense la patience)
+  # 🔵 SYMMETRY & VOLATILITY ENFORCEMENT (V3) — penalite latente (par step
+  # tant que la position est ouverte) contre la triche SL/TP.
+  #  - rr_penalty   : penalise |RR_effectif - target_RR| (asymetrie risque/gain)
+  #  - sl_atr_penalty: penalise un SL trop large vs la volatilite (ATR) = "lachete"
+  symmetry_enforcement:
+    enabled: true
+    target_rr: 1.5            # ratio risque/recompense cible (profil intraday)
+    rr_tolerance: 0.5         # zone morte : pas de penalite si |RR-target| <= 0.5
+    rr_lambda: 0.02           # poids penalite asymetrie (par step, latent)
+    sl_atr_mult_max: 2.0      # SL acceptable jusqu'a 2.0 x ATR ; au-dela = lachete
+    sl_atr_lambda: 0.02       # poids penalite SL-trop-large-vs-ATR (par step)
+    max_step_penalty: 0.15    # plafond de la penalite de symetrie par step
+  # 🔵 CLOSE INTENTION PENALTY (V3) — un AGENT_CLOSE precoce / non rentable
+  # coute proportionnellement a sa nuisance (duree trop courte + PnL faible).
+  close_intention_penalty:
+    enabled: true
+    min_hold_steps: 6         # en dessous => penalise (close trop precoce)
+    lambda_duration: 0.05     # poids du deficit de duree
+  # 🔵 ACTION ENTROPY CONSTRAINT (V3) — penalise une frequence de switch
+  # d'action (HOLD<->BUY<->SELL) trop elevee sur une fenetre glissante.
+  action_entropy:
+    enabled: true
+    window: 20                # taille de la fenetre glissante (steps)
+    switch_threshold: 0.5     # part de switches au-dela de laquelle on penalise
+    lambda_switch: 0.03       # poids de la penalite de switch
+  # 🟢 LATENT PnL SHAPING (V4, 2026-06-27) — la "ligne imaginaire" (cf. user).
+  # Des qu'une position est REELLEMENT ouverte, le PnL courant (non realise)
+  # est positif (au-dessus de l'entree) ou negatif (en-dessous). Le modele doit
+  # ressentir cette ligne a CHAQUE phase de detention, pas seulement a la
+  # cloture. Sinon il ne peut pas apprendre la gestion de portefeuille.
+  # Applique TOUTES LES every_n_steps (def 3) tant qu'une position est ouverte:
+  #   PnL_courant > 0 -> +reward (borne, attenue: on ne paie pas le non-realise plein)
+  #   PnL_courant < 0 -> -penalite (asymetrique: la perte fait plus mal)
+  # Compression log pour eviter la domination ; plafonne par |cap|.
+  latent_pnl_shaping:
+    enabled: true
+    every_n_steps: 3          # cadence (toutes les 3 steps de detention)
+    lambda_gain: 0.10         # poids du PnL latent POSITIF
+    lambda_loss: 0.15         # poids du PnL latent NEGATIF (asymetrie: perte > gain)
+    cap: 0.30                 # plafond absolu de la contribution latente par application
+  # 🟢 SATURATION PENALTY (V4, 2026-06-27) — penalise (log, plafonnee) le SPAM
+  # de SL/TP qui saturent les bornes du profil. Le clip masque le probleme ;
+  # si la policy sature les bornes en permanence, elle n'a pas appris a doser.
+  # Croissance LOGARITHMIQUE (pas exponentielle) avec un PLAFOND (cf. user).
+  saturation_penalty:
+    enabled: true
+    window: 50                # fenetre glissante (nb de trades/decisions SL-TP)
+    threshold: 0.5            # part de saturation au-dela de laquelle on penalise
+    lambda: 0.02              # V29 PATCH2: was 0.10 — dominait le reward
+                              #   (mean -0.1249 = 14x behavior_invalid -0.0087)
+    cap: 0.05                 # V29 PATCH2: was 0.20 — plafond aligne lambda
+  duration_tracking:
+    # PortfolioManager is the only close authority. Base limits reproduce the
+    # effective V19 limits for non-scalper profiles; explicit profile overrides
+    # avoid inferring profiles from Ray worker/sub-env identifiers.
+    1h:
+      max_duration_steps: 20
+    4h:
+      max_duration_steps: 15
+    5m:
+      max_duration_steps: 50
+      optimal_duration: 25
+    profile_overrides:
+      scalper:
+        5m:
+          max_duration_steps: 20
+  # ============================================================================
+  # COOLDOWN RULES — Empêchent les cycles BUY→SELL trop rapides
+  # Cycle : BUY → HOLD (position ouverte) → SELL → WAIT → BUY → ...
+  #
+  # hold_min_steps : Nombre minimum de steps entre BUY et SELL autorisé.
+  #   Pendant ce délai, le modèle est en HOLD (position ouverte, SL/TP actifs).
+  #   Si SELL tenté avant → pénalité proportionnelle + action ignorée.
+  #   Logique : plus la timeframe est haute, plus on tient longtemps.
+  #   5m = 6 steps (30 min), 1h = 3 steps (3h), 4h = 2 steps (8h)
+  #
+  # wait_steps_post_sell : Nombre minimum de steps entre SELL et BUY autorisé.
+  #   Pendant ce délai, le modèle est en WAIT (en USDT, cherche point d'entrée).
+  #   Si BUY tenté avant → pénalité proportionnelle + action ignorée.
+  #   Logique : calé sur force_trade_steps (1 journée / nb_trades_cibles).
+  #   5m = 72 steps (≈6h), 1h = 100 steps, 4h = 200 steps
+  #
+  # omega4e_cooldown : Cooldown anti-spam par profil worker (steps entre 2 BUY).
+  #   Empêche le modèle d'ouvrir plusieurs positions en rafale.
+  #   scalper=3, intraday=2, swing=1, position=1
+  # ============================================================================
+  cooldown:
+    # HOLD_MIN: minimum steps between BUY and SELL (prevents instant flip).
+    # BUY at step N -> SELL allowed from step N + hold_min_steps.
+    hold_min_steps:
+      5m: 3    # 15 min minimum hold after BUY
+      1h: 2    # 2h minimum hold
+      4h: 2    # 8h minimum hold
+    # WAIT post-SELL: minimum steps between SELL and next BUY.
+    # SELL at step N -> BUY allowed from step N + wait_steps_post_sell.
+    wait_steps_post_sell:
+      5m: 5    # DIAGNOSTIC-V3 (2026-06-29): was 2. Forces ~25min FLAT after SELL to
+               #   test whether steps_flat rises above 5% (collapse: flat=0.3%). One
+               #   variable at a time; not aggressive (15+) so exploration survives.
+      1h: 3    # 3h wait after SELL - REDUCED from 10
+      4h: 4    # ~16h wait after SELL - REDUCED from 20
+    # Anti-spam cooldown between consecutive BUY signals per worker profile.
+    omega4e_cooldown_by_profile:
+      scalper: 2    # 2 steps between BUY attempts
+      intraday: 2
+      swing: 1
+      position: 1
+  frequency:
+    action_threshold: 0.01
+    bonus_weight: 0.6
+    force_trade_steps:
+      1h: 180
+      4h: 3000
+      5m: 80
+    grace_period_steps: 5
+    max_positions:
+      1h: 13
+      4h: 4
+      5m: 30
+    min_positions:
+      1h: 0
+      4h: 0
+      5m: 0
+    penalty_weight: 0.05
+    total_daily_max: 50
+    total_daily_min: 1
+  futures_enabled: false
+  leverage: 1
+  max_position_steps: 144
+  min_order_value_usdt: 5.0  # V29: was 11.0 (54% du capital Micro 20.5$) — plancher operationnel aligne tier
+  slippage_pct: 0.0005
+  stop_loss_pct: 0.02
+  take_profit_pct: 0.04
+  trailing_stop:
+    activation_pct: 0.01
+    enabled: false
+    trailing_pct: 0.005
+training:
+  batch_size: 64
+  checkpointing:
+    enabled: true
+    model_name: ppo_trading_bot
+    save_freq: 5000
+    save_path: ./models/rl_agents
+  final_model_export:
+    enabled: true
+    export_path: ./models/rl_agents/final
+    formats:
+    - pytorch
+    - onnx
+    include_preprocessing: true
+    onnx_config:
+      do_constant_folding: true
+      dynamic_axes:
+        input:
+          0: batch_size
+          1: sequence_length
+        output:
+          0: batch_size
+      export_params: true
+      input_names:
+      - observation
+      opset_version: 11
+      output_names:
+      - action
+      - value
+  num_instances: 4
+  progress_bar: true
+  save_freq: 5000
+  timesteps_per_instance: 350000
+  use_custom_progress: true
+workers:
+  # ============================================================================
+  # ARCHITECTURE RULE: Workers define ONLY temporal specialization.
+  # ALL risk/exposure parameters (exposure_range, risk_per_trade_pct,
+  # sl_pct_range, tp_pct_range) are dictated by Capital Tiers above.
+  # ============================================================================
+  w1:
+    name: W1 Scalper
+    profile: scalper      # explicite (revue utilisateur: pas de detection implicite)
+    specialization:
+      timeframe: 5m
+      tracking_periods:
+        5m: {grace_period: 1, max_tracking_steps: 20, min_tracking_steps: 1, optimal_duration: 8}
+        1h: {grace_period: 1, max_tracking_steps: 30, min_tracking_steps: 1, optimal_duration: 12}
+        4h: {grace_period: 1, max_tracking_steps: 50, min_tracking_steps: 1, optimal_duration: 25}
+    max_position_steps: 20
+    max_trades_per_episode: 50
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    # Scalper-specific overrides (1.5% SL, 3.0% TP for R/R = 2.0)
+    trading_config:
+      stop_loss_pct: 0.015
+      take_profit_pct: 0.030
+      trailing_stop: true
+      trailing_delta: 0.005
+    # EXPLICIT source-of-truth read by the DBE (_get_tier_based_parameters).
+    # Revue utilisateur: les fallbacks doivent etre des securites, PAS le mode normal.
+    trading_parameters:
+      stop_loss_pct: 0.008
+      take_profit_pct: 0.015
+      position_size_pct: 0.70
+  w2:
+    name: W2 Intraday
+    profile: intraday     # explicite
+    specialization:
+      timeframe: 1h
+      tracking_periods:
+        5m: {grace_period: 2, max_tracking_steps: 52, min_tracking_steps: 1, optimal_duration: 33}
+        1h: {grace_period: 1, max_tracking_steps: 43, min_tracking_steps: 1, optimal_duration: 14}
+        4h: {grace_period: 1, max_tracking_steps: 16, min_tracking_steps: 1, optimal_duration: 8}
+    max_position_steps: 100
+    max_trades_per_episode: 15
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_parameters:
+      stop_loss_pct: 0.012
+      take_profit_pct: 0.030
+      position_size_pct: 0.70
+  w3:
+    name: W3 Swing
+    profile: swing        # explicite
+    specialization:
+      timeframe: 4h
+      tracking_periods:
+        5m: {grace_period: 2, max_tracking_steps: 49, min_tracking_steps: 1, optimal_duration: 30}
+        1h: {grace_period: 1, max_tracking_steps: 45, min_tracking_steps: 1, optimal_duration: 15}
+        4h: {grace_period: 1, max_tracking_steps: 13, min_tracking_steps: 1, optimal_duration: 6}
+    max_position_steps: 200
+    max_trades_per_episode: 10
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_parameters:
+      stop_loss_pct: 0.025
+      take_profit_pct: 0.060
+      position_size_pct: 0.70
+  w4:
+    name: W4 Position
+    profile: position     # explicite
+    specialization:
+      timeframe: 4h
+      tracking_periods:
+        5m: {grace_period: 2, max_tracking_steps: 60, min_tracking_steps: 1, optimal_duration: 40}
+        1h: {grace_period: 1, max_tracking_steps: 50, min_tracking_steps: 1, optimal_duration: 20}
+        4h: {grace_period: 1, max_tracking_steps: 80, min_tracking_steps: 1, optimal_duration: 50}
+    max_position_steps: 500
+    max_trades_per_episode: 5
+    assets: [BTCUSDT]
+    timeframes: [5m, 1h, 4h]
+    data_split: train
+    trading_parameters:
+      stop_loss_pct: 0.045
+      take_profit_pct: 0.110
+      position_size_pct: 0.70
+
+# ============================================================================
+# SANDBOX / CI TRAINING PARAMETERS
+# ============================================================================
+# These parameters are used ONLY when running in --mode sandbox (CPU-only,
+# low-RAM environments like GitHub Actions runners or development sandboxes).
+# They are NOT used in heavy/production mode (GPU, Ray Tune, Colab).
+#
+# IMPORTANT: The sandbox exists solely to verify the pipeline works end-to-end.
+# Performance metrics from sandbox runs (1GB RAM, 2 CPUs, n_steps=128) are
+# NOT representative of production training (7GB+ RAM, GPU, n_steps=2048).
+# ============================================================================
+sandbox:
+  initial_capital: 20.50      # Same as production Micro Capital tier
+  # S15 HARD RESET: Realistic CI hyperparameters.
+  # n_steps=512, batch=64 — proven safe on 7GB CI runner.
+  # 512 steps × obs_dict ≈ 2.5 MB per rollout. With Adam buffers + gradients
+  # total memory ≈ 500 MB — leaves 6.5 GB headroom.
+  # 10000 steps / 512 = ~19 PPO updates × 10 epochs = 190 gradient passes.
+  n_steps: 512                # Safe for 7GB CI (512 × obs ≈ 2.5 MB)
+  batch_size: 64              # 512/64 = 8 minibatches per epoch
+  n_epochs: 4                 # DIAGNOSTIC-V6: was 10. KL exploded on the FIRST
+                              #   minibatch ("Early stopping at step 0" x68) =>
+                              #   even 10 passes was too many. 4 passes lets a
+                              #   real (small) update land before KL early-stop.
+  max_training_steps: 10000   # CI: ~4 min on 2-CPU runner
+  ci_training_steps: 10000    # Relay segment size
+  learning_rate: 0.00008      # DIAGNOSTIC-V6: was 1.5e-4. approx_kl 0.12-0.17 per
+                              #   update => step size still too large. Halved again.
+  clip_range: 0.12            # DIAGNOSTIC-V6: tighter trust region (was 0.15)
+  target_kl: 0.04             # DIAGNOSTIC-V6: was 0.02. 0.02 tripped early-stop at
+                              #   step 0 (1.5*0.02=0.03 < first-batch KL). 0.04 lets
+                              #   a small update complete before stopping.
+  max_grad_norm: 0.3          # DIAGNOSTIC-V6: was 0.5. Tighter gradient clip to
+                              #   prevent the violent first-batch KL jump.
+  ent_coef: 0.03              # DIAGNOSTIC-V3 (2026-06-29): was 0.01. The sandbox
+                              #   path reads ent_coef from sandbox_cfg (NOT
+                              #   WORKER_PROFILES), so this is the value that
+                              #   reaches the 50k diagnostic. Tripled to fight the
+                              #   measured entropy collapse (action0 bimodal at +-1,
+                              #   HOLD=0%, 99.7% in-position). Can be overridden at
+                              #   launch via ADAN_ENT_COEF. Fees held at 0.5%.
+  # Session 6 fixes:
+  # A8 FIX: Reward is now scaled by 100/initial_capital (percentage-based).
+  #   On $20.50 capital, a $0.05 PnL → 0.244% → symlog(0.244) = 0.219
+  #   Previously: symlog($0.05) = 0.049 — too weak for PPO gradient.
+  # A3 FIX: HMM log_return amplified 1000x before RobustScaler.
+  #   5m log_returns O(1e-4) → O(0.1) — real regime separation.
+  # A1 FIX: Logs now show both portfolio_value (incl unrealized) and realized_equity.
+  # A7 FIX: Reward log precision increased from .4f to .6f.
+  # NOTE: Sharpe/WinRate from sandbox runs with 5k steps are NOT meaningful
+  # performance indicators. They exist only to prove the pipeline executes.

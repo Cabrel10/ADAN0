@@ -1,0 +1,32 @@
+{
+  "asset": "BTCUSDT_BINANCE",
+  "buffer_distinct_points": 251,
+  "buffer_len": 500,
+  "buffer_synthetic_rows": 250,
+  "buffer_synthetic_share": 0.5,
+  "calls_total": 599,
+  "calls_with_observation_id": 300,
+  "calls_with_synthetic_input": 299,
+  "engine_fit_count": 5,
+  "engine_fit_failures": 0,
+  "engine_total_obs": 600,
+  "final_probs": [
+    0.999906,
+    0.0,
+    9.4e-05
+  ],
+  "generated_at": "2026-09-05 00:38:47",
+  "question": "Does the featureless second caller (detect_market_regime) poison the HMM fit buffer and the returned posterior?",
+  "seed": 330500,
+  "share_calls_synthetic": 0.4992,
+  "share_posterior_computed_on_synthetic_last_row": 0.4992,
+  "split": "train",
+  "steps": 300,
+  "synthetic_vector_tested": [
+    0.0,
+    0.0,
+    0.5,
+    1.0
+  ],
+  "verdict": "CONFIRMED_buffer_contaminated_by_featureless_second_caller -> cause class = TRANSFORMATION/PLUMBING, not model training and not the data window. detect_market_regime() feeds a constant synthetic observation into the same rolling fit buffer used for the market posterior."
+}
