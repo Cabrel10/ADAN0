@@ -614,3 +614,131 @@ actuel sans modifier ce protocole.
 prudence, mais parce que les deux conditions posées (« B PASS et C PASS ») sont
 mesurées FAIL et que les seuls chemins pour les faire passer sont ceux
 explicitement interdits.
+
+---
+
+## U. Le 500k a été lancé, a tourné 480k steps, et s'est effondré. NO-GO mesuré.
+
+Le run a été autorisé sur huit conditions toutes vertes (section précédente),
+lancé, puis surveillé. Il a atteint ~480 768 / 500 000 steps sans un seul
+traceback. Il a néanmoins échoué, et l'échec est net.
+
+### U.1 — Ce que le monitoring a mesuré
+
+| Métrique | Valeur | Verdict |
+|---|---|---|
+| progression | 480 768 / 500 000 | run réel |
+| tracebacks | **0** | infra saine |
+| `explained_variance` fenêtre 0-100 updates | **+0.334 moyenne, 85/100 positifs** | le smoke était reproductible |
+| `explained_variance` fenêtre 800-900 | **−1.012 moyenne, 12/100 positifs** | **dégradation** |
+| EV négatif global | 690 / 938 updates | échec value function |
+| `DRAWDOWN_KILL` | 86 | mécanisme de survie actif |
+| equity | 12.30 → 20.51, gelée à **15.70 sur 412 604 lignes** | **gel** |
+| `fa_watchdog` | 2 405 hits, `future_share=71.7%` | Future Arena écrase le PnL |
+
+### U.2 — Cause racine : effondrement de la policy dans les coins
+
+Le log dit exactement ceci, répété :
+
+```
+[TARGET_WEIGHT] Step 19550 | Action=HOLD | Raw=-1.000 | Thr=0.100
+[TERMINATION WARNING] Long period without trades: 19550 steps > 1440
+```
+
+Distribution de `Raw` (= `a0`) sur les 3 000 dernières décisions :
+
+```
+1500  Raw=+1.000
+1500  Raw=-1.000
+    0  autre chose
+```
+
+Contre, au début du run :
+
+```
+7  Raw=+1.000
+7  Raw=0.185
+7  Raw=0.137
+7  Raw=-1.000
+6  Raw=0.165
+```
+
+**100 % de saturation en fin de run, distribution graduée au début.** La policy
+est morte dans les deux coins de `Box(-1,1)`. Quand elle émet `a0=-1.000` en
+étant FLAT, `route_action_by_state` renvoie HOLD — correctement, c'est sa
+définition. D'où 19 550 steps consécutifs sans trade et l'equity gelée.
+
+### U.3 — Trois de mes propres affirmations, infirmées par la mesure
+
+**(a) « `ent_coef = 0.0` ».** FAUX. `config.yaml` L1934 : `ent_coef: 0.03`
+dans le bloc `sandbox`, et `train_parallel_agents.py` L2750 lit
+`os.environ.get("ADAN_ENT_COEF", sandbox_cfg.get("ent_coef", ...))`. Le run a
+donc tourné avec un bonus d'entropie **non nul**. Le diagnostic « pas de
+bonus d'entropie » était une lecture de la mauvaise clé de config.
+
+**(b) « `log_std` est figé, l'exploration n'est pas adaptative ».** FAUX.
+`std` a bougé : `0.368 → 0.371 → 0.372 → 0.373`. `entropy_loss` a bougé :
+`−2.09 → −2.14 → −2.16`. `log_std` **est** un paramètre entraînable et il a
+été entraîné. Mon audit de constellation ne mesurait que 7 updates sur un
+smoke de 4 096 steps — une fenêtre trop courte pour voir le mouvement. La
+conclusion « figé » était un artefact de la taille de l'échantillon.
+
+**(c) « `explained_variance` devient positif — les fixes débloquent la value
+function ».** PRÉMATURÉ. C'est vrai sur 0-100 updates (+0.334, 85/100
+positifs, et le 500k a reproduit exactement ce que le smoke montrait). C'est
+faux ensuite : la moyenne retombe à −1.298 dès la fenêtre 100-200 et ne
+remonte jamais. J'ai généralisé un signal de 4 096 steps à un run de 500 000.
+La bonne formulation est : *les fixes HMM + truncation rendent la value
+function apprenable au démarrage ; ils ne l'empêchent pas de se dégrader
+ensuite.*
+
+Le point (b) est doublement instructif : `std` **monte** (0.368→0.373) alors
+que les actions **saturent** à ±1. Ce n'est pas contradictoire — c'est la
+signature d'un effondrement piloté par la **moyenne** de la gaussienne, pas
+par sa variance. `mu` part vers ±∞, et même un σ sain ne ramène plus rien
+dans la zone `|a0| < 0.10`. Augmenter `ent_coef` ne corrigerait donc pas cet
+échec : le levier est sur ce qui pousse `mu` dans les coins, c'est-à-dire le
+reward.
+
+### U.4 — Le suspect désigné par la mesure : `fa_watchdog` à 71,7 %
+
+2 405 avertissements, `future_share=71.7%` contre une cible `<40%`. La
+récompense Future Arena représente ~72 % de la magnitude du signal contre
+~28 % pour le PnL réel. Une policy optimise ce qu'on lui paie ; si 72 % du
+paiement vient d'un terme non-PnL, saturer `a0` peut être une réponse
+rationnelle à ce terme. **C'est une corrélation, pas une preuve** — le
+watchdog est advisory et n'a jamais été relié causalement à la saturation.
+C'est la prochaine mesure à faire, pas une conclusion.
+
+### U.5 — Ce qui reste acquis
+
+Rien de ce qui a été corrigé cette session n'est remis en cause :
+
+* contamination HMM = 0 (mesuré, `synthetic_rows 250→0`) ;
+* `terminated`/`truncated` conforme SB3/Gymnasium ;
+* Gate C canonique mesurait le mauvais univers — corrigé à la source ;
+* le harnais Gate B/C fabriquait 44 % de HOLD structurel — remplacé par
+  `policy_aware_execution_test` (B\* plumbing 0.000, C\* 0.779) ;
+* `decision_budget` ne pénalise pas les actions invalides (vérifié à la
+  source, pas via `getattr`) ;
+* le mécanisme de survie économique fonctionne : `lifetime_id=20`,
+  `reset_count=20`, capital restauré à 20,50 $, 86 `DRAWDOWN_KILL` absorbés
+  sans crash.
+
+### U.6 — Statut de `financial_stability_check.py`
+
+**NON-AUTORITAIRE** à compter de maintenant. Ses gates B et C échantillonnent
+`a0 ~ U(-1,1)` sans lire l'état du portefeuille et produisent donc un plancher
+de HOLD que l'environnement ne peut pas ne pas générer. Son verdict `NO_GO`
+sur B/C ne doit plus bloquer ni autoriser un lancement. Les gates A, D et E
+restent lisibles. L'autorité passe à
+`scripts/validation/policy_aware_execution_test.py`.
+
+### U.7 — Verdict
+
+**NO-GO sur ce run.** Ce n'est pas un échec d'infrastructure — 480k steps,
+0 traceback, checkpoints tous les 10k, survie économique fonctionnelle. C'est
+un échec d'apprentissage : la policy sature, l'equity gèle, la value function
+se dégrade. Reprendre un checkpoint de ce run serait reprendre une policy
+effondrée. Le prochain travail est sur l'équilibrage du reward
+(`future_share` 72 % → <40 %), pas sur un relancement à l'identique.
