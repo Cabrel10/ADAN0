@@ -113,6 +113,11 @@ class RewardBridge:
                 else ROUND_TRIP_FEES_DEFAULT
 
         max_fc = float(block.get("max_future_contrib", 0.60))
+        # ADAN0_FUTURE_SHARE_CAP: relative cap, see reward_service.py.
+        # max_future_contrib bounds a MAGNITUDE; this bounds the SHARE that
+        # the FA_WATCHDOG actually measures. Without it the watchdog can read
+        # 71.7% while the magnitude clamp never fires (measured, run V29).
+        max_fs = float(block.get("max_future_share", 0.40))
 
         # ── Anti-dette : surcharge des cibles FALLBACK + tf_scale depuis config ──
         # (le chemin principal reste MFE/MAE ; ceci ne touche que le fallback).
@@ -131,6 +136,7 @@ class RewardBridge:
             mode=mode,
             round_trip_fees=float(rtf),
             max_future_contrib=max_fc,
+            max_future_share=max_fs,
         )
         _wmap = {
             "w_pnl": "w_pnl", "w_eqs": "w_eqs", "w_sl": "w_sl", "w_tp": "w_tp",

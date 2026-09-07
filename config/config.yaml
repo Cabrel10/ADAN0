@@ -1244,6 +1244,14 @@ reward_shaping:
     mode: future_guided
     round_trip_fees: 0.004   # V17-Fix B: aligned with commission 0.0020 (0.40% R/T)
     max_future_contrib: 0.60
+    # ADAN0_FUTURE_SHARE_CAP (mesure du run V29 500k, 2026-09-06) :
+    # max_future_contrib plafonne une MAGNITUDE (+/-0.60) ; le FA_WATCHDOG
+    # mesure une PART : |future| / (|future| + |pnl|). Sur V29,
+    # mean_abs_future=0.0207 (30x sous le plafond, donc jamais clampe) alors
+    # que la part etait deja a 65.9% des la 1re fenetre de 200 steps, AVANT
+    # toute saturation de la policy -> le desequilibre precede l'effondrement,
+    # il n'en est pas la consequence. Ce parametre plafonne la PART.
+    max_future_share: 0.40
     # ── PHILOSOPHIE (revue utilisateur 2026-06-26) ──────────────────────────
     # Le Future Arena juge le TP/SL contre le POTENTIEL REELLEMENT OBSERVE
     # (MFE/MAE = capture-ratio), PAS contre une cible fixe. Le marche n'a pas de
