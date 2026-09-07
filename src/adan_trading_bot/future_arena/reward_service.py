@@ -164,6 +164,21 @@ class RewardConfig:
 
     # Le futur ne doit JAMAIS dominer : on plafonne sa contribution nette par step.
     max_future_contrib: float = 0.60
+    # ADAN0_FUTURE_SHARE_CAP (mesuré sur le run V29 500k, 2026-09-06) :
+    # `max_future_contrib` est un plafond de MAGNITUDE ABSOLUE (+/-0.60). Le
+    # watchdog, lui, mesure une PART RELATIVE :
+    #     future_share = |future| / (|future| + |pnl|)
+    # Sur le run V29, mean_abs_future valait 0.0207 -- trente fois sous le
+    # plafond -- donc le clamp ne s'est JAMAIS déclenché, alors que la part
+    # relative était déjà à 65.9% dès la première fenêtre de 200 steps (avant
+    # toute saturation de la policy). Le plafond censé garantir "le PnL reste
+    # roi" était donc structurellement inopérant : borner une magnitude ne
+    # borne pas une proportion.
+    # Ce paramètre borne la PART. À 0.40, |future| ne peut pas dépasser
+    # 2/3 * |pnl| (car 0.4 = f/(f+p) <=> f = 2p/3), ce qui rend le PnL
+    # majoritaire par construction et non par espoir.
+    # Mis à 0.0 ou négatif -> désactivé (comportement legacy).
+    max_future_share: float = 0.40
 
     # Config de l'escalation (anti-prévisibilité). Partagée par les motifs.
     escalation: EscalationConfig = field(default_factory=EscalationConfig)
@@ -541,6 +556,23 @@ class RewardService:
             # plafond anti-oracle : le futur ne peut pas dominer le PnL réel.
             future_sum = max(-cfg.max_future_contrib,
                              min(cfg.max_future_contrib, future_sum))
+
+        # ADAN0_FUTURE_SHARE_CAP : second plafond, RELATIF cette fois.
+        # Le clamp de magnitude ci-dessus ne peut pas empêcher le futur de
+        # dominer quand les deux termes sont petits (mesuré : |future|=0.0207
+        # vs |pnl|=0.0107 -> part 65.9%, tout en restant 30x sous +/-0.60).
+        # On borne donc |future| en fonction du |pnl| RÉEL de ce step :
+        #     share = f/(f+p) <= s   <=>   f <= p * s/(1-s)
+        # Le signe et donc la direction du shaping sont préservés : on ne
+        # change QUE l'amplitude. À p=0 (aucun PnL réalisé ce step) le futur
+        # est ramené à 0 -- c'est voulu : sans PnL réel il n'y a rien à
+        # "shaper", et c'est exactement le régime où la part explosait.
+        _share_cap = float(getattr(cfg, "max_future_share", 0.0) or 0.0)
+        if 0.0 < _share_cap < 1.0 and future_sum != 0.0:
+            _p_abs = abs(float(bd.pnl_net))
+            _allowed = _p_abs * (_share_cap / (1.0 - _share_cap))
+            if abs(future_sum) > _allowed:
+                future_sum = math.copysign(_allowed, future_sum)
         bd.future_contrib = future_sum
 
         # ── 4) Composition + symlog ───────────────────────────────────────────
