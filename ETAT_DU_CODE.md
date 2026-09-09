@@ -257,7 +257,24 @@ Toutes les divergences restantes ont une cause nommée :
   **RÉSOLU** (`bec88e9`) : pin aligné sur 1.9.0 = runtime mesuré.
   `models/exog_oracle.pkl` ne désérialise pas sous 1.9.0 mais est
   non-critique (DBE retombe sur des priors uniformes).
-- Aucun test de régression ne garde les découvertes fee_gate / HMM.
+- ~~Aucun test de régression ne garde les découvertes fee_gate / HMM.~~
+  **RÉSOLU** (`8c6c56d`) : `tests/test_fee_gate_hmm_regressions.py`,
+  12 tests (8 HMM read-only consumers, 4 sémantique fee gate), tous verts
+  sous `PYTHONPATH=src` avec l'interpréteur `trading_env`.
+
+- **Viabilité économique — TRANCHÉ (NO-GO justifié).**
+  `RAPPORT_GEOMETRIE_SLTP.md` + addendum (commits `455dc08`, `a0e0c06`) :
+  mesuré sur les parquets réels 5m/1h/4h, (1) toute géométrie SL/TP statique
+  a EV ≈ −frais (0/42 paires +EV) ; (2) aucun filtre d'entrée simple ne crée
+  d'edge net ; (3) la frontière de frais maximale est +0,148 % en 4h, sous
+  les 0,40 % A/R configurés ; (4) le seul edge conditionné apparent (ema>1
+  4h) était un artefact d'échantillons superposés — il s'évanouit sur val et
+  test dès que les trades sont indépendants. Chaque trade a donc une
+  espérance de −0,40 % par construction, et le collapse hold 99 % de la
+  policy est la réponse **correcte** à ce problème. **Tout lancement 500k
+  reste NO-GO tant qu'une condition mesurée de déblocage n'est pas remplie**
+  (frais ≤ 0,10 % A/R avec signal net démontré sur backtest non superposé
+  val ET test, ou re-cadrage du problème hors config actuelle).
 
 ---
 
