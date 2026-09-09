@@ -742,3 +742,72 @@ un échec d'apprentissage : la policy sature, l'equity gèle, la value function
 se dégrade. Reprendre un checkpoint de ce run serait reprendre une policy
 effondrée. Le prochain travail est sur l'équilibrage du reward
 (`future_share` 72 % → <40 %), pas sur un relancement à l'identique.
+
+---
+
+## U. Posterior modes post-fix — plan item 3 (mesure du 2026-09-09)
+
+`scripts/diag_hmm_posterior_modes.py` relancé APRÈS le fix read-only
+(`50eeee4`) sur l'univers réel du launcher (BTC + DOGE, split train, 300
+obs/fenêtre, seed 330500). Résultat :
+`logs/validation/hmm_posterior_modes_20260909_223549.json`,
+`cause_classification = GRADED_POSTERIOR_present_see_table`.
+
+| Fenêtre | distinct p_hmm | ONE_HOT | INTERMEDIATE | NEAR_ONE_HOT | p_hmm p50 |
+|---|---|---|---|---|---|
+| BTC train | 12 valeurs | 229 (76,3 %) | 66 (22,0 %) | 5 | 0,333 |
+| DOGE train | 17 valeurs | 228 (76,0 %) | 64 (21,3 %) | 8 | 0,048 |
+
+- **CONFIRMÉ — la classification est maintenant un posterior gradué** :
+  12-17 valeurs distinctes par fenêtre (et non le triplet uniforme
+  0.333/0.333/0.334 du fallback state_builder). Le support reste dominé par
+  les modes 0.01 / 0.99 (118+115 obs sur BTC) avec une queue intermédiaire
+  réelle (58 obs à 0.333, quelques obs à 0.44-0.96).
+- **CONFIRMÉ — `sideways_ever_above_0.05 = true`** sur les deux actifs
+  (max sideways = 1.0 sur BTC) : le régime sideways n'est plus jamais
+  structurellement mort ; la distribution jointe des trois régimes est vivante.
+- **CONFIRMÉ — `sum_p50 = 1.0`** : les triplets restent de vraies
+  probabilités normalisées, pas des constantes.
+- Note d'apprentissage HMM : le fit émet des warnings « Model is not
+  converging » (delta -0.0004 à -17.1) — l'EM n'a pas atteint son critère de
+  tolérance sur ces fenêtres, mais produit néanmoins des posteriors
+  discriminants. Non bloquant pour la mesure ; à suivre si le régime
+  prédit devient instable.
+- Conséquence : la correction read-only a tenu post-fix — la contamination
+  de buffer documentée en K-O ne se reproduit pas, et le fee gate voit
+  désormais des p_min mesurés (p50 ≈ 0.464 sur BTC, 0.464 sur DOGE) avec
+  `share_pmin_below_0.34` < 5 %, cohérent avec une boîte SL/TP normale.
+
+## V. Fee gate mesuré sur DOGEUSDT_BINANCE — plan item 4 (mesure du 2026-09-09)
+
+`DIAG_ASSET=DOGEUSDT_BINANCE DIAG_SPLIT=train DIAG_STEPS=500
+scripts/diag_fee_gate_measured.py` →
+`logs/validation/fee_gate_measured_20260909_223544.json`.
+
+| Métrique | DOGE | BTC (rappel 081341) |
+|---|---|---|
+| gate_invocations | 203 | — |
+| block_rate | **0,887** (180/203) | ≈ 0,31 des rejets routés |
+| dominant_term | **H-A_signal_p_hmm_too_low** | fee_gate |
+| p_hmm p50 | **0,01** (89,2 % < 0,5) | — |
+| p_min p50 | 0,469 (28,6 % > 0,5) | — |
+| marge (p_hmm − p_min) p50 | **−0,444** | — |
+
+- **INFIRMÉ — « gate fermé par construction » (c2ca902, déjà rétracté)** :
+  23/203 (11,3 %) des invocations passent sur DOGE ; sl_lo=0.003/tp_hi=0.0222
+  donne p_min=0.278 à l'intérieur de la boîte d'action. La porte EST
+  satisfiable.
+- **CONFIRMÉ — le blocage dominant sur DOGE est le SIGNAL HMM, pas la
+  géométrie** : `H-A_signal_p_hmm_too_low` avec p_hmm p50 = 0.01, i.e. le
+  posterior est quasi one-hot en bear et le seuil requis p50 = 0.469 est
+  hors de portée dans ~89 % des cas.
+- **CONFIRMÉ — asymétrie d'actifs** : sur BTC le blocage était ventilé
+  (structural random-policy + fee gate), sur DOGE c'est le terme de signal
+  qui domine. La cause du blocage est donc dépendante de l'actif — toute
+  recalibration doit être mesurée par actif, pas globale.
+- Implication 500k : DOGE confirme que le levier n'est pas le seuil de la
+  porte (interdit à modifier) mais la qualité/distribution du posterior
+  HMM — cohérent avec la décision section T (NO-GO mesuré maintenu).
+
+*Sections U-V ajoutées le 2026-09-09 ; chaque chiffre reproductible depuis
+les deux JSON cités.*
