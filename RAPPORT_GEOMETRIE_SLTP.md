@@ -125,3 +125,71 @@ l'hypothèse « la géométrie est le levier ».
 *Rapport généré le 2026-09-09. Sondes : `scripts/diagnostics/diag_sltp_first_passage.py`,
 `diag_sltp_conditioned.py`, `diag_fee_frontier.py`. Données :
 `data/processed/indicators/train/BTCUSDT_BINANCE/{5m,1h,4h}.parquet`.*
+
+---
+
+# ADDENDUM — la piste « edge conditionné 4h » est INFIRMÉE (artefact de superposition)
+
+> Ajout du 2026-09-09, même session. Une extension naturelle des sections 2-4
+> a failli produire une conclusion fausse. Documentée ici pour que personne
+> ne la ressorte comme piste valide.
+
+## A. Ce qui a été observé (in-sample, entrées superposées)
+
+Le scan conditionné étendu aux TF 1h/4h montrait des edges bruts
+apparemment exploitables en 4h : `rsi>70` +0.714 %, `ema>1` +0.522 %,
+`atr<p25` +0.518 % (paire 0.030/0.060, H=30). Le test OOS sur entrées
+superposées semblait confirmer `ema>1` : +0.522 % train / +0.414 % val /
++0.234 % test — signe consistant sur les 3 splits, y compris sur le test
+baissier (−9.2 % buy&hold).
+
+## B. Le biais
+
+Entrées à stride=1 avec horizon H=30 → chaque trade recouvre ~97 % du
+suivant. L'échantillon effectif n'est pas n=1 412 mais ~50 trades
+indépendants. Les percentiles d'entrée étaient aussi superposés : le
+« signal » mesurait la même poignée de mouvements 60 fois.
+
+## C. Le test honnête — entrées NON superposées (stride = H)
+
+| split | filtre | n indép | PnL moyen | t-stat | IC95% |
+|---|---|---|---|---|---|
+| train | ALL | 460 | +0.205 % | +1.11 | ±0.362 % |
+| train | ema>1 | 237 | **+0.670 %** | **+2.52** | ±0.521 % |
+| val | ema>1 | 51 | +0.009 % | +0.02 | ±1.065 % |
+| test | ema>1 | 50 | **−0.183 %** | −0.38 | ±0.934 % |
+
+Delta `ema>1 − ALL` : train **+0.465 %**, val **+0.023 %**, test **+0.016 %**.
+
+## D. Verdict — INFIRMÉ
+
+L'edge `ema>1` n'existe que sur le train (période +904.9 % buy&hold : la
+tendance longue y est gratuite) et s'évanouit intégralement sur val et test
+dès que les trades sont indépendants. `atr<p25` changeait déjà de signe
+entre val et test sur échantillons superposés ; `rsi>70` n'a jamais eu
+d'effectif suffisant (n<100). **Aucun filtre simple testé ne produit un
+edge net reproductible hors échantillon, à aucun des niveaux de frais
+simulés (0.04 % à 0.40 % A/R), sur aucun des trois timeframes.**
+
+## E. Conséquence pour la décision 500k — NO-GO économique justifié
+
+La chaîne complète est maintenant mesurée de bout en bout :
+1. toute géométrie SL/TP statique : EV ≈ −frais (§2) ;
+2. tout filtre d'entrée simple : pas d'edge net après frais (§3) ;
+3. monter de timeframe ne franchit pas la frontière (§4) ;
+4. le seul edge conditionné apparent était un artefact statistique (§A-D).
+
+Un run 500k sur cette config économique (0.40 % A/R) ne peut pas produire
+de croissance de capital par construction : chaque trade a une espérance
+de −0.40 % et aucune source de alpha mesurable n'a été démontrée. Le
+collapse hold 99 % de la policy est la **bonne** réponse à ce problème.
+
+Conditions mesurables de déblocage (au moins l'une) :
+- frais réels ramenés ≤ 0.10 % A/R **et** démonstration préalable, sur
+  backtest non superposé, d'un signal net > frais sur val ET test ;
+- ou re-cadrage du problème (market-making, horizon multi-jours avec
+  funding, cross-asset) — hors périmètre de la config actuelle.
+
+Tant qu'aucune de ces conditions n'est **mesurée** (pas supposée), tout
+lancement 500k reste NO-GO. C'est le « NO-GO justifié par des raisons
+précises » que prévoit le protocole.
