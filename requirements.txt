@@ -11,7 +11,7 @@ rich>=13.0.0
 python-dotenv>=1.0.0
 requests>=2.31.0
 scipy>=1.10.0
-scikit-learn==1.6.1  # PINNED — Oracle pkl unpickle compatibility (sandbox=1.6.1, CI matches)
+scikit-learn==1.9.0  # PINNED to measured runtime (trading_env). Verified 2026-09-09: prod_scalers pkl load OK under 1.9.0; models/exog_oracle.pkl (legacy GradientBoosting, _loss restructure) does NOT unpickle but is non-critical — DBE catches the failure and falls back to uniform priors (dynamic_behavior_engine._load_oracle). Rebuild exog_oracle under 1.9.0 if real exogenous regimes are needed.
 hmmlearn>=0.3.0
 tensorboard>=2.14.0
 psutil>=5.9.0
