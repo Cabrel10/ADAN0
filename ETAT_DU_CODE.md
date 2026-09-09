@@ -248,9 +248,15 @@ Toutes les divergences restantes ont une cause nommée :
   résultant, pas la cause. `sell_while_flat` a un reward exactement neutre
   (0,0), donc SELL-routé-en-HOLD et HOLD direct sont **indiscernables du point
   de vue du gradient**.
-- `portfolio_manager.py` L1560 `self.max_drawdown_pct` jamais assigné
-  (fallback 25,0) vs L1627 `_pending_max_dd_frac` (0,40).
-- `requirements.txt` épingle sklearn 1.6.1, l'environnement a 1.9.0.
+- ~~`portfolio_manager.py` L1560 `self.max_drawdown_pct` jamais assigné~~
+  **RÉSOLU** (`379df76`) : slot[24] lit désormais `_pending_max_dd_frac`
+  (autorité unique), fallback config `risk_management.max_drawdown_pct` au
+  cold start. Les slots [24] et [29] encodaient des budgets contradictoires
+  (25 % vs 40 %) dans le même vecteur d'état 32-dim.
+- ~~`requirements.txt` épingle sklearn 1.6.1, l'environnement a 1.9.0.~~
+  **RÉSOLU** (`bec88e9`) : pin aligné sur 1.9.0 = runtime mesuré.
+  `models/exog_oracle.pkl` ne désérialise pas sous 1.9.0 mais est
+  non-critique (DBE retombe sur des priors uniformes).
 - Aucun test de régression ne garde les découvertes fee_gate / HMM.
 
 ---
