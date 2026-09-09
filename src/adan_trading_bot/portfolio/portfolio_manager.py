@@ -1557,8 +1557,22 @@ class PortfolioManager:
                 )) if cash > _min_notional else 0.0
 
                 # [24] risk_budget_remaining: 1 - drawdown/max_dd
-                _max_dd_pct = float(getattr(self, 'max_drawdown_pct', 25.0))
-                _dd_ratio = drawdown / max(_max_dd_pct / 100.0, 1e-8)
+                # Single authority for the threshold: the tier-locked
+                # max_drawdown_pct (config risk_management.max_drawdown_pct,
+                # 40.0 in training) reaches this object as the
+                # _pending_max_dd_frac fraction written by the env before
+                # state construction. The previous code read
+                # getattr(self, 'max_drawdown_pct', 25.0) — an attribute
+                # that is NEVER assigned — so slot [24] used a 25% budget
+                # while slot [29] (below) used 40%: contradictory encodings
+                # of the same constraint inside one 32-dim vector.
+                _max_dd_frac = float(getattr(self, "_pending_max_dd_frac", 0.0))
+                if _max_dd_frac <= 0.0:
+                    _cfg_dd = (self.config.get("risk_management", {}) or {}).get(
+                        "max_drawdown_pct", 40.0
+                    )
+                    _max_dd_frac = max(float(_cfg_dd) / 100.0, 1e-8)
+                _dd_ratio = drawdown / max(_max_dd_frac, 1e-8)
                 cap_risk_budget = float(np.clip(1.0 - _dd_ratio, 0.0, 1.0))
 
                 # [25] max_size_remaining: room for exposure
