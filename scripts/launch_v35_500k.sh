@@ -15,7 +15,6 @@ NTHREADS="${NTHREADS:-1}"
 CKPT_FREQ="${CKPT_FREQ:-10000}"
 
 pkill -9 -f train_parallel_agents 2>/dev/null
-pkill -9 -f v32_monitor 2>/dev/null
 sleep 2
 
 TS=$(date +%Y%m%d_%H%M%S)

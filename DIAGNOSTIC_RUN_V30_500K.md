@@ -64,3 +64,52 @@ Note : les equity ~104 $ trouvées dans certains fichiers de metrics appartienne
 3. Avant tout nouveau run : appliquer la convention de nommage d'ETAT_DU_CODE.md (log dir + checkpoint dir + commit), et ajouter une sonde win-rate glissante dans le monitoring (le monitoring actuel détecte les crashes, pas le collapse économique).
 
 *Diagnostic généré le 2026-09-07 à partir des logs réels du run — chaque chiffre est reproductible par les commandes grep/python de la session.*
+
+---
+
+## 6. Issue finale du run — RÉSOLU (ajout 2026-09-09)
+
+La question « le run produira-t-il un checkpoint final exploitable à 500k ? »
+est maintenant tranchée par les faits :
+
+| Fait | Valeur | Source |
+|---|---|---|
+| Dernière écriture log | 2026-09-08 00:58:44 | `stat logs/v30_500k/run.log` |
+| Dernier step logué | `[STEP 4780]` (épisode 0) | run.log |
+| Lignes rewards JSONL | **479 062** (~95,8 % des 500k) | `wc -l logs/rewards/worker_0_rewards_20260907_033810.jsonl` |
+| Process 169220 | **mort** | `ps -p 169220` → absent |
+| Traceback à la fin | **0** — coupure nette entre deux steps | run.log |
+| Checkpoint le plus récent | **`ppo_adan0_BTCUSDT_470000_steps.zip`** | `checkpoints/v30_500k/` |
+| Checkpoints 480k/490k/final | **inexistants** | `ls checkpoints/v30_500k/` |
+
+**Distribution finale des actions** (479 062 steps, grep `"type":` sur le JSONL) :
+
+| Action | Occurrences | Part |
+|---|---|---|
+| hold | 474 425 | **99,04 %** |
+| buy | 2 323 | 0,48 % |
+| sell | 2 305 | 0,48 % |
+| stop_loss | 9 | 0,002 % |
+
+Equity figée à **19,59 $** jusqu'à la coupure (jamais > 20,52 $, critère
+> 21 $ jamais atteint — tier Micro).
+
+## 7. Verdict final
+
+1. **CONFIRMÉ — Pas de checkpoint final exploitable.** Le run est mort à
+   ~479k/500k sans écrire le checkpoint 480k. Coupure externe (session
+   sandbox), pas un crash applicatif : aucun traceback, log sain jusqu'au
+   dernier step. Le meilleur artefact disponible est le checkpoint **470k**.
+2. **CONFIRMÉ — Le collapse hold s'est maintenu jusqu'à la fin** (99,04 %
+   hold sur l'intégralité du run, equity figée sur les ~25k derniers steps).
+   Les ~21k steps manquants n'auraient rien changé : la policy n'apprenait
+   plus rien d'utile.
+3. **CONFIRMÉ — Le critère économique > 21 $ est un échec définitif** sur
+   cette config (max historique 20,52 $).
+4. **Décision inchangée** : pas de nouveau run 500k sur cette config. Le
+   prochain levier reste la géométrie SL/TP (RR > 1) ou la recalibration
+   sur la volatilité mesurée de BTC, puis revalidation par la chaîne de
+   gates avant tout lancement.
+
+*Ajout généré le 2026-09-09 à partir de `run.log`, du JSONL rewards et de
+`checkpoints/v30_500k/` — chaque chiffre reproductible.*
