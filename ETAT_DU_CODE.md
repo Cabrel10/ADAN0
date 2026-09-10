@@ -275,6 +275,19 @@ Toutes les divergences restantes ont une cause nommée :
   reste NO-GO tant qu'une condition mesurée de déblocage n'est pas remplie**
   (frais ≤ 0,10 % A/R avec signal net démontré sur backtest non superposé
   val ET test, ou re-cadrage du problème hors config actuelle).
+- **Voie « coûts » — TRANCHÉE (clôturée).**
+  `RAPPORT_FEE_SENSITIVITY.md` (commit `7f46e1e`, JSON
+  `fee_sensitivity_20260910_221310.json`) : sweep exact
+  `EV_net(c) = EV_brut − c` sur B1/B2/B3, 8 niveaux de 0,50 % à 0 % RT,
+  block bootstrap, univers launcher. Verdict : **aucune règle ne passe
+  val ET test à 0,10 % RT** ; seul DOGE/val B3 passe (EV +1,46 %,
+  IC95 bas +0,006 %) mais est contredit par DOGE/test B3 (−0,161 %).
+  Fait décisif : sur test, l'EV **brute** (à coût nul) de toutes les
+  règles est ≤ +0,04 % (max DOGE B2), négative pour B3 sur les deux
+  actifs. Le break-even étant ≤ 0 sur le régime récent, **même des frais
+  nuls ne débloquent rien** — la condition « frais ≤ 0,10 % + signal net »
+  est structurellement inaccessible. Ne reste ouverte que la voie
+  **re-cadrage du problème** (horizon, univers, formulation d'objectif).
 
 ---
 
