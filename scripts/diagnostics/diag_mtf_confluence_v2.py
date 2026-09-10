@@ -292,7 +292,8 @@ def eval_bucket(df, entries, H, label):
     high = df["high"].to_numpy(np.float64)
     low = df["low"].to_numpy(np.float64)
     close = df["close"].to_numpy(np.float64)
-    atr_entry = df["atr_pct"].to_numpy(np.float64)[entries] / 100.0
+    # atr_pct est deja une FRACTION (mediane ~0.0014 = 0.14%) : ne PAS diviser par 100
+    atr_entry = df["atr_pct"].to_numpy(np.float64)[entries]
     mfe, mae, final, path_len = path_stats(high, low, close, entries, H)
     n = len(entries)
     out = {"label": label, "H": H, "n": n,
@@ -436,7 +437,7 @@ def walk_forward(df, stats, weights, dec_edges, H_ref=80, n_folds=3):
         high = df_fit["high"].to_numpy(np.float64)
         low = df_fit["low"].to_numpy(np.float64)
         close = df_fit["close"].to_numpy(np.float64)
-        atr = df_fit["atr_pct"].to_numpy(np.float64)[entries_fit] / 100.0
+        atr = df_fit["atr_pct"].to_numpy(np.float64)[entries_fit]
         mfe, mae, final, _ = path_stats(high, low, close, entries_fit, H_ref)
         geo = edge_ratio_geometry(mfe, mae, atr, final)
         if np.isnan(geo["k_tp_star"]):
@@ -452,7 +453,7 @@ def walk_forward(df, stats, weights, dec_edges, H_ref=80, n_folds=3):
         high = df_oos["high"].to_numpy(np.float64)
         low = df_oos["low"].to_numpy(np.float64)
         close = df_oos["close"].to_numpy(np.float64)
-        atr_o = df_oos["atr_pct"].to_numpy(np.float64)[entries_oos] / 100.0
+        atr_o = df_oos["atr_pct"].to_numpy(np.float64)[entries_oos]
         pnl, ht, hit_tp, _ = first_passage_trades(
             high, low, close, entries_oos, H_ref,
             geo["k_sl_star"] * atr_o, geo["k_tp_star"] * atr_o)
@@ -476,7 +477,7 @@ def cross_asset_eval(df_target, stats, weights, dec_edges, geo_frozen, H_ref=80)
     high = df_target["high"].to_numpy(np.float64)
     low = df_target["low"].to_numpy(np.float64)
     close = df_target["close"].to_numpy(np.float64)
-    atr = df_target["atr_pct"].to_numpy(np.float64)[entries] / 100.0
+    atr = df_target["atr_pct"].to_numpy(np.float64)[entries]
     pnl, ht, hit_tp, _ = first_passage_trades(
         high, low, close, entries, H_ref,
         geo_frozen["k_sl_star"] * atr, geo_frozen["k_tp_star"] * atr)
@@ -534,7 +535,7 @@ def main():
         high = df_src["high"].to_numpy(np.float64)
         low = df_src["low"].to_numpy(np.float64)
         close = df_src["close"].to_numpy(np.float64)
-        atr = df_src["atr_pct"].to_numpy(np.float64)[entries] / 100.0
+        atr = df_src["atr_pct"].to_numpy(np.float64)[entries]
         mfe, mae, final, _ = path_stats(high, low, close, entries, 80)
         geo = edge_ratio_geometry(mfe, mae, atr, final)
         for dst in ASSET_CORE:
