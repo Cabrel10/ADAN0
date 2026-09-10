@@ -27,6 +27,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from _asset_guard import assert_dataset_identity, get_launcher_assets
+
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data/processed/indicators"
 OUT_DIR = ROOT / "logs/validation"
@@ -38,7 +40,11 @@ H = 40                   # horizon MaxDuration en barres 5m (~3h20)
 SL_GRID = [0.003, 0.005, 0.008, 0.012, 0.016, 0.020, 0.030]
 TP_GRID = [0.006, 0.010, 0.0135, 0.020, 0.030, 0.045, 0.060]
 
-ASSETS = ["BTCUSDT", "BTCUSDT_BINANCE", "DOGEUSDT", "DOGEUSDT_BINANCE"]
+# Univers launcher UNIQUEMENT. Audit identite dataset (RAPPORT_MTF_CONFLUENCE_V2_CORRECTION.md) :
+# les rounds 3/4 originaux melangeaient les petits controles BTCUSDT (7 991 barres,
+# ~28 j) et DOGEUSDT avec les vrais univers *_BINANCE (662 643 / 524 841 barres).
+# Source unique de verite = _asset_guard ; aucune liste locale.
+ASSETS = list(get_launcher_assets())
 SPLITS = ["train", "val", "test"]
 
 TF_DELTA = {"1h": pd.Timedelta(hours=1), "4h": pd.Timedelta(hours=4)}
@@ -81,6 +87,9 @@ def load_aligned(asset: str, split: str) -> pd.DataFrame | None:
         print(f"  [skip] {split}/{asset}: {e}")
         return None
 
+    # Preuve d'identite : asset + chemin absolu + rows journalises a chaque chargement.
+    for _tf, _df in (("5m", df5), ("1h", df1), ("4h", df4)):
+        assert_dataset_identity(asset, _tf, split, len(_df))
     df5 = df5.sort_index()
     out = df5.copy()
     out.index = out.index.astype("datetime64[ms]")

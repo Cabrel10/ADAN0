@@ -46,6 +46,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from diag_mtf_confluence import load_aligned, DATA, OUT_DIR  # noqa: E402
+from _asset_guard import get_launcher_assets  # noqa: E402
 
 # ---------------------------------------------------------------- parametres
 FEES_RT = 0.004            # round-trip 0.40 %
@@ -62,7 +63,10 @@ FDR_Q = 0.05
 N_DECILES = 10
 RNG = np.random.default_rng(42)
 
-ASSET_CORE = ["BTCUSDT", "DOGEUSDT"]
+# Univers launcher UNIQUEMENT (correction contamination dataset : le run original
+# apprenait les poids MI sur BTCUSDT = 7 991 barres ~28 j au lieu de
+# BTCUSDT_BINANCE = 662 643 barres). Source unique = _asset_guard.
+ASSET_CORE = list(get_launcher_assets())
 SPLITS = ["train", "val", "test"]
 
 # Signaux directionnels par TF (positif = haussier)
