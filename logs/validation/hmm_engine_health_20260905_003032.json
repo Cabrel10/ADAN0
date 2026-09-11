@@ -1,0 +1,78 @@
+{
+  "asset": "BTCUSDT_BINANCE",
+  "calls_returning_none": 0,
+  "calls_to_get_regime_probabilities": 599,
+  "cause_classification": "HMM_FITTED_look_at_posterior_saturation_not_at_the_engine",
+  "engine_state": {
+    "_hmm_fit_count": 5,
+    "_hmm_fit_failures": 0,
+    "_hmm_fitted": true,
+    "_hmm_last_fallback_reason": null,
+    "_hmm_last_refit_obs": 540,
+    "_hmm_min_obs": 60,
+    "_hmm_model_is_none": false,
+    "_hmm_n_init": 10,
+    "_hmm_obs_buffer_len": 500,
+    "_hmm_probs_final": [
+      0.999906,
+      0.0,
+      9.4e-05
+    ],
+    "_hmm_state_order": [
+      1,
+      0,
+      2
+    ],
+    "_hmm_total_obs": 600,
+    "_hmm_window": 500,
+    "dbe_is_dynamic_behavior_engine": true,
+    "dbe_present": true
+  },
+  "features_seen_by_engine": {
+    "atr_pct": {
+      "all_zero": false,
+      "distinct": 298,
+      "max": 0.0021402,
+      "min": 0.00044922,
+      "n": 300
+    },
+    "log_return": {
+      "all_zero": false,
+      "distinct": 300,
+      "max": 0.00474681,
+      "min": -0.0027713,
+      "n": 300
+    },
+    "observation_id": {
+      "distinct": 301,
+      "n": 599,
+      "none_share": 0.4992,
+      "sample": [
+        "0:BTCUSDT_BINANCE:5m:51",
+        null,
+        "0:BTCUSDT_BINANCE:5m:52"
+      ]
+    },
+    "rsi_norm": {
+      "all_zero": false,
+      "distinct": 300,
+      "max": 0.89517497,
+      "min": 0.26034455,
+      "n": 300
+    },
+    "volume_ratio_20": {
+      "all_zero": false,
+      "distinct": 300,
+      "max": 5.31684058,
+      "min": 0.1635061,
+      "n": 300
+    }
+  },
+  "generated_at": "2026-09-05 00:30:32",
+  "question": "Why is context[3:6] not a graded posterior? Ask the engine's own counters instead of inferring.",
+  "seed": 330500,
+  "split": "train",
+  "steps": 300,
+  "swallowed_exceptions": {},
+  "swallowed_tracebacks": []
+}

@@ -1,0 +1,269 @@
+{
+  "run_id": "v25_20260806T025139Z_smokecfg",
+  "audit_date": "2026-08-06",
+  "verdict": "STOPPED_BY_CRITIC_BREAKER_INVALID_FOR_500K",
+  "decision": {
+    "continue_to_500k": false,
+    "resume_from_final_checkpoint": false,
+    "launch_1m": false,
+    "change_hyperparameters_now": false,
+    "next_action": "Launch a fresh 500k directly with the V16 MTM reward plus loss-level L2 anchor correction, DiagGaussian, four PPO epochs, active breakers, and full telemetry.",
+    "continue_failed_v25": false,
+    "new_corrected_500k_authorized": true,
+    "change_ppo_hyperparameters_now": false
+  },
+  "execution": {
+    "requested_timesteps": 500000,
+    "reached_timesteps": 41985,
+    "completion_fraction": 0.08397,
+    "elapsed_seconds": 1937.48,
+    "average_steps_per_second": 21.67,
+    "projected_total_hours_if_healthy": 6.41,
+    "projected_remaining_hours_at_stop": 5.87,
+    "stop_reason": "explained_variance < -0.2 for 10 rollouts",
+    "worker_count": 1,
+    "profile": "scalper",
+    "fatal_tracebacks": 0,
+    "nonfinite_training_values": 0,
+    "oom_events": 0
+  },
+  "configuration_verified": {
+    "use_sde": false,
+    "log_std_init": -1.0,
+    "ent_coef": 0.05,
+    "n_steps": 512,
+    "n_epochs": 4,
+    "checkpoint_frequency": 10000,
+    "critic_breaker_enabled": true,
+    "critic_ev_min": -0.2,
+    "critic_ev_windows": 10,
+    "critic_value_loss_max": 1000000,
+    "diagnostic_frequency": 512
+  },
+  "ppo": {
+    "diagnostic_rows": 82,
+    "ppo_rows": 81,
+    "explained_variance": {
+      "mean": -0.3188,
+      "median": -0.0829,
+      "minimum": -3.2598,
+      "maximum": 0.6158,
+      "first_10_mean": -0.1655,
+      "last_10_mean": -1.3067,
+      "last": -1.4087,
+      "slope_per_10000_steps": -0.3481,
+      "positive_rollouts": 37,
+      "rollouts_below_minus_0_2": 32,
+      "rollouts_below_minus_1": 16,
+      "longest_bad_streak": 10
+    },
+    "approx_kl": {
+      "mean": 0.0098,
+      "maximum": 0.14884,
+      "last_10_mean": 0.04412,
+      "above_target_0_035": 6,
+      "early_stop_events": 7,
+      "maximum_early_stop_kl": 0.15
+    },
+    "clip_fraction": {
+      "mean": 0.162,
+      "maximum": 0.7031,
+      "last_10_mean": 0.4698,
+      "above_0_2": 31,
+      "above_0_5": 5
+    },
+    "value_loss": {
+      "mean": 0.07021,
+      "maximum": 1.0861,
+      "first_10_mean": 0.17868,
+      "last_10_mean": 0.00818,
+      "last": 0.00446
+    },
+    "policy_gradient_loss": {
+      "mean": 0.00717,
+      "last_10_mean": 0.03688,
+      "maximum": 0.10702
+    },
+    "entropy_loss": {
+      "first_10_mean": -2.097,
+      "last_10_mean": -2.1381,
+      "last": -2.141
+    },
+    "learning_rate": {
+      "first": 8.37e-06,
+      "last": 3.79e-05,
+      "warmup_active": true
+    },
+    "gradient_norm": {
+      "available": false,
+      "note": "No gradient-norm series was emitted by this run."
+    }
+  },
+  "policy_collapse": {
+    "a0_mean_first_10_mean": 0.0091,
+    "a0_mean_last_10_mean": -1.3843,
+    "a0_mean_last": -1.6169,
+    "a0_std_first_10_mean": 0.3658,
+    "a0_std_last_10_mean": 0.3723,
+    "a0_std_last": 0.3737,
+    "last_buy_fraction": 0.0,
+    "last_sell_fraction": 1.0,
+    "last_requested_hold_fraction": 1.0,
+    "collapse_streak": 16,
+    "interpretation": "Exploration variance remained stable, but the direction mean collapsed toward SELL while the routing layer converted the behavior into HOLD because the portfolio was flat."
+  },
+  "trading": {
+    "opens": 461,
+    "closes": 461,
+    "unclosed_positions": 0,
+    "maximum_simultaneous_positions": 1,
+    "trace_pnl_sum": -24.2107,
+    "reported_terminal_realized_pnl": -24.1286,
+    "pnl_reconciliation_gap": -0.082,
+    "win_rate": 0.1692,
+    "profit_factor": 0.1652,
+    "gross_profit": 4.7924,
+    "gross_loss": 29.003,
+    "mean_hold_steps": 16.705,
+    "median_hold_steps": 21.0,
+    "exit_distribution": {
+      "MaxDuration": {
+        "count": 317,
+        "fraction": 0.6876,
+        "pnl_sum": -11.457
+      },
+      "stop_loss": {
+        "count": 97,
+        "fraction": 0.2104,
+        "pnl_sum": -12.768
+      },
+      "agent_close": {
+        "count": 32,
+        "fraction": 0.0694,
+        "pnl_sum": -2.1611
+      },
+      "take_profit": {
+        "count": 14,
+        "fraction": 0.0304,
+        "pnl_sum": 2.2575
+      },
+      "DRAWDOWN_KILL_FORCE_CLOSE": {
+        "count": 1,
+        "fraction": 0.0022,
+        "pnl_sum": -0.082
+      }
+    }
+  },
+  "future_arena": {
+    "watchdog_snapshots": 209,
+    "coverage_fraction": 1.0,
+    "critical_fraction": 1.0,
+    "share_min_pct": 54.5,
+    "share_max_pct": 61.0,
+    "share_mean_pct": 59.85,
+    "first_10_mean_pct": 56.25,
+    "last_10_mean_pct": 60.1,
+    "pearson_share_vs_explained_variance": 0.0254,
+    "spearman_share_vs_explained_variance": 0.1664,
+    "interpretation": "The watchdog is not merely noisy: future shaping exceeded its 40% target at every measurement and increased over time. Its direct correlation with explained variance is weak, so it is a persistent risk signal rather than a proven sole cause of critic failure."
+  },
+  "checkpoints": [
+    {
+      "timesteps": 10000,
+      "size_bytes": 7379377,
+      "loadable": true,
+      "finite_parameters": true,
+      "validation_backtest_1000_steps": "NO_TRADES"
+    },
+    {
+      "timesteps": 20000,
+      "size_bytes": 7379392,
+      "loadable": true,
+      "finite_parameters": true,
+      "validation_backtest_1000_steps": "NO_TRADES"
+    },
+    {
+      "timesteps": 30000,
+      "size_bytes": 7381315,
+      "loadable": true,
+      "finite_parameters": true,
+      "validation_backtest_1000_steps": "NO_TRADES"
+    },
+    {
+      "timesteps": 40000,
+      "size_bytes": 7379431,
+      "loadable": true,
+      "finite_parameters": true,
+      "validation_backtest_1000_steps": "NO_TRADES"
+    },
+    {
+      "timesteps": 41985,
+      "size_bytes": 7379448,
+      "loadable": true,
+      "finite_parameters": true,
+      "validation_backtest_1000_steps": "NO_TRADES"
+    }
+  ],
+  "checkpoint_interpretation": {
+    "best_training_health_reference": "10000_steps",
+    "production_checkpoint_selected": null,
+    "reason": "The 10k checkpoint has positive local EV and no directional collapse, but all checkpoints produced zero deterministic trades in the identical 1000-step validation protocol. No checkpoint is validated for production or Arena replay."
+  },
+  "data_pipeline": {
+    "persisted_scalers_loaded_without_refit": true,
+    "scaler_fit_skipped": true,
+    "scaler_pickle_content_changed_in_git": false,
+    "manifest_timestamp_rewritten_at_shutdown": true,
+    "vecnormalize_enabled": false,
+    "vecnormalize_artifact_expected": false
+  },
+  "anomalies": [
+    "Critic breaker fired at 41985 timesteps.",
+    "Direction action collapsed to 100% SELL while effective requests became 100% HOLD.",
+    "The final ten rollout mean clip fraction was 0.4698 and mean KL exceeded the 0.035 target.",
+    "Future Arena share stayed critical for every watchdog snapshot.",
+    "Take-profit exits were only 3.04%; MaxDuration exits were 68.76%.",
+    "All five identical deterministic validation backtests produced zero trades.",
+    "Trace PnL differs from reported terminal realized PnL by approximately one forced-close amount.",
+    "Gradient norms were not emitted, so gradient-level stability cannot be concluded.",
+    "The shutdown summary labels the request as +500000 steps although cumulative steps are correctly reported as 41985."
+  ],
+  "causal_code_audit": {
+    "forced_trade_active": false,
+    "forced_trade_finding": "The active execution phase disables forced trades; 1440 steps only emits a warning.",
+    "sl_sign_bug": false,
+    "sl_mapping_finding": "sl_raw maps from [-1,1] into a positive bounded distance; a positive value widens the stop.",
+    "routing_penalty_active": false,
+    "routing_finding": "FLAT+SELL and LONG+BUY intentionally map to neutral HOLD under V12; gate penalties are zero.",
+    "v25_mtm_reward_active": false,
+    "v25_loss_level_anchor_active": false,
+    "correction_selected": {
+      "basis": "V16 repository evidence",
+      "ADAN_MTM_REWARD": 1,
+      "ADAN_L2_ANCHOR_LAMBDA": 0.05,
+      "ADAN_AUX_LOSS_COEF": 0.0
+    },
+    "rejected_changes": [
+      "gSDE-only relaunch",
+      "invented routing-reject penalty",
+      "forced-trade modification",
+      "SL sign inversion",
+      "arbitrary PPO tuning"
+    ]
+  },
+  "corrected_run_contract": {
+    "ADAN_USE_SDE": 0,
+    "ADAN_LOG_STD_INIT": -1.0,
+    "ADAN_ENT_COEF": 0.05,
+    "ADAN_N_EPOCHS": 4,
+    "ADAN_MTM_REWARD": 1,
+    "ADAN_L2_ANCHOR_LAMBDA": 0.05,
+    "ADAN_AUX_LOSS_COEF": 0.0,
+    "ADAN_CRITIC_BREAKER": 1,
+    "ADAN_COLLAPSE_BREAKER": 1,
+    "ADAN_DIAG_EVERY": 512,
+    "ADAN_REWARD_TELEM": 1,
+    "ADAN_CKPT_FREQ": 10000,
+    "ADAN_SAVE_SCALERS": 0
+  }
+}

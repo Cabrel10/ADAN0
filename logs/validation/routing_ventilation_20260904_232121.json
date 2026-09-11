@@ -1,0 +1,66 @@
+{
+  "action_pipeline_counts": {
+    "below_break_even": 0,
+    "budget_insufficient": 0,
+    "close_gap_active": 0,
+    "daily_close_quota": 0,
+    "deadband_reject": 39,
+    "exposure_below_close_min": 0,
+    "hold_min_active": 0,
+    "policy": 500,
+    "portfolio_reject": 0,
+    "routing_reject": 234,
+    "routing_reject_budget": 0,
+    "routing_reject_buy_while_long": 17,
+    "routing_reject_cooldown": 0,
+    "routing_reject_deadband": 39,
+    "routing_reject_drawdown": 0,
+    "routing_reject_other": 0,
+    "routing_reject_position": 234,
+    "routing_reject_sell_while_flat": 217,
+    "trade_executed": 18
+  },
+  "boundaries_hit": 0,
+  "dominant_reason": "fee_gate",
+  "executed_buckets": {
+    "?": 500
+  },
+  "invariant_coverage": 1.0,
+  "invariant_steps_instrumented": 500,
+  "invariant_steps_ok": 500,
+  "rejection_reasons_top": {
+    "below_break_even": 0,
+    "budget_insufficient": 0,
+    "close_gap_active": 0,
+    "cooldown_hold_min": 8,
+    "cooldown_omega4e": 0,
+    "daily_close_quota": 0,
+    "exposure_below_close_min": 0,
+    "fee_gate": 201,
+    "hold_min_active": 0,
+    "hysteresis": 0,
+    "min_notional": 0,
+    "risk_gate": 0
+  },
+  "requested_buckets": {
+    "BUY": 222,
+    "HOLD": 53,
+    "SELL": 225
+  },
+  "routing_reject_total": 741,
+  "routing_reject_ventilated": {
+    "routing_reject_budget": 0,
+    "routing_reject_buy_while_long": 17,
+    "routing_reject_cooldown": 0,
+    "routing_reject_deadband": 39,
+    "routing_reject_drawdown": 0,
+    "routing_reject_other": 0,
+    "routing_reject_position": 234,
+    "routing_reject_sell_while_flat": 217
+  },
+  "seed": 330500,
+  "steps": 500,
+  "termination_kinds": {
+    "none": 500
+  }
+}

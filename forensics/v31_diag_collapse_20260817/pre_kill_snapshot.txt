@@ -1,0 +1,94 @@
+===== LAST 45 LOG LINES worker pid=244350 =====
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:15 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=5581 | chunk=0/1 | step_in_chunk=5631 | exec_src=open[t+1] | raw_exec_p=62462.4 | buy_price(+slip)=62474.89 | size=0.000206 | notional=$12.89 | capital_before=$14.80 | cash_after=$1.88 | exposure=87.09% | SL=1.20% TP=2.00% | tier=Micro Capital | TF=5m | profile=scalper
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:15 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5581
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:15 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5582
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:16 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5583
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:17 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5584
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:17 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5585
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5586
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:19 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5587
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:19 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP 5588] Portfolio value: 14.78 (realized: 14.80) [repeated 18x across cluster]
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:19 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5588
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:20 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5589
+(ADAN_PBT_Worker pid=244350)                                                                                 
+(ADAN_PBT_Worker pid=244350)   t    s…   e…   ep   pv   d…   …   TD   …   r…   …   t…   …   s…   …   v…   …  
+(ADAN_PBT_Worker pid=244350)                                                                                 
+(ADAN_PBT_Worker pid=244350) Step 5590 - 2026-07-04T07:15:00                                                  [repeated 2x across cluster]
+(ADAN_PBT_Worker pid=244350)  ──────────────────────────────────────────────────────────────────────────────  [repeated 2x across cluster]
+(ADAN_PBT_Worker pid=244350)   0…   5…   u…    0   1…   0…   …   F    …   -…   …   0…   -    -   -    -       [repeated 2x across cluster]
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:21 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5590
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:16 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [Worker 0] [FREQUENCY] Tous les counts dans les bornes: {'5m': 1, '1h': 0, '4h': 0, 'daily_total': 1}
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:22 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5591
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:22 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [Worker 0] [FREQUENCY] Tous les counts dans les bornes: {'5m': 1, '1h': 0, '4h': 0, 'daily_total': 1}
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:22 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5592
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:23 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5593
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:24 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5594
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:24 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP 5595] Portfolio value: 14.78 (realized: 14.80) [repeated 15x across cluster]
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:24 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5595
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:25 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5596
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:25 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5597
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:25 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5598
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:25 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [SL_TP_CLAMPED] BTCUSDT | sl_dbe=0.0109 -> sl_final=0.0109 | tp_dbe=0.0060 -> tp_final=0.0164 | n_clamped=4350
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:26 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP] Starting step 5599
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:26 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [TIER] Step 5600 | Capital=1.88 | Tier=Micro Capital | Exposure=[70%,90%] | MaxRisk=4.00%
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:26 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [TARGET_WEIGHT] Step 5600 | BTCUSDT | Action=SELL | Raw=-1.000 | Thr=0.100 | SizeRaw=1.000 | Capital=1.88
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:26 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [ACTION_DIST OK] W0 | tp_raw_mean=-0.083 sl_raw_mean=-0.055 | tp_sat=42%(hi=18%,lo=25%) sl_sat=42% | tp_pct_mean=1.24% | band[0.60%,2.00%] | n=5600
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:26 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 5600 | Requested=SELL Executed=HOLD | inv_penalty=-0.01000 | rejections={'fee_gate': 1249, 'risk_gate': 0, 'cooldown_wait': 228, 'cooldown_hold_min': 17, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 608, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 147, 'sell_no_position': 0} | pipeline={'policy': 5600, 'deadband_reject': 311, 'routing_reject': 2936, 'budget_reject': 608, 'barrier_reject': 1249, 'portfolio_reject': 147, 'trade_executed': 193}
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:26 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [CHUNK DIAGNOSTIC Worker 0] step_in_chunk: 5650, data_length: 7991, current_chunk: 1/1
+(ADAN_PBT_Worker pid=244350)                                                                                 
+(ADAN_PBT_Worker pid=244350)   t    s…   e…   ep   pv   d…   …   TD   …   r…   …   t…   …   s…   …   v…   …  
+(ADAN_PBT_Worker pid=244350)                                                                                 
+(ADAN_PBT_Worker pid=244350)                                 …                                                [repeated 38x across cluster]
+(ADAN_PBT_Worker pid=244350) Step 5600 - 2026-07-04T08:05:00                                                 
+(ADAN_PBT_Worker pid=244350)  ────────────────────────────────────────────────────────────────────────────── 
+(ADAN_PBT_Worker pid=244350)   0…   5…   u…    0   1…   0…   …   F    …   -…   …   0…   -    -   -    -      
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:26 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [FA_WATCHDOG CRITICAL] Worker 0 | future_share=56.7% (target<40%) | mean_abs_future=0.0049 | mean_abs_pnl=0.0037 | n=5600
+(ADAN_PBT_Worker pid=244350) 2026-08-17 22:01:26 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [TIER_REWARD Worker 0] Tier=Micro | Capital=$14.79 | Steps_in_tier=5600 | PnL=+0.00% | Promo=+0.00 | Demote=+0.00 | ClosureBonus=+0.0000 | Drawdown=+0.0040 | Patience=+0.0000 | Final=-0.0127
+
+===== LAST 45 LOG LINES worker pid=244351 =====
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:48 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP 5561] Portfolio value: 16.23 (realized: 16.23)
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:48 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP 5562] Portfolio value: 16.23 (realized: 16.23)
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:49 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP 5563] Portfolio value: 16.23 (realized: 16.23)
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:50 - adan_trading_bot.portfolio.portfolio_manager - INFO - [Worker 1] [POSITION OUVERTE] BTCUSDT: 0.000226 @ 62629.26 | SL: 1.62% | TP: 2.43% | RH: 0.00 | Fees: $0.0283
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:50 - adan_trading_bot.environment.dynamic_behavior_engine - INFO - [HUNT STARTED] Worker 1 starting hunt for BTCUSDT on 5m for 50 steps.
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:50 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [TRADE_AUDIT_OPEN] BTCUSDT | step=5563 | chunk=0/1 | step_in_chunk=5613 | exec_src=open[t+1] | raw_exec_p=62616.74 | buy_price(+slip)=62629.26 | size=0.000226 | notional=$14.14 | capital_before=$16.23 | cash_after=$2.06 | exposure=87.09% | SL=1.62% TP=2.43% | tier=Micro Capital | TF=5m | profile=intraday
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:50 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP 5564] Portfolio value: 16.20 (realized: 16.23)
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:51 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [Worker 1] [FREQUENCY] Tous les counts dans les bornes: {'5m': 1, '1h': 0, '4h': 0, 'daily_total': 1}
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:53 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP 5566] Portfolio value: 16.19 (realized: 16.23) [repeated 4x across cluster]
+(ADAN_PBT_Worker pid=244351)                                                                                 
+(ADAN_PBT_Worker pid=244351)   t    s…   e…   ep   pv   d…   …   TD   …   r…   …   t…   …   s…   …   v…   …  
+(ADAN_PBT_Worker pid=244351)                                                                                 
+(ADAN_PBT_Worker pid=244351)                                 …                                                [repeated 38x across cluster]
+(ADAN_PBT_Worker pid=244351) Step 5570 - 2026-07-04T05:35:00                                                 
+(ADAN_PBT_Worker pid=244351)  ────────────────────────────────────────────────────────────────────────────── 
+(ADAN_PBT_Worker pid=244351)   0…   5…   u…    0   1…   0…   …   F    …   -…   …   0…   -    -   -    -      
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:58 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP 5572] Portfolio value: 16.19 (realized: 16.23) [repeated 12x across cluster]
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:00:58 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [Worker 1] [FREQUENCY] Tous les counts dans les bornes: {'5m': 1, '1h': 0, '4h': 0, 'daily_total': 1}
+(ADAN_PBT_Worker pid=244351)                                                                                 
+(ADAN_PBT_Worker pid=244351)   t    s…   e…   ep   pv   d…   …   TD   …   r…   …   t…   …   s…   …   v…   …  
+(ADAN_PBT_Worker pid=244351)                                                                                 
+(ADAN_PBT_Worker pid=244351)                                 …                                                [repeated 38x across cluster]
+(ADAN_PBT_Worker pid=244351) Step 5580 - 2026-07-04T06:25:00                                                 
+(ADAN_PBT_Worker pid=244351)  ────────────────────────────────────────────────────────────────────────────── 
+(ADAN_PBT_Worker pid=244351)   0…   5…   u…    0   1…   0…   …   F    …   0…   …   0…   -    -   -    -      
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:05 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [Worker 1] [FREQUENCY] Tous les counts dans les bornes: {'5m': 1, '1h': 0, '4h': 0, 'daily_total': 1}
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:07 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [STEP 5584] Portfolio value: 16.17 (realized: 16.23) [repeated 12x across cluster]
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:10 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [Worker 1] [FREQUENCY] Tous les counts dans les bornes: {'5m': 1, '1h': 0, '4h': 0, 'daily_total': 1}
+(ADAN_PBT_Worker pid=244351)                                                                                 
+(ADAN_PBT_Worker pid=244351)   t    s…   e…   ep   pv   d…   …   TD   …   r…   …   t…   …   s…   …   v…   …  
+(ADAN_PBT_Worker pid=244351)                                                                                 
+(ADAN_PBT_Worker pid=244351)                                 …                                                [repeated 38x across cluster]
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:14 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [SL_TP_CLAMPED] BTCUSDT | sl_dbe=0.0151 -> sl_final=0.0151 | tp_dbe=0.0097 -> tp_final=0.0226 | n_clamped=1650
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:16 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [Worker 1] [FREQUENCY] Tous les counts dans les bornes: {'5m': 1, '1h': 0, '4h': 0, 'daily_total': 1}
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [TIER] Step 5600 | Capital=2.06 | Tier=Micro Capital | Exposure=[70%,90%] | MaxRisk=4.00%
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [TARGET_WEIGHT] Step 5600 | BTCUSDT | Action=SELL | Raw=-1.000 | Thr=0.080 | SizeRaw=-1.000 | Capital=2.06
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:18 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [ACTION_DIST WARN] W1 | tp_raw_mean=+0.103 sl_raw_mean=-0.013 | tp_sat=54%(hi=32%,lo=22%) sl_sat=53% | tp_pct_mean=2.56% | band[0.80%,4.00%] | n=5600
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [ACTION_DIFF] Step 5600 | Requested=SELL Executed=HOLD | inv_penalty=-0.01000 | rejections={'fee_gate': 915, 'risk_gate': 0, 'cooldown_wait': 127, 'cooldown_hold_min': 17, 'cooldown_omega4e': 0, 'min_notional': 0, 'hysteresis': 1106, 'anti_spam_hold': 0, 'daily_limit': 0, 'pm_rejected': 48, 'sell_no_position': 0} | pipeline={'policy': 5600, 'deadband_reject': 275, 'routing_reject': 3027, 'budget_reject': 1106, 'barrier_reject': 915, 'portfolio_reject': 48, 'trade_executed': 155}
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [CHUNK DIAGNOSTIC Worker 1] step_in_chunk: 5650, data_length: 7991, current_chunk: 1/1
+(ADAN_PBT_Worker pid=244351)                                                                                 
+(ADAN_PBT_Worker pid=244351)   t    s…   e…   ep   pv   d…   …   TD   …   r…   …   t…   …   s…   …   v…   …  
+(ADAN_PBT_Worker pid=244351)                                                                                 
+(ADAN_PBT_Worker pid=244351)                                 …                                                [repeated 38x across cluster]
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:18 - adan_trading_bot.environment.multi_asset_chunked_env - WARNING - [FA_WATCHDOG CRITICAL] Worker 1 | future_share=55.0% (target<40%) | mean_abs_future=0.0041 | mean_abs_pnl=0.0033 | n=5600
+(ADAN_PBT_Worker pid=244351) 2026-08-17 22:01:18 - adan_trading_bot.environment.multi_asset_chunked_env - INFO - [TIER_REWARD Worker 1] Tier=Micro | Capital=$16.19 | Steps_in_tier=5600 | PnL=+0.00% | Promo=+0.00 | Demote=+0.00 | ClosureBonus=+0.0000 | Drawdown=+0.0033 | Patience=+0.0000 | Final=-0.0219
+

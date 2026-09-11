@@ -41,8 +41,9 @@ echo "📋 STEP 2: Filesystem Optimization..."
 echo "   • Syncing filesystem..."
 sync
 
-echo "   • Dropping Linux cache (frees ~2-3GB)..."
-echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null 2>&1 || true
+# v13 (user directive): removed `sudo drop_caches` — requires root, evicts the
+# page cache (hurts parquet reload perf), and has no place in a launch script.
+# The 71G of free disk makes it pointless anyway.
 
 echo "   • Resetting swap (clears old data)..."
 sudo swapoff -a 2>/dev/null || true

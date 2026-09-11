@@ -1,0 +1,12 @@
+=== DÉBIT RÉEL ===
+Durée run: 08:39 -> ~10:28 = ~109 min pour ~6929 steps/worker
+steps/sec/worker = 1.06
+steps/min/worker = 63.6
+ETA 500k steps/worker = 131.1 heures = 5.5 jours
+=== RAY raylet.err (goulots) ===
+=== CPU STAT par worker (dernière minute) ===
+MiB Swap:  16384.0 total,  12744.2 free,   3639.8 used.   5878.0 avail Mem 
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+1023868 ubuntu    35  15   12.0g   1.2g 444948 R 330.0  10.0 318:26.05 ray::Re+
+1023867 ubuntu    35  15   12.0g   1.2g 445512 R 270.0  10.0 319:08.96 ray::Re+

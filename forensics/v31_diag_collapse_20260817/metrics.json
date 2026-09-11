@@ -1,0 +1,30 @@
+{
+  "run": "V31-DIAG-50k",
+  "stopped_at_step": 5609,
+  "workers": {
+    "worker_0": {
+      "steps": 5609,
+      "a0_first1k": 0.0004,
+      "a0_last500": -0.2234,
+      "lock_last500_pct": 56.6,
+      "pv_start": 20.5,
+      "pv_end": 14.7657,
+      "trades": 97,
+      "win_rate": 0.165,
+      "mean_pnl_per_trade": -0.05912,
+      "total_realized_pnl": -5.7343
+    },
+    "worker_1": {
+      "steps": 5609,
+      "a0_first1k": -0.0712,
+      "a0_last500": -0.3585,
+      "lock_last500_pct": 63.4,
+      "pv_start": 20.5,
+      "pv_end": 16.203,
+      "trades": 77,
+      "win_rate": 0.247,
+      "mean_pnl_per_trade": -0.0554,
+      "total_realized_pnl": -4.266
+    }
+  }
+}

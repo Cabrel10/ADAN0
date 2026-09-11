@@ -1,0 +1,22 @@
+{
+  "asset": "BTCUSDT_BINANCE",
+  "steps": 1024,
+  "checkpoint_out": "checkpoints/eval1k/eval_1024.zip",
+  "resume_from": null,
+  "result": {
+    "steps": 1024,
+    "cumulative_steps": 1024,
+    "elapsed": 141.98824334144592,
+    "checkpoint": "checkpoints/eval1k/eval_1024.zip",
+    "vecnorm": "checkpoints/eval1k/eval_1024_vecnorm.pkl",
+    "size": 7387025,
+    "trades": 68,
+    "terminal_cash": 16.16479924098083,
+    "terminal_equity": 16.16479924098083,
+    "terminal_realized_pnl": -4.335200759019179,
+    "run_opens": 68,
+    "run_closes": 68,
+    "run_open_positions": 0,
+    "resumed_from": null
+  }
+}

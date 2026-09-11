@@ -1,0 +1,30 @@
+--- training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00000_0_ent_coef=0.0231,gamma=0.9715,learning_rate=0.0004,sl_pct=0.0275,tp_pct=0.1249,worker_config=worker_i_2026-08-18_08-39-35 ---
+total 100
+drwxrwxr-x 2 ubuntu ubuntu  4096 Aug 18 08:39 .
+drwxrwxr-x 4 ubuntu ubuntu  4096 Aug 18 08:39 ..
+-rw-rw-r-- 1 ubuntu ubuntu     0 Aug 18 10:29 events.out.tfevents.1787035191.vmi3461930
+-rw-rw-r-- 1 ubuntu ubuntu 56180 Aug 18 10:29 params.json
+-rw-rw-r-- 1 ubuntu ubuntu 33521 Aug 18 10:29 params.pkl
+-rw-rw-r-- 1 ubuntu ubuntu     0 Aug 18 10:29 result.json
+result.json size: 0 bytes
+params.json:
+{
+  "_max_iterations": 50,
+  "adan_config": {
+    "action": {
+      "action_scale": 1.0,
+--- training_output/v31_500k_20260818_0839/adan_pbt_training/ADAN_PBT_Worker_9380b_00001_1_ent_coef=0.0474,gamma=0.9725,learning_rate=0.0004,sl_pct=0.0288,tp_pct=0.0533,worker_config=worker_i_2026-08-18_08-39-35 ---
+total 100
+drwxrwxr-x 2 ubuntu ubuntu  4096 Aug 18 08:39 .
+drwxrwxr-x 4 ubuntu ubuntu  4096 Aug 18 08:39 ..
+-rw-rw-r-- 1 ubuntu ubuntu     0 Aug 18 10:29 events.out.tfevents.1787035191.vmi3461930
+-rw-rw-r-- 1 ubuntu ubuntu 56179 Aug 18 10:29 params.json
+-rw-rw-r-- 1 ubuntu ubuntu 33521 Aug 18 10:29 params.pkl
+-rw-rw-r-- 1 ubuntu ubuntu     0 Aug 18 10:29 result.json
+result.json size: 0 bytes
+params.json:
+{
+  "_max_iterations": 50,
+  "adan_config": {
+    "action": {
+      "action_scale": 1.0,

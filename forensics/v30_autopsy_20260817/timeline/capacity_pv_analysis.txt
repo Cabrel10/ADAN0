@@ -1,0 +1,24 @@
+lignes_lues=500224 (sampled 1/3)
+transitions_flat_to_open=7443 (attendu ~6645 si fiable)
+
+--- PV pendant FLAT (count==0), n=119447 ---
+mean=16.103 std=2.0179 min=12.31 max=20.63
+
+--- PV pendant OUVERT (count>0), n=47294 ---
+mean=17.203 std=1.8940 min=12.32 max=20.63
+
+--- CAPACITY_REWARD FLAT vs OPEN ---
+FLAT:  mean=-1.5000 min=-1.500 max=-1.500 n=117542
+OPEN:  mean=1.9997 min=-0.007 max=2.000 n=47294
+
+--- CAPACITY_REWARD value histogram (top 10) ---
+      -1.5: 117542
+       2.0: 47287
+     -0.01: 4
+      -0.0: 3
+
+--- Delta PV par cycle ouverture->fermeture, n=7443 ---
+delta moyen=-0.0268  median=-0.0310  positifs=2176/7443 (29.2%)
+duree moyenne=6.4 steps  mediane=7
+top5 pertes: [-1.4982693402248124, -1.4748808847751391, -0.2449926188017031, -0.23989304001558764, -0.23732604075484431]
+top5 gains:  [0.2742183490663024, 0.27422849273697025, 0.27480229525597366, 0.2932253972520087, 0.2985637483296948]

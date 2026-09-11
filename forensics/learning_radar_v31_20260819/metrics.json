@@ -1,0 +1,543 @@
+{
+  "run": {
+    "t0": "2026-08-18 10:35:22",
+    "t1": "2026-08-18 12:40:36",
+    "span_h": 2.09,
+    "trades_dedup": 219,
+    "opens_dedup": 1386,
+    "action_diff_rows": 8821,
+    "ppo_updates": 865,
+    "collapse_upd_first_durable": 368
+  },
+  "perf_per_window": [
+    {
+      "win": 0,
+      "trades": 36,
+      "WR": 22.2,
+      "PnL": -2.723,
+      "PF": 0.29,
+      "avg_hold": 7.4,
+      "TP": 8,
+      "SL": 21,
+      "AGENT_CLOSE": 7
+    },
+    {
+      "win": 1,
+      "trades": 17,
+      "WR": 29.4,
+      "PnL": -1.061,
+      "PF": 0.34,
+      "avg_hold": 11.9,
+      "TP": 5,
+      "SL": 12,
+      "AGENT_CLOSE": 0
+    },
+    {
+      "win": 2,
+      "trades": 35,
+      "WR": 17.1,
+      "PnL": -3.211,
+      "PF": 0.19,
+      "avg_hold": 9.5,
+      "TP": 6,
+      "SL": 22,
+      "AGENT_CLOSE": 7
+    },
+    {
+      "win": 3,
+      "trades": 18,
+      "WR": 22.2,
+      "PnL": -1.0,
+      "PF": 0.31,
+      "avg_hold": 10.3,
+      "TP": 4,
+      "SL": 7,
+      "AGENT_CLOSE": 7
+    },
+    {
+      "win": 4,
+      "trades": 34,
+      "WR": 26.5,
+      "PnL": -2.612,
+      "PF": 0.29,
+      "avg_hold": 9.3,
+      "TP": 9,
+      "SL": 25,
+      "AGENT_CLOSE": 0
+    },
+    {
+      "win": 5,
+      "trades": 14,
+      "WR": 28.6,
+      "PnL": -0.57,
+      "PF": 0.45,
+      "avg_hold": 9.1,
+      "TP": 4,
+      "SL": 3,
+      "AGENT_CLOSE": 7
+    },
+    {
+      "win": 6,
+      "trades": 31,
+      "WR": 35.5,
+      "PnL": -1.714,
+      "PF": 0.45,
+      "avg_hold": 7.8,
+      "TP": 11,
+      "SL": 20,
+      "AGENT_CLOSE": 0
+    },
+    {
+      "win": 7,
+      "trades": 9,
+      "WR": 22.2,
+      "PnL": -0.391,
+      "PF": 0.26,
+      "avg_hold": 5.4,
+      "TP": 1,
+      "SL": 1,
+      "AGENT_CLOSE": 7
+    },
+    {
+      "win": 8,
+      "trades": 22,
+      "WR": 22.7,
+      "PnL": -1.839,
+      "PF": 0.31,
+      "avg_hold": 11.4,
+      "TP": 5,
+      "SL": 17,
+      "AGENT_CLOSE": 0
+    },
+    {
+      "win": 9,
+      "trades": 3,
+      "WR": 0.0,
+      "PnL": -0.244,
+      "PF": 0.0,
+      "avg_hold": 3.0,
+      "TP": 0,
+      "SL": 1,
+      "AGENT_CLOSE": 2
+    }
+  ],
+  "diversity_per_block": [
+    {
+      "blk": 0,
+      "upd_range": [
+        4,
+        344
+      ],
+      "a0_mean": -0.251,
+      "share_BUY": 0.249,
+      "share_HOLD": 0.166,
+      "share_SELL": 0.585,
+      "pct_advBUY_nan": 7.0
+    },
+    {
+      "blk": 1,
+      "upd_range": [
+        348,
+        586
+      ],
+      "a0_mean": -3.263,
+      "share_BUY": 0.0,
+      "share_HOLD": 0.0,
+      "share_SELL": 1.0,
+      "pct_advBUY_nan": 100.0
+    },
+    {
+      "blk": 2,
+      "upd_range": [
+        587,
+        756
+      ],
+      "a0_mean": -6.046,
+      "share_BUY": 0.0,
+      "share_HOLD": 0.0,
+      "share_SELL": 1.0,
+      "pct_advBUY_nan": 100.0
+    },
+    {
+      "blk": 3,
+      "upd_range": [
+        757,
+        902
+      ],
+      "a0_mean": -7.406,
+      "share_BUY": 0.0,
+      "share_HOLD": 0.0,
+      "share_SELL": 1.0,
+      "pct_advBUY_nan": 100.0
+    },
+    {
+      "blk": 4,
+      "upd_range": [
+        906,
+        1057
+      ],
+      "a0_mean": -8.681,
+      "share_BUY": 0.0,
+      "share_HOLD": 0.0,
+      "share_SELL": 1.0,
+      "pct_advBUY_nan": 100.0
+    },
+    {
+      "blk": 5,
+      "upd_range": [
+        1058,
+        1177
+      ],
+      "a0_mean": -8.979,
+      "share_BUY": 0.0,
+      "share_HOLD": 0.0,
+      "share_SELL": 1.0,
+      "pct_advBUY_nan": 100.0
+    },
+    {
+      "blk": 6,
+      "upd_range": [
+        1178,
+        1281
+      ],
+      "a0_mean": -8.647,
+      "share_BUY": 0.0,
+      "share_HOLD": 0.0,
+      "share_SELL": 1.0,
+      "pct_advBUY_nan": 100.0
+    },
+    {
+      "blk": 7,
+      "upd_range": [
+        1282,
+        1380
+      ],
+      "a0_mean": -8.332,
+      "share_BUY": 0.0,
+      "share_HOLD": 0.0,
+      "share_SELL": 1.0,
+      "pct_advBUY_nan": 100.0
+    },
+    {
+      "blk": 8,
+      "upd_range": [
+        1384,
+        1513
+      ],
+      "a0_mean": -8.053,
+      "share_BUY": 0.0,
+      "share_HOLD": 0.0,
+      "share_SELL": 1.0,
+      "pct_advBUY_nan": 100.0
+    },
+    {
+      "blk": 9,
+      "upd_range": [
+        1517,
+        1644
+      ],
+      "a0_mean": -8.065,
+      "share_BUY": 0.0,
+      "share_HOLD": 0.0,
+      "share_SELL": 1.0,
+      "pct_advBUY_nan": 100.0
+    }
+  ],
+  "exec_per_window": [
+    {
+      "win": 0,
+      "req": {
+        "HOLD": 53,
+        "BUY": 20,
+        "SELL": 8
+      },
+      "exec": {
+        "HOLD": 72,
+        "SELL": 7,
+        "BUY": 2
+      },
+      "inv_penalty_sum": -0.47,
+      "d_policy": 4000,
+      "d_routing_reject": 1692,
+      "d_trade_executed": 188,
+      "exec_rate_pct": 4.7
+    },
+    {
+      "win": 1,
+      "req": {
+        "SELL": 6,
+        "HOLD": 49,
+        "BUY": 23
+      },
+      "exec": {
+        "HOLD": 75,
+        "BUY": 1,
+        "SELL": 2
+      },
+      "inv_penalty_sum": -0.34,
+      "d_policy": 3890,
+      "d_routing_reject": 1608,
+      "d_trade_executed": 111,
+      "exec_rate_pct": 2.85
+    },
+    {
+      "win": 2,
+      "req": {
+        "BUY": 16,
+        "HOLD": 52,
+        "SELL": 15
+      },
+      "exec": {
+        "HOLD": 77,
+        "SELL": 6
+      },
+      "inv_penalty_sum": -0.4,
+      "d_policy": 4100,
+      "d_routing_reject": 1736,
+      "d_trade_executed": 199,
+      "exec_rate_pct": 4.85
+    },
+    {
+      "win": 3,
+      "req": {
+        "SELL": 10,
+        "HOLD": 42,
+        "BUY": 29
+      },
+      "exec": {
+        "HOLD": 80,
+        "SELL": 1
+      },
+      "inv_penalty_sum": -0.28,
+      "d_policy": 4040,
+      "d_routing_reject": 1713,
+      "d_trade_executed": 117,
+      "exec_rate_pct": 2.9
+    },
+    {
+      "win": 4,
+      "req": {
+        "HOLD": 63,
+        "BUY": 13,
+        "SELL": 12
+      },
+      "exec": {
+        "HOLD": 81,
+        "SELL": 7
+      },
+      "inv_penalty_sum": -0.45,
+      "d_policy": 4350,
+      "d_routing_reject": 1825,
+      "d_trade_executed": 226,
+      "exec_rate_pct": 5.2
+    },
+    {
+      "win": 5,
+      "req": {
+        "HOLD": 56,
+        "BUY": 26,
+        "SELL": 1
+      },
+      "exec": {
+        "HOLD": 79,
+        "SELL": 4
+      },
+      "inv_penalty_sum": -0.35,
+      "d_policy": 4140,
+      "d_routing_reject": 1922,
+      "d_trade_executed": 86,
+      "exec_rate_pct": 2.08
+    },
+    {
+      "win": 6,
+      "req": {
+        "HOLD": 52,
+        "BUY": 11,
+        "SELL": 19
+      },
+      "exec": {
+        "HOLD": 75,
+        "SELL": 7
+      },
+      "inv_penalty_sum": -0.27,
+      "d_policy": 4050,
+      "d_routing_reject": 1902,
+      "d_trade_executed": 189,
+      "exec_rate_pct": 4.67
+    },
+    {
+      "win": 7,
+      "req": {
+        "HOLD": 53,
+        "BUY": 16,
+        "SELL": 5
+      },
+      "exec": {
+        "HOLD": 71,
+        "SELL": 3
+      },
+      "inv_penalty_sum": -0.21,
+      "d_policy": 3690,
+      "d_routing_reject": 2242,
+      "d_trade_executed": 78,
+      "exec_rate_pct": 2.11
+    },
+    {
+      "win": 8,
+      "req": {
+        "HOLD": 57,
+        "SELL": 14,
+        "BUY": 9
+      },
+      "exec": {
+        "SELL": 7,
+        "HOLD": 71,
+        "BUY": 2
+      },
+      "inv_penalty_sum": -0.1,
+      "d_policy": 3950,
+      "d_routing_reject": 2515,
+      "d_trade_executed": 132,
+      "exec_rate_pct": 3.34
+    },
+    {
+      "win": 9,
+      "req": {
+        "HOLD": 8085,
+        "SELL": 5,
+        "BUY": 1
+      },
+      "exec": {
+        "HOLD": 8090,
+        "BUY": 1
+      },
+      "inv_penalty_sum": -0.33,
+      "d_policy": 406540,
+      "d_routing_reject": 406165,
+      "d_trade_executed": 32,
+      "exec_rate_pct": 0.01
+    }
+  ],
+  "consequences": {
+    "closes_by_reason": {
+      "AGENT_CLOSE": 37,
+      "TP_HIT": 53,
+      "SL_HIT": 129
+    },
+    "pnl_by_reason": {
+      "AGENT_CLOSE": {
+        "n": 37,
+        "mean": -0.0756,
+        "sum": -2.797
+      },
+      "TP_HIT": {
+        "n": 53,
+        "mean": 0.1273,
+        "sum": 6.748
+      },
+      "SL_HIT": {
+        "n": 129,
+        "mean": -0.1497,
+        "sum": -19.316
+      }
+    },
+    "inv_penalty_total": -3.2,
+    "inv_penalty_nonzero_events": 320
+  },
+  "hold_adjustment": {
+    "hold_after_SL_H1": 10.1,
+    "hold_after_SL_H2": 9.4,
+    "hold_after_TP_H1": 10.2,
+    "hold_after_TP_H2": 9.1,
+    "hold_after_AGENT_H1": 6.5,
+    "hold_after_AGENT_H2": 5.2
+  },
+  "environment": {
+    "price_mean_H1": 66750.4,
+    "price_mean_H2": 66440.9,
+    "price_drift_pct": -0.46,
+    "trade2trade_vol_H1": 4.031,
+    "trade2trade_vol_H2": 5.234,
+    "trades_per_win": [
+      36,
+      17,
+      35,
+      18,
+      34,
+      14,
+      31,
+      9,
+      22,
+      3
+    ],
+    "corr_vol_tradefreq": 0.831
+  },
+  "error_learning": {
+    "p_repeat_given_sterile_sell": 0.12631578947368421,
+    "p_sell_baseline": 0.010769753996145562,
+    "sterile_events": 95,
+    "sl_rate_by_win": [
+      0.5833333333333334,
+      0.7058823529411765,
+      0.6285714285714286,
+      0.3888888888888889,
+      0.7352941176470589,
+      0.21428571428571427,
+      0.6451612903225806,
+      0.1111111111111111,
+      0.7727272727272727,
+      0.3333333333333333
+    ],
+    "tp_rate_by_win": [
+      0.2222222222222222,
+      0.29411764705882354,
+      0.17142857142857143,
+      0.2222222222222222,
+      0.2647058823529412,
+      0.2857142857142857,
+      0.3548387096774194,
+      0.1111111111111111,
+      0.22727272727272727,
+      0.0
+    ]
+  },
+  "scores": {
+    "L1_consequences": 15.8,
+    "L2_erreurs": 40.9,
+    "L3_environnement": 83.1,
+    "L4_coherence": 2.1,
+    "L5_performance": 33.3
+  },
+  "verdicts": [
+    {
+      "topic": "L4.collapse_SELL_absorbing",
+      "status": "CONFIRME",
+      "evidence": "dernier bloc: share_SELL=1.0, a0_mean=-8.065, advBUY_nan=100.0% ; bascule durable upd=368"
+    },
+    {
+      "topic": "L4.spam_sterile_routing",
+      "status": "PROBABLE",
+      "evidence": "sell->hold sterile events=95, inv_penalty_total=-3.2"
+    },
+    {
+      "topic": "L2.repetition_apres_rejet",
+      "status": "CONFIRME",
+      "evidence": "P(SELL|SELL sterile t-1)=0.126 vs baseline P(SELL)=0.011 -> PAS d apprentissage d evitement"
+    },
+    {
+      "topic": "L2.apprend_a_eviter_SL",
+      "status": "PROBABLE",
+      "evidence": "taux SL H1=0.608 -> H2=0.415 (amelioration)"
+    },
+    {
+      "topic": "L3.adaptation_vol_frequence",
+      "status": "PROBABLE",
+      "evidence": "corr(vol, freq_trades)=0.831 ; prix H1=66750.4 -> H2=66440.9 (-0.46%)"
+    },
+    {
+      "topic": "L5.performance_trend",
+      "status": "CONFIRME",
+      "evidence": "WR H1=23.5% -> H2=21.8% ; Sharpe(global,indicatif)=-8.81"
+    }
+  ]
+}

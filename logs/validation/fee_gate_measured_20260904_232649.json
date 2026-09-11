@@ -1,0 +1,45 @@
+{
+  "block_rate": 0.9571,
+  "blocked": 201,
+  "corrects_previous_claim": "commit c2ca902 stated the gate is 'closed by construction'. That was derived from the upper bounds only. sl_lo=0.003 with tp_hi=0.0222 gives p_min=0.278, so the gate IS satisfiable inside the action box. This run measures which term actually blocks.",
+  "dominant_term": "H-A_signal_p_hmm_too_low",
+  "gate_invocations": 210,
+  "generated_at": "2026-09-04 23:26:49",
+  "margin_distribution_p_hmm_minus_p_min": {
+    "max": 0.556139,
+    "mean": -0.384007,
+    "min": -0.556667,
+    "n": 210,
+    "p10": -0.527436,
+    "p50": -0.447666,
+    "p90": -0.155783
+  },
+  "p_hmm_distribution": {
+    "max": 0.99,
+    "mean": 0.080308,
+    "min": 0.01,
+    "n": 210,
+    "p10": 0.01,
+    "p50": 0.01,
+    "p90": 0.333333
+  },
+  "p_min_required_distribution": {
+    "max": 0.566667,
+    "mean": 0.464315,
+    "min": 0.328333,
+    "n": 210,
+    "p10": 0.368342,
+    "p50": 0.469688,
+    "p90": 0.550862
+  },
+  "passed": 9,
+  "reason_counts": {
+    "accepted": 9,
+    "negative_ev_fee_gate": 201
+  },
+  "seed": 330500,
+  "share_both_adverse": 0.2714,
+  "share_p_hmm_below_0.5": 0.9571,
+  "share_p_min_above_0.5": 0.2857,
+  "steps": 500
+}

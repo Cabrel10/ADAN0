@@ -1,0 +1,698 @@
+2026-08-16 22:34:11 - adan_trading_bot - INFO - ADAN Trading Bot v0.1.0 initialized
+2026-08-16 22:34:11 [INFO] [MODEL] Loading checkpoints/ppo_adan0_v30_500k_checkpoint_450000_steps.zip
+2026-08-16 22:34:20 [INFO] [MODEL] [SCHEMA OK] portfolio_proj input dim = 28 (obs_schema_v2)
+2026-08-16 22:34:20 [INFO] [MODEL] No VecNormalize found — this is expected if training used DummyVecEnv without VecNormalize (OOM prevention, observations pre-normalized in StateBuilder). Raw observations will be used.
+2026-08-16 22:34:20 [INFO] [MODEL] Loaded — obs_space keys: ['1h', '4h', '5m', 'context_vector', 'portfolio_state']
+2026-08-16 22:34:20 [INFO] [ASYNC] Initializing...
+2026-08-16 22:34:20 [WARNING] [CAPITAL_TIERS] Could not load config.yaml: [Errno 2] No such file or directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/scripts/config/config.yaml' — using KillSwitch cap
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - ✅ Loaded production scaler: 5m
+2026-08-16 22:34:21 [INFO] ✅ Loaded production scaler: 5m
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - ✅ Loaded production scaler: 1h
+2026-08-16 22:34:21 [INFO] ✅ Loaded production scaler: 1h
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - ✅ Loaded production scaler: 4h
+2026-08-16 22:34:21 [INFO] ✅ Loaded production scaler: 4h
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - ============================================================
+2026-08-16 22:34:21 [INFO] ============================================================
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - 🎯 PRODUCTION SCALERS LOADED - Distribution Preserved
+2026-08-16 22:34:21 [INFO] 🎯 PRODUCTION SCALERS LOADED - Distribution Preserved
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - ============================================================
+2026-08-16 22:34:21 [INFO] ============================================================
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - WARNING - [SCALER_AUDIT_PROD] 5m | MinMaxScaler | GLOBAL_MIN=-836.61 | GLOBAL_MAX=82140.00 | n_features=21
+2026-08-16 22:34:21 [WARNING] [SCALER_AUDIT_PROD] 5m | MinMaxScaler | GLOBAL_MIN=-836.61 | GLOBAL_MAX=82140.00 | n_features=21
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - WARNING - [SCALER_AUDIT_PROD] 1h | StandardScaler | mean_range=[-23.9613,70886.8817] | std_range=[0.0031,5720.3347]
+2026-08-16 22:34:21 [WARNING] [SCALER_AUDIT_PROD] 1h | StandardScaler | mean_range=[-23.9613,70886.8817] | std_range=[0.0031,5720.3347]
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - ✅ Using loaded training scalers - skipping _init_scalers
+2026-08-16 22:34:21 [INFO] ✅ Using loaded training scalers - skipping _init_scalers
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - Observation dimensions - Market: 1260 + Portfolio: 17 = Total: 1277
+2026-08-16 22:34:21 [INFO] Observation dimensions - Market: 1260 + Portfolio: 17 = Total: 1277
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - StateBuilder initialized. Target flattened observation size: 1277
+2026-08-16 22:34:21 [INFO] StateBuilder initialized. Target flattened observation size: 1277
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - Features per timeframe: {'5m': 21, '1h': 21, '4h': 21}
+2026-08-16 22:34:21 [INFO] Features per timeframe: {'5m': 21, '1h': 21, '4h': 21}
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - StateBuilder initialized with window_sizes={'5m': 20, '1h': 20, '4h': 20}, adaptive_window=True, timeframes=['5m', '1h', '4h'], features_per_timeframe={'5m': 21, '1h': 21, '4h': 21}
+2026-08-16 22:34:21 [INFO] StateBuilder initialized with window_sizes={'5m': 20, '1h': 20, '4h': 20}, adaptive_window=True, timeframes=['5m', '1h', '4h'], features_per_timeframe={'5m': 21, '1h': 21, '4h': 21}
+2026-08-16 22:34:21 - adan_trading_bot.trading.live_state_builder - INFO - 🎯 Fitting LiveStateBuilder scalers INLINE on BTCUSDT TRAIN Parquet data (data/processed/indicators/train/BTCUSDT) — pkl loading is BANNED.
+2026-08-16 22:34:21 [INFO] 🎯 Fitting LiveStateBuilder scalers INLINE on BTCUSDT TRAIN Parquet data (data/processed/indicators/train/BTCUSDT) — pkl loading is BANNED.
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - Fitting scalers on provided data...
+2026-08-16 22:34:21 [INFO] Fitting scalers on provided data...
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - ✅ Initializing scaler for timeframe 5m (with SafeScalerWrapper)
+2026-08-16 22:34:21 [INFO] ✅ Initializing scaler for timeframe 5m (with SafeScalerWrapper)
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - ✅ Initializing scaler for timeframe 1h (with SafeScalerWrapper)
+2026-08-16 22:34:21 [INFO] ✅ Initializing scaler for timeframe 1h (with SafeScalerWrapper)
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - ✅ Initializing scaler for timeframe 4h (with SafeScalerWrapper)
+2026-08-16 22:34:21 [INFO] ✅ Initializing scaler for timeframe 4h (with SafeScalerWrapper)
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - WARNING - [SCALER_FIX] 5m | fit on FIRST 5593/7991 samples (70%) to prevent lookahead bias
+2026-08-16 22:34:21 [WARNING] [SCALER_FIX] 5m | fit on FIRST 5593/7991 samples (70%) to prevent lookahead bias
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - Fitted new scaler for 5m on 7991 samples
+2026-08-16 22:34:21 [INFO] Fitted new scaler for 5m on 7991 samples
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - WARNING - [SCALER_AUDIT] 5m | type=MinMaxScaler | n_features=21 | n_samples=7991 | GLOBAL_MIN=-836.6074 | GLOBAL_MAX=82140.0000 | ⚠️ LOOKAHEAD RISK: scaler sees future min/max
+2026-08-16 22:34:21 [WARNING] [SCALER_AUDIT] 5m | type=MinMaxScaler | n_features=21 | n_samples=7991 | GLOBAL_MIN=-836.6074 | GLOBAL_MAX=82140.0000 | ⚠️ LOOKAHEAD RISK: scaler sees future min/max
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - WARNING - [SCALER_FIX] 1h | fit on FIRST 638/912 samples (70%) to prevent lookahead bias
+2026-08-16 22:34:21 [WARNING] [SCALER_FIX] 1h | fit on FIRST 638/912 samples (70%) to prevent lookahead bias
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - Fitted new scaler for 1h on 912 samples
+2026-08-16 22:34:21 [INFO] Fitted new scaler for 1h on 912 samples
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - WARNING - [SCALER_AUDIT] 1h | type=StandardScaler | n_features=21 | n_samples=912 | mean_range=[-23.9613, 70886.8817] | std_range=[0.0031, 5720.3347] | ⚠️ LOOKAHEAD RISK: scaler sees full distribution
+2026-08-16 22:34:21 [WARNING] [SCALER_AUDIT] 1h | type=StandardScaler | n_features=21 | n_samples=912 | mean_range=[-23.9613, 70886.8817] | std_range=[0.0031, 5720.3347] | ⚠️ LOOKAHEAD RISK: scaler sees full distribution
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - WARNING - [SCALER_FIX] 4h | fit on FIRST 686/980 samples (70%) to prevent lookahead bias
+2026-08-16 22:34:21 [WARNING] [SCALER_FIX] 4h | fit on FIRST 686/980 samples (70%) to prevent lookahead bias
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - INFO - Fitted new scaler for 4h on 980 samples
+2026-08-16 22:34:21 [INFO] Fitted new scaler for 4h on 980 samples
+2026-08-16 22:34:21 - adan_trading_bot.data_processing.state_builder - WARNING - [SCALER_AUDIT] 4h | type=RobustScaler | n_features=21 | n_samples=980 | ⚠️ LOOKAHEAD RISK: scaler sees full IQR distribution
+2026-08-16 22:34:21 [WARNING] [SCALER_AUDIT] 4h | type=RobustScaler | n_features=21 | n_samples=980 | ⚠️ LOOKAHEAD RISK: scaler sees full IQR distribution
+2026-08-16 22:34:22 - adan_trading_bot.data_processing.state_builder - INFO - Memory cleanup completed. Current usage: 950.5 MB
+2026-08-16 22:34:22 [INFO] Memory cleanup completed. Current usage: 950.5 MB
+2026-08-16 22:34:22 - adan_trading_bot.data_processing.state_builder - INFO - Scaler cache stats: 3 cached scalers, 0 hits, 3 misses, 0.0% hit rate
+2026-08-16 22:34:22 [INFO] Scaler cache stats: 3 cached scalers, 0 hits, 3 misses, 0.0% hit rate
+2026-08-16 22:34:22 - adan_trading_bot.trading.live_state_builder - INFO - [SCALER_CHECK] 5m MinMaxScaler | raw_close_mean=66030
+2026-08-16 22:34:22 [INFO] [SCALER_CHECK] 5m MinMaxScaler | raw_close_mean=66030
+2026-08-16 22:34:22 - adan_trading_bot.trading.live_state_builder - INFO - [SCALER_CHECK] 1h StandardScaler | fit_center=70666 fit_scale=5688.2 | raw_close_mean=67842
+2026-08-16 22:34:22 [INFO] [SCALER_CHECK] 1h StandardScaler | fit_center=70666 fit_scale=5688.2 | raw_close_mean=67842
+2026-08-16 22:34:22 - adan_trading_bot.trading.live_state_builder - INFO - [SCALER_CHECK] 4h RobustScaler | fit_center=85691 fit_scale=20529.4 | raw_close_mean=78617
+2026-08-16 22:34:22 [INFO] [SCALER_CHECK] 4h RobustScaler | fit_center=85691 fit_scale=20529.4 | raw_close_mean=78617
+2026-08-16 22:34:22 - adan_trading_bot.trading.live_state_builder - INFO - ✅ Scalers fitted inline & LOCKED to TRAIN distribution.
+2026-08-16 22:34:22 [INFO] ✅ Scalers fitted inline & LOCKED to TRAIN distribution.
+2026-08-16 22:34:22 - adan_trading_bot.trading.live_state_builder - INFO - [LiveStateBuilder] binance | BTC/USDT | TFs=['5m', '1h', '4h']
+2026-08-16 22:34:22 [INFO] [LiveStateBuilder] binance | BTC/USDT | TFs=['5m', '1h', '4h']
+2026-08-16 22:34:22 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] mode=paper exchange=binance symbol=BTC/USDT capital=$20.50 testnet=True
+2026-08-16 22:34:22 [INFO] [ExecutionEngine] mode=paper exchange=binance symbol=BTC/USDT capital=$20.50 testnet=True
+2026-08-16 22:34:22 [INFO] [ASYNC] Initialized successfully
+======================================================================
+  ADAN0 Trading Bot — PAPER MODE (ASYNC)
+  Exchange:   binance
+  Symbol:     BTC/USDT
+  Capital:    $20.50
+  Checkpoint: checkpoints/ppo_adan0_v30_500k_checkpoint_450000_steps.zip
+  VecNorm:    NO
+======================================================================
+2026-08-16 22:34:32 [INFO] [DEBUG_OBS] tick=1 5m                   | min= -0.0348 max= +1.0000 mean= +0.3743 std=0.2835
+2026-08-16 22:34:32 [INFO] [DEBUG_OBS] tick=1 1h                   | min= -2.2496 max= +1.7413 mean= -0.6056 std=0.7399
+2026-08-16 22:34:32 [INFO] [DEBUG_OBS] tick=1 4h                   | min= -1.7409 max= +3.7745 mean= -0.3400 std=0.7463
+2026-08-16 22:34:32 [INFO] [DEBUG_OBS] tick=1 portfolio_state      | min= +0.0000 max= +1.0000 mean= +0.2282 std=0.3913
+2026-08-16 22:34:32 [INFO] [DEBUG_OBS] tick=1 context_vector       | min= -0.9949 max= +1.0000 mean= +0.1660 std=0.5566
+2026-08-16 22:34:32 [INFO] [DEBUG_ACTION] tick=1 dir=+1.000000 size=-1.000000 tf=+0.210894 sl=+1.000000 tp=+1.000000
+2026-08-16 22:34:32 - adan_trading_bot.trading.execution_engine - INFO - [SIZING] LINEAR_EXPO profile=intraday conf=0.330 size_pct=0.7660 (76.60%) size_usd=$15.70 of cash=$20.50 (tier_cap=100.0%, min_order=$11.00)
+2026-08-16 22:34:32 [INFO] [SIZING] LINEAR_EXPO profile=intraday conf=0.330 size_pct=0.7660 (76.60%) size_usd=$15.70 of cash=$20.50 (tier_cap=100.0%, min_order=$11.00)
+2026-08-16 22:34:32 - adan_trading_bot.trading.execution_engine - INFO - [PAPER_TRADE] BUY BTC/USDT size=$15.70 price=$63120.15 SL=$61857.75 TP=$65644.96 fee=$0.0157
+2026-08-16 22:34:32 [INFO] [PAPER_TRADE] BUY BTC/USDT size=$15.70 price=$63120.15 SL=$61857.75 TP=$65644.96 fee=$0.0157
+[00:29:51] Tick 1 | BTC=$63,107.53 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.48 DD=0.1% Trades=1 → TRADE: BUY $15.70 @$63120.15 (reason=OPEN)
+2026-08-16 22:39:34 [INFO] [DEBUG_OBS] tick=2 5m                   | min= -0.0348 max= +1.0000 mean= +0.3740 std=0.2831
+2026-08-16 22:39:34 [INFO] [DEBUG_OBS] tick=2 1h                   | min= -2.2496 max= +1.7413 mean= -0.6056 std=0.7399
+2026-08-16 22:39:34 [INFO] [DEBUG_OBS] tick=2 4h                   | min= -1.7408 max= +3.7745 mean= -0.3401 std=0.7462
+2026-08-16 22:39:34 [INFO] [DEBUG_OBS] tick=2 portfolio_state      | min= -0.0002 max= +1.0000 mean= +0.2353 std=0.3900
+2026-08-16 22:39:34 [INFO] [DEBUG_OBS] tick=2 context_vector       | min= -0.9949 max= +1.0000 mean= +0.1681 std=0.5560
+2026-08-16 22:39:34 [INFO] [DEBUG_ACTION] tick=2 dir=+1.000000 size=-1.000000 tf=+0.010069 sl=+1.000000 tp=+1.000000
+[00:34:57] Tick 2 | BTC=$63,107.53 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.48 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0031
+2026-08-16 22:44:39 [INFO] [DEBUG_OBS] tick=3 5m                   | min= -0.0348 max= +1.0000 mean= +0.3730 std=0.2832
+2026-08-16 22:44:39 [INFO] [DEBUG_OBS] tick=3 1h                   | min= -2.2496 max= +1.7413 mean= -0.6056 std=0.7399
+2026-08-16 22:44:39 [INFO] [DEBUG_OBS] tick=3 4h                   | min= -1.7321 max= +3.7745 mean= -0.3402 std=0.7458
+2026-08-16 22:44:39 [INFO] [DEBUG_OBS] tick=3 portfolio_state      | min= -0.0003 max= +1.0000 mean= +0.2353 std=0.3900
+2026-08-16 22:44:39 [INFO] [DEBUG_OBS] tick=3 context_vector       | min= -0.9949 max= +1.0000 mean= +0.1708 std=0.5556
+2026-08-16 22:44:39 [INFO] [DEBUG_ACTION] tick=3 dir=+1.000000 size=-1.000000 tf=-0.322335 sl=+1.000000 tp=+1.000000
+[00:39:59] Tick 3 | BTC=$63,098.08 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.48 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0055
+2026-08-16 22:49:41 [INFO] [DEBUG_OBS] tick=4 5m                   | min= -0.0348 max= +1.0000 mean= +0.3723 std=0.2830
+2026-08-16 22:49:41 [INFO] [DEBUG_OBS] tick=4 1h                   | min= -2.2496 max= +1.7413 mean= -0.6056 std=0.7399
+2026-08-16 22:49:41 [INFO] [DEBUG_OBS] tick=4 4h                   | min= -1.7317 max= +3.7745 mean= -0.3406 std=0.7456
+2026-08-16 22:49:41 [INFO] [DEBUG_OBS] tick=4 portfolio_state      | min= -0.0008 max= +1.0000 mean= +0.2353 std=0.3899
+2026-08-16 22:49:41 [INFO] [DEBUG_OBS] tick=4 context_vector       | min= -0.9949 max= +1.0000 mean= +0.1735 std=0.5553
+2026-08-16 22:49:41 [INFO] [DEBUG_ACTION] tick=4 dir=+1.000000 size=-1.000000 tf=+0.026145 sl=+1.000000 tp=+1.000000
+[00:45:04] Tick 4 | BTC=$63,071.58 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0121
+2026-08-16 22:54:44 [INFO] [DEBUG_OBS] tick=5 5m                   | min= -0.0348 max= +1.0000 mean= +0.3673 std=0.2823
+2026-08-16 22:54:44 [INFO] [DEBUG_OBS] tick=5 1h                   | min= -2.2496 max= +1.7413 mean= -0.6056 std=0.7399
+2026-08-16 22:54:44 [INFO] [DEBUG_OBS] tick=5 4h                   | min= -1.7284 max= +3.7745 mean= -0.3402 std=0.7455
+2026-08-16 22:54:44 [INFO] [DEBUG_OBS] tick=5 portfolio_state      | min= -0.0012 max= +1.0000 mean= +0.2353 std=0.3898
+2026-08-16 22:54:44 [INFO] [DEBUG_OBS] tick=5 context_vector       | min= -0.9949 max= +1.0000 mean= +0.1764 std=0.5550
+2026-08-16 22:54:44 [INFO] [DEBUG_ACTION] tick=5 dir=+1.000000 size=-1.000000 tf=-0.129798 sl=+1.000000 tp=+1.000000
+[00:50:06] Tick 5 | BTC=$63,045.73 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$-0.0185
+2026-08-16 22:59:46 [INFO] [DEBUG_ACTION] tick=6 dir=+1.000000 size=-1.000000 tf=-0.483222 sl=+1.000000 tp=+1.000000
+[00:55:09] Tick 6 | BTC=$63,059.07 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0152
+2026-08-16 23:04:48 [INFO] [DEBUG_ACTION] tick=7 dir=+1.000000 size=-1.000000 tf=+0.421193 sl=+1.000000 tp=+1.000000
+[01:00:11] Tick 7 | BTC=$63,067.80 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0130
+2026-08-16 23:09:51 [INFO] [DEBUG_ACTION] tick=8 dir=+1.000000 size=-1.000000 tf=+0.292714 sl=+1.000000 tp=+1.000000
+[01:05:13] Tick 8 | BTC=$63,063.35 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0141
+2026-08-16 23:14:53 [INFO] [DEBUG_ACTION] tick=9 dir=+1.000000 size=-1.000000 tf=-0.199625 sl=+1.000000 tp=+1.000000
+[01:10:16] Tick 9 | BTC=$63,052.18 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$-0.0169
+2026-08-16 23:19:57 [INFO] [DEBUG_OBS] tick=10 5m                   | min= -0.0331 max= +1.0000 mean= +0.3468 std=0.2700
+2026-08-16 23:19:57 [INFO] [DEBUG_OBS] tick=10 1h                   | min= -2.2496 max= +1.7413 mean= -0.6094 std=0.7353
+2026-08-16 23:19:57 [INFO] [DEBUG_OBS] tick=10 4h                   | min= -1.7285 max= +3.7745 mean= -0.3397 std=0.7453
+2026-08-16 23:19:57 [INFO] [DEBUG_OBS] tick=10 portfolio_state      | min= -0.0010 max= +1.0000 mean= +0.2355 std=0.3897
+2026-08-16 23:19:57 [INFO] [DEBUG_OBS] tick=10 context_vector       | min= -0.9949 max= +1.0000 mean= +0.1895 std=0.5532
+2026-08-16 23:19:57 [INFO] [DEBUG_ACTION] tick=10 dir=+1.000000 size=-1.000000 tf=+0.182161 sl=+1.000000 tp=+1.000000
+2026-08-16 23:19:57 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 10 consecutive ticks! Model may be broken.
+[01:15:18] Tick 10 | BTC=$63,057.99 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0155
+2026-08-16 23:24:59 [INFO] [DEBUG_ACTION] tick=11 dir=+1.000000 size=-1.000000 tf=-0.734293 sl=+1.000000 tp=+1.000000
+2026-08-16 23:24:59 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 11 consecutive ticks! Model may be broken.
+[01:20:22] Tick 11 | BTC=$63,068.51 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0128
+2026-08-16 23:30:03 [INFO] [DEBUG_ACTION] tick=12 dir=+1.000000 size=-1.000000 tf=-0.876853 sl=+1.000000 tp=+1.000000
+2026-08-16 23:30:03 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 12 consecutive ticks! Model may be broken.
+[01:25:24] Tick 12 | BTC=$63,046.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$-0.0184
+2026-08-16 23:30:03 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786915803.json
+2026-08-16 23:30:03 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786915803.json
+2026-08-16 23:30:03 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.17% E=$0.0
+2026-08-16 23:30:03 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.17% E=$0.0
+2026-08-16 23:30:03 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786915803.csv (1 rows)
+2026-08-16 23:30:03 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786915803.csv (1 rows)
+2026-08-16 23:30:03 [INFO] [CHECKPOINT] tick=12 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786915803.json
+2026-08-16 23:35:06 [INFO] [DEBUG_ACTION] tick=13 dir=+1.000000 size=-1.000000 tf=+0.283162 sl=+1.000000 tp=+1.000000
+2026-08-16 23:35:06 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 13 consecutive ticks! Model may be broken.
+[01:30:28] Tick 13 | BTC=$63,032.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.46 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$-0.0219
+2026-08-16 23:40:08 [INFO] [DEBUG_ACTION] tick=14 dir=+1.000000 size=-1.000000 tf=+0.673029 sl=+1.000000 tp=+1.000000
+2026-08-16 23:40:08 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 14 consecutive ticks! Model may be broken.
+[01:35:31] Tick 14 | BTC=$63,034.42 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.46 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$-0.0213
+2026-08-16 23:45:11 [INFO] [DEBUG_ACTION] tick=15 dir=+1.000000 size=-1.000000 tf=-0.085669 sl=+1.000000 tp=+1.000000
+2026-08-16 23:45:11 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 15 consecutive ticks! Model may be broken.
+[01:40:33] Tick 15 | BTC=$62,762.63 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.40 DD=0.5% Trades=1 | POS: BUY $15.70 PnL=$-0.0889
+2026-08-16 23:50:13 [INFO] [DEBUG_ACTION] tick=16 dir=+1.000000 size=-1.000000 tf=-0.482756 sl=+1.000000 tp=+1.000000
+2026-08-16 23:50:13 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 16 consecutive ticks! Model may be broken.
+[01:45:36] Tick 16 | BTC=$62,939.59 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.44 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0449
+2026-08-16 23:55:17 [INFO] [DEBUG_ACTION] tick=17 dir=+1.000000 size=-1.000000 tf=-0.079795 sl=+1.000000 tp=+1.000000
+2026-08-16 23:55:17 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 17 consecutive ticks! Model may be broken.
+[01:50:38] Tick 17 | BTC=$62,969.42 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.45 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0375
+2026-08-17 00:00:20 [INFO] [DEBUG_ACTION] tick=18 dir=+1.000000 size=-1.000000 tf=-0.073668 sl=+1.000000 tp=+1.000000
+2026-08-17 00:00:20 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 18 consecutive ticks! Model may be broken.
+[01:55:42] Tick 18 | BTC=$62,944.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.44 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0438
+2026-08-17 00:05:22 [INFO] [DEBUG_ACTION] tick=19 dir=+1.000000 size=-1.000000 tf=+0.246315 sl=+1.000000 tp=+1.000000
+2026-08-17 00:05:22 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 19 consecutive ticks! Model may be broken.
+[02:00:45] Tick 19 | BTC=$62,900.35 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0547
+2026-08-17 00:10:25 [INFO] [DEBUG_OBS] tick=20 5m                   | min= -0.0297 max= +0.8583 mean= +0.3602 std=0.2727
+2026-08-17 00:10:25 [INFO] [DEBUG_OBS] tick=20 1h                   | min= -2.2496 max= +1.7413 mean= -0.6097 std=0.7351
+2026-08-17 00:10:25 [INFO] [DEBUG_OBS] tick=20 4h                   | min= -1.6988 max= +3.7745 mean= -0.3391 std=0.7432
+2026-08-17 00:10:25 [INFO] [DEBUG_OBS] tick=20 portfolio_state      | min= -0.0037 max= +1.0000 mean= +0.2355 std=0.3890
+2026-08-17 00:10:25 [INFO] [DEBUG_OBS] tick=20 context_vector       | min= -0.9949 max= +1.0000 mean= +0.2205 std=0.5516
+2026-08-17 00:10:25 [INFO] [DEBUG_ACTION] tick=20 dir=+1.000000 size=-1.000000 tf=+0.148762 sl=+1.000000 tp=+1.000000
+2026-08-17 00:10:25 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 20 consecutive ticks! Model may be broken.
+[02:05:47] Tick 20 | BTC=$62,887.86 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0578
+2026-08-17 00:15:28 [INFO] [DEBUG_ACTION] tick=21 dir=+1.000000 size=-1.000000 tf=-0.534502 sl=+1.000000 tp=+1.000000
+2026-08-17 00:15:28 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 21 consecutive ticks! Model may be broken.
+[02:10:50] Tick 21 | BTC=$62,900.13 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0547
+2026-08-17 00:20:29 [INFO] [DEBUG_ACTION] tick=22 dir=+1.000000 size=-1.000000 tf=-0.518210 sl=+1.000000 tp=+1.000000
+2026-08-17 00:20:29 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 22 consecutive ticks! Model may be broken.
+[02:15:53] Tick 22 | BTC=$62,953.99 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.44 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0413
+2026-08-17 00:25:31 [INFO] [DEBUG_ACTION] tick=23 dir=+1.000000 size=-1.000000 tf=+0.523490 sl=+1.000000 tp=+1.000000
+2026-08-17 00:25:31 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 23 consecutive ticks! Model may be broken.
+[02:20:54] Tick 23 | BTC=$62,910.50 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0522
+2026-08-17 00:30:33 [INFO] [DEBUG_ACTION] tick=24 dir=+1.000000 size=-1.000000 tf=+0.057421 sl=+1.000000 tp=+1.000000
+2026-08-17 00:30:33 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 24 consecutive ticks! Model may be broken.
+[02:25:56] Tick 24 | BTC=$62,854.28 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.42 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0661
+2026-08-17 00:30:33 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786919433.json
+2026-08-17 00:30:33 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786919433.json
+2026-08-17 00:30:33 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.4% E=$0.0
+2026-08-17 00:30:33 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.4% E=$0.0
+2026-08-17 00:30:33 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786919433.csv (1 rows)
+2026-08-17 00:30:33 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786919433.csv (1 rows)
+2026-08-17 00:30:33 [INFO] [CHECKPOINT] tick=24 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786919433.json
+2026-08-17 00:35:35 [INFO] [DEBUG_ACTION] tick=25 dir=+1.000000 size=-1.000000 tf=-0.063302 sl=+1.000000 tp=+1.000000
+2026-08-17 00:35:35 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 25 consecutive ticks! Model may be broken.
+[02:30:58] Tick 25 | BTC=$62,833.31 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.41 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0714
+2026-08-17 00:40:38 [INFO] [DEBUG_ACTION] tick=26 dir=+1.000000 size=-1.000000 tf=-0.207107 sl=+1.000000 tp=+1.000000
+2026-08-17 00:40:38 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 26 consecutive ticks! Model may be broken.
+[02:36:00] Tick 26 | BTC=$62,780.59 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.40 DD=0.5% Trades=1 | POS: BUY $15.70 PnL=$-0.0845
+2026-08-17 00:45:39 [INFO] [DEBUG_ACTION] tick=27 dir=+1.000000 size=-1.000000 tf=-0.245234 sl=+1.000000 tp=+1.000000
+2026-08-17 00:45:39 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 27 consecutive ticks! Model may be broken.
+[02:41:02] Tick 27 | BTC=$62,725.09 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.39 DD=0.6% Trades=1 | POS: BUY $15.70 PnL=$-0.0983
+2026-08-17 00:50:42 [INFO] [DEBUG_ACTION] tick=28 dir=+1.000000 size=-1.000000 tf=-0.255463 sl=+1.000000 tp=+1.000000
+2026-08-17 00:50:42 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 28 consecutive ticks! Model may be broken.
+[02:46:04] Tick 28 | BTC=$62,744.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.39 DD=0.5% Trades=1 | POS: BUY $15.70 PnL=$-0.0936
+2026-08-17 00:55:43 [INFO] [DEBUG_ACTION] tick=29 dir=+1.000000 size=-1.000000 tf=+0.150830 sl=+1.000000 tp=+1.000000
+2026-08-17 00:55:43 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 29 consecutive ticks! Model may be broken.
+[02:51:07] Tick 29 | BTC=$62,798.74 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.40 DD=0.5% Trades=1 | POS: BUY $15.70 PnL=$-0.0800
+2026-08-17 01:00:45 [INFO] [DEBUG_OBS] tick=30 5m                   | min= -0.0267 max= +0.9035 mean= +0.3850 std=0.2847
+2026-08-17 01:00:45 [INFO] [DEBUG_OBS] tick=30 1h                   | min= -2.2496 max= +1.7624 mean= -0.6082 std=0.7400
+2026-08-17 01:00:45 [INFO] [DEBUG_OBS] tick=30 4h                   | min= -1.6988 max= +3.7745 mean= -0.3365 std=0.7435
+2026-08-17 01:00:45 [INFO] [DEBUG_OBS] tick=30 portfolio_state      | min= -0.0046 max= +1.0000 mean= +0.2357 std=0.3886
+2026-08-17 01:00:45 [INFO] [DEBUG_OBS] tick=30 context_vector       | min= -0.9949 max= +1.0000 mean= +0.2383 std=0.5455
+2026-08-17 01:00:45 [INFO] [DEBUG_ACTION] tick=30 dir=+1.000000 size=-1.000000 tf=-1.000000 sl=+1.000000 tp=+1.000000
+2026-08-17 01:00:45 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 30 consecutive ticks! Model may be broken.
+[02:56:08] Tick 30 | BTC=$62,829.06 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.41 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0724
+2026-08-17 01:05:47 [INFO] [DEBUG_ACTION] tick=31 dir=+1.000000 size=-1.000000 tf=+0.318755 sl=+1.000000 tp=+1.000000
+2026-08-17 01:05:47 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 31 consecutive ticks! Model may be broken.
+[03:01:10] Tick 31 | BTC=$62,932.86 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.44 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0466
+2026-08-17 01:10:49 [INFO] [DEBUG_ACTION] tick=32 dir=+1.000000 size=-1.000000 tf=+0.345716 sl=+1.000000 tp=+1.000000
+2026-08-17 01:10:49 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 32 consecutive ticks! Model may be broken.
+[03:06:11] Tick 32 | BTC=$62,933.66 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.44 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0464
+2026-08-17 01:15:50 [INFO] [DEBUG_ACTION] tick=33 dir=+1.000000 size=-1.000000 tf=-0.512937 sl=+1.000000 tp=+1.000000
+2026-08-17 01:15:50 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 33 consecutive ticks! Model may be broken.
+[03:11:14] Tick 33 | BTC=$62,960.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.44 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0398
+2026-08-17 01:20:52 [INFO] [DEBUG_ACTION] tick=34 dir=+1.000000 size=-1.000000 tf=-0.170399 sl=+1.000000 tp=+1.000000
+2026-08-17 01:20:52 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 34 consecutive ticks! Model may be broken.
+[03:16:15] Tick 34 | BTC=$62,883.36 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0589
+2026-08-17 01:25:54 [INFO] [DEBUG_ACTION] tick=35 dir=+1.000000 size=-1.000000 tf=-0.011012 sl=+1.000000 tp=+1.000000
+2026-08-17 01:25:54 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 35 consecutive ticks! Model may be broken.
+[03:21:17] Tick 35 | BTC=$62,874.83 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.42 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0610
+2026-08-17 01:30:56 [INFO] [DEBUG_ACTION] tick=36 dir=+1.000000 size=-1.000000 tf=+0.108379 sl=+1.000000 tp=+1.000000
+2026-08-17 01:30:56 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 36 consecutive ticks! Model may be broken.
+[03:26:19] Tick 36 | BTC=$62,856.29 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.42 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0656
+2026-08-17 01:30:56 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786923056.json
+2026-08-17 01:30:56 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786923056.json
+2026-08-17 01:30:56 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.4% E=$0.0
+2026-08-17 01:30:56 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.4% E=$0.0
+2026-08-17 01:30:56 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786923056.csv (1 rows)
+2026-08-17 01:30:56 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786923056.csv (1 rows)
+2026-08-17 01:30:56 [INFO] [CHECKPOINT] tick=36 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786923056.json
+2026-08-17 01:35:58 [INFO] [DEBUG_ACTION] tick=37 dir=+1.000000 size=-1.000000 tf=-0.015248 sl=+1.000000 tp=+1.000000
+2026-08-17 01:35:58 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 37 consecutive ticks! Model may be broken.
+[03:31:21] Tick 37 | BTC=$62,848.02 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.42 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0677
+2026-08-17 01:41:00 [INFO] [DEBUG_ACTION] tick=38 dir=+1.000000 size=-1.000000 tf=+0.050715 sl=+1.000000 tp=+1.000000
+2026-08-17 01:41:00 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 38 consecutive ticks! Model may be broken.
+[03:36:23] Tick 38 | BTC=$62,890.39 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0572
+2026-08-17 01:46:02 [INFO] [DEBUG_ACTION] tick=39 dir=+1.000000 size=-1.000000 tf=+0.497399 sl=+1.000000 tp=+1.000000
+2026-08-17 01:46:02 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 39 consecutive ticks! Model may be broken.
+[03:41:25] Tick 39 | BTC=$62,865.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.42 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0635
+2026-08-17 01:51:04 [INFO] [DEBUG_OBS] tick=40 5m                   | min= -0.0051 max= +0.9035 mean= +0.4007 std=0.2839
+2026-08-17 01:51:04 [INFO] [DEBUG_OBS] tick=40 1h                   | min= -2.2496 max= +1.7624 mean= -0.6082 std=0.7400
+2026-08-17 01:51:04 [INFO] [DEBUG_OBS] tick=40 4h                   | min= -1.6988 max= +3.7745 mean= -0.3355 std=0.7444
+2026-08-17 01:51:04 [INFO] [DEBUG_OBS] tick=40 portfolio_state      | min= -0.0036 max= +1.0000 mean= +0.2362 std=0.3886
+2026-08-17 01:51:04 [INFO] [DEBUG_OBS] tick=40 context_vector       | min= -0.9949 max= +1.0000 mean= +0.2396 std=0.5330
+2026-08-17 01:51:04 [INFO] [DEBUG_ACTION] tick=40 dir=+1.000000 size=-1.000000 tf=-0.370458 sl=+1.000000 tp=+1.000000
+2026-08-17 01:51:04 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 40 consecutive ticks! Model may be broken.
+[03:46:27] Tick 40 | BTC=$62,892.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0568
+2026-08-17 01:56:06 [INFO] [DEBUG_ACTION] tick=41 dir=+1.000000 size=-1.000000 tf=+0.448045 sl=+1.000000 tp=+1.000000
+2026-08-17 01:56:06 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 41 consecutive ticks! Model may be broken.
+[03:51:29] Tick 41 | BTC=$62,917.43 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0504
+2026-08-17 02:01:08 [INFO] [DEBUG_ACTION] tick=42 dir=+1.000000 size=-1.000000 tf=+0.022515 sl=+1.000000 tp=+1.000000
+2026-08-17 02:01:08 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 42 consecutive ticks! Model may be broken.
+[03:56:31] Tick 42 | BTC=$62,905.67 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0534
+2026-08-17 02:06:10 [INFO] [DEBUG_ACTION] tick=43 dir=+1.000000 size=-1.000000 tf=-0.672127 sl=+1.000000 tp=+1.000000
+2026-08-17 02:06:10 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 43 consecutive ticks! Model may be broken.
+[04:01:33] Tick 43 | BTC=$62,906.31 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0532
+2026-08-17 02:11:12 [INFO] [DEBUG_ACTION] tick=44 dir=+1.000000 size=-1.000000 tf=+0.449769 sl=+1.000000 tp=+1.000000
+2026-08-17 02:11:12 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 44 consecutive ticks! Model may be broken.
+[04:06:35] Tick 44 | BTC=$62,909.16 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0525
+2026-08-17 02:16:14 [INFO] [DEBUG_ACTION] tick=45 dir=+1.000000 size=-1.000000 tf=-0.406768 sl=+1.000000 tp=+1.000000
+2026-08-17 02:16:14 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 45 consecutive ticks! Model may be broken.
+[04:11:37] Tick 45 | BTC=$62,894.29 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0562
+2026-08-17 02:21:16 [INFO] [DEBUG_ACTION] tick=46 dir=+1.000000 size=-1.000000 tf=-0.029775 sl=+1.000000 tp=+1.000000
+2026-08-17 02:21:16 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 46 consecutive ticks! Model may be broken.
+[04:16:39] Tick 46 | BTC=$62,886.78 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0581
+2026-08-17 02:26:18 [INFO] [DEBUG_ACTION] tick=47 dir=+1.000000 size=-1.000000 tf=-0.047129 sl=+1.000000 tp=+1.000000
+2026-08-17 02:26:18 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 47 consecutive ticks! Model may be broken.
+[04:21:41] Tick 47 | BTC=$62,860.04 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.42 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0647
+2026-08-17 02:31:20 [INFO] [DEBUG_ACTION] tick=48 dir=+1.000000 size=-1.000000 tf=-0.023127 sl=+1.000000 tp=+1.000000
+2026-08-17 02:31:20 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 48 consecutive ticks! Model may be broken.
+[04:26:43] Tick 48 | BTC=$62,781.16 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.40 DD=0.5% Trades=1 | POS: BUY $15.70 PnL=$-0.0843
+2026-08-17 02:31:20 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786926680.json
+2026-08-17 02:31:20 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786926680.json
+2026-08-17 02:31:20 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.49% E=$0.0
+2026-08-17 02:31:20 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.49% E=$0.0
+2026-08-17 02:31:20 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786926680.csv (1 rows)
+2026-08-17 02:31:20 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786926680.csv (1 rows)
+2026-08-17 02:31:20 [INFO] [CHECKPOINT] tick=48 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786926680.json
+2026-08-17 02:36:23 [INFO] [DEBUG_ACTION] tick=49 dir=+1.000000 size=-1.000000 tf=-0.567509 sl=+1.000000 tp=+1.000000
+2026-08-17 02:36:23 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 49 consecutive ticks! Model may be broken.
+[04:31:45] Tick 49 | BTC=$62,792.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.40 DD=0.5% Trades=1 | POS: BUY $15.70 PnL=$-0.0816
+2026-08-17 02:41:25 [INFO] [DEBUG_OBS] tick=50 5m                   | min= -0.0050 max= +0.8483 mean= +0.3928 std=0.2672
+2026-08-17 02:41:25 [INFO] [DEBUG_OBS] tick=50 1h                   | min= -2.2496 max= +1.7624 mean= -0.6090 std=0.7332
+2026-08-17 02:41:25 [INFO] [DEBUG_OBS] tick=50 4h                   | min= -1.6988 max= +3.7745 mean= -0.3561 std=0.7273
+2026-08-17 02:41:25 [INFO] [DEBUG_OBS] tick=50 portfolio_state      | min= -0.0058 max= +1.0000 mean= +0.2363 std=0.3880
+2026-08-17 02:41:25 [INFO] [DEBUG_OBS] tick=50 context_vector       | min= -0.9541 max= +1.0000 mean= +0.3060 std=0.4948
+2026-08-17 02:41:25 [INFO] [DEBUG_ACTION] tick=50 dir=+1.000000 size=-1.000000 tf=-0.523400 sl=+1.000000 tp=+1.000000
+2026-08-17 02:41:25 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 50 consecutive ticks! Model may be broken.
+[04:36:47] Tick 50 | BTC=$62,755.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.39 DD=0.5% Trades=1 | POS: BUY $15.70 PnL=$-0.0908
+2026-08-17 02:46:26 [INFO] [DEBUG_ACTION] tick=51 dir=+1.000000 size=-1.000000 tf=+0.462092 sl=+1.000000 tp=+1.000000
+2026-08-17 02:46:26 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 51 consecutive ticks! Model may be broken.
+[04:41:50] Tick 51 | BTC=$62,790.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.40 DD=0.5% Trades=1 | POS: BUY $15.70 PnL=$-0.0821
+2026-08-17 02:51:29 [INFO] [DEBUG_ACTION] tick=52 dir=+1.000000 size=-1.000000 tf=-0.622768 sl=+1.000000 tp=+1.000000
+2026-08-17 02:51:29 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 52 consecutive ticks! Model may be broken.
+[04:46:51] Tick 52 | BTC=$62,920.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0498
+2026-08-17 02:56:31 [INFO] [DEBUG_ACTION] tick=53 dir=+1.000000 size=-1.000000 tf=+0.153772 sl=+1.000000 tp=+1.000000
+2026-08-17 02:56:31 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 53 consecutive ticks! Model may be broken.
+[04:51:54] Tick 53 | BTC=$62,860.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.42 DD=0.4% Trades=1 | POS: BUY $15.70 PnL=$-0.0647
+2026-08-17 03:01:34 [INFO] [DEBUG_ACTION] tick=54 dir=+1.000000 size=-1.000000 tf=+0.076457 sl=+1.000000 tp=+1.000000
+2026-08-17 03:01:34 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 54 consecutive ticks! Model may be broken.
+[04:56:56] Tick 54 | BTC=$62,902.41 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.43 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$-0.0542
+2026-08-17 03:06:36 [INFO] [DEBUG_ACTION] tick=55 dir=+1.000000 size=-1.000000 tf=+0.489394 sl=+1.000000 tp=+1.000000
+2026-08-17 03:06:36 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 55 consecutive ticks! Model may be broken.
+[05:01:59] Tick 55 | BTC=$63,019.99 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.46 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$-0.0249
+2026-08-17 03:11:38 [INFO] [DEBUG_ACTION] tick=56 dir=+1.000000 size=-1.000000 tf=-0.710370 sl=+1.000000 tp=+1.000000
+2026-08-17 03:11:38 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 56 consecutive ticks! Model may be broken.
+[05:07:01] Tick 56 | BTC=$63,173.33 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.50 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0132
+2026-08-17 03:16:40 [INFO] [DEBUG_ACTION] tick=57 dir=+1.000000 size=-1.000000 tf=-0.471722 sl=+1.000000 tp=+1.000000
+2026-08-17 03:16:40 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 57 consecutive ticks! Model may be broken.
+[05:12:03] Tick 57 | BTC=$63,060.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0150
+2026-08-17 03:21:41 [INFO] [DEBUG_ACTION] tick=58 dir=+1.000000 size=-1.000000 tf=+0.211121 sl=+1.000000 tp=+1.000000
+2026-08-17 03:21:41 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 58 consecutive ticks! Model may be broken.
+[05:17:05] Tick 58 | BTC=$63,042.73 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.46 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$-0.0193
+2026-08-17 03:26:43 [INFO] [DEBUG_ACTION] tick=59 dir=+1.000000 size=-1.000000 tf=+0.404916 sl=+1.000000 tp=+1.000000
+2026-08-17 03:26:43 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 59 consecutive ticks! Model may be broken.
+[05:22:06] Tick 59 | BTC=$63,091.99 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.48 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0070
+2026-08-17 03:31:44 [INFO] [DEBUG_OBS] tick=60 5m                   | min= -0.0051 max= +1.0000 mean= +0.4083 std=0.2727
+2026-08-17 03:31:44 [INFO] [DEBUG_OBS] tick=60 1h                   | min= -2.2496 max= +2.1021 mean= -0.5982 std=0.7504
+2026-08-17 03:31:44 [INFO] [DEBUG_OBS] tick=60 4h                   | min= -1.6988 max= +3.7745 mean= -0.3435 std=0.7303
+2026-08-17 03:31:44 [INFO] [DEBUG_OBS] tick=60 portfolio_state      | min= +0.0000 max= +1.0000 mean= +0.2375 std=0.3890
+2026-08-17 03:31:44 [INFO] [DEBUG_OBS] tick=60 context_vector       | min= -0.9541 max= +1.0000 mean= +0.3143 std=0.4894
+2026-08-17 03:31:44 [INFO] [DEBUG_ACTION] tick=60 dir=+1.000000 size=-1.000000 tf=-0.202666 sl=+1.000000 tp=+1.000000
+2026-08-17 03:31:44 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 60 consecutive ticks! Model may be broken.
+[05:27:08] Tick 60 | BTC=$63,139.82 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.49 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0049
+2026-08-17 03:31:44 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786930304.json
+2026-08-17 03:31:44 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786930304.json
+2026-08-17 03:31:44 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.05% E=$0.0
+2026-08-17 03:31:44 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.05% E=$0.0
+2026-08-17 03:31:44 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786930304.csv (1 rows)
+2026-08-17 03:31:44 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786930304.csv (1 rows)
+2026-08-17 03:31:44 [INFO] [CHECKPOINT] tick=60 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786930304.json
+2026-08-17 03:36:47 [INFO] [DEBUG_ACTION] tick=61 dir=+1.000000 size=-1.000000 tf=+0.122644 sl=+1.000000 tp=+1.000000
+2026-08-17 03:36:47 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 61 consecutive ticks! Model may be broken.
+[05:32:09] Tick 61 | BTC=$63,221.03 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.51 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0251
+2026-08-17 03:41:48 [INFO] [DEBUG_ACTION] tick=62 dir=+1.000000 size=-1.000000 tf=-0.111264 sl=+1.000000 tp=+1.000000
+2026-08-17 03:41:48 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 62 consecutive ticks! Model may be broken.
+[05:37:12] Tick 62 | BTC=$63,200.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.50 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0199
+2026-08-17 03:46:50 [INFO] [DEBUG_ACTION] tick=63 dir=+1.000000 size=-1.000000 tf=+0.267007 sl=+1.000000 tp=+1.000000
+2026-08-17 03:46:50 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 63 consecutive ticks! Model may be broken.
+[05:42:13] Tick 63 | BTC=$63,204.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.51 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0209
+2026-08-17 03:51:52 [INFO] [DEBUG_ACTION] tick=64 dir=+1.000000 size=-1.000000 tf=-0.235456 sl=+1.000000 tp=+1.000000
+2026-08-17 03:51:52 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 64 consecutive ticks! Model may be broken.
+[05:47:15] Tick 64 | BTC=$63,165.77 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.50 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0113
+2026-08-17 03:56:54 [INFO] [DEBUG_ACTION] tick=65 dir=+1.000000 size=-1.000000 tf=-0.183207 sl=+1.000000 tp=+1.000000
+2026-08-17 03:56:54 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 65 consecutive ticks! Model may be broken.
+[05:52:17] Tick 65 | BTC=$63,170.91 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.50 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0126
+2026-08-17 04:01:56 [INFO] [DEBUG_ACTION] tick=66 dir=+1.000000 size=-1.000000 tf=+0.540157 sl=+1.000000 tp=+1.000000
+2026-08-17 04:01:56 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 66 consecutive ticks! Model may be broken.
+[05:57:19] Tick 66 | BTC=$63,126.07 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.49 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0015
+2026-08-17 04:06:58 [INFO] [DEBUG_ACTION] tick=67 dir=+1.000000 size=-1.000000 tf=+0.494119 sl=+1.000000 tp=+1.000000
+2026-08-17 04:06:58 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 67 consecutive ticks! Model may be broken.
+[06:02:21] Tick 67 | BTC=$63,111.73 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.48 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0021
+2026-08-17 04:12:01 [INFO] [DEBUG_ACTION] tick=68 dir=+1.000000 size=-1.000000 tf=-1.000000 sl=+1.000000 tp=+1.000000
+2026-08-17 04:12:01 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 68 consecutive ticks! Model may be broken.
+[06:07:23] Tick 68 | BTC=$63,043.15 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$-0.0192
+2026-08-17 04:17:02 [INFO] [DEBUG_ACTION] tick=69 dir=+1.000000 size=-1.000000 tf=-0.350457 sl=+1.000000 tp=+1.000000
+2026-08-17 04:17:02 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 69 consecutive ticks! Model may be broken.
+[06:12:26] Tick 69 | BTC=$63,078.34 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.47 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$-0.0104
+2026-08-17 04:22:04 [INFO] [DEBUG_OBS] tick=70 5m                   | min= -0.0053 max= +1.0000 mean= +0.4378 std=0.2866
+2026-08-17 04:22:04 [INFO] [DEBUG_OBS] tick=70 1h                   | min= -2.2496 max= +2.1021 mean= -0.5783 std=0.7647
+2026-08-17 04:22:04 [INFO] [DEBUG_OBS] tick=70 4h                   | min= -1.6988 max= +3.7745 mean= -0.3450 std=0.7290
+2026-08-17 04:22:04 [INFO] [DEBUG_OBS] tick=70 portfolio_state      | min= -0.0003 max= +1.0000 mean= +0.2377 std=0.3886
+2026-08-17 04:22:04 [INFO] [DEBUG_OBS] tick=70 context_vector       | min= -0.9541 max= +1.0000 mean= +0.3179 std=0.4862
+2026-08-17 04:22:04 [INFO] [DEBUG_ACTION] tick=70 dir=+1.000000 size=-1.000000 tf=+0.180037 sl=+1.000000 tp=+1.000000
+2026-08-17 04:22:04 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 70 consecutive ticks! Model may be broken.
+[06:17:27] Tick 70 | BTC=$63,100.98 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.48 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0048
+2026-08-17 04:27:06 [INFO] [DEBUG_ACTION] tick=71 dir=+1.000000 size=-1.000000 tf=+0.918282 sl=+1.000000 tp=+1.000000
+2026-08-17 04:27:06 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 71 consecutive ticks! Model may be broken.
+[06:22:29] Tick 71 | BTC=$63,119.62 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.48 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$-0.0001
+2026-08-17 04:32:07 [INFO] [DEBUG_ACTION] tick=72 dir=+1.000000 size=-1.000000 tf=+0.276748 sl=+1.000000 tp=+1.000000
+2026-08-17 04:32:07 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 72 consecutive ticks! Model may be broken.
+[06:27:31] Tick 72 | BTC=$63,200.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.50 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0199
+2026-08-17 04:32:07 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786933927.json
+2026-08-17 04:32:07 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786933927.json
+2026-08-17 04:32:07 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.03% E=$0.0
+2026-08-17 04:32:07 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.03% E=$0.0
+2026-08-17 04:32:07 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786933927.csv (1 rows)
+2026-08-17 04:32:07 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786933927.csv (1 rows)
+2026-08-17 04:32:07 [INFO] [CHECKPOINT] tick=72 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786933927.json
+2026-08-17 04:37:09 [INFO] [DEBUG_ACTION] tick=73 dir=+1.000000 size=-1.000000 tf=+0.072064 sl=+1.000000 tp=+1.000000
+2026-08-17 04:37:09 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 73 consecutive ticks! Model may be broken.
+[06:32:32] Tick 73 | BTC=$63,136.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.49 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0039
+2026-08-17 04:42:11 [INFO] [DEBUG_ACTION] tick=74 dir=+1.000000 size=-1.000000 tf=+0.167801 sl=+1.000000 tp=+1.000000
+2026-08-17 04:42:11 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 74 consecutive ticks! Model may be broken.
+[06:37:34] Tick 74 | BTC=$63,283.39 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.52 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0406
+2026-08-17 04:47:12 [INFO] [DEBUG_ACTION] tick=75 dir=+1.000000 size=-1.000000 tf=-0.038197 sl=+1.000000 tp=+1.000000
+2026-08-17 04:47:12 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 75 consecutive ticks! Model may be broken.
+[06:42:35] Tick 75 | BTC=$63,288.66 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.53 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0419
+2026-08-17 04:52:14 [INFO] [DEBUG_ACTION] tick=76 dir=+1.000000 size=-1.000000 tf=-0.056306 sl=+1.000000 tp=+1.000000
+2026-08-17 04:52:14 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 76 consecutive ticks! Model may be broken.
+[06:47:37] Tick 76 | BTC=$63,272.53 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.52 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0379
+2026-08-17 04:57:17 [INFO] [DEBUG_ACTION] tick=77 dir=+1.000000 size=-1.000000 tf=-0.523917 sl=+1.000000 tp=+1.000000
+2026-08-17 04:57:17 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 77 consecutive ticks! Model may be broken.
+[06:52:39] Tick 77 | BTC=$63,364.41 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.55 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0608
+2026-08-17 05:02:19 [INFO] [DEBUG_ACTION] tick=78 dir=+1.000000 size=-1.000000 tf=-0.398510 sl=+1.000000 tp=+1.000000
+2026-08-17 05:02:19 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 78 consecutive ticks! Model may be broken.
+[06:57:42] Tick 78 | BTC=$63,420.15 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.56 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0746
+2026-08-17 05:07:21 [INFO] [DEBUG_ACTION] tick=79 dir=+1.000000 size=-1.000000 tf=+0.052853 sl=+1.000000 tp=+1.000000
+2026-08-17 05:07:21 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 79 consecutive ticks! Model may be broken.
+[07:02:44] Tick 79 | BTC=$63,409.66 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.56 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0720
+2026-08-17 05:12:24 [INFO] [DEBUG_OBS] tick=80 5m                   | min= -0.0053 max= +1.0000 mean= +0.4447 std=0.2921
+2026-08-17 05:12:24 [INFO] [DEBUG_OBS] tick=80 1h                   | min= -2.2496 max= +2.1021 mean= -0.5535 std=0.7818
+2026-08-17 05:12:24 [INFO] [DEBUG_OBS] tick=80 4h                   | min= -1.6988 max= +3.7745 mean= -0.3370 std=0.7362
+2026-08-17 05:12:24 [INFO] [DEBUG_OBS] tick=80 portfolio_state      | min= +0.0000 max= +1.0025 mean= +0.2384 std=0.3886
+2026-08-17 05:12:24 [INFO] [DEBUG_OBS] tick=80 context_vector       | min= -0.9541 max= +1.0000 mean= +0.3280 std=0.4858
+2026-08-17 05:12:24 [INFO] [DEBUG_ACTION] tick=80 dir=+1.000000 size=-1.000000 tf=+0.054393 sl=+1.000000 tp=+1.000000
+2026-08-17 05:12:24 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 80 consecutive ticks! Model may be broken.
+[07:07:46] Tick 80 | BTC=$63,387.99 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.55 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0666
+2026-08-17 05:17:26 [INFO] [DEBUG_ACTION] tick=81 dir=+1.000000 size=-1.000000 tf=-0.174792 sl=+1.000000 tp=+1.000000
+2026-08-17 05:17:26 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 81 consecutive ticks! Model may be broken.
+[07:12:49] Tick 81 | BTC=$63,377.28 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.55 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0640
+2026-08-17 05:22:27 [INFO] [DEBUG_ACTION] tick=82 dir=+1.000000 size=-1.000000 tf=+0.694550 sl=+1.000000 tp=+1.000000
+2026-08-17 05:22:27 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 82 consecutive ticks! Model may be broken.
+[07:17:50] Tick 82 | BTC=$63,401.15 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.55 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0699
+2026-08-17 05:27:29 [INFO] [DEBUG_ACTION] tick=83 dir=+1.000000 size=-1.000000 tf=-0.421561 sl=+1.000000 tp=+1.000000
+2026-08-17 05:27:29 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 83 consecutive ticks! Model may be broken.
+[07:22:52] Tick 83 | BTC=$63,368.73 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.55 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0618
+2026-08-17 05:32:31 [INFO] [DEBUG_ACTION] tick=84 dir=+1.000000 size=-1.000000 tf=-0.202274 sl=+1.000000 tp=+1.000000
+2026-08-17 05:32:31 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 84 consecutive ticks! Model may be broken.
+[07:27:54] Tick 84 | BTC=$63,360.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.54 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0597
+2026-08-17 05:32:31 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786937551.json
+2026-08-17 05:32:31 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786937551.json
+2026-08-17 05:32:31 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.07% E=$0.0
+2026-08-17 05:32:31 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.07% E=$0.0
+2026-08-17 05:32:31 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786937551.csv (1 rows)
+2026-08-17 05:32:31 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786937551.csv (1 rows)
+2026-08-17 05:32:31 [INFO] [CHECKPOINT] tick=84 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786937551.json
+2026-08-17 05:37:33 [INFO] [DEBUG_ACTION] tick=85 dir=+1.000000 size=-1.000000 tf=-0.176547 sl=+1.000000 tp=+1.000000
+2026-08-17 05:37:33 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 85 consecutive ticks! Model may be broken.
+[07:32:56] Tick 85 | BTC=$63,347.21 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.54 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0565
+2026-08-17 05:42:34 [INFO] [DEBUG_ACTION] tick=86 dir=+1.000000 size=-1.000000 tf=+0.288121 sl=+1.000000 tp=+1.000000
+2026-08-17 05:42:34 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 86 consecutive ticks! Model may be broken.
+[07:37:58] Tick 86 | BTC=$63,382.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.55 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0651
+2026-08-17 05:47:36 [INFO] [DEBUG_ACTION] tick=87 dir=+1.000000 size=-1.000000 tf=+0.300543 sl=+1.000000 tp=+1.000000
+2026-08-17 05:47:36 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 87 consecutive ticks! Model may be broken.
+[07:42:59] Tick 87 | BTC=$63,356.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.54 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0587
+2026-08-17 05:52:39 [INFO] [DEBUG_ACTION] tick=88 dir=+1.000000 size=-1.000000 tf=-0.806348 sl=+1.000000 tp=+1.000000
+2026-08-17 05:52:39 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 88 consecutive ticks! Model may be broken.
+[07:48:01] Tick 88 | BTC=$63,359.48 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.54 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0595
+2026-08-17 05:57:41 [INFO] [DEBUG_ACTION] tick=89 dir=+1.000000 size=-1.000000 tf=-0.177459 sl=+1.000000 tp=+1.000000
+2026-08-17 05:57:41 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 89 consecutive ticks! Model may be broken.
+[07:53:04] Tick 89 | BTC=$63,430.71 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.56 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0773
+2026-08-17 06:02:42 [INFO] [DEBUG_OBS] tick=90 5m                   | min= -0.0052 max= +1.0000 mean= +0.4551 std=0.2932
+2026-08-17 06:02:42 [INFO] [DEBUG_OBS] tick=90 1h                   | min= -2.2496 max= +2.4005 mean= -0.5215 std=0.8090
+2026-08-17 06:02:42 [INFO] [DEBUG_OBS] tick=90 4h                   | min= -1.6988 max= +3.7745 mean= -0.3368 std=0.7523
+2026-08-17 06:02:42 [INFO] [DEBUG_OBS] tick=90 portfolio_state      | min= +0.0000 max= +1.0032 mean= +0.2389 std=0.3886
+2026-08-17 06:02:42 [INFO] [DEBUG_OBS] tick=90 context_vector       | min= -0.9541 max= +1.0000 mean= +0.3307 std=0.4891
+2026-08-17 06:02:42 [INFO] [DEBUG_ACTION] tick=90 dir=+1.000000 size=-1.000000 tf=+0.124329 sl=+1.000000 tp=+1.000000
+2026-08-17 06:02:42 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 90 consecutive ticks! Model may be broken.
+[07:58:06] Tick 90 | BTC=$63,446.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0811
+2026-08-17 06:07:44 [INFO] [DEBUG_ACTION] tick=91 dir=+1.000000 size=-1.000000 tf=-0.140047 sl=+1.000000 tp=+1.000000
+2026-08-17 06:07:44 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 91 consecutive ticks! Model may be broken.
+[08:03:07] Tick 91 | BTC=$63,481.30 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0898
+2026-08-17 06:12:45 [INFO] [DEBUG_ACTION] tick=92 dir=+1.000000 size=-1.000000 tf=-0.551660 sl=+1.000000 tp=+1.000000
+2026-08-17 06:12:45 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 92 consecutive ticks! Model may be broken.
+[08:08:09] Tick 92 | BTC=$63,495.57 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0934
+2026-08-17 06:17:47 [INFO] [DEBUG_ACTION] tick=93 dir=+1.000000 size=-1.000000 tf=-0.785420 sl=+1.000000 tp=+1.000000
+2026-08-17 06:17:47 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 93 consecutive ticks! Model may be broken.
+[08:13:10] Tick 93 | BTC=$63,509.80 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0969
+2026-08-17 06:22:48 [INFO] [DEBUG_ACTION] tick=94 dir=+1.000000 size=-1.000000 tf=-0.632596 sl=+1.000000 tp=+1.000000
+2026-08-17 06:22:48 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 94 consecutive ticks! Model may be broken.
+[08:18:12] Tick 94 | BTC=$63,481.07 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0898
+2026-08-17 06:27:51 [INFO] [DEBUG_ACTION] tick=95 dir=+1.000000 size=-1.000000 tf=+0.177532 sl=+1.000000 tp=+1.000000
+2026-08-17 06:27:51 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 95 consecutive ticks! Model may be broken.
+[08:23:13] Tick 95 | BTC=$63,524.40 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1006
+2026-08-17 06:32:52 [INFO] [DEBUG_ACTION] tick=96 dir=+1.000000 size=-1.000000 tf=-0.132138 sl=+1.000000 tp=+1.000000
+2026-08-17 06:32:52 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 96 consecutive ticks! Model may be broken.
+[08:28:16] Tick 96 | BTC=$63,496.05 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0935
+2026-08-17 06:32:52 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786941172.json
+2026-08-17 06:32:52 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786941172.json
+2026-08-17 06:32:52 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.03% E=$0.0
+2026-08-17 06:32:52 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.03% E=$0.0
+2026-08-17 06:32:52 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786941172.csv (1 rows)
+2026-08-17 06:32:52 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786941172.csv (1 rows)
+2026-08-17 06:32:52 [INFO] [CHECKPOINT] tick=96 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786941172.json
+2026-08-17 06:37:54 [INFO] [DEBUG_ACTION] tick=97 dir=+1.000000 size=-1.000000 tf=+0.043791 sl=+1.000000 tp=+1.000000
+2026-08-17 06:37:54 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 97 consecutive ticks! Model may be broken.
+[08:33:17] Tick 97 | BTC=$63,474.23 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0881
+2026-08-17 06:42:56 [INFO] [DEBUG_ACTION] tick=98 dir=+1.000000 size=-1.000000 tf=-0.807051 sl=+1.000000 tp=+1.000000
+2026-08-17 06:42:56 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 98 consecutive ticks! Model may be broken.
+[08:38:19] Tick 98 | BTC=$63,486.06 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0910
+2026-08-17 06:47:58 [INFO] [DEBUG_ACTION] tick=99 dir=+1.000000 size=-1.000000 tf=+0.057195 sl=+1.000000 tp=+1.000000
+2026-08-17 06:47:58 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 99 consecutive ticks! Model may be broken.
+[08:43:21] Tick 99 | BTC=$63,508.18 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0965
+2026-08-17 06:52:59 [INFO] [DEBUG_OBS] tick=100 5m                   | min= -0.0052 max= +1.0000 mean= +0.4662 std=0.3016
+2026-08-17 06:52:59 [INFO] [DEBUG_OBS] tick=100 1h                   | min= -2.2496 max= +2.4005 mean= -0.5215 std=0.8090
+2026-08-17 06:52:59 [INFO] [DEBUG_OBS] tick=100 4h                   | min= -1.6988 max= +3.7745 mean= -0.3302 std=0.7535
+2026-08-17 06:52:59 [INFO] [DEBUG_OBS] tick=100 portfolio_state      | min= +0.0000 max= +1.0040 mean= +0.2393 std=0.3884
+2026-08-17 06:52:59 [INFO] [DEBUG_OBS] tick=100 context_vector       | min= -0.9541 max= +1.0000 mean= +0.3273 std=0.4948
+2026-08-17 06:52:59 [INFO] [DEBUG_ACTION] tick=100 dir=+1.000000 size=-1.000000 tf=-0.103250 sl=+1.000000 tp=+1.000000
+2026-08-17 06:52:59 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 100 consecutive ticks! Model may be broken.
+[08:48:22] Tick 100 | BTC=$63,515.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.0982
+2026-08-17 06:58:01 [INFO] [DEBUG_ACTION] tick=101 dir=+1.000000 size=-1.000000 tf=-0.145356 sl=+1.000000 tp=+1.000000
+2026-08-17 06:58:01 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 101 consecutive ticks! Model may be broken.
+[08:53:24] Tick 101 | BTC=$63,572.43 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1125
+2026-08-17 07:03:03 [INFO] [DEBUG_ACTION] tick=102 dir=+1.000000 size=-1.000000 tf=+0.149933 sl=+1.000000 tp=+1.000000
+2026-08-17 07:03:03 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 102 consecutive ticks! Model may be broken.
+[08:58:26] Tick 102 | BTC=$63,547.64 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1064
+2026-08-17 07:08:05 [INFO] [DEBUG_ACTION] tick=103 dir=+1.000000 size=-1.000000 tf=+0.067556 sl=+1.000000 tp=+1.000000
+2026-08-17 07:08:05 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 103 consecutive ticks! Model may be broken.
+[09:03:28] Tick 103 | BTC=$63,527.62 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.1014
+2026-08-17 07:13:06 [INFO] [DEBUG_ACTION] tick=104 dir=+1.000000 size=-1.000000 tf=-0.053952 sl=+1.000000 tp=+1.000000
+2026-08-17 07:13:06 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 104 consecutive ticks! Model may be broken.
+[09:08:30] Tick 104 | BTC=$63,451.07 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0823
+2026-08-17 07:18:08 [INFO] [DEBUG_ACTION] tick=105 dir=+1.000000 size=-1.000000 tf=-0.344535 sl=+1.000000 tp=+1.000000
+2026-08-17 07:18:08 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 105 consecutive ticks! Model may be broken.
+[09:13:31] Tick 105 | BTC=$63,473.47 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0879
+2026-08-17 07:23:10 [INFO] [DEBUG_ACTION] tick=106 dir=+1.000000 size=-1.000000 tf=+0.196806 sl=+1.000000 tp=+1.000000
+2026-08-17 07:23:10 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 106 consecutive ticks! Model may be broken.
+[09:18:33] Tick 106 | BTC=$63,560.63 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1096
+2026-08-17 07:28:11 [INFO] [DEBUG_ACTION] tick=107 dir=+1.000000 size=-1.000000 tf=+0.184260 sl=+1.000000 tp=+1.000000
+2026-08-17 07:28:11 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 107 consecutive ticks! Model may be broken.
+[09:23:35] Tick 107 | BTC=$63,572.43 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1125
+2026-08-17 07:33:13 [INFO] [DEBUG_ACTION] tick=108 dir=+1.000000 size=-1.000000 tf=+0.509947 sl=+1.000000 tp=+1.000000
+2026-08-17 07:33:13 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 108 consecutive ticks! Model may be broken.
+[09:28:36] Tick 108 | BTC=$63,505.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0957
+2026-08-17 07:33:13 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786944793.json
+2026-08-17 07:33:13 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786944793.json
+2026-08-17 07:33:13 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.08% E=$0.0
+2026-08-17 07:33:13 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.08% E=$0.0
+2026-08-17 07:33:13 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786944793.csv (1 rows)
+2026-08-17 07:33:13 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786944793.csv (1 rows)
+2026-08-17 07:33:13 [INFO] [CHECKPOINT] tick=108 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786944793.json
+2026-08-17 07:38:15 [INFO] [DEBUG_ACTION] tick=109 dir=+1.000000 size=-1.000000 tf=-0.568753 sl=+1.000000 tp=+1.000000
+2026-08-17 07:38:15 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 109 consecutive ticks! Model may be broken.
+[09:33:38] Tick 109 | BTC=$63,490.41 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0921
+2026-08-17 07:43:17 [INFO] [DEBUG_OBS] tick=110 5m                   | min= -0.0050 max= +1.0000 mean= +0.4631 std=0.3035
+2026-08-17 07:43:17 [INFO] [DEBUG_OBS] tick=110 1h                   | min= -2.2496 max= +2.8184 mean= -0.4840 std=0.8404
+2026-08-17 07:43:17 [INFO] [DEBUG_OBS] tick=110 4h                   | min= -1.6988 max= +3.7745 mean= -0.3286 std=0.7534
+2026-08-17 07:43:17 [INFO] [DEBUG_OBS] tick=110 portfolio_state      | min= +0.0000 max= +1.0033 mean= +0.2395 std=0.3879
+2026-08-17 07:43:17 [INFO] [DEBUG_OBS] tick=110 context_vector       | min= -0.9541 max= +1.0000 mean= +0.3078 std=0.4981
+2026-08-17 07:43:17 [INFO] [DEBUG_ACTION] tick=110 dir=+1.000000 size=-1.000000 tf=+0.526214 sl=+1.000000 tp=+1.000000
+2026-08-17 07:43:17 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 110 consecutive ticks! Model may be broken.
+[09:38:40] Tick 110 | BTC=$63,458.43 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0842
+2026-08-17 07:48:18 [INFO] [DEBUG_ACTION] tick=111 dir=+1.000000 size=-1.000000 tf=+0.214804 sl=+1.000000 tp=+1.000000
+2026-08-17 07:48:18 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 111 consecutive ticks! Model may be broken.
+[09:43:42] Tick 111 | BTC=$63,459.94 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0845
+2026-08-17 07:53:22 [INFO] [DEBUG_ACTION] tick=112 dir=+1.000000 size=-1.000000 tf=+0.120257 sl=+1.000000 tp=+1.000000
+2026-08-17 07:53:22 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 112 consecutive ticks! Model may be broken.
+[09:48:43] Tick 112 | BTC=$63,463.18 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0853
+2026-08-17 07:58:24 [INFO] [DEBUG_ACTION] tick=113 dir=+1.000000 size=-1.000000 tf=-0.547228 sl=+1.000000 tp=+1.000000
+2026-08-17 07:58:24 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 113 consecutive ticks! Model may be broken.
+[09:53:47] Tick 113 | BTC=$63,511.99 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0975
+2026-08-17 08:03:25 [INFO] [DEBUG_ACTION] tick=114 dir=+1.000000 size=-1.000000 tf=-0.271188 sl=+1.000000 tp=+1.000000
+2026-08-17 08:03:25 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 114 consecutive ticks! Model may be broken.
+[09:58:49] Tick 114 | BTC=$63,520.17 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0995
+2026-08-17 08:08:27 [INFO] [DEBUG_ACTION] tick=115 dir=+1.000000 size=-1.000000 tf=-0.480886 sl=+1.000000 tp=+1.000000
+2026-08-17 08:08:27 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 115 consecutive ticks! Model may be broken.
+[10:03:50] Tick 115 | BTC=$63,520.29 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.0995
+2026-08-17 08:13:29 [INFO] [DEBUG_ACTION] tick=116 dir=+1.000000 size=-1.000000 tf=-0.238164 sl=+1.000000 tp=+1.000000
+2026-08-17 08:13:29 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 116 consecutive ticks! Model may be broken.
+[10:08:52] Tick 116 | BTC=$63,565.07 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1107
+2026-08-17 08:18:31 [INFO] [DEBUG_ACTION] tick=117 dir=+1.000000 size=-1.000000 tf=-0.089865 sl=+1.000000 tp=+1.000000
+2026-08-17 08:18:31 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 117 consecutive ticks! Model may be broken.
+[10:13:54] Tick 117 | BTC=$63,580.77 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1146
+2026-08-17 08:23:33 [INFO] [DEBUG_ACTION] tick=118 dir=+1.000000 size=-1.000000 tf=+0.446883 sl=+1.000000 tp=+1.000000
+2026-08-17 08:23:33 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 118 consecutive ticks! Model may be broken.
+[10:18:56] Tick 118 | BTC=$63,589.71 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1168
+2026-08-17 08:28:35 [INFO] [DEBUG_ACTION] tick=119 dir=+1.000000 size=-1.000000 tf=-0.809785 sl=+1.000000 tp=+1.000000
+2026-08-17 08:28:35 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 119 consecutive ticks! Model may be broken.
+[10:23:58] Tick 119 | BTC=$63,583.64 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1153
+2026-08-17 08:33:37 [INFO] [DEBUG_OBS] tick=120 5m                   | min= -0.0050 max= +1.0000 mean= +0.4372 std=0.2969
+2026-08-17 08:33:37 [INFO] [DEBUG_OBS] tick=120 1h                   | min= -2.2496 max= +3.1270 mean= -0.4492 std=0.8664
+2026-08-17 08:33:37 [INFO] [DEBUG_OBS] tick=120 4h                   | min= -1.6988 max= +3.7745 mean= -0.3242 std=0.7587
+2026-08-17 08:33:37 [INFO] [DEBUG_OBS] tick=120 portfolio_state      | min= +0.0000 max= +1.0047 mean= +0.2400 std=0.3881
+2026-08-17 08:33:37 [INFO] [DEBUG_OBS] tick=120 context_vector       | min= -0.9541 max= +1.0000 mean= +0.2885 std=0.5053
+2026-08-17 08:33:37 [INFO] [DEBUG_ACTION] tick=120 dir=+1.000000 size=-1.000000 tf=+0.190693 sl=+1.000000 tp=+1.000000
+2026-08-17 08:33:37 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 120 consecutive ticks! Model may be broken.
+[10:29:00] Tick 120 | BTC=$63,570.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1119
+2026-08-17 08:33:37 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786948417.json
+2026-08-17 08:33:37 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786948417.json
+2026-08-17 08:33:37 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.02% E=$0.0
+2026-08-17 08:33:37 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.02% E=$0.0
+2026-08-17 08:33:37 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786948417.csv (1 rows)
+2026-08-17 08:33:37 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786948417.csv (1 rows)
+2026-08-17 08:33:37 [INFO] [CHECKPOINT] tick=120 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786948417.json
+2026-08-17 08:38:39 [INFO] [DEBUG_ACTION] tick=121 dir=+1.000000 size=-1.000000 tf=-0.541564 sl=+1.000000 tp=+1.000000
+2026-08-17 08:38:39 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 121 consecutive ticks! Model may be broken.
+[10:34:02] Tick 121 | BTC=$63,583.99 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1154
+2026-08-17 08:43:41 [INFO] [DEBUG_ACTION] tick=122 dir=+1.000000 size=-1.000000 tf=+0.349177 sl=+1.000000 tp=+1.000000
+2026-08-17 08:43:41 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 122 consecutive ticks! Model may be broken.
+[10:39:04] Tick 122 | BTC=$63,604.80 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1206
+2026-08-17 08:48:43 [INFO] [DEBUG_ACTION] tick=123 dir=+1.000000 size=-1.000000 tf=-0.464150 sl=+1.000000 tp=+1.000000
+2026-08-17 08:48:43 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 123 consecutive ticks! Model may be broken.
+[10:44:06] Tick 123 | BTC=$63,600.15 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1194
+2026-08-17 08:53:44 [INFO] [DEBUG_ACTION] tick=124 dir=+1.000000 size=-1.000000 tf=-0.537732 sl=+1.000000 tp=+1.000000
+2026-08-17 08:53:44 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 124 consecutive ticks! Model may be broken.
+[10:49:07] Tick 124 | BTC=$63,695.25 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.63 DD=0.0% Trades=1 | POS: BUY $15.70 PnL=$+0.1431
+2026-08-17 08:58:46 [INFO] [DEBUG_ACTION] tick=125 dir=+1.000000 size=-1.000000 tf=+0.071552 sl=+1.000000 tp=+1.000000
+2026-08-17 08:58:46 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 125 consecutive ticks! Model may be broken.
+[10:54:09] Tick 125 | BTC=$63,650.40 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.62 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.1319
+2026-08-17 09:03:48 [INFO] [DEBUG_ACTION] tick=126 dir=+1.000000 size=-1.000000 tf=+0.485828 sl=+1.000000 tp=+1.000000
+2026-08-17 09:03:48 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 126 consecutive ticks! Model may be broken.
+[10:59:11] Tick 126 | BTC=$63,650.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.62 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.1318
+2026-08-17 09:08:50 [INFO] [DEBUG_ACTION] tick=127 dir=+1.000000 size=-1.000000 tf=-0.032456 sl=+1.000000 tp=+1.000000
+2026-08-17 09:08:50 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 127 consecutive ticks! Model may be broken.
+[11:04:13] Tick 127 | BTC=$63,572.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.1124
+2026-08-17 09:13:52 [INFO] [DEBUG_ACTION] tick=128 dir=+1.000000 size=-1.000000 tf=+0.246575 sl=+1.000000 tp=+1.000000
+2026-08-17 09:13:52 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 128 consecutive ticks! Model may be broken.
+[11:09:15] Tick 128 | BTC=$63,595.35 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.1182
+2026-08-17 09:18:54 [INFO] [DEBUG_ACTION] tick=129 dir=+1.000000 size=-1.000000 tf=+0.035934 sl=+1.000000 tp=+1.000000
+2026-08-17 09:18:54 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 129 consecutive ticks! Model may be broken.
+[11:14:17] Tick 129 | BTC=$63,578.32 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.1140
+2026-08-17 09:23:56 [INFO] [DEBUG_OBS] tick=130 5m                   | min= -0.0050 max= +1.0000 mean= +0.4234 std=0.2954
+2026-08-17 09:23:56 [INFO] [DEBUG_OBS] tick=130 1h                   | min= -2.2496 max= +3.1270 mean= -0.4184 std=0.8744
+2026-08-17 09:23:56 [INFO] [DEBUG_OBS] tick=130 4h                   | min= -1.6988 max= +3.7745 mean= -0.3234 std=0.7600
+2026-08-17 09:23:56 [INFO] [DEBUG_OBS] tick=130 portfolio_state      | min= +0.0000 max= +1.0044 mean= +0.2402 std=0.3875
+2026-08-17 09:23:56 [INFO] [DEBUG_OBS] tick=130 context_vector       | min= -0.9541 max= +1.0000 mean= +0.2723 std=0.5138
+2026-08-17 09:23:56 [INFO] [DEBUG_ACTION] tick=130 dir=+1.000000 size=-1.000000 tf=+0.052139 sl=+1.000000 tp=+1.000000
+2026-08-17 09:23:56 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 130 consecutive ticks! Model may be broken.
+[11:19:19] Tick 130 | BTC=$63,547.99 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$+0.1064
+2026-08-17 09:28:58 [INFO] [DEBUG_ACTION] tick=131 dir=+1.000000 size=-1.000000 tf=+0.008107 sl=+1.000000 tp=+1.000000
+2026-08-17 09:28:58 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 131 consecutive ticks! Model may be broken.
+[11:24:21] Tick 131 | BTC=$63,557.55 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$+0.1088
+2026-08-17 09:34:00 [INFO] [DEBUG_ACTION] tick=132 dir=+1.000000 size=-1.000000 tf=+0.437752 sl=+1.000000 tp=+1.000000
+2026-08-17 09:34:00 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 132 consecutive ticks! Model may be broken.
+[11:29:23] Tick 132 | BTC=$63,596.01 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.1% Trades=1 | POS: BUY $15.70 PnL=$+0.1184
+2026-08-17 09:34:00 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786952040.json
+2026-08-17 09:34:00 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786952040.json
+2026-08-17 09:34:00 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.12% E=$0.0
+2026-08-17 09:34:00 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.12% E=$0.0
+2026-08-17 09:34:00 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786952040.csv (1 rows)
+2026-08-17 09:34:00 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786952040.csv (1 rows)
+2026-08-17 09:34:00 [INFO] [CHECKPOINT] tick=132 report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786952040.json
+2026-08-17 09:39:03 [INFO] [DEBUG_ACTION] tick=133 dir=+1.000000 size=-1.000000 tf=+0.383400 sl=+1.000000 tp=+1.000000
+2026-08-17 09:39:03 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 133 consecutive ticks! Model may be broken.
+[11:34:25] Tick 133 | BTC=$63,566.00 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.60 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$+0.1109
+2026-08-17 09:44:05 [INFO] [DEBUG_ACTION] tick=134 dir=+1.000000 size=-1.000000 tf=-0.090354 sl=+1.000000 tp=+1.000000
+2026-08-17 09:44:05 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 134 consecutive ticks! Model may be broken.
+[11:39:28] Tick 134 | BTC=$63,549.60 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$+0.1068
+2026-08-17 09:49:07 [INFO] [DEBUG_ACTION] tick=135 dir=+1.000000 size=-1.000000 tf=+0.133509 sl=+1.000000 tp=+1.000000
+2026-08-17 09:49:07 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 135 consecutive ticks! Model may be broken.
+[11:44:30] Tick 135 | BTC=$63,551.24 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$+0.1072
+2026-08-17 09:54:09 [INFO] [DEBUG_ACTION] tick=136 dir=+1.000000 size=-1.000000 tf=+0.593015 sl=+1.000000 tp=+1.000000
+2026-08-17 09:54:09 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 136 consecutive ticks! Model may be broken.
+[11:49:32] Tick 136 | BTC=$63,535.86 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$+0.1034
+2026-08-17 09:59:11 [INFO] [DEBUG_ACTION] tick=137 dir=+1.000000 size=-1.000000 tf=-0.565646 sl=+1.000000 tp=+1.000000
+2026-08-17 09:59:11 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 137 consecutive ticks! Model may be broken.
+[11:54:34] Tick 137 | BTC=$63,534.72 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$+0.1031
+2026-08-17 10:04:13 [INFO] [DEBUG_ACTION] tick=138 dir=+1.000000 size=-1.000000 tf=-0.274088 sl=+1.000000 tp=+1.000000
+2026-08-17 10:04:13 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 138 consecutive ticks! Model may be broken.
+[11:59:36] Tick 138 | BTC=$63,557.23 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.59 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$+0.1087
+2026-08-17 10:09:15 [INFO] [DEBUG_ACTION] tick=139 dir=+1.000000 size=-1.000000 tf=+0.949531 sl=+1.000000 tp=+1.000000
+2026-08-17 10:09:15 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 139 consecutive ticks! Model may be broken.
+[12:04:38] Tick 139 | BTC=$63,493.69 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.58 DD=0.2% Trades=1 | POS: BUY $15.70 PnL=$+0.0929
+2026-08-17 10:14:17 [INFO] [DEBUG_OBS] tick=140 5m                   | min= -0.0050 max= +1.0000 mean= +0.3985 std=0.2792
+2026-08-17 10:14:17 [INFO] [DEBUG_OBS] tick=140 1h                   | min= -2.2496 max= +3.1270 mean= -0.3880 std=0.8896
+2026-08-17 10:14:17 [INFO] [DEBUG_OBS] tick=140 4h                   | min= -1.6988 max= +3.7745 mean= -0.3256 std=0.7697
+2026-08-17 10:14:17 [INFO] [DEBUG_OBS] tick=140 portfolio_state      | min= +0.0000 max= +1.0033 mean= +0.2404 std=0.3871
+2026-08-17 10:14:17 [INFO] [DEBUG_OBS] tick=140 context_vector       | min= -0.9541 max= +1.0000 mean= +0.2508 std=0.5224
+2026-08-17 10:14:17 [INFO] [DEBUG_ACTION] tick=140 dir=+1.000000 size=-1.000000 tf=-0.388987 sl=+1.000000 tp=+1.000000
+2026-08-17 10:14:17 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 140 consecutive ticks! Model may be broken.
+[12:09:40] Tick 140 | BTC=$63,457.65 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$+0.0840
+2026-08-17 10:19:19 [INFO] [DEBUG_ACTION] tick=141 dir=+1.000000 size=-1.000000 tf=+0.185498 sl=+1.000000 tp=+1.000000
+2026-08-17 10:19:19 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 141 consecutive ticks! Model may be broken.
+[12:14:42] Tick 141 | BTC=$63,433.79 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.56 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$+0.0780
+2026-08-17 10:24:20 [INFO] [DEBUG_ACTION] tick=142 dir=+1.000000 size=-1.000000 tf=-0.015375 sl=+1.000000 tp=+1.000000
+2026-08-17 10:24:20 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 142 consecutive ticks! Model may be broken.
+[12:19:43] Tick 142 | BTC=$63,448.15 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.57 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$+0.0816
+2026-08-17 10:29:22 [INFO] [DEBUG_ACTION] tick=143 dir=+1.000000 size=-1.000000 tf=-0.226473 sl=+1.000000 tp=+1.000000
+2026-08-17 10:29:22 [ERROR] [SATURATION ALARM] Direction=+1.0000 for 143 consecutive ticks! Model may be broken.
+[12:24:45] Tick 143 | BTC=$63,416.74 | Dir=+1.0000 Size=76.60% SL=2.000% TP=4.000% | Equity=$20.56 DD=0.3% Trades=1 | POS: BUY $15.70 PnL=$+0.0738
+2026-08-17 10:34:23 [INFO] [BOT] Duration limit reached
+
+======================================================================
+  ADAN0 Bot — Session Complete
+======================================================================
+2026-08-17 10:34:23 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786955663.json
+2026-08-17 10:34:23 [INFO] [ExecutionEngine] Report saved: logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786955663.json
+2026-08-17 10:34:23 - adan_trading_bot.trading.execution_engine - INFO - [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.34% E=$0.0
+2026-08-17 10:34:23 [INFO] [METRICS] trades=0 WR=0.0% PF=0.0 Sharpe=0.0 DD=0.34% E=$0.0
+2026-08-17 10:34:23 - adan_trading_bot.trading.execution_engine - INFO - [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786955663.csv (1 rows)
+2026-08-17 10:34:23 [INFO] [ExecutionEngine] Trades CSV exported: logs/paper/v30_450k_20260816_223359/trades_paper_binance_1786955663.csv (1 rows)
+  Ticks:     143
+  Trades:    1
+  Equity:    $20.56 (+0.0585, +0.29%)
+  Report:    logs/paper/v30_450k_20260816_223359/trading_paper_binance_1786955663.json
+======================================================================

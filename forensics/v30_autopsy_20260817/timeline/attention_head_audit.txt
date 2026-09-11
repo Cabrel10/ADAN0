@@ -1,0 +1,22 @@
+=== ATTENTION HEAD AUDIT — checkpoints/ppo_adan0_v30_500k_checkpoint_500000_steps.zip ===
+
+--- Policy modules (searching for attention) ---
+  ATTN: features_extractor.cross_attention -> HierarchicalCrossAttention
+  ATTN: features_extractor.cross_attention.attn -> MultiheadAttention
+  ATTN: features_extractor.cross_attention.attn.out_proj -> NonDynamicallyQuantizableLinear
+  ATTN: features_extractor.cross_attention.norm_q -> LayerNorm
+  ATTN: features_extractor.cross_attention.norm_kv -> LayerNorm
+  ATTN: features_extractor.cross_attention.norm_out -> LayerNorm
+  ATTN: features_extractor.cross_attention.ffn -> Sequential
+  ATTN: features_extractor.cross_attention.ffn.0 -> Linear
+  ATTN: features_extractor.cross_attention.ffn.1 -> GELU
+  ATTN: features_extractor.cross_attention.ffn.2 -> Dropout
+  ATTN: features_extractor.cross_attention.ffn.3 -> Linear
+  ATTN: features_extractor.cross_attention.ffn.4 -> Dropout
+
+--- Latent features variance across observations ---
+latent shape per obs: 256
+latent std across 5 different obs: mean=0.149518 max=0.584960
+latent pairwise diff (obs500 vs obs7000): max|Δ|=1.610077
+
+*** ENCODER ALIVE: latents vary (max std 0.5850) — collapse is in policy head only ***
