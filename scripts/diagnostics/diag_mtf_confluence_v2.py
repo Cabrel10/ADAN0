@@ -260,8 +260,19 @@ def ev_grid(high, low, close, entries, H, atr_entry):
 
 # ------------------------------------------------------------------ pipeline
 def fit_confluence(df_train, H_ref=80):
-    """Poids w_k par information mutuelle (train only) + stats de standardisation."""
-    stats, weights = {}, {}
+    """Poids SIGNEs w_k = sign(corr(z_k, MFE)) x MI(z_k ; MFE), train only.
+
+    ETAPE 0 (doc 47) : MI >= 0 par definition — les poids affiches ne sont PAS
+    du MI brut mais une magnitude d'information multipliee par la direction de
+    la correlation (comportement documente depuis R4). On expose desormais les
+    deux separement (mi_raw >= 0, sign, poids signe) pour lever l'ambiguite.
+    IMPORTANT : ce score signe n'est utilise QUE par cette sonde (deciles,
+    monotonie, FDR). Les sondes aval (fee_sensitivity, mfe_excursion,
+    spot_mirror) utilisent get_masks() — un masque booleen brut
+    (f4>1)&(f1>1)&(m5>0) — jamais ce score : elles sont insensibles a un
+    eventuel probleme de signe ici.
+    """
+    stats, weights, mi_raws, signs = {}, {}, {}, {}
     n = len(df_train)
     events = cross_up_events(df_train)
     entries = select_nonoverlapping(events, n, H_ref)
@@ -275,12 +286,14 @@ def fit_confluence(df_train, H_ref=80):
         stats[tf] = (mu, sd)
         z = (s - mu) / sd
         z_ev = z[entries]
-        mi = mutual_information(z_ev, mfe)
+        mi_raw = max(0.0, mutual_information(z_ev, mfe))  # MI >= 0 (invariant)
         sign = 1.0 if np.corrcoef(z_ev, mfe)[0, 1] >= 0 else -1.0
-        weights[tf] = sign * mi
+        weights[tf] = sign * mi_raw
+        mi_raws[tf] = mi_raw
+        signs[tf] = int(sign)
     tot = sum(abs(w) for w in weights.values()) or 1.0
     weights = {k: v / tot for k, v in weights.items()}
-    return stats, weights
+    return stats, weights, {"mi_raw": mi_raws, "sign": signs}
 
 
 def confluence_score(df, stats, weights):
@@ -368,8 +381,11 @@ def run_asset(asset, splits_data, H_ref=80):
     df_train = splits_data.get("train")
     if df_train is None:
         return None
-    stats, weights = fit_confluence(df_train, H_ref)
-    report["weights_mi"] = {k: round(v, 4) for k, v in weights.items()}
+    stats, weights, mi_detail = fit_confluence(df_train, H_ref)
+    # ETAPE 0 : etiquetage explicite — MI brute (>=0) et poids SIGNE separes.
+    report["mi_raw"] = {k: round(v, 6) for k, v in mi_detail["mi_raw"].items()}
+    report["mi_sign"] = mi_detail["sign"]
+    report["weights_signed_mi"] = {k: round(v, 4) for k, v in weights.items()}
     c_train = confluence_score(df_train, stats, weights)
     dec_edges = np.quantile(c_train, np.linspace(0, 1, N_DECILES + 1))
     dec_edges[0], dec_edges[-1] = -np.inf, np.inf
@@ -517,7 +533,8 @@ def main():
         rep, stats, weights, dec_edges = run_asset(asset, data[asset])
         reports[asset] = rep
         fitted[asset] = (stats, weights, dec_edges)
-        print("  poids MI:", rep["weights_mi"])
+        print("  MI brute (>=0):", rep["mi_raw"], " signes:", rep["mi_sign"])
+        print("  poids signes (MI x sign(corr)):", rep["weights_signed_mi"])
         print("  monotonie:", rep["monotonicity"])
         print("  FDR rejetes:", rep["fdr_train"]["rejected"])
         # Walk-forward sur le train
