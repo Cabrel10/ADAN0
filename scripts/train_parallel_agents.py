@@ -1151,12 +1151,16 @@ class ADAN_PBT_Worker(_TrainableBase):
 
         # Mutable hyper-parameters (PBT will perturb these)
         # IMPORTANT: Use profile-specific values as initial seeds if available,
-        # falling back to PBT's random sample. This ensures each worker starts
+        # falling back to production.simple_ppo config. This ensures each worker starts
         # with its research-calibrated hyperparams before PBT explores.
+        # ADAN0_GAMMA_FIX (2026-09-20): Load gamma from production.simple_ppo (0.99),
+        # not stale root agent.gamma (which was deleted). Precedence: profile -> config.
         _prof = WORKER_PROFILES.get(self.profile, {}) if self.profile else {}
         self.learning_rate = _prof.get("learning_rate", config.get("learning_rate", 3e-4))
         self.ent_coef = _prof.get("ent_coef", config.get("ent_coef", 0.01))
-        self.gamma = _prof.get("gamma", config.get("gamma", 0.99))
+        # FIXED: Use production.simple_ppo.gamma as the source of truth (was using stale root gamma)
+        self.gamma = _prof.get("gamma", 
+                               config.get("production", {}).get("simple_ppo", {}).get("gamma", 0.99))
         
         # Trading hyperparams (Ray PBT auto-evolves these)
         self.sl_pct = config.get("sl_pct", 0.02)  # Stop-Loss percentage
@@ -2671,6 +2675,16 @@ def sandbox_train(steps: int = None, initial_capital: float = None,
     if resume_ckpt:
         logger.info(f"[SANDBOX] Resuming PPO from {resume_ckpt}")
         model = PPO.load(resume_ckpt, env=vec_env, device="cpu")
+        # ADAN0_GAMMA_FIX (2026-09-20): Override gamma from config after checkpoint load.
+        # Checkpoint v30 was trained with stale gamma=0.9523, but config specifies 0.99.
+        # Explicitly re-apply the intended gamma so resumed training uses the correct value.
+        intended_gamma = sandbox_cfg.get("production", {}).get("simple_ppo", {}).get("gamma", 0.99)
+        if hasattr(model, 'gamma'):
+            old_gamma = model.gamma
+            model.gamma = intended_gamma
+            logger.info(f"[SANDBOX] Updated PPO.gamma: {old_gamma} → {intended_gamma} (from config)")
+        else:
+            logger.warning(f"[SANDBOX] Could not override gamma: model has no gamma attribute")
         # The PPO model loaded from disk keeps its own num_timesteps;
         # we tell .learn() to NOT reset it so we accumulate across relays.
         reset_num_timesteps = False
