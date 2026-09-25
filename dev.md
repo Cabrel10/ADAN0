@@ -95,6 +95,48 @@ structurel + ordres limit), pas un problème de signal.
 - `deterministic_gate.py` : refus géométrique si frais_R > 0.3R
 - Exécution cible : ordres limit post-only (maker), pas de taker
 
+### Étape 1 — nested_state_builder.py : LIVRÉE ET PROUVÉE (2026-09-25)
+
+**Fichier** : `src/adan_trading_bot/data/nested_state_builder.py` (+ `data/__init__.py`)
+
+**Ce qui a été fait** : `NestedStateBuilder` construit le `LivingStateSnapshot` S_t
+à chaque clôture 5m — barre 5m scellée + contenants 1h (k/12) et 4h (m/48)
+**vivants** (OHLCV running reconstruits depuis la timeline 5m, jamais chargés
+depuis des parquets 1h/4h figés), niveaux des contenants fermés précédents,
+sweeps avec réintégration, phases, positions intra-contenant, portefeuille,
+et flag d'intégrité (étape 2 → abstention).
+
+**Pourquoi** : élimine la latence temporelle du MTF statique (l'erreur
+fondatrice d'ADAN0) — à k=6/12, le contenant 1h n'est qu'à moitié formé, son
+état reflète exactement cette réalité. Zéro fuite possible par construction.
+
+**Corrections clés** :
+- pandas 3.0.5 a supprimé `ts.view('int64')` → `ts.to_numpy('datetime64[ns]').astype(int64)`
+- `.gitignore` : la règle `data/` (données racine) masquait aussi le package
+  `src/adan_trading_bot/data/` → ancrée en `/data/` + exception explicite.
+
+**Preuves (tests/test_nested_state_builder.py — 7/7)** :
+- T1 : mutation des barres > i (high×5, close×3) → snapshot i **inchangé**
+- T2 : à k=6/12, running_1h == OHLCV des 6 premières 5m exactement
+- T3 : prev_1h == bougie 1h civile fermée précédente (recalcul indépendant)
+- T4 : phases frontières exactes (00:00 → 1/12 & 1/48 ; 03:55 → 12/12 & 48/48)
+- T5 : historique court / NaN / OHLC incohérent → integrity_ok=False (abstention)
+- T6 : sweeps conformes à la référence Phase 0 (dépassement + réintégration)
+- T7 : cohérence sur 10 000 barres réelles BTCUSDT (running_1h à k=12 == 1h recalculée)
+
+### Prochaines briques (ordre décidé 2026-09-25)
+
+1. `models/system_one_core.py` — interface NOUL/CHOICE/SCORE + Query-Slots
+   (le « JEV personnel ») — PRIORITAIRE avant le moteur d'exécution
+2. `policy/` — geometry_engine (SL≥1.2%/ATR1h, TP 3.5R, rejet frais_R>0.30),
+   deterministic_gate (intégrité, quota ≤5 trades/j, cooldown, direction),
+   risk_engine (Kelly quart, plafond exposition 20%, min 15$ Binance)
+3. `position/lifecycle_manager.py` — vigie active à chaque 5m (étape 10)
+4. `offline/` — labeler MFE/MAE + entraînement supervisé calibré (Brier,
+   calibration VAL, test OOS) — cible d'entraînement : 500K pas
+5. Grand backtest walk-forward 2017→2026 — seuils : PF ≥ 1.6, max DD < 15%,
+   0-5 trades/j, stabilité par cycle (Bull 2017/2021, Bear 2018/2022, Chop 2024-26)
+
 
 **Last updated:** 2026-09-20  
 **Status:** CODE FROZEN — Ready for 500k production run  
