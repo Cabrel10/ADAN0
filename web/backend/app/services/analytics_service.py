@@ -22,7 +22,14 @@ VAL_DIR = settings.REPO_ROOT / "logs" / "validation"
 SCAN_DIR = VAL_DIR / "confidence_scan"
 FORENSIC_DIR = VAL_DIR / "forensic"
 PAPER_DIR = settings.REPO_ROOT / "logs" / "paper"
-DATA_DIR = settings.REPO_ROOT / "data" / "processed" / "BTCUSDT"
+# Univers launcher (garde-fou _asset_guard) : *_BINANCE, jamais le petit
+# controle BTCUSDT (~28 jours) qui a contamine les rounds 3/4 des sondes.
+DATA_DIR = (settings.REPO_ROOT / "data" / "processed" / "indicators"
+            / "test" / "BTCUSDT_BINANCE")
+# Trades individuels persistes par les sondes (diag_conditional_edge) :
+# 22 385 trades spot avec features d'entree — base de la visualisation
+# approfondie des trades.
+PROBE_TRADES_DIR = VAL_DIR / "conditional_edge_trades"
 
 _CKPT_RE = re.compile(r"(\d+)")
 
