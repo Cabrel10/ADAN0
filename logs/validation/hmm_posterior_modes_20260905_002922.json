@@ -1,0 +1,279 @@
+{
+  "assets": [
+    "BTCUSDT_BINANCE",
+    "DOGEUSDT_BINANCE"
+  ],
+  "cause_classification": "GRADED_POSTERIOR_present_see_table",
+  "default_triple_from_state_builder": [
+    0.33,
+    0.33,
+    0.34
+  ],
+  "generated_at": "2026-09-05 00:29:22",
+  "method": "Record the JOINT (ctx[3],ctx[4],ctx[5]) triple per step on the universe launch_asset_run.py actually loads, bucket each observation, and attach the fee gate's real p_min_required.",
+  "question": "Why does hmm_probs become bull~0 / sideways~0 / bear~1, and is 0.333333 a posterior or state_builder's uniform fallback?",
+  "seed": 330500,
+  "splits": [
+    "train",
+    "val"
+  ],
+  "steps_per_window": 300,
+  "windows": [
+    {
+      "asset": "BTCUSDT_BINANCE",
+      "measured": {
+        "distinct_p_hmm_values": 28,
+        "fee_gate": {
+          "block_rate": 0.7065,
+          "blocked": 65,
+          "invocations": 92,
+          "p_min_min": 0.33119,
+          "p_min_p50": 0.465998,
+          "share_pmin_below_0.34": 0.0326
+        },
+        "mode_counts": {
+          "INTERMEDIATE": 38,
+          "NEAR_ONE_HOT": 20,
+          "ONE_HOT": 242
+        },
+        "mode_shares": {
+          "INTERMEDIATE": 0.1267,
+          "NEAR_ONE_HOT": 0.0667,
+          "ONE_HOT": 0.8067
+        },
+        "n_obs": 300,
+        "p_hmm_p50": 0.333333,
+        "p_hmm_support_top": [
+          [
+            0.99,
+            130
+          ],
+          [
+            0.01,
+            113
+          ],
+          [
+            0.333,
+            29
+          ],
+          [
+            0.013,
+            3
+          ],
+          [
+            0.939,
+            2
+          ],
+          [
+            0.022,
+            1
+          ],
+          [
+            0.125,
+            1
+          ],
+          [
+            0.989,
+            1
+          ]
+        ],
+        "sideways_ever_above_0.05": true,
+        "sideways_max": 0.333333,
+        "sum_p50": 1.0
+      },
+      "split": "train"
+    },
+    {
+      "asset": "BTCUSDT_BINANCE",
+      "measured": {
+        "distinct_p_hmm_values": 42,
+        "fee_gate": {
+          "block_rate": 0.8435,
+          "blocked": 97,
+          "invocations": 115,
+          "p_min_min": 0.328333,
+          "p_min_p50": 0.466392,
+          "share_pmin_below_0.34": 0.0261
+        },
+        "mode_counts": {
+          "INTERMEDIATE": 46,
+          "NEAR_ONE_HOT": 24,
+          "ONE_HOT": 230
+        },
+        "mode_shares": {
+          "INTERMEDIATE": 0.1533,
+          "NEAR_ONE_HOT": 0.08,
+          "ONE_HOT": 0.7667
+        },
+        "n_obs": 300,
+        "p_hmm_p50": 0.01,
+        "p_hmm_support_top": [
+          [
+            0.01,
+            168
+          ],
+          [
+            0.99,
+            63
+          ],
+          [
+            0.333,
+            29
+          ],
+          [
+            0.022,
+            2
+          ],
+          [
+            0.95,
+            1
+          ],
+          [
+            0.818,
+            1
+          ],
+          [
+            0.912,
+            1
+          ],
+          [
+            0.8,
+            1
+          ]
+        ],
+        "sideways_ever_above_0.05": true,
+        "sideways_max": 0.333333,
+        "sum_p50": 1.0
+      },
+      "split": "val"
+    },
+    {
+      "asset": "DOGEUSDT_BINANCE",
+      "measured": {
+        "distinct_p_hmm_values": 65,
+        "fee_gate": {
+          "block_rate": 0.8125,
+          "blocked": 91,
+          "invocations": 112,
+          "p_min_min": 0.328333,
+          "p_min_p50": 0.464354,
+          "share_pmin_below_0.34": 0.0268
+        },
+        "mode_counts": {
+          "INTERMEDIATE": 52,
+          "NEAR_ONE_HOT": 50,
+          "ONE_HOT": 198
+        },
+        "mode_shares": {
+          "INTERMEDIATE": 0.1733,
+          "NEAR_ONE_HOT": 0.1667,
+          "ONE_HOT": 0.66
+        },
+        "n_obs": 300,
+        "p_hmm_p50": 0.01,
+        "p_hmm_support_top": [
+          [
+            0.01,
+            154
+          ],
+          [
+            0.99,
+            46
+          ],
+          [
+            0.333,
+            29
+          ],
+          [
+            0.011,
+            4
+          ],
+          [
+            0.019,
+            3
+          ],
+          [
+            0.014,
+            2
+          ],
+          [
+            0.925,
+            2
+          ],
+          [
+            0.969,
+            2
+          ]
+        ],
+        "sideways_ever_above_0.05": true,
+        "sideways_max": 0.333333,
+        "sum_p50": 1.0
+      },
+      "split": "train"
+    },
+    {
+      "asset": "DOGEUSDT_BINANCE",
+      "measured": {
+        "distinct_p_hmm_values": 61,
+        "fee_gate": {
+          "block_rate": 0.6429,
+          "blocked": 54,
+          "invocations": 84,
+          "p_min_min": 0.328333,
+          "p_min_p50": 0.465377,
+          "share_pmin_below_0.34": 0.0476
+        },
+        "mode_counts": {
+          "INTERMEDIATE": 53,
+          "NEAR_ONE_HOT": 44,
+          "ONE_HOT": 203
+        },
+        "mode_shares": {
+          "INTERMEDIATE": 0.1767,
+          "NEAR_ONE_HOT": 0.1467,
+          "ONE_HOT": 0.6767
+        },
+        "n_obs": 300,
+        "p_hmm_p50": 0.596145,
+        "p_hmm_support_top": [
+          [
+            0.01,
+            106
+          ],
+          [
+            0.99,
+            97
+          ],
+          [
+            0.333,
+            29
+          ],
+          [
+            0.96,
+            3
+          ],
+          [
+            0.984,
+            3
+          ],
+          [
+            0.962,
+            2
+          ],
+          [
+            0.968,
+            2
+          ],
+          [
+            0.988,
+            2
+          ]
+        ],
+        "sideways_ever_above_0.05": true,
+        "sideways_max": 1.0,
+        "sum_p50": 1.0
+      },
+      "split": "val"
+    }
+  ]
+}

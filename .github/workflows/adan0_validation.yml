@@ -45,7 +45,7 @@ jobs:
           "
 
       - name: "Smoke test (C1-C14)"
-        run: python smoke_test.py
+        run: python scripts/verification/smoke_test.py
 
       - name: "Verify no forbidden patterns"
         run: |

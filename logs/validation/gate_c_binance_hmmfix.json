@@ -1,0 +1,700 @@
+{
+  "asset": "BTCUSDT_BINANCE",
+  "close_events_first_500": [
+    {
+      "final_step_reward": -0.3864030982188358,
+      "pnl": -0.058648756189819615,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.0006229993728216077,
+        "final_reward": -0.3864030982188358,
+        "future_contrib": -0.25300903578103706,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.14304574680443807,
+        "raw": -0.4716777819582968
+      },
+      "step": 8
+    },
+    {
+      "final_step_reward": -0.38675252069443505,
+      "pnl": -0.0829927497674135,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.0022315046761419133,
+        "final_reward": -0.38675252069443505,
+        "future_contrib": -0.19253926353338022,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.20242134089613048,
+        "raw": -0.47219210910565257
+      },
+      "step": 40
+    },
+    {
+      "final_step_reward": -0.2403243461529073,
+      "pnl": -0.07296607881476902,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.025,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.003907637749168703,
+        "final_reward": -0.2403243461529073,
+        "future_contrib": -0.06478785832905558,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.17796604588968054,
+        "raw": -0.2716615419679048
+      },
+      "step": 45
+    },
+    {
+      "final_step_reward": -0.4070117259903215,
+      "pnl": -0.07076996660544885,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.0031163877227244497,
+        "final_reward": -0.4070117259903215,
+        "future_contrib": -0.25159565939847567,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.1726096746474362,
+        "raw": -0.5023217217686363
+      },
+      "step": 76
+    },
+    {
+      "final_step_reward": -0.52506572027695,
+      "pnl": -0.0791227019485623,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.025,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.007936088354401351,
+        "final_reward": -0.52506572027695,
+        "future_contrib": -0.46465166122459245,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.1929821998745422,
+        "raw": -0.690569949453536
+      },
+      "step": 80
+    },
+    {
+      "final_step_reward": -0.4648691853286877,
+      "pnl": -0.07134632772645684,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.008993594434660631,
+        "final_reward": -0.4648691853286877,
+        "future_contrib": -0.33379691578149395,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.17401543347916304,
+        "raw": -0.5918059436953176
+      },
+      "step": 89
+    },
+    {
+      "final_step_reward": -0.41630215515335656,
+      "pnl": -0.09255381181160334,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": 0.0,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.011247453513228754,
+        "final_reward": -0.41630215515335656,
+        "future_contrib": -0.2793555128714196,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.22574100441854475,
+        "raw": -0.516343970803193
+      },
+      "step": 136
+    },
+    {
+      "final_step_reward": -0.4978514124319188,
+      "pnl": -0.09784415339406055,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.025,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.012501848207382992,
+        "final_reward": -0.4978514124319188,
+        "future_contrib": -0.3690365267742779,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.2386442765708794,
+        "raw": -0.6451826515525403
+      },
+      "step": 139
+    },
+    {
+      "final_step_reward": -0.37931025940121993,
+      "pnl": -0.04501784706836359,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": 0.0,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.010418401697071315,
+        "final_reward": -0.37931025940121993,
+        "future_contrib": -0.341058311448049,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.10979962699600876,
+        "raw": -0.46127634014112906
+      },
+      "step": 150
+    },
+    {
+      "final_step_reward": -0.44271119327017067,
+      "pnl": -0.0483461588802396,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.011083772117450826,
+        "final_reward": -0.44271119327017067,
+        "future_contrib": -0.3529213868732465,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.11791746068351121,
+        "raw": -0.5569226196742085
+      },
+      "step": 157
+    },
+    {
+      "final_step_reward": -0.41818380547861556,
+      "pnl": -0.06776786247771367,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": 0.0,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.00905936848243213,
+        "final_reward": -0.41818380547861556,
+        "future_contrib": -0.34485304806303196,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.16528746945783823,
+        "raw": -0.5191998860033024
+      },
+      "step": 183
+    },
+    {
+      "final_step_reward": -0.48890414019670175,
+      "pnl": -0.0831625355961635,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.013322260089528373,
+        "final_reward": -0.48890414019670175,
+        "future_contrib": -0.33937069723401114,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.20283545267356953,
+        "raw": -0.6305284099971091
+      },
+      "step": 190
+    },
+    {
+      "final_step_reward": -0.5171103177059997,
+      "pnl": -0.0692310042644848,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.011799155761797785,
+        "final_reward": -0.5171103177059997,
+        "future_contrib": -0.4215188763852792,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.16885610796215803,
+        "raw": -0.677174140109235
+      },
+      "step": 198
+    },
+    {
+      "final_step_reward": -0.39325682292046465,
+      "pnl": -0.09409336411136915,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.018160186823167838,
+        "final_reward": -0.39325682292046465,
+        "future_contrib": -0.15914270353543347,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.22949601002772962,
+        "raw": -0.48179890038633094
+      },
+      "step": 202
+    },
+    {
+      "final_step_reward": -0.09532890576384816,
+      "pnl": -0.05553673488497082,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.025,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.011022458902415011,
+        "final_reward": -0.09532890576384816,
+        "future_contrib": 0.07145731109302755,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.13545545093895323,
+        "raw": -0.10002059874834068
+      },
+      "step": 205
+    },
+    {
+      "final_step_reward": -0.25760487836099877,
+      "pnl": -0.044362704885939956,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.02277657610156008,
+        "final_reward": -0.25760487836099877,
+        "future_contrib": -0.08784920303674035,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.1082017192339999,
+        "raw": -0.2938274983723004
+      },
+      "step": 218
+    },
+    {
+      "final_step_reward": -0.11288062258577701,
+      "pnl": -0.06290140168435877,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.025,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.021763334207649872,
+        "final_reward": -0.11288062258577701,
+        "future_contrib": 0.08068310493517927,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.15341805288867993,
+        "raw": -0.11949828216115052
+      },
+      "step": 224
+    },
+    {
+      "final_step_reward": -0.270777266487239,
+      "pnl": -0.049643823642795876,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.012971502059079716,
+        "final_reward": -0.270777266487239,
+        "future_contrib": -0.10192903925704558,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.12108249668974604,
+        "raw": -0.31098303800587135
+      },
+      "step": 229
+    },
+    {
+      "final_step_reward": 0.48764105531854796,
+      "pnl": 0.022914013915141043,
+      "positive_winning_trade_reward": true,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": 0.0,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.5,
+        "drawdown_penalty": 0.02457263693225009,
+        "final_reward": 0.48764105531854796,
+        "future_contrib": 0.04800973858091978,
+        "inaction_penalty": 0.0,
+        "pnl_reward": 0.05588783881741718,
+        "raw": 0.6284702143305871
+      },
+      "step": 233
+    },
+    {
+      "final_step_reward": -0.4362600973187213,
+      "pnl": -0.05828502099783956,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.025,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.04510574959402268,
+        "final_reward": -0.4362600973187213,
+        "future_contrib": -0.3346467524623105,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.1421585877996087,
+        "raw": -0.546911089855942
+      },
+      "step": 236
+    },
+    {
+      "final_step_reward": -0.6279124645973938,
+      "pnl": -0.12148871450546947,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.01419415390529477,
+        "final_reward": -0.6279124645973938,
+        "future_contrib": -0.4881869972685004,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.29631393781821824,
+        "raw": -0.8736950889920134
+      },
+      "step": 242
+    },
+    {
+      "final_step_reward": -0.4060965917592185,
+      "pnl": -0.06688172485082987,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.03929201082119296,
+        "final_reward": -0.4060965917592185,
+        "future_contrib": -0.2235293556242979,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.16312615817275578,
+        "raw": -0.5009475246182467
+      },
+      "step": 246
+    },
+    {
+      "final_step_reward": -0.44180900102756493,
+      "pnl": -0.06716478715875782,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.025,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.024394219382342132,
+        "final_reward": -0.44180900102756493,
+        "future_contrib": -0.3423078361750385,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.16381655404575077,
+        "raw": -0.5555186096031314
+      },
+      "step": 281
+    },
+    {
+      "final_step_reward": -0.48314753899046375,
+      "pnl": -0.08334742725533266,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.035900253168478446,
+        "final_reward": -0.48314753899046375,
+        "future_contrib": -0.30698241190842723,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.20328640793983574,
+        "raw": -0.6211690730167414
+      },
+      "step": 285
+    },
+    {
+      "final_step_reward": -0.300354142386175,
+      "pnl": -0.09587608078075359,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.0277093612635608,
+        "final_reward": -0.300354142386175,
+        "future_contrib": -0.013783473723803294,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.23384409946525267,
+        "raw": -0.3503369344526168
+      },
+      "step": 289
+    },
+    {
+      "final_step_reward": -0.579723259581513,
+      "pnl": -0.08047244599540064,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.032477487450178685,
+        "final_reward": -0.579723259581513,
+        "future_contrib": -0.48179248413756726,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.19627425852536742,
+        "raw": -0.7855442301131135
+      },
+      "step": 296
+    },
+    {
+      "final_step_reward": -0.44256263921482253,
+      "pnl": -0.05315210113278129,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.01095913462095914,
+        "final_reward": -0.44256263921482253,
+        "future_contrib": -0.34109294400714224,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.12963927105556414,
+        "raw": -0.5566913496836655
+      },
+      "step": 301
+    },
+    {
+      "final_step_reward": -0.6336293417433573,
+      "pnl": -0.07515280157341965,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.026137934715836017,
+        "final_reward": -0.6336293417433573,
+        "future_contrib": -0.6,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.18329951603273084,
+        "raw": -0.8844374507485668
+      },
+      "step": 319
+    },
+    {
+      "final_step_reward": -0.24395933202848896,
+      "pnl": -0.08644496602977476,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": 0.0,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.045703598176902,
+        "final_reward": -0.24395933202848896,
+        "future_contrib": -0.019747446472704128,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.21084138056042626,
+        "raw": -0.2762924252100324
+      },
+      "step": 324
+    },
+    {
+      "final_step_reward": -0.4341524962773766,
+      "pnl": -0.03752116894430555,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.0245522725427676,
+        "final_reward": -0.4341524962773766,
+        "future_contrib": -0.35258693294702037,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.09151504620562328,
+        "raw": -0.5436542516954113
+      },
+      "step": 378
+    },
+    {
+      "final_step_reward": -0.4610972365245055,
+      "pnl": -0.07089081821873927,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.018240925225260565,
+        "final_reward": -0.4610972365245055,
+        "future_contrib": -0.3196676828275835,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.1729044346798519,
+        "raw": -0.585813042732696
+      },
+      "step": 386
+    },
+    {
+      "final_step_reward": -0.6081265812008844,
+      "pnl": -0.05316704658018984,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.07500000000000001,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.03231100429765439,
+        "final_reward": -0.6081265812008844,
+        "future_contrib": -0.6,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.1296757233663167,
+        "raw": -0.8369867276639711
+      },
+      "step": 478
+    },
+    {
+      "final_step_reward": -0.5880045112162312,
+      "pnl": -0.08094143410614399,
+      "positive_winning_trade_reward": false,
+      "reason": "AGENT_CLOSE",
+      "reward_components": {
+        "behavior_penalty": -0.025,
+        "capacity_reward": -0.03,
+        "closure_bonus": 0.0,
+        "drawdown_penalty": -0.049017696714743694,
+        "final_reward": -0.5880045112162312,
+        "future_contrib": -0.52895633739887,
+        "inaction_penalty": 0.0,
+        "pnl_reward": -0.19741813196620484,
+        "raw": -0.8003921660798186
+      },
+      "step": 481
+    }
+  ],
+  "counts_first_500": {
+    "capacity_negative_steps": 391,
+    "capacity_positive_steps": 109,
+    "capacity_zero_steps": 0,
+    "closings": 33,
+    "losing_closings": 32,
+    "openings": 33,
+    "positive_winning_trade_rewards": 1,
+    "profitable_closes_with_nonpositive_reward": 0,
+    "winning_closings": 1
+  },
+  "episodes_or_resets_1000": 0,
+  "gates": {
+    "A_capacity_vs_winning_trade": {
+      "capacity_reward_in_optimized_raw_reward": false,
+      "capacity_reward_max_abs_telemetry": 2.0,
+      "capacity_reward_mean_telemetry": 0.4125400000000001,
+      "capacity_reward_std_telemetry": 0.8381614095148976,
+      "decision_basis": "telemetry_ratio_required_by_gate_A",
+      "effective_ppo_contribution_max_abs": 0.0,
+      "effective_ppo_ratio": 0.0,
+      "telemetry_ratio": 4.101377392626457,
+      "threshold": {
+        "operator": "<",
+        "value": 0.1
+      },
+      "verdict": "FAIL",
+      "winning_trade_reward_mean": 0.48764105531854796
+    },
+    "B_action_diff": {
+      "divergence_count": 334,
+      "divergence_rate": 0.334,
+      "source": "direct requested/executed environment attributes",
+      "steps": 1000,
+      "threshold": {
+        "operator": "<",
+        "value": 0.05
+      },
+      "verdict": "FAIL"
+    },
+    "C_random_hold": {
+      "decision_basis": "executed HOLD rate",
+      "executed_hold_count": 434,
+      "executed_hold_rate": 0.868,
+      "requested_hold_count": 257,
+      "requested_hold_rate": 0.514,
+      "steps": 500,
+      "threshold": {
+        "operator": "<=",
+        "value": 0.8
+      },
+      "verdict": "FAIL"
+    },
+    "D_reward_std": {
+      "reward_max": 0.48764105531854796,
+      "reward_mean": -0.03235653712231229,
+      "reward_min": -0.6336293417433573,
+      "reward_std": 0.11150530195628792,
+      "steps": 500,
+      "threshold": {
+        "operator": ">",
+        "value": 0.01
+      },
+      "verdict": "PASS"
+    },
+    "E_fees_vs_mean_tp": {
+      "commission_per_side": 0.002,
+      "fees_to_mean_tp_ratio": 0.22408963585434172,
+      "mean_tp": 0.01785,
+      "round_trip_fees": 0.004,
+      "sl_high": 0.0235,
+      "threshold": {
+        "operator": "<",
+        "value": 0.3
+      },
+      "tp_high": 0.0222,
+      "tp_low": 0.0135,
+      "verdict": "PASS"
+    }
+  },
+  "launch_authorized": false,
+  "launcher_runtime_invariants": {
+    "ADAN_FREE_SLTP": "1",
+    "ADAN_SL_HI": "0.0235",
+    "ADAN_TP_HI": "0.0222",
+    "ADAN_TP_LO": "0.0135"
+  },
+  "measurement_windows": {
+    "action_diff_steps_B": 1000,
+    "financial_steps_A_C_D": 500,
+    "trajectory": "single uninterrupted trajectory except natural episode resets"
+  },
+  "overall_verdict": "NO_GO",
+  "protocol": "real_environment_uniform_random_policy_strict_A_to_E",
+  "reward_influence_audit": {
+    "capacity_reward": "telemetry_only_not_in_raw_reward",
+    "inaction_penalty_function": "constant_0.0",
+    "inaction_penalty_runtime_call_sites": 0
+  },
+  "seed": 330500,
+  "split": "train"
+}

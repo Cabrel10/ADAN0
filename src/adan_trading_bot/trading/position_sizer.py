@@ -7,12 +7,32 @@ risk management and capital allocation.
 
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
+from enum import Enum
 import logging
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 MIN_ATR_VALUE = 1e-5  # Minimum ATR value to prevent division by zero
+
+
+class PositionSizingMethod(Enum):
+    """
+    Canonical position-sizing methods.
+
+    Re-exported here as the single source of truth so that
+    ``action_translator._map_position_size_method`` can import it
+    (fixes the pre-existing ``ImportError: cannot import name
+    'PositionSizingMethod'`` that blocked live trading). The concrete
+    sizing logic in :class:`PositionSizer` now dispatches by
+    ``worker_type``; this enum is kept for the translator's legacy
+    mapping API and any external caller relying on the symbolic names.
+    """
+    FIXED = "fixed"
+    PERCENTAGE = "percentage"
+    VOLATILITY_ADJUSTED = "volatility_adjusted"
+    KELLY_CRITERION = "kelly_criterion"
+
 
 @dataclass
 class PositionSizingResult:

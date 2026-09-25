@@ -1,0 +1,107 @@
+{
+  "bin_size": 50000,
+  "checkpoints": [
+    {
+      "ckpt_~steps": 50000,
+      "ep_rew_mean": 1360.0,
+      "entropy": -2.6837,
+      "value_loss": 0.4264,
+      "explained_var": 0.0018,
+      "approx_kl": 0.1613,
+      "clip_frac": 0.5215,
+      "tp_pct_mean": 1.6144,
+      "tp_sat%": 24.748,
+      "sl_sat%": 5.5488,
+      "fa_share%": 16.0892,
+      "TP_HIT": 7716,
+      "SL_HIT": 2940,
+      "TP/SL": 2.62
+    },
+    {
+      "ckpt_~steps": 100000,
+      "ep_rew_mean": 2238.4694,
+      "entropy": -3.7712,
+      "value_loss": 0.5579,
+      "explained_var": -0.043,
+      "approx_kl": 0.1803,
+      "clip_frac": 0.5695,
+      "tp_pct_mean": 1.6985,
+      "tp_sat%": 37.4032,
+      "sl_sat%": 12.375,
+      "fa_share%": 6.3833,
+      "TP_HIT": 12662,
+      "SL_HIT": 1966,
+      "TP/SL": 6.44
+    },
+    {
+      "ckpt_~steps": 150000,
+      "ep_rew_mean": 2606.5979,
+      "entropy": -4.8651,
+      "value_loss": 0.613,
+      "explained_var": -0.1463,
+      "approx_kl": 0.1845,
+      "clip_frac": 0.5638,
+      "tp_pct_mean": 1.5741,
+      "tp_sat%": 33.8543,
+      "sl_sat%": 27.4737,
+      "fa_share%": 6.1068,
+      "TP_HIT": 12046,
+      "SL_HIT": 2296,
+      "TP/SL": 5.25
+    },
+    {
+      "ckpt_~steps": 200000,
+      "ep_rew_mean": 2984.2857,
+      "entropy": -6.0094,
+      "value_loss": 0.6106,
+      "explained_var": -0.1267,
+      "approx_kl": 0.1843,
+      "clip_frac": 0.5452,
+      "tp_pct_mean": 1.5466,
+      "tp_sat%": 39.0602,
+      "sl_sat%": 41.7149,
+      "fa_share%": 5.9572,
+      "TP_HIT": 12588,
+      "SL_HIT": 2728,
+      "TP/SL": 4.61
+    },
+    {
+      "ckpt_~steps": 250000,
+      "ep_rew_mean": 3080.0,
+      "entropy": -6.44,
+      "value_loss": 0.6824,
+      "explained_var": -0.0958,
+      "approx_kl": 0.1784,
+      "clip_frac": 0.4899,
+      "tp_pct_mean": 1.5269,
+      "tp_sat%": 42.8125,
+      "sl_sat%": 47.2917,
+      "fa_share%": 5.9898,
+      "TP_HIT": 2184,
+      "SL_HIT": 600,
+      "TP/SL": 3.64
+    }
+  ],
+  "transitions": [
+    {
+      "transition": "50000\u2192100000",
+      "verdict": "PROGRESSE",
+      "detail": "reward \u2191878; TP/SL 2.62\u21926.44; expl_var=-0.043"
+    },
+    {
+      "transition": "100000\u2192150000",
+      "verdict": "PROGRESSE",
+      "detail": "reward \u2191368; TP/SL 6.44\u21925.25; expl_var=-0.1463"
+    },
+    {
+      "transition": "150000\u2192200000",
+      "verdict": "PROGRESSE",
+      "detail": "reward \u2191378; TP/SL 5.25\u21924.61; expl_var=-0.1267"
+    },
+    {
+      "transition": "200000\u2192250000",
+      "verdict": "PLATEAU",
+      "detail": "reward \u219196; TP/SL 4.61\u21923.64; expl_var=-0.0958"
+    }
+  ]
+}
