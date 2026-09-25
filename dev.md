@@ -124,10 +124,46 @@ fondatrice d'ADAN0) — à k=6/12, le contenant 1h n'est qu'à moitié formé, s
 - T6 : sweeps conformes à la référence Phase 0 (dépassement + réintégration)
 - T7 : cohérence sur 10 000 barres réelles BTCUSDT (running_1h à k=12 == 1h recalculée)
 
+### Étape 4 — system_one_core.py : LE « JEV PERSONNEL » LIVRÉ (2026-09-25)
+
+**Fichier** : `src/adan_trading_bot/models/system_one_core.py`
+
+**Ce qui a été fait** : le moteur de jugement (étape 4 du workflow). Z n'est
+jamais transformé directement en ordre — il est **interrogé** par des
+Query-Slots (embeddings de questions appris) :
+
+- **NOUL** (6 questions : mfe_atteint_tp, risque_adverse_faible,
+  expansion_imminente, anomalie_donnees, sweep_confirme, reintegration_valide)
+  → P(vérité) ∈ [0,1]
+- **CHOICE** (regime ∈ {BULL, BEAR, RANGE, TRAP} ; direction ∈ {LONG, SHORT,
+  AUCUNE}) → distribution catégorielle
+- **SCORE** (qualite_setup, conviction) → distribution **ordinale monotone**
+  sur 0..10 : P(>k) structurellement décroissante (cumsum de softplus),
+  distribution reconstruite par bornes, E[score] + incertitude. Corrige la
+  somme naïve de sigmoïdes du prototype (aucune monotonie garantie).
+
+**Architecture** : moteur GÉNÉRAL de jugement — notion partagée (décodeur par
+type) + adaptateur spécifique par question, au lieu de 10 têtes indépendantes.
+Le système apprend que « la même notion probabiliste s'applique à plusieurs
+affirmations, chacune avec sa sémantique ».
+
+**Calibration** : `calibrate()` fixe les températures (buffers, apprises sur
+VALIDATION à l'étape 12) ; `predict_calibrated()` ne sert que des probabilités
+dont P=0.70 signifie 70 % réel. Les logits bruts ne sortent que pour
+l'entraînement (Brier/NLL).
+
+**Bogues trouvés par le smoke test et corrigés** :
+1. KeyError : dict de logits indexé par entier au lieu du nom de question
+2. Distribution ordinale tronquée (10 vs 11 niveaux) → bornes P(>-1)=1 et
+   P(>10)=0 explicitement concaténées
+
+**Preuves (smoke test 6/6)** : forward batch, monotonie ordinale, probabilités
+sommant à 1, espérance ∈ [0,10], calibration activable, round-trip complet
+LivingStateSnapshot → features (88 dims) → Judgment sur données réelles BTCUSDT.
+
 ### Prochaines briques (ordre décidé 2026-09-25)
 
-1. `models/system_one_core.py` — interface NOUL/CHOICE/SCORE + Query-Slots
-   (le « JEV personnel ») — PRIORITAIRE avant le moteur d'exécution
+1. ~~`models/system_one_core.py`~~ ✅ LIVRÉ (voir ci-dessous)
 2. `policy/` — geometry_engine (SL≥1.2%/ATR1h, TP 3.5R, rejet frais_R>0.30),
    deterministic_gate (intégrité, quota ≤5 trades/j, cooldown, direction),
    risk_engine (Kelly quart, plafond exposition 20%, min 15$ Binance)
