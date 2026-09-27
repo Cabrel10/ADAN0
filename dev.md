@@ -196,6 +196,34 @@ pertes jour > 5 %, minimum 15 USDT (Binance). Kelly ≤ 0 → aucun capital.
 frais 0.333R) et G6 (p=0.15→EV brute −0.325R) — les valeurs initiales de test
 ne déclenchaient pas le refus attendu (le code métier était correct).
 
+### Étape 10 — lifecycle_manager.py : LA VIGIE ACTIVE LIVRÉE (2026-09-25)
+
+**Fichier** : `src/adan_trading_bot/position/lifecycle_manager.py` (+ `__init__.py`)
+
+**Ce qui a été fait** : contrairement à ADAN0 (trade abandonné à un SL/TP
+aveugles), le cerveau reste allumé tant que la position est ouverte. À chaque
+clôture 5m, dans l'ordre de priorité : TP → SL → anomalie critique (JEV) →
+invalidation de thèse → break-even → trailing → time-stop → HOLD.
+
+**Règles gravées** : break-even dès +1.5R (SL → entry ± frais, trade garanti
+sans perte) ; trailing ATR_1h dès +2.0R ; invalidation anticipée après ≥6
+barres si clôture au-delà de l'extrême des 3 barres PRÉCÉDENTES contre la
+position (transforme −1R en ≈−0.5R) ; anomalie critique P>0.70 → sortie
+marché immédiate ; time-stop 288 barres (24h).
+
+**Bugs trouvés par les tests et corrigés** (les tests avant tout) :
+1. **Fenêtre d'invalidation** incluait la barre courante — or `close ≤ high`
+   de sa propre barre, donc l'invalidation ne pouvait JAMAIS se déclencher.
+   Fix : la barre courante n'entre dans la fenêtre qu'APRÈS l'évaluation
+   (factorisé via `_push_recent`, appelé avant chaque décision).
+2. **Frontière float** : `(100−98.20)/1.2 = 1.4999…` < 1.5 bloquait le
+   break-even à pile +1.5R → epsilon 1e-9 sur les seuils BE/trailing.
+
+**Preuves (tests/test_lifecycle_manager.py — 9/9)** : TP SHORT/LONG, SL
+touché (−1R), break-even (SL=entry−frais, garanti sans perte), trailing suit
+le prix à 1×ATR, invalidation anticipée à −0.50R au lieu de −1R, anomalie
+critique → marché, time-stop, HOLD nominal, suivi MFE/MAE exact.
+
 ### Prochaines briques (ordre décidé 2026-09-25)
 
 1. ~~`models/system_one_core.py`~~ ✅ LIVRÉ (voir ci-dessous)
