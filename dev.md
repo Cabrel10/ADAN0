@@ -161,6 +161,41 @@ l'entraînement (Brier/NLL).
 sommant à 1, espérance ∈ [0,10], calibration activable, round-trip complet
 LivingStateSnapshot → features (88 dims) → Judgment sur données réelles BTCUSDT.
 
+### Étapes 5-8 — BLOC POLICY LIVRÉ (2026-09-25)
+
+**Fichiers** : `src/adan_trading_bot/policy/` — `geometry_engine.py`,
+`deterministic_gate.py`, `risk_engine.py` (+ `__init__.py`)
+
+**Ce qui a été fait** : la chaîne déterministe qui transforme l'état S_t en
+ordre sain ou en abstention — grave dans le code les invariants économiques
+prouvés en Phase 0b.
+
+**geometry_engine.py (étape 7)** — invariants non négociables :
+- Plancher SL = max(1.2 %, 1.0 × ATR_1h) — interdiction du micro-SL
+- TP = 3.5 R (expansion du contenant 4h)
+- Refus géométrique si frais_R = frais_RT / SL > 0.30 R
+- EV nette = P(win)·3.5 − (1−P(win)) − frais_R > 0 exigée
+
+**deterministic_gate.py (étapes 5-6)** — le gardien de l'abstention (0-5 trades/j
+MAX, jamais de punition du silence). Chaîne de veto dans l'ordre : intégrité →
+quota (5/j) → cooldown → anomalie JEV → régime TRAP → géométrie → direction
+(sweep_high→SHORT, sweep_low→LONG, confirmé par le JEV).
+
+**risk_engine.py (étape 8)** — sizing déterministe : Kelly fractionnaire
+(quart) plafonné à 20 %/trade, exposition totale ≤ 40 %, circuit breaker
+pertes jour > 5 %, minimum 15 USDT (Binance). Kelly ≤ 0 → aucun capital.
+
+**Preuves (tests/test_policy_suite.py — 21/21)** :
+- Géométrie : plancher SL, ATR, refus frais>0.30R (0.333R taker), EV nette
+  maker exacte (+1.647R), TP=3.5R, refus EV brute négative (p=0.15)
+- Gate : abstention sur intégrité/quota(6e trade)/cooldown/anomalie/TRAP,
+  direction par sweep, confirmation JEV, chemin complet GO (7 filtres)
+- Risk : Kelly ≤0, plafond 20 %, min 15$, circuit breaker, exposition 40 %
+
+**Bogues de fixtures corrigés** : G3 (invalidation 0.10%→planchée 1.2%,
+frais 0.333R) et G6 (p=0.15→EV brute −0.325R) — les valeurs initiales de test
+ne déclenchaient pas le refus attendu (le code métier était correct).
+
 ### Prochaines briques (ordre décidé 2026-09-25)
 
 1. ~~`models/system_one_core.py`~~ ✅ LIVRÉ (voir ci-dessous)
