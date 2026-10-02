@@ -37,8 +37,9 @@ def reference_atr(df, i):
     # Need 14 TRs, plus previous close if that preceding hour exists.
     for offset in range(15, 0, -1):
         start = current_hour - pd.Timedelta(hours=offset)
-        positions = [j for j in range(max(0, i - 192), i + 1)
-                     if start <= df.index[j] < start + pd.Timedelta(hours=1)]
+        left = int(df.index.searchsorted(start))
+        right = min(i + 1, int(df.index.searchsorted(start + pd.Timedelta(hours=1))))
+        positions = list(range(left, right))
         expected = pd.date_range(start, periods=12, freq="5min")
         if len(positions) != 12 or not df.index[positions].equals(expected):
             hourly.append(None)
@@ -236,6 +237,11 @@ def main():
     if args.check_malformed:
         metadata["malformed_rejections"] = malformed_tests()
     if not args.synthetic_only:
+        digest = hashlib.sha256()
+        with open(args.data, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        metadata["dataset_sha256"] = digest.hexdigest()
         source = pd.read_parquet(args.data, columns=COLS)
         train = source[(source.index >= "2017-01-01") & (source.index < "2022-01-01")]
         rng = np.random.default_rng(args.seed)
