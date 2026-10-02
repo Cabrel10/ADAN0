@@ -110,6 +110,8 @@ class RelationGraph:
         import datetime
         if edge.source not in self.name_to_idx or edge.target not in self.name_to_idx:
             raise ValueError(f"Unknown graph endpoint: {edge.source} -> {edge.target}")
+        if not isinstance(edge.edge_type, EdgeType) or not isinstance(edge.origin, DependencyOrigin):
+            raise ValueError("Unknown edge type or dependency origin")
         if edge.source == edge.target or not math.isfinite(edge.weight):
             raise ValueError("Self edge or nonfinite weight")
         empirical = edge.edge_type == EdgeType.EMPIRICAL_DEPENDENCY
@@ -145,6 +147,8 @@ class RelationGraph:
             if var.name.startswith("seq_5m.lag_"):
                 continue
             for parent in var.dependances_deterministes:
+                if parent not in self.name_to_idx:
+                    raise ValueError(f"Unresolved declared dependency {parent} -> {var.name}")
                 if parent in self.name_to_idx:
                     self.add_edge(RelationEdge(
                         source=parent,
