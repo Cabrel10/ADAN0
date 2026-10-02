@@ -8,6 +8,59 @@
 > (machine locale de jugement probabiliste). Le workflow complet est figé
 > ci-dessous — toute implémentation le suit à la lettre.
 
+## Autorité actuelle — gates 1 à 9 (2026-10-02)
+
+Les prototypes ci-dessous ne valent pas autorisation d'entraînement. Ordre :
+labeler production/référence → audit du registre EXISTANT → graph sparse →
+audit labels → labels conditionnés au plan → géométrie conditionnelle →
+SystemOne(state,plan,portfolio) → GPU 1K/5K/10K → backtest walk-forward.
+Aucun 500K avant validation des mini-runs. Aucun choix sur TEST.
+Sizing cible : capital ~20 $, allocation Micro 70–90 %, min ordre ~11 $,
+une position maximum, risque/trade 4 %. Les anciens plafonds 20 %/40 % et
+minimum 15 $ restent des prototypes NON alignés à réconcilier avec la config.
+
+### GATE 1 — comparaison directe validée (2026-10-02)
+
+Code : commits `6503f70` → `1870cc0` (production finale `138e741`, version
+`gate1-baseline-v2`). PR : https://github.com/Cabrel10/ADAN0/pull/11.
+
+- Ancien « zéro divergence » rejeté : comparait deux copies locales à i+2,
+  ignorait --n et ne testait pas compute_labels.
+- Référence scalaire indépendante : OHLC bruts, direction/sweep et ATR calculés
+  sans les tableaux de production ; entrée open[i+1], scan i+1..i+288.
+- MFE/MAE : fractions non négatives jusqu'à la sortie, barre de sortie entière
+  incluse (excursion intra-barre non ordonnée). Touches simultanées : SL gagne.
+- Y_WIN baseline = TP_FIRST, pas encore un PnL portefeuille complet ; AUCUNE
+  direction est encore évaluée LONG par défaut. Ce biais sera traité au GATE 5.
+- Avant : 122 différences/champs absents sur 70 décisions synthétiques.
+  Puis le comparateur strict a démasqué l'arrondi float32 de net_return
+  (égalité NumPy pouvait arrondir la référence). Correction float64.
+- Correctifs : dernière fenêtre complète réadmise ; plan_valid explicite ;
+  ATR14 d'heures complètes consécutives, sans bfill ni double définition ;
+  warmup NaN ; fenêtre d'expansion incomplète exclue (wraparound détecté par
+  fixture adversariale) ; réintégration finale sans bouclage ; rejet explicite
+  NaN/gaps/doublons/OHLC incohérent/prix nul/volume négatif. Pas de drop silencieux.
+- Après : 3 000 timestamps d'entrée uniques, seed 1729, répartis dans 12 fenêtres
+  continues de 5 000 barres sur TRAIN ; 77 décisions synthétiques ; 14 champs
+  comparés valeur par valeur, **0 divergence, erreur max 0.0**, atol=1e-12,
+  rtol=0. Six familles d'entrées malformées rejetées. 14/14 mutations des sorties
+  de production détectées par le comparateur. Les régressions state/policy/
+  lifecycle passent ; cela ne valide pas leurs contrats économiques futurs.
+- Données : data/processed/BTCUSDT_binance/BTCUSDT_5m_featured.parquet ;
+  source TRAIN 458 489 barres, 2017-08-17 04:00 → 2021-12-31 23:55.
+  SHA256 : 3c4fd11116a3c5982248a0adb83b9157fb34569542d4c88f3dfc295294ea5935.
+  Python 3.12.13, NumPy 2.2.6, pandas 3.0.5 ; aucune dépendance GPU utilisée.
+- Rapport reproductible : logs/gate1_final.json (hash production et entrées,
+  dates de chaque fenêtre, erreurs par champ). Commande :
+  `PYTHONPATH=src /home/ubuntu/webapp/MORNINGSTAR/miniconda3/envs/trading_env/bin/python3 -m adan_trading_bot.offline.validate_labeler --n 3000 --check-malformed --report logs/gate1_final.json`.
+- Limites/échec conservé : TRAIN contient 32 trous réels (timestamps convertis
+  explicitement en ns ; .asi8 était en microsecondes). La CLI de labellisation
+  refuse donc actuellement le fichier complet : segmentation continue et purge
+  des frontières requises avant nouveau dataset. Les anciens parquets et le
+  smoke checkpoint sont expérimentaux/périmés, NON autorisés pour entraînement.
+  Timeout net_return=0 reste une convention provisoire, aucun fill maker simulé.
+  Tous les NOUL/régimes ne sont pas encore audités. Prochaine étape : GATE 2.
+
 ## Principe cardinal
 
 **La clôture 5m est l'horloge maîtresse unique.** Les échelles 1h et 4h ne sont
@@ -54,7 +107,14 @@ Aucun gradient de punition pour le silence. C'est ce qui manquait à PPO
 | 2026-09-25 | Phase 0 — test brut sweep 1h (scripts/phase0_nested_container_edge.py) | ⚠️ séparation +1.30R (sweep −2.78R vs baseline −4.08R sur test) mais EV nette négative → piège du dénominateur R identifié (frais 0.40% / SL micro-mèche ~0.15% ≈ 2.67R de frais/trade) |
 | 2026-09-25 | Phase 0b — audit 4 niveaux (scripts/phase0b_edge_audit.py) | ✅ **POSITIF** — détails ci-dessous |
 
-### Phase 0b — Résultats détaillés (946 633 bougies 5m BTCUSDT, 2017→2026)
+### Phase 0b — Résultats exploratoires (946 633 bougies 5m BTCUSDT, 2017→2026)
+
+Correction scientifique (2026-10-02) : la géométrie a été comparée et choisie
+sur TEST. Ce TEST n'est donc plus une confirmation indépendante intacte pour
+cette exploration. Les événements se chevauchent ; les frais maker 0.08 %
+présupposent un fill sans modèle de remplissage/slippage/impact. Pas de preuve
+d'alpha déployable, ni de géométrie définitivement optimale. Les chiffres
+historiques restent conservés ci-dessous comme observations exploratoires.
 
 **Méthode** : cadre en 4 niveaux (décision du 2026-09-25) — on ne juge plus une
 géométrie arbitraire, on mesure la physique du signal PUIS on cherche la cage
@@ -70,7 +130,8 @@ qui la monétise. Splits temporels stricts : train <2022 · val 2022-23 · test 
 
 → Le sweep en fin de contenant 1h (k∈{11,12}) détecte une anomalie réelle :
 excursion favorable plus fréquente ET asymétrie MFE/MAE supérieure. Le signal
-possède une information physique, confirmée sur le test jamais vu.
+présente une association exploratoire ; ce n'est pas une preuve causale
+ni une confirmation sur un test jamais consulté.
 
 **Niveau 3 — Géométrie (EV BRUTE en R, split test)** : positive sur TOUTE la
 grille SL{0.4, 0.8, 1.2%} × TP{1.5, 2.5, 3.5}R, de +0.065R à **+0.147R**
@@ -84,10 +145,10 @@ l'erreur, pas le signal).
 | Taker 0.40% RT (stress) | −0.90R | −0.40R | −0.19R (TP 3.5R) |
 | **Maker 0.08% RT (limit post-only)** | −0.10R | **+0.03R** | **+0.080R** ✅ |
 
-**Verdict** : ✅ POSITIF — meilleure cellule **SL=1.2% × TP=3.5R, exécution
-maker → +0.080R/trade net** sur le test. L'edge existe dans la réalité physique
-du marché ; les frais étaient un problème d'ingénierie (résolu par SL
-structurel + ordres limit), pas un problème de signal.
+**Verdict révisé** : résultat exploratoire positif sous hypothèses — meilleure
+cellule observée **SL=1.2% × TP=3.5R, frais maker → +0.080R/trade net** sur TEST.
+Ce choix sur TEST, le chevauchement et l'absence de modèle de fills interdisent
+de conclure à un edge exploitable ou à un problème de frais résolu.
 
 **Conséquences pour les modules System One** (gravées dans l'implémentation) :
 - `geometry_engine.py` : SL MINIMUM structurel ~1.2% (ou ATR 1h), jamais la
@@ -223,6 +284,21 @@ marché immédiate ; time-stop 288 barres (24h).
 touché (−1R), break-even (SL=entry−frais, garanti sans perte), trailing suit
 le prix à 1×ATR, invalidation anticipée à −0.50R au lieu de −1R, anomalie
 critique → marché, time-stop, HOLD nominal, suivi MFE/MAE exact.
+
+### PROCESS_STATE (diagnostic 2026-09-30, avant pipeline offline)
+
+| Ressource | État |
+|-----------|------|
+| PROCESS | Aucun entraînement fantôme (services externes uniquement : litellm, MAPNET, aura-loc, supervisord) |
+| CPU | sandbox multi-cœurs, torch 2.13.0+cu130 (CPU-only) |
+| RAM | 11.9 GB total, 6.3 GB disponibles |
+| DISK | 54 GB libres / 193 GB (73%) |
+| GPU | AUCUN local → colab-cli OBLIGATOIRE pour 500K |
+| ORPHAN_PROCESSES | aucun |
+
+Règle actée : aucune métrique n'est acceptée sans test ; aucune sélection sur
+TEST ; labels/variables/hyperparams choisis sur TRAIN/VAL uniquement ; résultats
+négatifs conservés ; aucune entraînement CPU > 10K pas (GPU via colab-cli).
 
 ### Prochaines briques (ordre décidé 2026-09-25)
 
