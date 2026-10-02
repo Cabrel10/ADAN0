@@ -1,0 +1,177 @@
+{
+  "aggregate": {
+    "bear_share_mean": 0.4483,
+    "bear_share_on_falling": 0.595,
+    "bear_share_on_rising": 0.3017,
+    "falling_windows": 3,
+    "rising_windows": 3,
+    "windows_measured": 6
+  },
+  "assets": [
+    "BTCUSDT_BINANCE",
+    "DOGEUSDT_BINANCE"
+  ],
+  "generated_at": "2026-09-05 00:23:34",
+  "method": "Read the posteriors the pipeline produces over several asset/split windows and compare each window's regime call with that window's realized 5m close move.",
+  "question": "Is the near one-hot bear posterior a broken HMM (H-alpha) or a genuinely bearish, unrepresentative probe window (H-beta)?",
+  "seed": 330500,
+  "splits": [
+    "train",
+    "val",
+    "test"
+  ],
+  "steps_per_window": 200,
+  "verdict": "H_BETA_regime_call_tracks_realized_direction",
+  "windows": [
+    {
+      "asset": "BTCUSDT_BINANCE",
+      "posteriors": {
+        "bear_mean": 0.467538,
+        "bear_p50": 0.333333,
+        "bull_mean": 0.484128,
+        "bull_p50": 0.333333,
+        "n_obs": 200,
+        "p_hmm_p50": 0.333333,
+        "p_hmm_share_at_floor_0.01": 0.395,
+        "share_bear_above_0.9": 0.41,
+        "share_bull_above_0.5": 0.44,
+        "sideways_mean": 0.048333,
+        "sideways_p50": 0.0
+      },
+      "realized": {
+        "available": true,
+        "direction": "UP",
+        "first_close": 26585.44,
+        "last_close": 43846.59,
+        "rows": 25046,
+        "window_return_pct": 64.9271
+      },
+      "split": "train"
+    },
+    {
+      "asset": "BTCUSDT_BINANCE",
+      "posteriors": {
+        "bear_mean": 0.808693,
+        "bear_p50": 1.0,
+        "bull_mean": 0.142974,
+        "bull_p50": 0.0,
+        "n_obs": 200,
+        "p_hmm_p50": 0.01,
+        "p_hmm_share_at_floor_0.01": 0.72,
+        "share_bear_above_0.9": 0.745,
+        "share_bull_above_0.5": 0.095,
+        "sideways_mean": 0.048333,
+        "sideways_p50": 0.0
+      },
+      "realized": {
+        "available": true,
+        "direction": "DOWN",
+        "first_close": 100865.76,
+        "last_close": 84460.43,
+        "rows": 25020,
+        "window_return_pct": -16.2645
+      },
+      "split": "val"
+    },
+    {
+      "asset": "BTCUSDT_BINANCE",
+      "posteriors": {
+        "bear_mean": 0.474496,
+        "bear_p50": 0.333333,
+        "bull_mean": 0.477171,
+        "bull_p50": 0.333333,
+        "n_obs": 200,
+        "p_hmm_p50": 0.333333,
+        "p_hmm_share_at_floor_0.01": 0.41,
+        "share_bear_above_0.9": 0.415,
+        "share_bull_above_0.5": 0.43,
+        "sideways_mean": 0.048333,
+        "sideways_p50": 0.0
+      },
+      "realized": {
+        "available": true,
+        "direction": "UP",
+        "first_close": 73378.01,
+        "last_close": 77074.93,
+        "rows": 24960,
+        "window_return_pct": 5.0382
+      },
+      "split": "test"
+    },
+    {
+      "asset": "DOGEUSDT_BINANCE",
+      "posteriors": {
+        "bear_mean": 0.83796,
+        "bear_p50": 1.0,
+        "bull_mean": 0.113706,
+        "bull_p50": 0.0,
+        "n_obs": 200,
+        "p_hmm_p50": 0.01,
+        "p_hmm_share_at_floor_0.01": 0.715,
+        "share_bear_above_0.9": 0.785,
+        "share_bull_above_0.5": 0.06,
+        "sideways_mean": 0.048333,
+        "sideways_p50": 0.0
+      },
+      "realized": {
+        "available": true,
+        "direction": "DOWN",
+        "first_close": 0.197,
+        "last_close": 0.125,
+        "rows": 25015,
+        "window_return_pct": -36.5344
+      },
+      "split": "train"
+    },
+    {
+      "asset": "DOGEUSDT_BINANCE",
+      "posteriors": {
+        "bear_mean": 0.164051,
+        "bear_p50": 0.0,
+        "bull_mean": 0.487616,
+        "bull_p50": 0.333333,
+        "n_obs": 200,
+        "p_hmm_p50": 0.333333,
+        "p_hmm_share_at_floor_0.01": 0.36,
+        "share_bear_above_0.9": 0.08,
+        "share_bull_above_0.5": 0.445,
+        "sideways_mean": 0.348333,
+        "sideways_p50": 0.0
+      },
+      "realized": {
+        "available": true,
+        "direction": "UP",
+        "first_close": 0.1839,
+        "last_close": 0.2409,
+        "rows": 25005,
+        "window_return_pct": 31.0056
+      },
+      "split": "val"
+    },
+    {
+      "asset": "DOGEUSDT_BINANCE",
+      "posteriors": {
+        "bear_mean": 0.303333,
+        "bear_p50": 0.0,
+        "bull_mean": 0.648333,
+        "bull_p50": 1.0,
+        "n_obs": 200,
+        "p_hmm_p50": 0.99,
+        "p_hmm_share_at_floor_0.01": 0.255,
+        "share_bear_above_0.9": 0.255,
+        "share_bull_above_0.5": 0.6,
+        "sideways_mean": 0.048333,
+        "sideways_p50": 0.0
+      },
+      "realized": {
+        "available": true,
+        "direction": "DOWN",
+        "first_close": 0.0985,
+        "last_close": 0.0919,
+        "rows": 24960,
+        "window_return_pct": -6.7587
+      },
+      "split": "test"
+    }
+  ]
+}

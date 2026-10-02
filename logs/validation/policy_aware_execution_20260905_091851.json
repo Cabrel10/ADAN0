@@ -1,0 +1,92 @@
+{
+  "B_economically_executable_requests": 60,
+  "B_plumbing_unattributed_count": 0,
+  "B_plumbing_unattributed_divergence": 0.0,
+  "B_star_execution_divergence_raw": 0.424,
+  "B_star_limit": 0.05,
+  "B_star_note": "raw divergence INCLUDES named economic refusals (fee_gate/cooldown/daily_limit); it is not the plumbing metric and cannot pass while the gate is on",
+  "B_star_verdict": "PASS",
+  "C_star_hold_rate_on_legal_nonhold": 0.779412,
+  "C_star_limit": 0.8,
+  "C_star_verdict": "PASS",
+  "action_pipeline_counts": {
+    "below_break_even": 0,
+    "budget_insufficient": 0,
+    "close_gap_active": 0,
+    "daily_close_quota": 0,
+    "deadband_reject": 228,
+    "exposure_below_close_min": 0,
+    "hold_min_active": 0,
+    "policy": 500,
+    "portfolio_reject": 0,
+    "routing_reject": 0,
+    "routing_reject_budget": 0,
+    "routing_reject_buy_while_long": 0,
+    "routing_reject_cooldown": 0,
+    "routing_reject_deadband": 228,
+    "routing_reject_drawdown": 0,
+    "routing_reject_other": 0,
+    "routing_reject_position": 0,
+    "routing_reject_sell_while_flat": 0,
+    "trade_executed": 60
+  },
+  "action_threshold": 0.05,
+  "asset": "BTCUSDT_BINANCE",
+  "boundaries_hit": 0,
+  "decision_budget": {
+    "max": 1.0,
+    "mean": 0.4929,
+    "min": 0.0
+  },
+  "divergence_reasons": {
+    "cooldown_hold_min": 20,
+    "daily_limit": 7,
+    "fee_gate": 185
+  },
+  "executed_buckets": {
+    "BUY": 30,
+    "HOLD": 440,
+    "SELL": 30
+  },
+  "fee_gate_active": true,
+  "illegal_requests_emitted": 0,
+  "legal_nonhold_requests": 272,
+  "legal_requests": 500,
+  "p_hmm": {
+    "distinct": 0,
+    "mean": null,
+    "n": 0
+  },
+  "portfolio_states_visited": {
+    "FLAT": 400,
+    "LONG": 100
+  },
+  "rejection_reasons": {
+    "anti_spam_hold": 0,
+    "below_break_even": 0,
+    "budget_insufficient": 0,
+    "close_gap_active": 0,
+    "cooldown_hold_min": 20,
+    "cooldown_omega4e": 0,
+    "daily_close_quota": 0,
+    "daily_limit": 7,
+    "exposure_below_close_min": 0,
+    "fee_gate": 185,
+    "hold_min_active": 0,
+    "hysteresis": 0,
+    "min_notional": 0,
+    "pm_rejected": 0,
+    "risk_gate": 0,
+    "sell_no_position": 0
+  },
+  "requested_buckets": {
+    "BUY": 222,
+    "HOLD": 228,
+    "SELL": 50
+  },
+  "seed": 330500,
+  "split": "train",
+  "steps": 500,
+  "test": "policy_aware_execution_test",
+  "verdict": "PASS"
+}

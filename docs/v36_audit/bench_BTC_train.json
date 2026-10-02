@@ -1,0 +1,86 @@
+{
+  "label": "BTC_train_binance",
+  "n_bars": 662643,
+  "range": [
+    "2017-08-17 04:00:00",
+    "2023-12-10 22:05:00"
+  ],
+  "contract": {
+    "tp_atr": 3.0,
+    "sl_atr": 2.0,
+    "horizon": 40,
+    "fee_per_side": 0.0006
+  },
+  "results": {
+    "buy_hold": {
+      "total_return_pct": 928.7852160282343,
+      "max_drawdown_pct": -83.99023378200587,
+      "n_trades": 1
+    },
+    "random_entry": {
+      "n_trades": 9884,
+      "win_rate_pct": 38.2537434237151,
+      "profit_factor": 0.654,
+      "avg_net_ret_pct": -0.1376330528483003,
+      "total_return_pct": -99.9999146011276,
+      "sharpe_annual": -13.054,
+      "max_drawdown_pct": -99.99991838429538,
+      "exit_TP": 3195,
+      "exit_SL": 5373,
+      "exit_HORIZON": 1316,
+      "avg_hold_bars": 16.0
+    },
+    "random_exit": {
+      "n_trades": 38692,
+      "win_rate_pct": 39.10627519900755,
+      "profit_factor": 0.698,
+      "avg_net_ret_pct": -0.12564627865202802,
+      "total_return_pct": -100.0,
+      "sharpe_annual": -11.148,
+      "max_drawdown_pct": -100.0,
+      "exit_TP": 12785,
+      "exit_SL": 21231,
+      "exit_HORIZON": 4676,
+      "avg_hold_bars": 15.1
+    },
+    "momentum": {
+      "n_trades": 23288,
+      "win_rate_pct": 38.88698041909996,
+      "profit_factor": 0.68,
+      "avg_net_ret_pct": -0.12407626749750479,
+      "total_return_pct": -99.99999999998795,
+      "sharpe_annual": -11.79,
+      "max_drawdown_pct": -99.99999999998828,
+      "exit_TP": 7664,
+      "exit_SL": 12464,
+      "exit_HORIZON": 3160,
+      "avg_hold_bars": 16.2
+    },
+    "mean_reversion": {
+      "n_trades": 11158,
+      "win_rate_pct": 40.5090518013981,
+      "profit_factor": 0.75,
+      "avg_net_ret_pct": -0.1160017893489611,
+      "total_return_pct": -99.99987848944643,
+      "sharpe_annual": -9.182,
+      "max_drawdown_pct": -99.99992185412947,
+      "exit_TP": 3796,
+      "exit_SL": 6185,
+      "exit_HORIZON": 1177,
+      "avg_hold_bars": 13.9
+    },
+    "cluster_oversold_adx": {
+      "n_trades": 11124,
+      "win_rate_pct": 40.94750089895721,
+      "profit_factor": 0.78,
+      "avg_net_ret_pct": -0.10293076809226537,
+      "total_return_pct": -99.99948230202224,
+      "sharpe_annual": -7.482,
+      "max_drawdown_pct": -99.99983759790952,
+      "exit_TP": 3596,
+      "exit_SL": 6012,
+      "exit_HORIZON": 1516,
+      "avg_hold_bars": 15.3
+    }
+  }
+}
