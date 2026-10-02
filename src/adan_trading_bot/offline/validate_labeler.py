@@ -187,6 +187,12 @@ def synthetic_tests():
     if not np.allclose(original[:i + 1], revised[:i + 1], atol=ATOL, rtol=0, equal_nan=True):
         raise AssertionError("ATR reads future bars")
     reports.append(compare(df, [0, 11, 12, 167, 168, i], "ATR-warmup"))
+    reports.append(compare(df.iloc[5:], [0, 162, 163, 175, 197], "partial-start-hour"))
+    # Detect wraparound of reverse rolling windows at the series tail.
+    tail = df.copy()
+    tail.iloc[:12, tail.columns.get_loc("high")] = 200
+    tail.iloc[:12, tail.columns.get_loc("low")] = 50
+    reports.append(compare(tail, [len(tail) - 1, len(tail) - 12], "expansion-tail-no-future"))
     return reports
 
 
