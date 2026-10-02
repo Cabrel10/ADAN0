@@ -61,6 +61,38 @@ Code : commits `6503f70` → `1870cc0` (production finale `138e741`, version
   Timeout net_return=0 reste une convention provisoire, aucun fill maker simulé.
   Tous les NOUL/régimes ne sont pas encore audités. Prochaine étape : GATE 2.
 
+### GATE 2 — audit du registre existant (2026-10-02)
+
+Commit code `9dd3347`. Aucun registre parallèle, aucun remplacement/suppression
+ou édition du JSON d'origine (empreinte vérifiée avant/après). Rapport détaillé
+pour CHAQUE déclaration : logs/registry_audit.json ; ce rapport est un inventaire
+de preuves, pas une nouvelle source de variables.
+
+- 1 026 déclarées ; 281 valeurs de marché/snapshot effectivement résolues
+  (8 bar courante + 245 lags + 28 champs de contenants). Disponibles à t et
+  invariantes à une mutation future sur la fenêtre continue TRAIN testée.
+  Ce sont des bornes inférieures vérifiées, pas une preuve universelle.
+- 577 chemins de configuration déclarés : 433 existent dans la config actuelle,
+  144 manquent. Ce ne sont PAS 577 observations de marché calculées. Aucun
+  archivage de config point-in-time historique vérifié ; valeurs/secrets non exportés.
+- 385 entrées déclarent des dépendances (toutes les références existent).
+  1 026 manquent sous-famille/lineage/future_safe explicites ; une assertion
+  causal_t dans le JSON ne suffit pas. 745 restent sans preuve future-safe.
+- 0 dépendance future formellement confirmée au nom exact de la déclaration,
+  mais 8 sources labeler doivent être tracées : le label de réintégration de
+  production lit next_close. Zéro confirmé ne signifie PAS zéro risque.
+- Les ATR déclarés à partir de running_high/low ne décrivent pas l'ATR14
+  d'heures complètes du GATE 1. Les champs risk 20 %/40 %/15 $ sont obsolètes
+  pour le micro-capital. Les réglages reward PPO/credentials/paths ne sont pas
+  des features numériques de perception ; aucune variable supprimée.
+- Test : première fenêtre TRAIN continue de 600 barres, décision index 300,
+  future high×5 et volume×3, égalité des 281 valeurs ; seed non applicable.
+  Versions Python/NumPy/pandas/PyYAML, dates/empreintes JSON/config dans le rapport.
+  Commande : `PYTHONPATH=src /home/ubuntu/webapp/MORNINGSTAR/miniconda3/envs/trading_env/bin/python3 -m adan_trading_bot.features.feature_registry --report logs/registry_audit.json`.
+- Prochain : graph sparse typé sur les déclarations, sans certifier comme
+  exploitable toute variable non auditée. Résolution runtime des 745 restantes
+  et métadonnées manquantes nécessaires avant GATE 7/GPU.
+
 ## Principe cardinal
 
 **La clôture 5m est l'horloge maîtresse unique.** Les échelles 1h et 4h ne sont
