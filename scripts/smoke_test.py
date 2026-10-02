@@ -30,7 +30,7 @@ def read_file(path):
 
 
 def main():
-    base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    base = os.path.dirname(os.path.abspath(__file__))
     src = os.path.join(base, "src", "adan_trading_bot")
 
     # ── CONFIG CHECKS ──────────────────────────────────────────────
