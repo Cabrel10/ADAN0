@@ -199,6 +199,7 @@ def compute_labels(b: NestedStateBuilder, feats: np.ndarray):
     fut_range = np.roll(fh, -1) - np.roll(fl, -1)
     y_expansion = ((fut_range >= 1.8 * atr_1h) & np.isfinite(atr_1h)
                    & np.isfinite(fut_range)).astype(np.int64)
+    y_expansion[max(0, n - 12):] = 0  # Incomplete future, no np.roll wraparound.
 
     # ── ORDRE 2C : Refonte structurelle de y_regime (priorité TRAP explicite) ──
     ema_1h = pd.Series(c).ewm(span=12 * 12).mean().to_numpy()
