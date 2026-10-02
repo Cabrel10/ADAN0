@@ -57,7 +57,7 @@ def reference_atr(df, i):
     return sum(ranges) / 14
 
 
-def naive_reference(df, i):
+def naive_reference(df, i, atr_cache=None):
     """Independent scalar oracle, including sweep-derived baseline direction."""
     o, h, l, c, _ = map(float, df.iloc[i][COLS])
     high_sweep = low_sweep = False
@@ -70,7 +70,13 @@ def naive_reference(df, i):
                      c > float(previous.low.min()) and
                      min(o, c) - l >= 0.40 * max(h - l, 1e-12))
     direction = 1 if high_sweep and not low_sweep else (0 if low_sweep and not high_sweep else 2)
-    atr = reference_atr(df, i)
+    hour = df.index[i].floor("h")
+    if atr_cache is None:
+        atr = reference_atr(df, i)
+    else:
+        if hour not in atr_cache:
+            atr_cache[hour] = reference_atr(df, i)
+        atr = atr_cache[hour]
     future = df.iloc[i + 1:i + 13]
     expansion = int(len(future) == 12 and np.isfinite(atr) and
                     float(future.high.max() - future.low.min()) >= 1.8 * atr)
@@ -111,16 +117,19 @@ def compare(df, indices, tag):
     builder = NestedStateBuilder(df)
     actual = production.compute_labels(builder, production.build_features(builder))
     errors = []
+    atr_cache = {}
     maxima = {field: 0.0 for field in FIELDS}
     counts = {field: 0 for field in FIELDS}
     for i in indices:
-        expected = naive_reference(df, int(i))
+        expected = naive_reference(df, int(i), atr_cache)
         for field in FIELDS:
             if field not in actual:
                 errors.append(dict(sample=tag, index=int(i), field=field, reason="missing production output"))
                 counts[field] += 1
                 continue
-            got, want = actual[field][i], expected[field]
+            # Convert scalars BEFORE equality: NumPy float32 == Python float
+            # can round the reference and falsely report exact equality.
+            got, want = float(actual[field][i]), float(expected[field])
             equal = (np.isnan(got) and np.isnan(want)) or got == want
             if field in ("mfe", "mae", "net_return", "atr_1h_new"):
                 equal = equal or np.isclose(got, want, atol=ATOL, rtol=0)
@@ -212,6 +221,8 @@ def main():
     args = ap.parse_args()
     if args.n <= 0:
         ap.error("--n must be positive")
+    assert (production.MAX_HOLD, production.SL_PCT, production.TP_R,
+            production.LOOKBACK_SWEEP, production.WICK_MIN) == (288, 0.012, 3.5, 10, 0.40)
     reports = synthetic_tests()
     metadata = dict(seed=args.seed, python=platform.python_version(), numpy=np.__version__,
                     pandas=pd.__version__, atol=ATOL, rtol=0,
