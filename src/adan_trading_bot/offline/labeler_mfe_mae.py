@@ -277,7 +277,7 @@ def compute_labels(b: NestedStateBuilder, feats: np.ndarray):
     # Net Return en R (frais Maker estimés 0.08% RT -> 0.08/1.2 = 0.0667 R)
     fees_r = 0.0008 / SL_PCT
     net_return = np.where(y_tp_first == 1, TP_R - fees_r,
-                 np.where(y_sl_first == 1, -1.0 - fees_r, 0.0)).astype(np.float32)
+                 np.where(y_sl_first == 1, -1.0 - fees_r, 0.0)).astype(np.float64)
     y_win = (y_tp_first == 1).astype(np.int64)
     y_lowmae = (valid & (y_sl_first == 0)).astype(np.int64)
 
