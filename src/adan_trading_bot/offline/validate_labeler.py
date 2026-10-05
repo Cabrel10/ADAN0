@@ -208,8 +208,8 @@ def malformed_tests():
     variants["zero-price"].iloc[250, :4] = 0
     variants["negative-volume"].iloc[250, 4] = -1
     for name, bad in variants.items():
-        b = NestedStateBuilder(bad)
         try:
+            b = NestedStateBuilder(bad)
             production.compute_labels(b, production.build_features(b))
         except ValueError:
             continue
