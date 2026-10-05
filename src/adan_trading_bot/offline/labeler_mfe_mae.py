@@ -125,9 +125,9 @@ def build_features(b: NestedStateBuilder) -> np.ndarray:
     return feats.astype(np.float32)
 
 
-def validate_label_inputs(b, feats):
+def validate_label_inputs(b, feats=None):
     """Fail closed: callers must split gaps into contiguous segments, not drop bars."""
-    if b.n < 12 or feats.shape != (b.n, 88):
+    if b.n < 12 or (feats is not None and feats.shape != (b.n, 88)):
         raise ValueError("Need >=12 bars and aligned (n,88) features")
     ts = b.ts.to_numpy(dtype="datetime64[ns]").astype(np.int64)
     if b.ts.hasnans or (ts % (300 * 10**9)).any() or (np.diff(ts) != 300 * 10**9).any():
@@ -354,10 +354,12 @@ def compute_plan_outcomes(b, decision_indices, candidates, *, fees_rt,
     if not np.isfinite(fees_rt) or fees_rt < 0:
         raise ValueError("Explicit round-trip fees required")
     # Shared production integrity rules; NEVER concatenate across timeline gaps.
-    validate_label_inputs(b, np.empty((b.n, 88)))
+    validate_label_inputs(b)
     rows = []
     for index, plan in zip(decision_indices, candidates):
         i = int(index)
+        if not isinstance(plan.horizon, (int, np.integer)) or isinstance(plan.horizon, bool):
+            raise ValueError("Horizon must be an integer bar count")
         if index != i or i < 0 or i + plan.horizon >= b.n or plan.horizon <= 0:
             raise ValueError("Decision lacks complete future candidate horizon")
         if (plan.direction not in ("LONG", "SHORT") or not np.isfinite(plan.sl_pct)
