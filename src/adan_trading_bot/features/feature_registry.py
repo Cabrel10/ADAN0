@@ -420,8 +420,14 @@ def reconcile_atr_definitions(registry_path="config/feature_registry.json"):
                         labeler_consistency="1h base implemented and GATE1 validated; normalized value is ATR / close_t" if hours == 1 else "4h canonical implementation unresolved",
                         corrected_parents=parents,
                         consistency="explicit definition decision; old running-H/L parent claims retained as historical declaration, not verified constraints")
+            resolved_1h = hours == 1 and name in ("c1h.atr_1h", "c1h.atr_1h_pct") and entry.get("future_safe") == "VERIFIED"
+            if resolved_1h:
+                base.update(runtime_source="data.canonical_atr.canonical_atr_1h shared with labeler.compute_true_atr_1h",
+                            snapshot_consistency="WIRED: LivingStateSnapshot.atr_1h with value/fraction/availability/14 source hours/lag/definition",
+                            geometry_consistency="contract-admitted canonical snapshot fraction; candidate factory checks SL_MIN/MAX; TP_MAX remains unresolved",
+                            bootstrap_contract="first TR after absent previous close uses H-L, explicitly flagged; retained GATE1 initialization convention")
             entry["lineage"] = dict(entry["lineage"], parents=parents,
-                                    definition_status="DECLARED_CANONICAL_NOT_RUNTIME_RESOLVED")
+                                    definition_status="RUNTIME_BRIDGE_VERIFIED" if resolved_1h else "DECLARED_CANONICAL_NOT_RUNTIME_RESOLVED")
         else:
             base.update(kind="UNRESOLVED_ATR_RELATED", formula=entry["transformation"], runtime_source=None,
                         consistency="needs explicit source trace")
