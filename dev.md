@@ -19,7 +19,96 @@ Sizing cible : capital ~20 $, allocation Micro 70–90 %, min ordre ~11 $,
 une position maximum, risque/trade 4 %. Les anciens plafonds 20 %/40 % et
 minimum 15 $ restent des prototypes NON alignés à réconcilier avec la config.
 
-### GATE 1 — comparaison directe validée (2026-10-02)
+### GATE ATR — PASS pour le bridge 1h, géométrie finale NON verrouillée (2026-10-05)
+
+Commits intermédiaires `d03a8df` → `ca67619` ; PR #11. Périmètre testé :
+source canonique 1h → snapshot → contrat → géométrie → candidat borné.
+Aucune autorisation GPU/500K ; prochains gates : audit labels puis targets
+conditionnées au plan. Les statuts/résultats plus anciens ci-dessous sont historiques.
+
+**Source et runtime uniques** : `data/canonical_atr.py` contient l'unique formule
+SMA14(TR des heures complètes)/lag1. Le labeler importe EXACTEMENT la même
+fonction `compute_true_atr_1h` (identité d'objet testée) ; le builder appelle le
+même runtime partagé `canonical_atr_1h`, pas une réimplémentation. La complétude
+exige 12 barres uniques sur grille 5m, OHLCV finis/cohérents/positifs ; les heures
+partielles, manquantes ou invalides remettent l'amorçage à NaN. Pas de bfill,
+pas de zéro de remplacement. Convention GATE1 conservée : le premier TR sans
+prev_close disponible vaut H-L et porte bootstrap=True, uniquement en tête de
+la fenêtre valide. Ce bootstrap n'est pas caché en donnée future ni en zéro.
+
+`LivingStateSnapshot.atr_1h` porte valeur quote_price, fraction ATR/close_t,
+available, available_at, les 14 ATRHour (début, H/L/C, prev_close, TR, bootstrap),
+lag_containers=1, definition=systemone-1h-sma14-tr-lag1-v1 et motif d'indisponibilité.
+Le contenant courant reste exclu même à xx:55. Disponibilité à l'ouverture du
+contenant suivant les 14 heures sources. ATR NaN reste NaN avec available=False.
+
+Deux tests DISTINCTS passent : (1) toutes les barres après t mutées ; (2) les
+barres DÉJÀ écoulées du contenant courant jusqu'à t incluse mutées. L'ATR absolu
+et les heures sources restent inchangés. Si close_t est muté, la fraction
+ATR/close_t change normalement : le dénominateur est causal, pas constant.
+Test d'unités explicite : ATR=2 à close=100 donne 0.02, PAS 2.0.
+
+**Preuves de valeur, pas simple exit=0** :
+- 1 200 snapshots synthétiques comparés point par point à la sortie du labeler,
+  NaN inclus : égalité exacte ; test gap/warmup/lag et TR via prev_close.
+- 458 489 timestamps TRAIN : tableaux runtime et labeler identiques, 0 divergence.
+- 500 décisions TRAIN seed1729 : admission réelle du candidate factory comparée
+  à la disponibilité ATR + intégrité + intervalle SL ; chaque candidat respecte
+  réellement SL_MIN ≤ SL ≤ SL_MAX et porte la provenance du snapshot.
+- Nouvelle comparaison directe compute_labels/référence indépendante : 3 000
+  entrées TRAIN + 77 décisions synthétiques, 0 divergence après extraction ATR
+  (logs/gate1_after_atr_bridge.json).
+- Suites demandées toutes PASS : canonical_atr_bridge 10/10,
+  feature_availability_contract 12/12, relation_graph 12/12, policy 21/21,
+  nested_state 7/7, lifecycle 9/9. Les anciens tests policy ont réellement échoué
+  avec leurs scalaires sans provenance ; corrigés par fixtures OHLCV historiques
+  appelant le vrai snapshot/contrat, PAS par suppression du nouveau veto ATR.
+
+**Contract → Geometry → PlanCandidate** : les deux noms 1h sont admis uniquement
+après mutation runtime et source-hash partagé. Warmup/gap/provenance/horloge/
+SMA/unités invalides lèvent FeatureAvailabilityError, jamais un NaN vers le modèle.
+Geometry s'abstient si indisponible ou SL_MIN>SL_MAX ; un scalaire contradictoire
+ne remplace jamais l'ATR du snapshot. Pas de range/phase. Le selector refuse les
+candidats sans provenance, hors intervalle ou avec des bornes d'un autre état.
+
+SL_MIN=max(0.012,1×fraction), SL_MAX=min(0.030,2.5×fraction). Grille bornée avec
+extrémités réelles. TP=3.5R est uniquement la baseline ; suppression du TP_MAX
+inventé à partir de phase/régime du draft. TP conditionnel reste à déterminer.
+Risk micro-capital et fills ne sont pas validés par ce verrou.
+
+**Registre préservé** : 1 026 noms conservés. SEULEMENT c1h.atr_1h et
+c1h.atr_1h_pct passent après preuve de UNKNOWN à VERIFIED : 283 VERIFIED,
+743 UNKNOWN, 0 UNSAFE confirmé. Les 745 initialement non résolues restent toutes
+dans le registre ; seules ces deux ont désormais leur contrat résolu. ATR 4h
+reste UNKNOWN/UNRESOLVED, aucune promotion par analogie de formule.
+
+#### Abstention ATR/SL — TRAIN uniquement, bornes non retunées
+
+Dataset data/processed/BTCUSDT_binance/BTCUSDT_5m_featured.parquet,
+458 489 décisions, 2017-08-17 04:00 → 2021-12-31 23:55 ; SHA256
+3c4fd11116a3c5982248a0adb83b9157fb34569542d4c88f3dfc295294ea5935.
+Python 3.12.13 / NumPy 2.2.6 / pandas 3.0.5. Rapport exact, quantiles,
+numérateurs/dénominateurs et empreintes : logs/atr_train_abstention.json.
+
+| Année | Décisions | ATR indisponible | ATR<0.48% | ATR>3% | Abstention ATR/SL totale |
+|---|---:|---:|---:|---:|---:|
+| 2017 | 39 311 | 528 | 0 | 6 242 | 17.2216% |
+| 2018 | 104 328 | 1 614 | 11 375 | 4 981 | 17.2245% |
+| 2019 | 104 768 | 1 025 | 17 284 | 816 | 18.2546% |
+| 2020 | 105 159 | 1 368 | 16 213 | 1 439 | 18.0869% |
+| 2021 | 104 923 | 1 029 | 19 | 3 498 | 4.3327% |
+
+Global **14.7072%** avant EV/modèle/fills/portefeuille ; la contrainte écarte
+une part mesurable des situations calmes et volatiles. Ce n'est pas une mesure
+de trades effectifs/jour, ni une raison de corriger les bornes sur TEST.
+Aucune sélection finale de géométrie effectuée. Commande reproductible :
+`PYTHONPATH=src /home/ubuntu/webapp/MORNINGSTAR/miniconda3/envs/trading_env/bin/python3 -m adan_trading_bot.offline.audit_atr_bridge --report logs/atr_train_abstention.json`.
+
+**Prochain expériment** : GATE4 distributions/majority baselines, diagnostic
+legacy expansion/TRAP, MFE/MAE censurés, TP/SL-first, Y_WIN et timeouts ; produire
+ensuite des vrais targets state×plan, sans entraînement sur le draft actuel.
+
+### GATE 1 — comparaison directe validée (2026-10-02, historique)
 
 Code : commits `6503f70` → `1870cc0` (production finale `138e741`, version
 `gate1-baseline-v2`). PR : https://github.com/Cabrel10/ADAN0/pull/11.

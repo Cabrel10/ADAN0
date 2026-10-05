@@ -1,0 +1,26 @@
+2026-10-05 14:50:22 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k'
+2026-10-05 14:50:22 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data'
+2026-10-05 14:50:22 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke'
+2026-10-05 14:50:22 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance'
+2026-10-05 14:50:22 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading'
+2026-10-05 14:50:22 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k'
+2026-10-05 14:50:22 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k'
+2026-10-05 14:50:22 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe'
+2026-10-05 14:50:22 - adan_trading_bot - INFO - ADAN Trading Bot v0.1.0 initialized
+test_bad_edges_rejected (__main__.GraphTests.test_bad_edges_rejected) ... ok
+test_declarations_do_not_auto_verify_constraints (__main__.GraphTests.test_declarations_do_not_auto_verify_constraints) ... ok
+test_empirical_train_only_provenance (__main__.GraphTests.test_empirical_train_only_provenance) ... ok
+test_explicit_empty_graph (__main__.GraphTests.test_explicit_empty_graph) ... ok
+test_forged_edge_verification_rejected (__main__.GraphTests.test_forged_edge_verification_rejected) ... ok
+test_membership_and_temporal_semantics (__main__.GraphTests.test_membership_and_temporal_semantics) ... ok
+test_open_aggregations_are_not_silently_dropped (__main__.GraphTests.test_open_aggregations_are_not_silently_dropped) ... ok
+test_predictive_train_edge_is_not_a_hard_causal_constraint (__main__.GraphTests.test_predictive_train_edge_is_not_a_hard_causal_constraint) ... ok
+test_qualified_constraints_and_reconciled_atr_lineage (__main__.GraphTests.test_qualified_constraints_and_reconciled_atr_lineage) ... ok
+test_sparse_scatter_equals_independent_loop_and_backprop (__main__.GraphTests.test_sparse_scatter_equals_independent_loop_and_backprop) ... ok
+test_sparse_topology (__main__.GraphTests.test_sparse_topology) ... ok
+test_unresolved_registry_parent_rejected (__main__.GraphTests.test_unresolved_registry_parent_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 4.654s
+
+OK

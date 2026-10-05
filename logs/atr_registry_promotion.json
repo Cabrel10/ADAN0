@@ -1,0 +1,23 @@
+{
+  "classification": {
+    "CONFIG_ONLY": 577,
+    "CONTEXT_FEATURE": 4,
+    "DERIVED_FEATURE": 274,
+    "LABEL_ONLY": 8,
+    "MARKET_FEATURE": 5,
+    "PLAN_FEATURE": 0,
+    "PORTFOLIO_FEATURE": 0,
+    "RISK_FEATURE": 0,
+    "UNRESOLVED": 158
+  },
+  "future_safe": {
+    "VERIFIED": 283,
+    "UNKNOWN": 743,
+    "UNSAFE": 0
+  },
+  "resolution": {
+    "RESOLVED": 283,
+    "UNRESOLVED": 743
+  },
+  "registry_sha256": "25f785144c20a37b082b0be4d68e0f623bf7de6f99b0af533500ca8e88b8c2eb"
+}
