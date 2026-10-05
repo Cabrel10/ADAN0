@@ -30,15 +30,44 @@ Référence : workflow étape 7 + dev.md §Phase 0b (conséquences gravées).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional, Tuple
+import math
+from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityError
 
 # ─── Constantes prouvées par la Phase 0b (jamais modifiées sans nouvel audit) ─
 SL_FLOOR_PCT = 0.012          # plancher structurel : 1.2 %
 SL_ATR_MULT = 1.0             # alternative : 1.0 × ATR (du contenant 1h)
+SL_MIN_BOUND = 0.012          # SL_MIN = max(1.20%, 1.0 × ATR_1h)
+SL_MAX_BOUND = 0.030          # SL_MAX = min(3.00%, 2.5 × ATR_1h)
+SL_ATR_MAX_MULT = 2.5
 TP_R_RATIO = 3.5              # cible d'expansion : 3.5 R (cellule gagnante 0b)
+TP_MIN_R = 3.5                # baseline
 FEES_R_MAX = 0.30             # refus géométrique si frais > 0.30 R
 FEES_RT_TAKER = 0.0040        # 0.40 % aller-retour (stress-test)
 FEES_RT_MAKER = 0.0008        # 0.08 % aller-retour (ordres limit post-only)
+
+
+@dataclass(frozen=True)
+class PlanCandidate:
+    """Spécification d'un plan de trading candidat."""
+    direction: str                     # 'LONG' | 'SHORT'
+    sl_pct: float                      # ex: 0.012 (1.2%)
+    tp_r: float                        # ex: 3.5 (3.5R)
+    horizon: int = 288                 # 288 barres 5m = 24h
+    execution_mode: str = "MAKER_POST_ONLY"
+    portfolio_state: Optional[object] = None
+    atr_observation: Optional[object] = None
+    sl_min_bound: Optional[float] = None
+    sl_max_bound: Optional[float] = None
+    tp_status: str = "BASELINE_ONLY_TP_MAX_UNRESOLVED"
+
+    def admissible(self):
+        return (self.direction in ("LONG", "SHORT") and self.horizon > 0
+                and self.atr_observation is not None and self.atr_observation.available
+                and self.sl_min_bound is not None and self.sl_max_bound is not None
+                and math.isfinite(self.sl_pct) and math.isfinite(self.tp_r)
+                and self.sl_min_bound <= self.sl_pct <= self.sl_max_bound
+                and self.tp_r >= TP_MIN_R)
 
 
 @dataclass(frozen=True)
@@ -56,15 +85,15 @@ class TradeGeometry:
     ev_brute_r: float = 0.0
     ev_nette_r: float = 0.0
     motif_refus: str = ""
+    candidate_plan: Optional[PlanCandidate] = None
 
 
-def _atr_pct_from_snapshot(snap) -> float:
-    """Deprecated misleading name: running range / phase is NOT an ATR.
-
-    LivingStateSnapshot currently carries no completed-hour ATR. Fail closed
-    instead of substituting a phase-extrapolated range or zero during warmup.
-    """
-    raise ValueError("Canonical ATR_1h unavailable in snapshot: require 14 complete hours, TR, lag1; running range/phase is prohibited")
+def _atr_pct_from_snapshot(snap, availability_contract=None) -> float:
+    """Canonical fraction only, admitted by feature contract; never a proxy."""
+    if availability_contract is None:
+        raise FeatureAvailabilityError("Canonical ATR requires feature availability contract")
+    values = availability_contract.materialize(snap, ["c1h.atr_1h", "c1h.atr_1h_pct"])
+    return values["c1h.atr_1h_pct"]
 
 
 def compute_geometry(
@@ -74,6 +103,7 @@ def compute_geometry(
     atr_1h_pct: Optional[float] = None,
     p_win: float = 0.55,
     fees_rt: float = FEES_RT_MAKER,
+    *, snapshot=None, availability_contract=None,
 ) -> TradeGeometry:
     """Construit et valide la géométrie d'un trade candidat.
 
@@ -92,12 +122,21 @@ def compute_geometry(
     if entry <= 0:
         return TradeGeometry(False, "NONE", motif_refus="entry invalide")
 
-    # ── Invariant 1 : plancher structurel du SL ──────────────────────────────
+    try:
+        fraction = _atr_pct_from_snapshot(snapshot, availability_contract)
+        floor_pct, ceiling_pct = compute_sl_bounds(fraction)
+    except (FeatureAvailabilityError, ValueError, AttributeError) as error:
+        return TradeGeometry(False, "NONE", motif_refus=f"ATR unavailable: {error}")
+    if atr_1h_pct is not None and not math.isclose(atr_1h_pct, fraction, rel_tol=1e-12, abs_tol=1e-12):
+        return TradeGeometry(False, "NONE", motif_refus="ATR scalar differs from canonical snapshot fraction")
+    if not math.isfinite(entry) or not math.isfinite(invalidation_level) or not (0 <= p_win <= 1) or not math.isfinite(fees_rt) or fees_rt < 0:
+        return TradeGeometry(False, "NONE", motif_refus="invalid economics or price")
+    if floor_pct > ceiling_pct:
+        return TradeGeometry(False, "NONE", motif_refus="SL_MIN > SL_MAX")
     structural_pct = abs(entry - invalidation_level) / entry if invalidation_level > 0 else 0.0
-    floor_pct = SL_FLOOR_PCT
-    if atr_1h_pct and atr_1h_pct > 0:
-        floor_pct = max(SL_FLOOR_PCT, SL_ATR_MULT * atr_1h_pct)
-    sl_pct = max(structural_pct, floor_pct)   # JAMAIS sous le plancher
+    sl_pct = max(structural_pct, floor_pct)
+    if sl_pct > ceiling_pct:
+        return TradeGeometry(False, "NONE", motif_refus="structural SL above canonical SL_MAX")
 
     # ── Invariant 2 : cible = expansion du contenant (3.5 R) ─────────────────
     tp_pct = TP_R_RATIO * sl_pct
@@ -135,3 +174,122 @@ def compute_geometry(
         sl_distance_pct=sl_pct, tp_distance_pct=tp_pct, risk_r=1.0,
         frais_r=frais_r, ev_brute_r=ev_brute, ev_nette_r=ev_nette,
     )
+
+
+def compute_sl_bounds(atr_1h_pct: float) -> Tuple[float, float]:
+    """
+    Calcule les bornes d'admissibilité du Stop Loss (ORDRE 4A) :
+      SL_MIN = max(1.20%, 1.0 × ATR_1h)
+      SL_MAX = min(3.00%, 2.5 × ATR_1h)
+    """
+    if not math.isfinite(atr_1h_pct) or atr_1h_pct < 0:
+        raise ValueError("ATR must be an available finite fraction, not percent-points")
+    sl_min = max(SL_MIN_BOUND, SL_ATR_MULT * atr_1h_pct)
+    sl_max = min(SL_MAX_BOUND, SL_ATR_MAX_MULT * atr_1h_pct)
+    return sl_min, sl_max
+
+
+def generate_candidate_grid(
+    atr_1h_pct: float,
+    direction: str,
+    regime: str = "RANGE",
+    phase_1h: float = 1.0,
+    phase_4h: float = 1.0,
+    mfe_conditional_pct: Optional[float] = None,
+) -> List[PlanCandidate]:
+    """
+    Génère une grille de plans candidats bornés (ORDRE 4A).
+    Si SL_MIN > SL_MAX -> Grille vide (PLAN REFUSÉ).
+    """
+    sl_min, sl_max = compute_sl_bounds(atr_1h_pct)
+    if sl_min > sl_max:
+        return []
+
+    # Grille de SL admissibles
+    candidate_sls = [0.012, 0.015, 0.018, 0.020, 0.025, 0.030]
+    valid_sls = [s for s in candidate_sls if sl_min <= s <= sl_max]
+    if not valid_sls:
+        valid_sls = [sl_min]
+
+    # TP conditionnel (MFE conditionnel, horizon, phase, régime)
+    if mfe_conditional_pct is not None and mfe_conditional_pct > 0:
+        tp_max = max(TP_MIN_R, min(6.0, mfe_conditional_pct / max(sl_min, 1e-6)))
+    else:
+        # Boost conditionnel structurel
+        boost = 0.5 * (phase_1h >= 0.8) + 0.5 * (regime in ("BULL", "BEAR"))
+        tp_max = min(5.5, TP_MIN_R + boost)
+
+    candidate_tps = [3.5, 4.0, 4.5, 5.0, 5.5, 6.0]
+    valid_tps = [t for t in candidate_tps if TP_MIN_R <= t <= tp_max]
+    if not valid_tps:
+        valid_tps = [TP_MIN_R]
+
+    grid = []
+    for sl in valid_sls:
+        for tp in valid_tps:
+            grid.append(PlanCandidate(
+                direction=direction,
+                sl_pct=sl,
+                tp_r=tp,
+                horizon=288,
+                execution_mode="MAKER_POST_ONLY"
+            ))
+    return grid
+
+
+def select_best_plan(
+    snapshot,
+    candidate_evaluations: List[Tuple[PlanCandidate, float]], # List of (plan, p_win)
+    fees_rt: float = FEES_RT_MAKER,
+) -> Tuple[Optional[PlanCandidate], Optional[TradeGeometry]]:
+    """
+    Sélectionne le meilleur plan admissible (ORDRE 4B) :
+      - Rejette si frais_R > 0.30 R
+      - Rejette si EV_nette ≤ 0
+      - Recherche le plan maximisant la probabilité de succès P(TP avant SL)
+        sous contrainte d'EV nette positive.
+    """
+    best_plan = None
+    best_geom = None
+    best_p_win = -1.0
+    entry = snapshot.price
+
+    for plan, p_win in candidate_evaluations:
+        frais_r = fees_rt / plan.sl_pct
+        if frais_r > FEES_R_MAX:
+            continue
+
+        ev_brute = p_win * plan.tp_r - (1.0 - p_win) * 1.0
+        ev_nette = ev_brute - frais_r
+        if ev_nette <= 0:
+            continue
+
+        # Calcul des prix cibles
+        if plan.direction == "SHORT":
+            stop = entry * (1.0 + plan.sl_pct)
+            target = entry * (1.0 - plan.tp_r * plan.sl_pct)
+        else:
+            stop = entry * (1.0 - plan.sl_pct)
+            target = entry * (1.0 + plan.tp_r * plan.sl_pct)
+
+        geom = TradeGeometry(
+            viable=True,
+            direction=plan.direction,
+            entry=entry,
+            stop_loss=stop,
+            take_profit=target,
+            sl_distance_pct=plan.sl_pct,
+            tp_distance_pct=plan.tp_r * plan.sl_pct,
+            risk_r=1.0,
+            frais_r=frais_r,
+            ev_brute_r=ev_brute,
+            ev_nette_r=ev_nette,
+            candidate_plan=plan
+        )
+
+        if p_win > best_p_win:
+            best_p_win = p_win
+            best_plan = plan
+            best_geom = geom
+
+    return best_plan, best_geom
