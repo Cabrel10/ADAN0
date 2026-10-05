@@ -1,5 +1,9 @@
 """
-geometry_engine.py — ADAN-System-One · Étape 7 (Géométrie du trade)
+geometry_engine.py — canonical ATR/SL admission; full geometry NOT locked
+
+The historical discussion below is exploratory. SL bounds are requested
+constraints, TP3.5R is a baseline, and TP_MAX/fills/portfolio economics remain
+unresolved. No optimality or live-trading authorization is implied.
 ====================================================================
 
 Grave dans le code les conclusions ÉCONOMIQUES de la Phase 0b (commit deb24df,
@@ -34,13 +38,13 @@ from typing import List, Optional, Tuple
 import math
 from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityError
 
-# ─── Constantes prouvées par la Phase 0b (jamais modifiées sans nouvel audit) ─
+# Requested SL constraints, measured on TRAIN; not permanently optimal geometry.
 SL_FLOOR_PCT = 0.012          # plancher structurel : 1.2 %
 SL_ATR_MULT = 1.0             # alternative : 1.0 × ATR (du contenant 1h)
 SL_MIN_BOUND = 0.012          # SL_MIN = max(1.20%, 1.0 × ATR_1h)
 SL_MAX_BOUND = 0.030          # SL_MAX = min(3.00%, 2.5 × ATR_1h)
 SL_ATR_MAX_MULT = 2.5
-TP_R_RATIO = 3.5              # cible d'expansion : 3.5 R (cellule gagnante 0b)
+TP_R_RATIO = 3.5              # exploratory Phase0b baseline, not an optimality claim
 TP_MIN_R = 3.5                # baseline
 FEES_R_MAX = 0.30             # refus géométrique si frais > 0.30 R
 FEES_RT_TAKER = 0.0040        # 0.40 % aller-retour (stress-test)
@@ -111,7 +115,8 @@ def compute_geometry(
     entry              : prix d'entrée (open de la 5m suivante, typiquement)
     invalidation_level : niveau structurel d'invalidation (mèche/niveau) —
                          le SL technique, AVANT application du plancher.
-    atr_1h_pct         : ATR du contenant 1h en % du prix (si None → plancher seul)
+    atr_1h_pct         : optional fraction cross-check, NEVER the authoritative source;
+                         snapshot + availability_contract are mandatory
     p_win              : probabilité calibrée de succès (issue du JEV, étape 4)
     fees_rt            : régime de frais aller-retour (maker par défaut)
 
