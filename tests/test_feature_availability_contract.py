@@ -22,10 +22,10 @@ class AvailabilityTests(unittest.TestCase):
     def test_every_declaration_has_exclusive_category_and_status(self):
         entries = self.registry.all_variables()
         self.assertEqual(len(entries), 1026)
-        self.assertEqual(sum(x.future_safe == 'VERIFIED' for x in entries), 281)
-        self.assertEqual(sum(x.future_safe == 'UNKNOWN' for x in entries), 745)
+        self.assertEqual(sum(x.future_safe == 'VERIFIED' for x in entries), 283)
+        self.assertEqual(sum(x.future_safe == 'UNKNOWN' for x in entries), 743)
         self.assertEqual(sum(x.future_safe == 'UNSAFE' for x in entries), 0)
-        self.assertEqual(sum(x.status == 'UNRESOLVED' for x in entries), 745)
+        self.assertEqual(sum(x.status == 'UNRESOLVED' for x in entries), 743)
         for entry in entries:
             self.assertTrue(entry.reason)
             self.assertIsNotNone(entry.missing_source)
@@ -37,7 +37,7 @@ class AvailabilityTests(unittest.TestCase):
 
     def test_no_1026_auto_input(self):
         eligible = set(self.contract.eligible_names())
-        self.assertEqual(len(eligible), 281)
+        self.assertEqual(len(eligible), 283)
         for entry in self.registry.all_variables():
             if entry.name in eligible:
                 self.contract.require(entry.name)
@@ -60,7 +60,7 @@ class AvailabilityTests(unittest.TestCase):
         edited.iloc[i + 1:, 4] *= 4
         after = self.contract.materialize(NestedStateBuilder(edited).snapshot(i))
         self.assertEqual(before, after)
-        self.assertEqual(len(before), 281)
+        self.assertEqual(len(before), 283)
         self.assertNotIn('rsi_7', before)
         with self.assertRaises(FeatureAvailabilityError):
             self.contract.materialize(NestedStateBuilder(self.frame).snapshot(i), ['rsi_7'])
@@ -93,7 +93,11 @@ class AvailabilityTests(unittest.TestCase):
             contract.materialize(NestedStateBuilder(self.frame).snapshot(300), ['not.mapped'])
 
     def test_atr_semantics_are_explicit_and_not_automatically_resolved(self):
-        for name in ('c1h.atr_1h', 'c1h.atr_1h_pct', 'c4h.atr_4h', 'c4h.atr_4h_pct'):
+        for name in ('c1h.atr_1h', 'c1h.atr_1h_pct'):
+            entry = self.contract.require(name)
+            self.assertEqual(entry.future_safe, 'VERIFIED')
+            self.assertTrue(entry.verification.get('bridge_tests'))
+        for name in ('c4h.atr_4h', 'c4h.atr_4h_pct'):
             entry = self.registry[name]
             self.assertEqual(entry.future_safe, 'UNKNOWN')
             self.assertEqual(entry.status, 'UNRESOLVED')
