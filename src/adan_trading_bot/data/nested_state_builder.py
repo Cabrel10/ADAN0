@@ -31,6 +31,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from adan_trading_bot.data.canonical_atr import canonical_atr_1h, ATR1hObservation
+
 
 # ─── Dimensions canoniques ────────────────────────────────────────────────────
 BARS_PER_1H = 12      # 12 × 5m
@@ -74,6 +76,7 @@ class LivingStateSnapshot:
 
     # 5. Intégrité (étape 2) : False → ABSTENTION obligatoire
     integrity_ok: bool = True
+    atr_1h: Optional[ATR1hObservation] = None
 
 
 class NestedStateBuilder:
@@ -118,6 +121,7 @@ class NestedStateBuilder:
         self._pos_4h = self.m_4h - 1
 
         self._precompute_containers()
+        self.canonical_atr_1h = canonical_atr_1h(self)
 
     # ─── Pré-calcul vectorisé des contenants vivants ──────────────────────────
     def _precompute_containers(self):
@@ -174,6 +178,9 @@ class NestedStateBuilder:
         if i < self.MIN_BARS:
             return False
         win = self.bars_5m[i - BARS_PER_4H:i + 1]
+        timestamps = self.ts[i - BARS_PER_4H:i + 1].to_numpy(dtype="datetime64[ns]").astype(np.int64)
+        if (np.diff(timestamps) != 300 * 10**9).any():
+            return False
         if not np.isfinite(win).all():
             return False
         o, h, l, v = self.o[i], self.h[i], self.l[i], self.v[i]
@@ -229,6 +236,7 @@ class NestedStateBuilder:
             prev_4h=self.prev_4h[i].copy(),
             portfolio=np.asarray(portfolio, dtype=np.float64),
             integrity_ok=self._integrity(i),
+            atr_1h=self.canonical_atr_1h.observation(i, close),
         )
 
     def __len__(self):
