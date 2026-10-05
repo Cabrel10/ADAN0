@@ -199,6 +199,11 @@ def snapshot_values(registry, snapshot):
     result = {}
     for entry in registry.all_variables():
         name = entry.name
+        if name in ("c1h.atr_1h", "c1h.atr_1h_pct"):
+            observation = getattr(snapshot, "atr_1h", None)
+            if observation is not None and observation.available:
+                result[name] = float(observation.value if name == "c1h.atr_1h" else observation.fraction)
+            continue
         if name.startswith("bar_5m.") and name[7:] in bar_fields:
             result[name] = float(snapshot.bar_5m[bar_fields[name[7:]]])
             continue
@@ -493,6 +498,11 @@ def classify_existing_registry(registry_path="config/feature_registry.json"):
                         "mutations": ["ALL_OHLC_after_t_times_3", "volume_after_t_times_5"],
                         "producer_sha256": hashlib.sha256(Path(producer.__file__).read_bytes()).hexdigest(),
                         "adapter_sha256": hashlib.sha256(inspect.getsource(snapshot_values).encode()).hexdigest()}
+            if name in ("c1h.atr_1h", "c1h.atr_1h_pct"):
+                from adan_trading_bot.data import canonical_atr
+                evidence["canonical_source_sha256"] = hashlib.sha256(Path(canonical_atr.__file__).read_bytes()).hexdigest()
+                evidence["bridge_tests"] = "tests/test_canonical_atr_bridge.py: source identity, value-by-value equality, future and elapsed-current-hour mutations, warmup/gaps"
+
         atr_parents = (entry.get("atr_definition") or {}).get("corrected_parents")
         if atr_parents is not None:
             parents = atr_parents
