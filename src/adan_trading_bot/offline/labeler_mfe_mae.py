@@ -74,27 +74,8 @@ def atr14(o, h, l, c):
     tr[0] = h[0] - l[0]
     return pd.Series(tr).rolling(14).mean().to_numpy()
 
-def compute_true_atr_1h(b: NestedStateBuilder) -> np.ndarray:
-    """ATR14 of COMPLETE consecutive hours, available in the NEXT hour.
-
-    A partial starting hour is excluded. Missing hours reset the rolling
-    window. Warmup stays NaN: never backfill from future observations.
-    Convention is deliberately one-hour lag even at the xx:55 decision.
-    """
-    ts_ns = b.ts.to_numpy(dtype="datetime64[ns]").astype(np.int64)
-    ids = ts_ns // (3600 * 10**9)
-    bars = pd.DataFrame({"id": ids, "h": b.h, "l": b.l, "c": b.c})
-    candles = bars.groupby("id").agg(h=("h", "max"), l=("l", "min"),
-                                      c=("c", "last"), count=("c", "count"))
-    candles = candles.reindex(np.arange(ids.min(), ids.max() + 1))
-    complete = candles["count"].eq(12)
-    candles.loc[~complete, ["h", "l", "c"]] = np.nan
-    prev_c = candles.c.shift(1)
-    tr = pd.concat([candles.h - candles.l, (candles.h - prev_c).abs(),
-                    (candles.l - prev_c).abs()], axis=1).max(axis=1)
-    tr[~complete] = np.nan
-    atr = tr.rolling(14, min_periods=14).mean().shift(1)
-    return atr.reindex(ids).to_numpy()
+# Exact same function object used by the snapshot runtime; no second formula.
+from adan_trading_bot.data.canonical_atr import compute_true_atr_1h
 
 def build_features(b: NestedStateBuilder) -> np.ndarray:
     """Assemble le vecteur 88 dims pour TOUTES les barres (ordre strict =
