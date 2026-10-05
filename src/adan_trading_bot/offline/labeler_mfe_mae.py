@@ -335,6 +335,68 @@ def compute_labels(b: NestedStateBuilder, feats: np.ndarray):
     return labels
 
 
+def compute_plan_outcomes(b, decision_indices, candidates, *, fees_rt,
+                          entry_assumption="FILLED_AT_NEXT_OPEN"):
+    """State × explicit candidate outcomes, conditional on hypothetical filled entry.
+
+    No direction classifier: each supplied LONG/SHORT/SL/TP/horizon is evaluated.
+    MFE/MAE and touch times span the FULL candidate horizon (uncensored excursion).
+    Touch times are 1-based, 0 means not touched. Same-bar ambiguity => SL first.
+    Timeout is marked to horizon CLOSE and charged round-trip costs. NET_RETURN
+    is R, Y_WIN is positive net R, and differs from Y_TP_FIRST on some timeouts.
+    Maker fill probability/slippage is NOT inferred from OHLC: this API does not
+    authorize maker backtests or training until their separate contracts pass.
+    """
+    if entry_assumption != "FILLED_AT_NEXT_OPEN":
+        raise ValueError("Unsupported entry/fill assumption")
+    if len(decision_indices) != len(candidates):
+        raise ValueError("One explicit plan is required per decision")
+    if not np.isfinite(fees_rt) or fees_rt < 0:
+        raise ValueError("Explicit round-trip fees required")
+    # Shared production integrity rules; NEVER concatenate across timeline gaps.
+    validate_label_inputs(b, np.empty((b.n, 88)))
+    rows = []
+    for index, plan in zip(decision_indices, candidates):
+        i = int(index)
+        if index != i or i < 0 or i + plan.horizon >= b.n or plan.horizon <= 0:
+            raise ValueError("Decision lacks complete future candidate horizon")
+        if (plan.direction not in ("LONG", "SHORT") or not np.isfinite(plan.sl_pct)
+                or not 0 < plan.sl_pct < 1 or not np.isfinite(plan.tp_r)
+                or plan.tp_r <= 0 or plan.horizon != int(plan.horizon)):
+            raise ValueError("Invalid explicit plan parameters")
+        entry = float(b.o[i + 1]); risk = entry * plan.sl_pct
+        short = plan.direction == "SHORT"
+        stop = entry + risk if short else entry - risk
+        target = entry - risk * plan.tp_r if short else entry + risk * plan.tp_r
+        if target <= 0:
+            raise ValueError("Invalid nonpositive TP price")
+        highs, lows = b.h[i + 1:i + 1 + plan.horizon], b.l[i + 1:i + 1 + plan.horizon]
+        favorable = (entry - lows) / entry if short else (highs - entry) / entry
+        adverse = (highs - entry) / entry if short else (entry - lows) / entry
+        hit_tp = lows <= target if short else highs >= target
+        hit_sl = highs >= stop if short else lows <= stop
+        tp_events, sl_events = np.flatnonzero(hit_tp), np.flatnonzero(hit_sl)
+        t_tp = int(tp_events[0] + 1) if len(tp_events) else 0
+        t_sl = int(sl_events[0] + 1) if len(sl_events) else 0
+        tp_first = int(t_tp > 0 and (t_sl == 0 or t_tp < t_sl))
+        sl_first = int(t_sl > 0 and (t_tp == 0 or t_sl <= t_tp))
+        timeout = not (tp_first or sl_first)
+        gross = ((entry - b.c[i + plan.horizon]) / risk if short else
+                 (b.c[i + plan.horizon] - entry) / risk) if timeout else (plan.tp_r if tp_first else -1.)
+        net = float(gross - fees_rt / plan.sl_pct)
+        rows.append({"decision_timestamp": b.ts[i], "entry_timestamp": b.ts[i + 1],
+                     "direction": plan.direction, "sl_pct": plan.sl_pct, "tp_r": plan.tp_r,
+                     "horizon": plan.horizon, "execution_mode": plan.execution_mode,
+                     "entry_assumption": entry_assumption, "portfolio_state": plan.portfolio_state,
+                     "entry": entry, "Y_WIN": int(net > 0), "Y_TP_FIRST": tp_first,
+                     "Y_SL_FIRST": sl_first, "TIMEOUT": int(timeout),
+                     "MFE": float(max(0., favorable.max())), "MAE": float(max(0., adverse.max())),
+                     "TIME_TO_TP": t_tp, "TIME_TO_SL": t_sl, "NET_RETURN": net,
+                     "return_unit": "R", "excursion_unit": "price_fraction",
+                     "touch_time_unit": "5m_bars_from_entry_1_based_zero_censored"})
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="limite de barres (smoke test)")
