@@ -173,6 +173,10 @@ def compute_geometry(
         True, direction, entry=entry, stop_loss=stop, take_profit=target,
         sl_distance_pct=sl_pct, tp_distance_pct=tp_pct, risk_r=1.0,
         frais_r=frais_r, ev_brute_r=ev_brute, ev_nette_r=ev_nette,
+        candidate_plan=PlanCandidate(direction, sl_pct, TP_MIN_R,
+                                     atr_observation=snapshot.atr_1h,
+                                     sl_min_bound=floor_pct, sl_max_bound=ceiling_pct,
+                                     portfolio_state=snapshot.portfolio.copy()),
     )
 
 
@@ -220,6 +224,7 @@ def select_best_plan(
     snapshot,
     candidate_evaluations: List[Tuple[PlanCandidate, float]], # List of (plan, p_win)
     fees_rt: float = FEES_RT_MAKER,
+    *, availability_contract=None,
 ) -> Tuple[Optional[PlanCandidate], Optional[TradeGeometry]]:
     """
     Sélectionne le meilleur plan admissible (ORDRE 4B) :
@@ -230,10 +235,23 @@ def select_best_plan(
     """
     best_plan = None
     best_geom = None
-    best_p_win = -1.0
+    best_ev = float("-inf")
     entry = snapshot.price
+    try:
+        fraction = _atr_pct_from_snapshot(snapshot, availability_contract)
+        sl_min, sl_max = compute_sl_bounds(fraction)
+    except (FeatureAvailabilityError, ValueError, AttributeError):
+        return None, None
+    if sl_min > sl_max or not math.isfinite(fees_rt) or fees_rt < 0:
+        return None, None
 
     for plan, p_win in candidate_evaluations:
+        if (not plan.admissible() or not sl_min <= plan.sl_pct <= sl_max
+                or plan.sl_min_bound != sl_min or plan.sl_max_bound != sl_max
+                or plan.atr_observation != snapshot.atr_1h
+                or not math.isfinite(p_win) or not 0 <= p_win <= 1
+                or plan.tp_r != TP_MIN_R or plan.tp_status != "BASELINE_ONLY_TP_MAX_UNRESOLVED"):
+            continue
         frais_r = fees_rt / plan.sl_pct
         if frais_r > FEES_R_MAX:
             continue
@@ -266,8 +284,8 @@ def select_best_plan(
             candidate_plan=plan
         )
 
-        if p_win > best_p_win:
-            best_p_win = p_win
+        if ev_nette > best_ev:
+            best_ev = ev_nette
             best_plan = plan
             best_geom = geom
 
