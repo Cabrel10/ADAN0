@@ -1,0 +1,287 @@
+[
+  {
+    "name": "atr_14",
+    "declared_source": "feature_engineer.atr",
+    "timeframe": "5m",
+    "availability": "UNRESOLVED",
+    "causal_contract": "5m bars through t only; warmup and backend init must be validated",
+    "name_changed": false,
+    "declared_dependencies": [
+      "bar_5m.high",
+      "bar_5m.low",
+      "bar_5m.close"
+    ],
+    "kind": "LEGACY_5M_ATR",
+    "definition_version": "legacy-5m-rma14",
+    "formula": "Wilder/RMA14(TR_5m), TR=max(H-L,abs(H-prevC),abs(L-prevC))",
+    "runtime_source": "data_processing.feature_engineer: pandas_ta ATR default; exact backend/seed unverified",
+    "smoothing": "Wilder/RMA, NOT arithmetic SMA",
+    "consistency": "labeler.atr14 uses SMA14 at 5m; distinct legacy definition, not silently aliased"
+  },
+  {
+    "name": "atr_5m_pct",
+    "declared_source": "feature_engineer.atr",
+    "timeframe": "5m",
+    "availability": "UNRESOLVED",
+    "causal_contract": "5m bars through t only; warmup and backend init must be validated",
+    "name_changed": false,
+    "declared_dependencies": [
+      "atr_14",
+      "bar_5m.close"
+    ],
+    "kind": "LEGACY_5M_ATR",
+    "definition_version": "legacy-5m-rma14",
+    "formula": "Wilder/RMA14 of TR_5m; divided by close_t",
+    "runtime_source": "data_processing.feature_engineer: pandas_ta ATR default; exact backend/seed unverified",
+    "smoothing": "Wilder/RMA, NOT arithmetic SMA",
+    "consistency": "labeler.atr14 uses SMA14 at 5m; distinct legacy definition, not silently aliased"
+  },
+  {
+    "name": "c1h.atr_1h",
+    "declared_source": "indicators.atr",
+    "timeframe": "1h",
+    "availability": "previous 14 full consecutive 1h containers; UTC bar-open timestamps; current container excluded even at its final 5m close",
+    "causal_contract": "complete containers only; lag one; gaps reset warmup; no bfill; fraction normalization uses causal current close",
+    "name_changed": false,
+    "declared_dependencies": [
+      "c1h.running_high",
+      "c1h.running_low",
+      "bar_5m.close"
+    ],
+    "kind": "CANONICAL_COMPLETED_CONTAINER_ATR",
+    "formula": "SMA14(TR of COMPLETE 1h containers), TR=max(H-L,abs(H-prevC),abs(L-prevC)); lag 1 container",
+    "definition_version": "systemone-1h-sma14-tr-lag1-v1",
+    "smoothing": "arithmetic SMA14",
+    "runtime_source": "offline.labeler_mfe_mae.compute_true_atr_1h",
+    "snapshot_consistency": "NOT_WIRED: existing LivingStateSnapshot contains no ATR field",
+    "geometry_consistency": "NOT_PROVEN: scalar atr_1h_pct lacks provenance; legacy _atr_pct_from_snapshot now raises instead of returning a range/phase proxy",
+    "labeler_consistency": "1h base implemented and GATE1 validated; normalized value is ATR / close_t",
+    "corrected_parents": [
+      {
+        "name": "c1h.prev_high",
+        "time_offset_bars": "last_14_complete_containers"
+      },
+      {
+        "name": "c1h.prev_low",
+        "time_offset_bars": "last_14_complete_containers"
+      },
+      {
+        "name": "c1h.prev_close",
+        "time_offset_bars": "last_15_complete_containers"
+      }
+    ],
+    "consistency": "explicit definition decision; old running-H/L parent claims retained as historical declaration, not verified constraints"
+  },
+  {
+    "name": "c1h.atr_1h_pct",
+    "declared_source": "indicators.atr",
+    "timeframe": "1h",
+    "availability": "previous 14 full consecutive 1h containers; UTC bar-open timestamps; current container excluded even at its final 5m close",
+    "causal_contract": "complete containers only; lag one; gaps reset warmup; no bfill; fraction normalization uses causal current close",
+    "name_changed": false,
+    "declared_dependencies": [
+      "c1h.atr_1h",
+      "bar_5m.close"
+    ],
+    "kind": "CANONICAL_COMPLETED_CONTAINER_ATR",
+    "formula": "SMA14(TR of COMPLETE 1h containers), TR=max(H-L,abs(H-prevC),abs(L-prevC)); lag 1 container; divide by close_5m(t), fraction not percent-points",
+    "definition_version": "systemone-1h-sma14-tr-lag1-v1",
+    "smoothing": "arithmetic SMA14",
+    "runtime_source": "offline.labeler_mfe_mae.compute_true_atr_1h",
+    "snapshot_consistency": "NOT_WIRED: existing LivingStateSnapshot contains no ATR field",
+    "geometry_consistency": "NOT_PROVEN: scalar atr_1h_pct lacks provenance; legacy _atr_pct_from_snapshot now raises instead of returning a range/phase proxy",
+    "labeler_consistency": "1h base implemented and GATE1 validated; normalized value is ATR / close_t",
+    "corrected_parents": [
+      {
+        "name": "c1h.atr_1h",
+        "time_offset_bars": 0
+      },
+      {
+        "name": "bar_5m.close",
+        "time_offset_bars": 0
+      }
+    ],
+    "consistency": "explicit definition decision; old running-H/L parent claims retained as historical declaration, not verified constraints"
+  },
+  {
+    "name": "c1h.range_to_atr",
+    "declared_source": "indicators.ratio",
+    "timeframe": "1h",
+    "availability": "previous 14 full consecutive 1h containers; UTC bar-open timestamps; current container excluded even at its final 5m close",
+    "causal_contract": "complete containers only; lag one; gaps reset warmup; no bfill; fraction normalization uses causal current close",
+    "name_changed": false,
+    "declared_dependencies": [
+      "c1h.running_range",
+      "c1h.atr_1h"
+    ],
+    "kind": "CANONICAL_COMPLETED_CONTAINER_ATR",
+    "formula": "running_range_1h(t) / canonical_atr_1h(t)",
+    "definition_version": "systemone-1h-sma14-tr-lag1-v1",
+    "smoothing": "arithmetic SMA14",
+    "runtime_source": "offline.labeler_mfe_mae.compute_true_atr_1h",
+    "snapshot_consistency": "NOT_WIRED: existing LivingStateSnapshot contains no ATR field",
+    "geometry_consistency": "NOT_PROVEN: scalar atr_1h_pct lacks provenance; legacy _atr_pct_from_snapshot now raises instead of returning a range/phase proxy",
+    "labeler_consistency": "1h base implemented and GATE1 validated; normalized value is ATR / close_t",
+    "corrected_parents": [
+      {
+        "name": "c1h.running_range",
+        "time_offset_bars": 0
+      },
+      {
+        "name": "c1h.atr_1h",
+        "time_offset_bars": 0
+      }
+    ],
+    "consistency": "explicit definition decision; old running-H/L parent claims retained as historical declaration, not verified constraints"
+  },
+  {
+    "name": "c4h.atr_4h",
+    "declared_source": "indicators.atr",
+    "timeframe": "4h",
+    "availability": "previous 14 full consecutive 4h containers; UTC bar-open timestamps; current container excluded even at its final 5m close",
+    "causal_contract": "complete containers only; lag one; gaps reset warmup; no bfill; fraction normalization uses causal current close",
+    "name_changed": false,
+    "declared_dependencies": [
+      "c4h.running_high",
+      "c4h.running_low",
+      "bar_5m.close"
+    ],
+    "kind": "CANONICAL_COMPLETED_CONTAINER_ATR",
+    "formula": "SMA14(TR of COMPLETE 4h containers), TR=max(H-L,abs(H-prevC),abs(L-prevC)); lag 1 container",
+    "definition_version": "systemone-4h-sma14-tr-lag1-v1",
+    "smoothing": "arithmetic SMA14",
+    "runtime_source": null,
+    "snapshot_consistency": "NOT_WIRED: existing LivingStateSnapshot contains no ATR field",
+    "geometry_consistency": "NOT_PROVEN: scalar atr_1h_pct lacks provenance; legacy _atr_pct_from_snapshot now raises instead of returning a range/phase proxy",
+    "labeler_consistency": "4h canonical implementation unresolved",
+    "corrected_parents": [
+      {
+        "name": "c4h.prev_high",
+        "time_offset_bars": "last_14_complete_containers"
+      },
+      {
+        "name": "c4h.prev_low",
+        "time_offset_bars": "last_14_complete_containers"
+      },
+      {
+        "name": "c4h.prev_close",
+        "time_offset_bars": "last_15_complete_containers"
+      }
+    ],
+    "consistency": "explicit definition decision; old running-H/L parent claims retained as historical declaration, not verified constraints"
+  },
+  {
+    "name": "c4h.atr_4h_pct",
+    "declared_source": "indicators.atr",
+    "timeframe": "4h",
+    "availability": "previous 14 full consecutive 4h containers; UTC bar-open timestamps; current container excluded even at its final 5m close",
+    "causal_contract": "complete containers only; lag one; gaps reset warmup; no bfill; fraction normalization uses causal current close",
+    "name_changed": false,
+    "declared_dependencies": [
+      "c4h.atr_4h",
+      "bar_5m.close"
+    ],
+    "kind": "CANONICAL_COMPLETED_CONTAINER_ATR",
+    "formula": "SMA14(TR of COMPLETE 4h containers), TR=max(H-L,abs(H-prevC),abs(L-prevC)); lag 1 container; divide by close_5m(t), fraction not percent-points",
+    "definition_version": "systemone-4h-sma14-tr-lag1-v1",
+    "smoothing": "arithmetic SMA14",
+    "runtime_source": null,
+    "snapshot_consistency": "NOT_WIRED: existing LivingStateSnapshot contains no ATR field",
+    "geometry_consistency": "NOT_PROVEN: scalar atr_1h_pct lacks provenance; legacy _atr_pct_from_snapshot now raises instead of returning a range/phase proxy",
+    "labeler_consistency": "4h canonical implementation unresolved",
+    "corrected_parents": [
+      {
+        "name": "c4h.atr_4h",
+        "time_offset_bars": 0
+      },
+      {
+        "name": "bar_5m.close",
+        "time_offset_bars": 0
+      }
+    ],
+    "consistency": "explicit definition decision; old running-H/L parent claims retained as historical declaration, not verified constraints"
+  },
+  {
+    "name": "c4h.range_to_atr",
+    "declared_source": "indicators.ratio",
+    "timeframe": "4h",
+    "availability": "previous 14 full consecutive 4h containers; UTC bar-open timestamps; current container excluded even at its final 5m close",
+    "causal_contract": "complete containers only; lag one; gaps reset warmup; no bfill; fraction normalization uses causal current close",
+    "name_changed": false,
+    "declared_dependencies": [
+      "c4h.running_range",
+      "c4h.atr_4h"
+    ],
+    "kind": "CANONICAL_COMPLETED_CONTAINER_ATR",
+    "formula": "running_range_4h(t) / canonical_atr_4h(t)",
+    "definition_version": "systemone-4h-sma14-tr-lag1-v1",
+    "smoothing": "arithmetic SMA14",
+    "runtime_source": null,
+    "snapshot_consistency": "NOT_WIRED: existing LivingStateSnapshot contains no ATR field",
+    "geometry_consistency": "NOT_PROVEN: scalar atr_1h_pct lacks provenance; legacy _atr_pct_from_snapshot now raises instead of returning a range/phase proxy",
+    "labeler_consistency": "4h canonical implementation unresolved",
+    "corrected_parents": [
+      {
+        "name": "c4h.running_range",
+        "time_offset_bars": 0
+      },
+      {
+        "name": "c4h.atr_4h",
+        "time_offset_bars": 0
+      }
+    ],
+    "consistency": "explicit definition decision; old running-H/L parent claims retained as historical declaration, not verified constraints"
+  },
+  {
+    "name": "risk.sl_atr_multiplier_min",
+    "declared_source": "risk_engine.limits",
+    "timeframe": "global",
+    "availability": "UNRESOLVED",
+    "causal_contract": "no future fill; warmup unavailable; no implicit zero",
+    "name_changed": false,
+    "declared_dependencies": [],
+    "formula": "constant_1_0",
+    "kind": "SETTING_NOT_AN_ATR_OBSERVATION",
+    "runtime_source": "risk_engine.limits",
+    "consistency": "not a volatility measurement"
+  },
+  {
+    "name": "risk.sl_atr_multiplier_max",
+    "declared_source": "risk_engine.limits",
+    "timeframe": "global",
+    "availability": "UNRESOLVED",
+    "causal_contract": "no future fill; warmup unavailable; no implicit zero",
+    "name_changed": false,
+    "declared_dependencies": [],
+    "formula": "constant_2_5",
+    "kind": "SETTING_NOT_AN_ATR_OBSERVATION",
+    "runtime_source": "risk_engine.limits",
+    "consistency": "not a volatility measurement"
+  },
+  {
+    "name": "config.trading_rules.symmetry_enforcement.sl_atr_mult_max",
+    "declared_source": "config/config.yaml:trading_rules.symmetry_enforcement.sl_atr_mult_max",
+    "timeframe": "global",
+    "availability": "UNRESOLVED",
+    "causal_contract": "no future fill; warmup unavailable; no implicit zero",
+    "name_changed": false,
+    "declared_dependencies": [],
+    "formula": "none",
+    "kind": "SETTING_NOT_AN_ATR_OBSERVATION",
+    "runtime_source": "config/config.yaml:trading_rules.symmetry_enforcement.sl_atr_mult_max",
+    "consistency": "not a volatility measurement"
+  },
+  {
+    "name": "config.trading_rules.symmetry_enforcement.sl_atr_lambda",
+    "declared_source": "config/config.yaml:trading_rules.symmetry_enforcement.sl_atr_lambda",
+    "timeframe": "global",
+    "availability": "UNRESOLVED",
+    "causal_contract": "no future fill; warmup unavailable; no implicit zero",
+    "name_changed": false,
+    "declared_dependencies": [],
+    "formula": "none",
+    "kind": "SETTING_NOT_AN_ATR_OBSERVATION",
+    "runtime_source": "config/config.yaml:trading_rules.symmetry_enforcement.sl_atr_lambda",
+    "consistency": "not a volatility measurement"
+  }
+]

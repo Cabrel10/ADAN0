@@ -7,7 +7,7 @@ import torch
 
 from adan_trading_bot.features.feature_registry import FeatureRegistry, get_feature_registry
 from adan_trading_bot.features.relation_graph import (
-    RelationGraph, RelationEdge, EdgeType, DependencyOrigin, SparseRelationConv,
+    RelationGraph, RelationEdge, EdgeType, EdgeStatus, DependencyOrigin, SparseRelationConv, RelationalPerception,
 )
 
 
@@ -19,8 +19,8 @@ class GraphTests(unittest.TestCase):
     def test_sparse_topology(self):
         summary = self.graph.validate()
         self.assertEqual(summary['total_nodes'], 1026)
-        self.assertEqual(summary['total_edges'], 530)
-        self.assertEqual(self.graph.get_edge_index().shape, (2, 530))
+        self.assertEqual(summary['total_edges'], 540)
+        self.assertEqual(self.graph.get_edge_index().shape, (2, 540))
         self.assertGreater(summary['sparsity_pct'], 99.9)
 
     def test_open_aggregations_are_not_silently_dropped(self):
@@ -61,6 +61,61 @@ class GraphTests(unittest.TestCase):
         self.graph.add_edge(replace(edge, training_provenance=provenance))
         self.assertEqual(self.graph.validate()['by_origin']['PREDICTIVE_DEPENDENCY'], 1)
         # The edge above is a synthetic validation fixture, not fitted evidence.
+
+    def test_declarations_do_not_auto_verify_constraints(self):
+        from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityContract
+        contract = FeatureAvailabilityContract(self.registry)
+        self.assertEqual(self.graph.constraint_edges(contract), [])
+        self.assertTrue(all(e.status == EdgeStatus.UNVERIFIED for e in self.graph.edges))
+        with self.assertRaises(ValueError):
+            self.graph.get_edge_index(verified_only=True)
+        with self.assertRaises(RuntimeError):
+            RelationalPerception(self.registry, self.graph)
+
+    def test_qualified_constraints_and_reconciled_atr_lineage(self):
+        import pandas as pd
+        from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityContract
+        contract = FeatureAvailabilityContract(self.registry)
+        frame = pd.DataFrame({'open': 100., 'high': 101., 'low': 99., 'close': 100., 'volume': 1.},
+                             index=pd.date_range('2020-01-01', periods=600, freq='5min'))
+        qualified = self.graph.qualify_on_raw_train(frame, contract)
+        self.assertEqual(len(qualified.constraint_edges(contract)), 283)
+        self.assertEqual(qualified.get_edge_index(True, contract).shape, (2, 283))
+        self.assertEqual(qualified.get_edge_weights(True, contract).shape, (283,))
+        for edge in qualified.constraint_edges(contract):
+            self.assertNotEqual(edge.status, EdgeStatus.UNVERIFIED)
+            self.assertNotIn(self.registry[edge.source].category, ('LABEL_ONLY', 'CONFIG_ONLY', 'UNRESOLVED'))
+            self.assertNotIn(self.registry[edge.target].category, ('LABEL_ONLY', 'CONFIG_ONLY', 'UNRESOLVED'))
+        for edge in qualified.edges:
+            if edge.target == 'c1h.atr_1h':
+                self.assertIn('prev_', edge.source)
+                self.assertNotEqual(edge.source_time_offset_bars, 0)
+                self.assertEqual(edge.status, EdgeStatus.UNVERIFIED)
+        with self.assertRaises(ValueError):
+            qualified.qualify_on_raw_train(frame.set_axis(pd.date_range('2022-01-01', periods=600, freq='5min')), contract)
+
+    def test_forged_edge_verification_rejected(self):
+        template = self.graph.edges[0]
+        with self.assertRaises(ValueError):
+            self.graph.add_edge(replace(template, status=EdgeStatus.VERIFIED_DETERMINISTIC))
+        with self.assertRaises(ValueError):
+            self.graph.add_edge(replace(template, status=EdgeStatus.VERIFIED_PLAN,
+                                        verification={'passed': True, 'source': template.source,
+                                                      'target': template.target, 'test': 'fake'}))
+
+    def test_predictive_train_edge_is_not_a_hard_causal_constraint(self):
+        from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityContract
+        contract = FeatureAvailabilityContract(self.registry)
+        proof = {'passed': True, 'test': 'synthetic-provenance-fixture-not-data-evidence',
+                 'source': 'bar_5m.close', 'target': 'bar_5m.open',
+                 'producer_sha256': contract.producer_hash, 'adapter_sha256': contract.adapter_hash}
+        edge = RelationEdge('bar_5m.close', 'bar_5m.open', EdgeType.EMPIRICAL_DEPENDENCY,
+                            DependencyOrigin.PREDICTIVE_DEPENDENCY,
+                            training_provenance={'split': 'TRAIN', 'start': '2017-08-17', 'end': '2021-12-31',
+                                                 'method': 'test-fixture', 'sample_count': 10, 'freeze_id': 'test-only'},
+                            status=EdgeStatus.PREDICTIVE_TRAIN_ONLY, verification=proof)
+        graph = RelationGraph(self.registry, edges=[edge])
+        self.assertEqual(graph.constraint_edges(contract), [])
 
     def test_explicit_empty_graph(self):
         graph = RelationGraph(self.registry, edges=[])

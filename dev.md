@@ -61,7 +61,138 @@ Code : commits `6503f70` → `1870cc0` (production finale `138e741`, version
   Timeout net_return=0 reste une convention provisoire, aucun fill maker simulé.
   Tous les NOUL/régimes ne sont pas encore audités. Prochaine étape : GATE 2.
 
-### GATE 2 — audit du registre existant (2026-10-02)
+### GATE 2 — PARTIAL / AUDIT IN PROGRESS (mise à jour 2026-10-05)
+
+**Statut autoritaire actuel** : GATE 1 = PASS ; GATE 2 = PARTIAL, aucune
+validation pour entraînement ; GATE 3 = travail structurel autorisé, qualification
+limitée ; GATE 4 = label audit pending ; GPU = BLOCKED ; 500K = BLOCKED.
+Les contrôles de métadonnées décrits ci-dessous passent, sans transformer
+l'inventaire en 1 026 features ni valider le pipeline économique complet.
+
+#### Classification exclusive et contrat d'entrée (2026-10-05)
+
+Code/proofs : `d4224bb` → `446049b` (classification, contrat, ATR et graphe).
+Les commits seront regroupés pour la PR, les mesures intermédiaires restent
+traçables dans les rapports. Aucune déclaration supprimée ou renommée : test
+comparant les 1 026 noms/ordre et les anciens champs à `a990609` ; anciens
+`causal_t` conservés uniquement comme declared_disponibilite_t, jamais comme preuve.
+
+| Catégorie exclusive | Nombre |
+|---|---:|
+| MARKET_FEATURE | 5 |
+| CONTEXT_FEATURE | 4 |
+| DERIVED_FEATURE | 272 |
+| LABEL_ONLY | 8 |
+| CONFIG_ONLY | 577 |
+| UNRESOLVED | 160 |
+| PORTFOLIO_FEATURE / PLAN_FEATURE / RISK_FEATURE | 0 / 0 / 0 |
+
+La catégorie et le statut de résolution sont différents : 577 CONFIG_ONLY +
+8 LABEL_ONLY + 160 de catégorie UNRESOLVED = **745 status=UNRESOLVED**, tous
+conservés avec reason, missing_source, missing_runtime_mapping, lineage et
+future_safe. Les rôles portfolio/plan/risk sont déclarés, pas encore prouvés au
+runtime ; on ne les promeut donc pas artificiellement en features disponibles.
+
+**Future-safe : VERIFIED=281 ; UNKNOWN=745 ; UNSAFE=0 confirmé.** Zéro UNSAFE
+confirmé ne signifie pas zéro risque : les 8 sources labeler sont interdites
+comme STATE par classification conservatrice ; leurs mappings individuels ne
+sont pas inventés. Un résultat ex-post contenant next_close/future H/L ou
+TP_FIRST/SL_FIRST/MFE/MAE/times/NET_RETURN n'est jamais un input causal.
+
+- Mutation future : première fenêtre TRAIN continue de 600 barres, t=index 300,
+  toutes les OHLC après t ×3 et tous les volumes après t ×5 ; les 281 valeurs
+  t restent égales. Preuve par entrée, empreintes du producer et de l'adapter,
+  timestamp et transformations stockés dans le JSON existant. Un test indépendant
+  synthétique répète l'invariance avec facteurs ×7/×4. Seed non applicable.
+- `features/feature_availability_contract.py` : admission par NOM, sans remplir
+  les inconnues de zéro ; rejet labels/config/unresolved, preuves périmées,
+  mappings manquants et intégrité invalide. La sortie est un dictionnaire nommé
+  qui préserve la structure, pas 281→MLP. Le classifieur ne crée pas un registre
+  parallèle. Les anciennes déclarations restent intégralement consultables.
+- `train_calibrated_judgments.py` reste un draft historique NON valide ; son
+  entrée est bloquée avant tout chargement de données/optimiseur/checkpoint,
+  y compris --steps 1. Le MlpEncoder et l'ancienne RelationalPerception tout-
+  registre sont bloqués. Aucun pas d'entraînement, aucun TEST utilisé.
+- Tests persistants : `tests/test_feature_availability_contract.py` **12/12** ;
+  inclut tentative de falsifier une source labeler, de réutiliser une preuve
+  périmée, d'injecter une inconnue/zero et de contourner le verrou training.
+
+#### Réconciliation ATR explicite — définitions, pas résolution fictive
+
+12 entrées liées à ATR documentées dans leur atr_definition, sans changer les
+noms, incluant les réglages/multiplicateurs qui ne sont PAS des mesures ATR.
+`atr_14` / `atr_5m_pct` conservent la sémantique legacy 5m Wilder/RMA14 (backend,
+amorçage et mapping non vérifiés). Le helper 5m du labeler emploie SMA14 : ce ne
+sont pas silencieusement les mêmes variables.
+
+`c1h.atr_1h` : décision explicite **SMA14 de True Range de 14 heures complètes
+consécutives, lag d'un contenant, jamais le contenant en formation**. Fraction
+`c1h.atr_1h_pct` = ATR / close_5m(t), pas points de pourcentage. Définition
+`systemone-1h-sma14-tr-lag1-v1`, producteur du GATE 1 déjà validé.
+Même définition proposée en 4h, producteur 4h encore UNRESOLVED.
+Lineage corrigé explicite vers prev_high/low/close et offsets historiques ; les
+anciens running H/L restent des déclarations historiques, pas des contraintes
+vérifiées. Les ratios running_range/ATR sont distincts de l'ATR lui-même.
+
+**Non résolu** : LivingStateSnapshot n'expose pas encore un ATR canonique et
+les scalaires de geometry ne prouvent pas leur provenance. Le helper trompeur
+`_atr_pct_from_snapshot` REFUSE maintenant tout appel au lieu de substituer
+range/phase ou zéro. Les ATR du registre restent UNKNOWN/UNRESOLVED et sont
+interdits dans STATE tant que leurs mappings/proofs ne sont pas établis.
+Cohérence/lacunes labeler/geometry/snapshot, formula, source, timeframe,
+availability et causal contract détaillés dans logs/atr_reconciliation.json.
+Les assertions ATR (warmup NaN, lag, mutation future et refus proxy) passent.
+
+#### Graphe sparse qualifié — aucune preuve de causalité économique
+
+`features/relation_graph.py` conserve 1 026 nœuds déclarés : **540 arêtes**
+(sparsité 99.9487 %), dont 273 derived_from, 8 aggregates, 245 temporal,
+2 same_container, 5 portfolio_constraint, 7 plan_dependency.
+Les 10 liens supplémentaires explicitent les sources des contenants précédents.
+Les offsets historiques sont conservés ; pas de parent current_close présenté
+comme producteur d'un lag, pas d'ATR attribué à running H/L au même instant.
+
+Qualification indépendante sur OHLCV TRAIN, 600 barres, décisions
+[192,203,239,288,347,503], références brutes :
+
+| Statut d'arête | Nombre |
+|---|---:|
+| VERIFIED_DETERMINISTIC | 28 |
+| VERIFIED_TEMPORAL | 255 |
+| VERIFIED_PORTFOLIO | 0 |
+| VERIFIED_PLAN | 0 |
+| PREDICTIVE_TRAIN_ONLY | 0 |
+| UNVERIFIED | 257 |
+
+Seules **283 arêtes** vérifiées entre variables admises par le contrat peuvent
+être des contraintes ; par défaut les 540 arêtes sont UNVERIFIED jusqu'à cette
+qualification. Temporal/membership certifie l'ordre/structure, pas une équation
+de prix ni une causalité. Aucun edge empirique appris ; admission d'un edge
+empirical exige TRAIN 2017–2021, méthode, effectif et freeze_id. Même avec
+provenance, une relation prédictive ne devient PAS une contrainte déterministe.
+Relations plan/portfolio/result restent à vérifier aux gates suivants ; les
+sorties ex-post ne reviennent jamais dans STATE. Graphe déclaré ≠ graphe utilisable.
+
+`tests/test_relation_graph.py` **12/12** : COO/scatter vs boucle indépendante,
+gradients finis (seed 1729), endpoints/duplications, refus provenance VAL/TEST,
+statuts falsifiés, exclusion contraintes non vérifiées, lineage ATR et blocage
+prototype neural. Régression policy 21/21 maintenue (contrats économiques récents
+non validés par ces anciens fixtures).
+
+Rapports versionnés : logs/registry_classification.json,
+logs/registry_audit_classified.json, logs/atr_reconciliation.json,
+logs/relation_graph_qualified.json ; hashes source/dataset/registry, dates,
+échantillons et versions inclus. Dataset et empreinte restent ceux du GATE 1.
+Aucun tuning/sélection sur VAL/TEST. Python 3.12.13, NumPy 2.2.6, pandas 3.0.5.
+
+Prochain travail : résoudre les mappings ATR canoniques/snapshot/geometry avec
+preuves dédiées, puis l'audit des labels et leurs anciens déséquilibres ; ne pas
+prétendre que les labels/régimes/targets/geometry sont déjà verrouillés.
+Les 745 non résolues restent à résoudre progressivement, aucune réduction
+artificielle du registre. Les ajouts de géométrie préexistants restent préservés
+et non validés au GATE 6.
+
+### Audit initial du registre (2026-10-02, historique)
 
 Commit code `9dd3347`. Aucun registre parallèle, aucun remplacement/suppression
 ou édition du JSON d'origine (empreinte vérifiée avant/après). Rapport détaillé

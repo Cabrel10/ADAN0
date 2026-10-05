@@ -26,12 +26,16 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from typing import Dict, List, Optional, Set, Union
 
 
 VALID_ROLES = {"perception", "contexte", "plan", "risque", "portefeuille"}
 VALID_TIMEFRAMES = {"5m", "1h", "4h", "trade", "1d", "global"}
+VALID_CATEGORIES = {"MARKET_FEATURE", "CONTEXT_FEATURE", "PORTFOLIO_FEATURE",
+                    "PLAN_FEATURE", "RISK_FEATURE", "DERIVED_FEATURE", "LABEL_ONLY",
+                    "CONFIG_ONLY", "UNRESOLVED"}
+FUTURE_SAFE_STATUSES = {"VERIFIED", "UNKNOWN", "UNSAFE"}
 
 
 @dataclass(frozen=True)
@@ -49,8 +53,25 @@ class FeatureEntry:
     frequence_maj: str
     disponibilite_t: str
     role_potentiel: str
+    category: str = "UNRESOLVED"
+    status: str = "UNRESOLVED"
+    future_safe: str = "UNKNOWN"
+    available_at_t: bool = False
+    reason: str = "Availability has not been demonstrated"
+    missing_source: Optional[bool] = None
+    missing_runtime_mapping: bool = True
+    lineage: Optional[dict] = None
+    verification: Optional[dict] = None
+    atr_definition: Optional[dict] = None
+    sous_famille: Optional[str] = None
 
     def __post_init__(self):
+        if self.category not in VALID_CATEGORIES or self.future_safe not in FUTURE_SAFE_STATUSES:
+            raise ValueError(f"Invalid classification or future-safe status for {self.name}")
+        if self.status not in {"RESOLVED", "UNRESOLVED"}:
+            raise ValueError(f"Invalid resolution status for {self.name}")
+        if self.future_safe == "VERIFIED" and not self.verification:
+            raise ValueError(f"VERIFIED requires mutation-test evidence: {self.name}")
         if self.role_potentiel not in VALID_ROLES:
             raise ValueError(f"Rôle invalide '{self.role_potentiel}' pour {self.name}. Doit être dans {VALID_ROLES}")
 
@@ -142,7 +163,10 @@ class FeatureRegistry:
                 dependances_deterministes=d.get("dependances_deterministes", []),
                 frequence_maj=d["frequence_maj"],
                 disponibilite_t=d["disponibilite_t"],
-                role_potentiel=d["role_potentiel"]
+                role_potentiel=d["role_potentiel"],
+                **{key: d[key] for key in ("category", "status", "future_safe", "available_at_t",
+                                          "reason", "missing_source", "missing_runtime_mapping", "lineage",
+                                          "verification", "atr_definition", "sous_famille") if key in d}
             )
             for d in raw_data
         ]
@@ -245,8 +269,10 @@ def audit_existing_registry(registry_path="config/feature_registry.json",
         raise ValueError("Invalid snapshot in audit")
     values = snapshot_values(registry, snapshot)
     edited = sample.copy()
-    edited.iloc[i + 1:, edited.columns.get_loc("high")] *= 5
-    edited.iloc[i + 1:, edited.columns.get_loc("volume")] *= 3
+    # Modify ALL future raw OHLCV fields, preserving future OHLC coherence.
+    for column in ("open", "high", "low", "close"):
+        edited.iloc[i + 1:, edited.columns.get_loc(column)] *= 3
+    edited.iloc[i + 1:, edited.columns.get_loc("volume")] *= 5
     other = snapshot_values(registry, NestedStateBuilder(edited).snapshot(i))
     if values != other:
         raise AssertionError("Audited snapshot values change when future is mutated")
@@ -288,6 +314,9 @@ def audit_existing_registry(registry_path="config/feature_registry.json",
                      "computed_in_existing_snapshot": computed,
                      "available_at_t_verified": computed,
                      "future_safe_verified": computed,
+                     "category": entry.get("category", "UNRESOLVED"),
+                     "resolution_status": entry.get("status", "UNRESOLVED"),
+                     "future_safe": entry.get("future_safe", "UNKNOWN"),
                      "verification_scope": "continuous_TRAIN_window_future_mutation" if computed else "unverified",
                      "static_config_path_exists_now": config_present,
                      "historical_config_asof_verified": False if name.startswith("config.") else None,
@@ -310,7 +339,9 @@ def audit_existing_registry(registry_path="config/feature_registry.json",
                "label_source_hazards": sum(x["source"].startswith("labeler.") for x in rows),
                "entries_missing_metadata": sum(bool(x["missing_metadata"]) for x in rows),
                "unresolved_dependency_references": sum(len(x["missing_dependency_names"]) for x in rows),
-               "by_family": dict(Counter(x["family"] for x in rows))}
+               "by_family": dict(Counter(x["family"] for x in rows)),
+               "classification": {c: sum(x["category"] == c for x in rows) for c in sorted(VALID_CATEGORIES)},
+               "future_safe_status_counts": {s: sum(x["future_safe"] == s for x in rows) for s in ("VERIFIED", "UNKNOWN", "UNSAFE")}}
     assert len(rows) == 1026 and len(names) == 1026
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
     return {"kind": "AUDIT_EVIDENCE_NOT_A_SECOND_REGISTRY", "registry_sha256": before,
@@ -323,6 +354,173 @@ def audit_existing_registry(registry_path="config/feature_registry.json",
                          "pandas": pd.__version__, "pyyaml": yaml.__version__},
             "interpretation": "Counts are verified lower bounds in the stated test scope; unknown is not safe. Static paths are not calculated market variables. No registry rows deleted or rewritten.",
             "entries": rows}
+
+
+def reconcile_atr_definitions(registry_path="config/feature_registry.json"):
+    """Record explicit semantic decisions without renaming or resolving variables.
+
+    The 1h baseline producer already passed GATE 1. The snapshot does NOT
+    currently carry ATR; a geometry float argument is not provenance proof.
+    Unknown mappings remain UNKNOWN. Running range/phase is never called ATR.
+    """
+    from pathlib import Path
+    path = Path(registry_path).resolve()
+    if not path.is_relative_to(Path("/home/ubuntu/webapp")):
+        raise ValueError("Registry outside workspace")
+    entries = json.loads(path.read_text())
+    decisions = []
+    for entry in entries:
+        name = entry["name"]
+        if "atr" not in name.lower():
+            continue
+        base = {"name": name, "declared_source": entry["source"],
+                "timeframe": entry["timeframe"], "availability": "UNRESOLVED",
+                "causal_contract": "no future fill; warmup unavailable; no implicit zero",
+                "name_changed": False, "declared_dependencies": entry["dependances_deterministes"]}
+        if name.startswith("config.") or name.startswith("risk."):
+            base.update(formula=entry["transformation"], kind="SETTING_NOT_AN_ATR_OBSERVATION",
+                        runtime_source=entry["source"], consistency="not a volatility measurement")
+        elif name in ("atr_14", "atr_5m_pct"):
+            base.update(kind="LEGACY_5M_ATR", definition_version="legacy-5m-rma14",
+                        formula="Wilder/RMA14 of TR_5m; divided by close_t" if name.endswith("pct") else
+                                "Wilder/RMA14(TR_5m), TR=max(H-L,abs(H-prevC),abs(L-prevC))",
+                        runtime_source="data_processing.feature_engineer: pandas_ta ATR default; exact backend/seed unverified",
+                        smoothing="Wilder/RMA, NOT arithmetic SMA",
+                        consistency="labeler.atr14 uses SMA14 at 5m; distinct legacy definition, not silently aliased",
+                        causal_contract="5m bars through t only; warmup and backend init must be validated")
+        elif name.startswith(("c1h.", "c4h.")):
+            hours = 1 if name.startswith("c1h.") else 4
+            ratio = "range_to_atr" in name
+            fraction = name.endswith("_pct")
+            formula = f"SMA14(TR of COMPLETE {hours}h containers), TR=max(H-L,abs(H-prevC),abs(L-prevC)); lag 1 container"
+            if fraction:
+                formula += "; divide by close_5m(t), fraction not percent-points"
+            if ratio:
+                formula = f"running_range_{hours}h(t) / canonical_atr_{hours}h(t)"
+            parents = ([{"name": f"c{hours}h.running_range", "time_offset_bars": 0},
+                        {"name": f"c{hours}h.atr_{hours}h", "time_offset_bars": 0}] if ratio else
+                       [{"name": f"c{hours}h.prev_high", "time_offset_bars": "last_14_complete_containers"},
+                        {"name": f"c{hours}h.prev_low", "time_offset_bars": "last_14_complete_containers"},
+                        {"name": f"c{hours}h.prev_close", "time_offset_bars": "last_15_complete_containers"}])
+            if fraction:
+                parents = [{"name": f"c{hours}h.atr_{hours}h", "time_offset_bars": 0},
+                           {"name": "bar_5m.close", "time_offset_bars": 0}]
+            base.update(kind="CANONICAL_COMPLETED_CONTAINER_ATR", formula=formula,
+                        definition_version=f"systemone-{hours}h-sma14-tr-lag1-v1", smoothing="arithmetic SMA14",
+                        runtime_source="offline.labeler_mfe_mae.compute_true_atr_1h" if hours == 1 else None,
+                        availability=f"previous 14 full consecutive {hours}h containers; UTC bar-open timestamps; current container excluded even at its final 5m close",
+                        causal_contract="complete containers only; lag one; gaps reset warmup; no bfill; fraction normalization uses causal current close",
+                        snapshot_consistency="NOT_WIRED: existing LivingStateSnapshot contains no ATR field",
+                        geometry_consistency="NOT_PROVEN: scalar atr_1h_pct lacks provenance; legacy _atr_pct_from_snapshot now raises instead of returning a range/phase proxy",
+                        labeler_consistency="1h base implemented and GATE1 validated; normalized value is ATR / close_t" if hours == 1 else "4h canonical implementation unresolved",
+                        corrected_parents=parents,
+                        consistency="explicit definition decision; old running-H/L parent claims retained as historical declaration, not verified constraints")
+            entry["lineage"] = dict(entry["lineage"], parents=parents,
+                                    definition_status="DECLARED_CANONICAL_NOT_RUNTIME_RESOLVED")
+        else:
+            base.update(kind="UNRESOLVED_ATR_RELATED", formula=entry["transformation"], runtime_source=None,
+                        consistency="needs explicit source trace")
+        entry["atr_definition"] = base
+        decisions.append(base)
+    assert len(entries) == 1026
+    path.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n")
+    return decisions
+
+
+def classify_existing_registry(registry_path="config/feature_registry.json"):
+    """Enrich entries IN PLACE after rerunning mutation evidence; never recreate.
+
+    Category and resolution are different: LABEL_ONLY/CONFIG_ONLY may remain
+    UNRESOLVED for runtime mapping. All original declarations are preserved.
+    """
+    import re
+    import hashlib
+    import inspect
+    from pathlib import Path
+    from collections import Counter
+    from adan_trading_bot.data import nested_state_builder as producer
+
+    path = Path(registry_path).resolve()
+    if not path.is_relative_to(Path("/home/ubuntu/webapp")):
+        raise ValueError("Registry must remain within workspace")
+    raw = json.loads(path.read_text())
+    names_before = [x["name"] for x in raw]
+    audit = audit_existing_registry(str(path))
+    audited = {row["name"]: row for row in audit["entries"]}
+    for entry in raw:
+        row = audited[entry["name"]]
+        verified = row["computed_in_existing_snapshot"]
+        name = entry["name"]
+        if name.startswith("config."):
+            category = "CONFIG_ONLY"
+        elif entry["source"].startswith("labeler."):
+            category = "LABEL_ONLY"
+        elif not verified:
+            category = "UNRESOLVED"
+        elif entry["famille"] == "portfolio":
+            category = "PORTFOLIO_FEATURE"
+        elif entry["famille"] == "plan":
+            category = "PLAN_FEATURE"
+        elif entry["famille"] == "risk_limits":
+            category = "RISK_FEATURE"
+        elif entry["transformation"] in ("k_div_12", "m_div_48", "k_raw", "m_raw") or name.endswith("bar_index") or ".phase_" in name:
+            category = "CONTEXT_FEATURE"
+        elif entry["transformation"] == "raw":
+            category = "MARKET_FEATURE"
+        else:
+            category = "DERIVED_FEATURE"
+        lag = re.search(r"seq_5m\.lag_(\d+)\.", name)
+        offset = -int(lag[1]) if lag else 0
+        parents = [{"name": p, "time_offset_bars": offset}
+                   for p in entry["dependances_deterministes"]]
+        # Previous completed OHLCV was missing explicit parents in old metadata.
+        if ".prev_" in name and not parents:
+            field = name.split(".prev_", 1)[1]
+            if field in ("open", "high", "low", "close", "volume"):
+                parents = [{"name": "bar_5m." + field, "time_offset_bars": "previous_complete_container"}]
+        if category == "LABEL_ONLY":
+            reason = "Ex-post label source; prohibited in STATE even if a future mapping is later resolved"
+        elif category == "CONFIG_ONLY":
+            reason = "Static operational setting, not market data; no mutation/asof runtime proof"
+        elif verified:
+            reason = "Existing snapshot resolver passed raw TRAIN future-mutation test"
+        else:
+            reason = "No demonstrated value-at-t producer/runtime mapping; declared causal_t is insufficient"
+        evidence = None
+        if verified:
+            evidence = {"test": "snapshot_future_mutation", "passed": True,
+                        "feature": name, "sample": audit["sample"],
+                        "mutations": ["ALL_OHLC_after_t_times_3", "volume_after_t_times_5"],
+                        "producer_sha256": hashlib.sha256(Path(producer.__file__).read_bytes()).hexdigest(),
+                        "adapter_sha256": hashlib.sha256(inspect.getsource(snapshot_values).encode()).hexdigest()}
+        atr_parents = (entry.get("atr_definition") or {}).get("corrected_parents")
+        if atr_parents is not None:
+            parents = atr_parents
+        entry.update(category=category, status="RESOLVED" if verified else "UNRESOLVED",
+                     future_safe="VERIFIED" if verified else ("UNSAFE" if entry.get("future_safe") == "UNSAFE" else "UNKNOWN"),
+                     available_at_t=verified,
+                     reason=reason,
+                     missing_source=False if verified or row["static_config_path_exists_now"] else True,
+                     missing_runtime_mapping=not verified,
+                     sous_famille=entry.get("sous_famille") or entry["source"].split(".")[0],
+                     lineage={"kind": "STATIC_CONFIG" if category == "CONFIG_ONLY" else
+                              "EX_POST_ONLY" if category == "LABEL_ONLY" else
+                              "RUNTIME_VERIFIED" if verified else "DECLARED_UNVERIFIED",
+                              "source": entry["source"], "operation": entry["transformation"],
+                              "parents": parents,
+                              "runtime_mapping": "snapshot_values:" + name if verified else None},
+                     verification=evidence)
+        # Keep causal_t only as a historic declaration, never as the contract.
+        entry.setdefault("declared_disponibilite_t", entry["disponibilite_t"])
+        entry["disponibilite_t"] = "VERIFIED_AT_T" if verified else "UNRESOLVED"
+    assert [x["name"] for x in raw] == names_before and len(raw) == 1026
+    path.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
+    counts = Counter(x["category"] for x in raw)
+    safe = Counter(x["future_safe"] for x in raw)
+    return {"classification": {k: counts[k] for k in sorted(VALID_CATEGORIES)},
+            "future_safe": {k: safe[k] for k in ("VERIFIED", "UNKNOWN", "UNSAFE")},
+            "resolution": dict(Counter(x["status"] for x in raw)),
+            "registry_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 if __name__ == "__main__":

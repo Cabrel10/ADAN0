@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple, Union
 
@@ -75,6 +75,15 @@ class DependencyOrigin(str, Enum):
     PREDICTIVE_DEPENDENCY = "PREDICTIVE_DEPENDENCY"
 
 
+class EdgeStatus(str, Enum):
+    VERIFIED_DETERMINISTIC = "VERIFIED_DETERMINISTIC"
+    VERIFIED_TEMPORAL = "VERIFIED_TEMPORAL"
+    VERIFIED_PORTFOLIO = "VERIFIED_PORTFOLIO"
+    VERIFIED_PLAN = "VERIFIED_PLAN"
+    PREDICTIVE_TRAIN_ONLY = "PREDICTIVE_TRAIN_ONLY"
+    UNVERIFIED = "UNVERIFIED"
+
+
 @dataclass(frozen=True)
 class RelationEdge:
     """Arête orientée reliant deux variables."""
@@ -85,6 +94,9 @@ class RelationEdge:
     weight: float = 1.0
     description: str = ""
     training_provenance: Optional[dict] = None
+    status: EdgeStatus = EdgeStatus.UNVERIFIED
+    verification: Optional[dict] = None
+    source_time_offset_bars: Union[int, str] = 0
 
 
 class RelationGraph:
@@ -114,7 +126,25 @@ class RelationGraph:
             raise ValueError("Unknown edge type or dependency origin")
         if edge.source == edge.target or not math.isfinite(edge.weight):
             raise ValueError("Self edge or nonfinite weight")
+        if not isinstance(edge.status, EdgeStatus):
+            raise ValueError("Invalid edge status")
+        if edge.status != EdgeStatus.UNVERIFIED:
+            proof = edge.verification or {}
+            if (proof.get("passed") is not True or proof.get("source") != edge.source
+                    or proof.get("target") != edge.target or not proof.get("test")):
+                raise ValueError("A verified edge requires endpoint-specific passing test evidence")
+            if edge.status in (EdgeStatus.VERIFIED_PORTFOLIO, EdgeStatus.VERIFIED_PLAN):
+                if not proof.get("runtime_economic_contract"):
+                    raise ValueError("Plan/portfolio verification requires runtime economic contract")
+            if edge.status == EdgeStatus.VERIFIED_TEMPORAL and edge.edge_type not in (EdgeType.TEMPORAL, EdgeType.AGGREGATES, EdgeType.SAME_CONTAINER):
+                raise ValueError("Temporal status requires temporal/aggregation/membership edge")
+            if edge.status == EdgeStatus.VERIFIED_DETERMINISTIC and edge.edge_type != EdgeType.DERIVED_FROM:
+                raise ValueError("Numeric deterministic status requires a derivation edge")
         empirical = edge.edge_type == EdgeType.EMPIRICAL_DEPENDENCY
+        if edge.status == EdgeStatus.PREDICTIVE_TRAIN_ONLY and not empirical:
+            raise ValueError("Predictive status is not deterministic causality")
+        if empirical and edge.status not in (EdgeStatus.UNVERIFIED, EdgeStatus.PREDICTIVE_TRAIN_ONLY):
+            raise ValueError("Empirical edges cannot be VERIFIED_DETERMINISTIC")
         if empirical != (edge.origin == DependencyOrigin.PREDICTIVE_DEPENDENCY):
             raise ValueError("Empirical edges must be PREDICTIVE; structural edges DETERMINISTIC")
         if empirical:
@@ -149,6 +179,15 @@ class RelationGraph:
             for parent in var.dependances_deterministes:
                 if parent not in self.name_to_idx:
                     raise ValueError(f"Unresolved declared dependency {parent} -> {var.name}")
+            # Explicit reconciled lineage takes precedence over historical
+            # declarations (e.g. ATR must not depend on running future-complete H/L).
+            parents = (var.lineage or {}).get("parents")
+            if parents is None:
+                parents = [{"name": p, "time_offset_bars": 0} for p in var.dependances_deterministes]
+            for link in parents:
+                parent = link["name"]
+                if parent not in self.name_to_idx:
+                    raise ValueError(f"Unknown lineage endpoint {parent} -> {var.name}")
                 if parent in self.name_to_idx:
                     self.add_edge(RelationEdge(
                         source=parent,
@@ -156,7 +195,8 @@ class RelationGraph:
                         edge_type=EdgeType.DERIVED_FROM,
                         origin=DependencyOrigin.DETERMINISTIC_DEPENDENCY,
                         weight=1.0,
-                        description=f"{var.name} dérive déterministement de {parent}"
+                        description=f"Declared derivation {parent} -> {var.name}; not verified by declaration",
+                        source_time_offset_bars=link.get("time_offset_bars", 0)
                     ))
 
         # 2. Agrégations temporelles 5m -> 1h (12 barres) et 5m -> 4h (48 barres)
@@ -241,6 +281,108 @@ class RelationGraph:
                     weight=1.0, description="Dépendance du plan candidat"
                 ))
 
+    def qualify_on_raw_train(self, frame, availability_contract):
+        """Verify a conservative subset against raw OHLCV, never declaration-only.
+
+        Temporal edges certify timestamps/order, NOT price transition equations.
+        Portfolio/plan constraints remain UNVERIFIED until their runtime and
+        economic contracts are tested. Empirical fitting is not performed here.
+        """
+        import pandas as pd
+        import re
+        from adan_trading_bot.data.nested_state_builder import NestedStateBuilder
+        if len(frame) < 550 or frame.index.min() < pd.Timestamp("2017-01-01") or frame.index.max() >= pd.Timestamp("2022-01-01"):
+            raise ValueError("Qualification requires raw TRAIN only")
+        ns = frame.index.to_numpy(dtype="datetime64[ns]").astype(np.int64)
+        if not np.isfinite(frame[["open", "high", "low", "close", "volume"]].to_numpy()).all() or (np.diff(ns) != 300_000_000_000).any():
+            raise ValueError("Continuous finite 5m window required")
+        builder = NestedStateBuilder(frame)
+        decisions = [192, 203, 239, 288, 347, 503]
+        snapshots = [builder.snapshot(i) for i in decisions]
+        values = [availability_contract.materialize(s) for s in snapshots]
+        raw_bar_fields = {"open", "high", "low", "close", "volume"}
+
+        def raw_value(name, i):
+            if name.startswith("seq_5m."):
+                match = re.fullmatch(r"seq_5m\.lag_(\d+)\.(\w+)", name)
+                return raw_value("bar_5m." + match[2], i - int(match[1]))
+            if name.startswith("bar_5m."):
+                key = name.split(".")[1]
+                row = frame.iloc[i]
+                if key in raw_bar_fields:
+                    return float(row[key])
+                return float({"wick_up": row.high - max(row.open, row.close),
+                              "wick_down": min(row.open, row.close) - row.low,
+                              "body": row.close - row.open}[key])
+            prefix, key = name.split(".")
+            hours = 1 if prefix == "c1h" else 4
+            start = frame.index[i].floor(f"{hours}h")
+            left = int(frame.index.searchsorted(start))
+            bars = frame.iloc[left:i + 1]
+            high, low = float(bars.high.max()), float(bars.low.min())
+            price = float(frame.close.iloc[i])
+            phase = (i - left + 1) / (12 * hours)
+            previous_start = start - pd.Timedelta(hours=hours)
+            previous = frame[(frame.index >= previous_start) & (frame.index < start)]
+            if key == "open": return float(bars.open.iloc[0])
+            if key == "running_high": return high
+            if key == "running_low": return low
+            if key == "running_vol": return float(bars.volume.sum())
+            if key == f"pos_in_{hours}h": return float(np.clip((price - low) / max(high - low, 1e-12), 0, 1))
+            if key == f"phase_{hours}h": return phase
+            if key == "sweep_high": return float(frame.high.iloc[i] > previous.high.max() and price < previous.high.max())
+            if key == "sweep_low": return float(frame.low.iloc[i] < previous.low.min() and price > previous.low.min())
+            raise KeyError(name)
+
+        def formula_supported(edge):
+            if edge.edge_type == EdgeType.TEMPORAL:
+                return True
+            if edge.edge_type == EdgeType.SAME_CONTAINER:
+                return edge.source.split('.')[0] == edge.target.split('.')[0]
+            if edge.edge_type == EdgeType.AGGREGATES:
+                return True
+            if edge.edge_type == EdgeType.DERIVED_FROM:
+                return edge.target in {"bar_5m.wick_up", "bar_5m.wick_down", "bar_5m.body",
+                                       "c1h.open", "c1h.running_high", "c1h.running_low", "c1h.running_vol", "c1h.pos_in_1h", "c1h.sweep_high", "c1h.sweep_low",
+                                       "c4h.open", "c4h.running_high", "c4h.running_low", "c4h.running_vol", "c4h.pos_in_4h", "c4h.sweep_high", "c4h.sweep_low"}
+            return False
+
+        qualified = []
+        for edge in self.edges:
+            if edge.source_time_offset_bars != 0:
+                qualified.append(edge)
+                continue
+            if edge.status != EdgeStatus.UNVERIFIED:
+                qualified.append(edge)
+                continue
+            if not formula_supported(edge):
+                qualified.append(edge)
+                continue
+            try:
+                availability_contract.require(edge.source)
+                availability_contract.require(edge.target)
+                for i, resolved in zip(decisions, values):
+                    for name in (edge.source, edge.target):
+                        # Previous closed levels are tested by snapshot regression,
+                        # but this qualifier deliberately does not infer extra proof.
+                        if ".prev_" in name:
+                            raise KeyError(name)
+                        if not np.isclose(resolved[name], raw_value(name, i), atol=1e-9, rtol=0):
+                            raise AssertionError(f"Raw relation value mismatch: {name}, index {i}")
+            except (ValueError, KeyError):
+                qualified.append(edge)
+                continue
+            status = EdgeStatus.VERIFIED_TEMPORAL if edge.edge_type in (EdgeType.TEMPORAL, EdgeType.AGGREGATES, EdgeType.SAME_CONTAINER) else EdgeStatus.VERIFIED_DETERMINISTIC
+            proof = {"test": "raw_TRAIN_OHLCV_relation_and_timestamp_reference", "passed": True,
+                     "source": edge.source, "target": edge.target,
+                     "decisions": [str(frame.index[i]) for i in decisions],
+                     "start": str(frame.index[0]), "end": str(frame.index[-1]),
+                     "producer_sha256": availability_contract.producer_hash,
+                     "adapter_sha256": availability_contract.adapter_hash,
+                     "scope": "finite_continuous_window; temporal order is not causal evidence"}
+            qualified.append(replace(edge, status=status, verification=proof))
+        return RelationGraph(self.registry, edges=qualified)
+
     def validate(self):
         """Validate topology without allocating a dense N×N tensor."""
         if len(self.edges) > 16 * len(self.names):
@@ -256,7 +398,7 @@ class RelationGraph:
         # are not equations and must not be tested as if they were causal DAGs.
         adjacency = {n: [] for n in self.names}
         for edge in self.edges:
-            if edge.edge_type == EdgeType.DERIVED_FROM:
+            if edge.edge_type == EdgeType.DERIVED_FROM and edge.source_time_offset_bars == 0:
                 adjacency[edge.source].append(edge.target)
         visited, active = set(), set()
         def visit(node):
@@ -273,19 +415,48 @@ class RelationGraph:
             visit(node)
         return self.summary()
 
-    def get_edge_index(self) -> torch.Tensor:
-        """Retourne le tenseur (2, E) compatible PyTorch Sparse / PyG."""
-        if not self.edges:
+    def constraint_edges(self, availability_contract):
+        """Only verified relations between allowed named STATE variables.
+
+        Structural declarations may retain all nodes/edges. Their existence
+        never authorizes their use as numerical model constraints.
+        """
+        from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityError
+        allowed = []
+        for edge in self.edges:
+            if edge.status == EdgeStatus.UNVERIFIED or edge.source_time_offset_bars != 0:
+                continue
+            try:
+                availability_contract.require(edge.source)
+                availability_contract.require(edge.target)
+            except FeatureAvailabilityError:
+                continue
+            proof = edge.verification or {}
+            if proof.get("producer_sha256") != availability_contract.producer_hash or proof.get("adapter_sha256") != availability_contract.adapter_hash:
+                continue
+            # TRAIN-only predictive connections may be message-passing proposals,
+            # but are never hard deterministic/causal constraints.
+            if edge.status == EdgeStatus.PREDICTIVE_TRAIN_ONLY:
+                continue
+            allowed.append(edge)
+        return allowed
+
+    def get_edge_index(self, verified_only=False, availability_contract=None) -> torch.Tensor:
+        """COO for structural inspection; model constraints MUST use verified_only."""
+        if verified_only and availability_contract is None:
+            raise ValueError("Verified edges require availability contract")
+        edges = self.constraint_edges(availability_contract) if verified_only else self.edges
+        if not edges:
             return torch.empty((2, 0), dtype=torch.long)
-        src_indices = [self.name_to_idx[e.source] for e in self.edges]
-        tgt_indices = [self.name_to_idx[e.target] for e in self.edges]
+        src_indices = [self.name_to_idx[e.source] for e in edges]
+        tgt_indices = [self.name_to_idx[e.target] for e in edges]
         return torch.tensor([src_indices, tgt_indices], dtype=torch.long)
 
-    def get_edge_weights(self) -> torch.Tensor:
-        """Retourne les poids (E,) des arêtes."""
-        if not self.edges:
-            return torch.empty((0,), dtype=torch.float32)
-        return torch.tensor([e.weight for e in self.edges], dtype=torch.float32)
+    def get_edge_weights(self, verified_only=False, availability_contract=None) -> torch.Tensor:
+        if verified_only and availability_contract is None:
+            raise ValueError("Verified weights require availability contract")
+        edges = self.constraint_edges(availability_contract) if verified_only else self.edges
+        return torch.tensor([e.weight for e in edges], dtype=torch.float32)
 
     def sparsity_ratio(self) -> float:
         """Calcule la sparsité du graphe : 1 - (E / (N*N))."""
@@ -303,7 +474,8 @@ class RelationGraph:
             "total_edges": len(self.edges),
             "sparsity_pct": round(self.sparsity_ratio() * 100, 4),
             "by_edge_type": dict(type_counts),
-            "by_origin": dict(orig_counts)
+            "by_origin": dict(orig_counts),
+            "by_status": {status.value: sum(e.status == status for e in self.edges) for status in EdgeStatus}
         }
 
 
@@ -376,6 +548,7 @@ class RelationalPerception(nn.Module):
         n_heads: int = 4
     ):
         super().__init__()
+        raise RuntimeError("Legacy all-registry perception is BLOCKED: redesign at GATE 7 using availability contract, typed lineage, temporal encoder and plan/portfolio conditioning")
         self.registry = registry
         self.graph = relation_graph
         self.num_vars = len(registry)

@@ -59,14 +59,12 @@ class TradeGeometry:
 
 
 def _atr_pct_from_snapshot(snap) -> float:
-    """ATR approché du contenant 1h vivant : (running_high − running_low) / prix,
-    ramené à une fraction de contenant via la phase (range partiel × 12/k)."""
-    high_1h, low_1h = snap.running_1h[1], snap.running_1h[2]
-    if snap.price <= 0:
-        return 0.0
-    range_pct = (high_1h - low_1h) / snap.price
-    k = max(snap.phase_1h, 1 / 12)         # k/12 ∈ (0,1]
-    return range_pct / (12 * k / 12)       # range extrapolé au contenant complet
+    """Deprecated misleading name: running range / phase is NOT an ATR.
+
+    LivingStateSnapshot currently carries no completed-hour ATR. Fail closed
+    instead of substituting a phase-extrapolated range or zero during warmup.
+    """
+    raise ValueError("Canonical ATR_1h unavailable in snapshot: require 14 complete hours, TR, lag1; running range/phase is prohibited")
 
 
 def compute_geometry(
