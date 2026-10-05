@@ -45,7 +45,7 @@ from adan_trading_bot.data.nested_state_builder import (
 )
 from adan_trading_bot.models.system_one_core import Judgment
 from adan_trading_bot.policy.geometry_engine import (
-    compute_geometry, TradeGeometry, SL_FLOOR_PCT, TP_R_RATIO,
+    compute_geometry as production_compute_geometry, TradeGeometry, SL_FLOOR_PCT, TP_R_RATIO,
     FEES_R_MAX, FEES_RT_MAKER,
 )
 from adan_trading_bot.policy.deterministic_gate import (
@@ -64,6 +64,24 @@ def check(name, cond, detail=""):
     print(f"  {PASS if cond else FAIL} {name}" + (f" — {detail}" if detail else ""))
     if not cond:
         failures.append(name)
+
+
+def compute_geometry(*args, atr_1h_pct=None, **kwargs):
+    """Feed production with real canonical historical ATR, not an invented scalar.
+
+    Default fixture ATR=.64%: SL interval [1.2%,1.6%] admits original tests.
+    Explicit 2% ATR case uses raw completed-hour TR=2 at price=100.
+    """
+    from adan_trading_bot.features.feature_registry import get_feature_registry
+    from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityContract
+    fraction = 0.0064 if atr_1h_pct is None else atr_1h_pct
+    spread = fraction * 100 / 2
+    history = pd.DataFrame({'open': 100., 'high': 100. + spread, 'low': 100. - spread,
+                            'close': 100., 'volume': 1.},
+                           index=pd.date_range('2020-01-01', periods=600, freq='5min'))
+    snap = NestedStateBuilder(history).snapshot(300)
+    return production_compute_geometry(*args, atr_1h_pct=atr_1h_pct, snapshot=snap,
+                                        availability_contract=FeatureAvailabilityContract(get_feature_registry()), **kwargs)
 
 
 def make_snapshot(sweep_high=1, sweep_low=0, integrity=True, price=100.0):
