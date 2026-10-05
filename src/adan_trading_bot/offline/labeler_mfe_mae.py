@@ -342,6 +342,7 @@ def compute_plan_outcomes(b, decision_indices, candidates, *, fees_rt,
     No direction classifier: each supplied LONG/SHORT/SL/TP/horizon is evaluated.
     MFE/MAE and touch times span the FULL candidate horizon (uncensored excursion).
     Touch times are 1-based, 0 means not touched. Same-bar ambiguity => SL first.
+    SL gaps are filled conservatively at the worse of stop or bar OPEN.
     Timeout is marked to horizon CLOSE and charged round-trip costs. NET_RETURN
     is R, Y_WIN is positive net R, and differs from Y_TP_FIRST on some timeouts.
     Maker fill probability/slippage is NOT inferred from OHLC: this API does not
@@ -383,14 +384,22 @@ def compute_plan_outcomes(b, decision_indices, candidates, *, fees_rt,
         tp_first = int(t_tp > 0 and (t_sl == 0 or t_tp < t_sl))
         sl_first = int(t_sl > 0 and (t_tp == 0 or t_sl <= t_tp))
         timeout = not (tp_first or sl_first)
-        gross = ((entry - b.c[i + plan.horizon]) / risk if short else
-                 (b.c[i + plan.horizon] - entry) / risk) if timeout else (plan.tp_r if tp_first else -1.)
+        if timeout:
+            exit_price = float(b.c[i + plan.horizon])
+        elif tp_first:
+            exit_price = float(target)  # no favourable gap-fill improvement assumed
+        else:
+            exit_open = float(b.o[i + t_sl])
+            exit_price = max(stop, exit_open) if short else min(stop, exit_open)
+        gross = (entry - exit_price) / risk if short else (exit_price - entry) / risk
         net = float(gross - fees_rt / plan.sl_pct)
         rows.append({"decision_timestamp": b.ts[i], "entry_timestamp": b.ts[i + 1],
                      "direction": plan.direction, "sl_pct": plan.sl_pct, "tp_r": plan.tp_r,
                      "horizon": plan.horizon, "execution_mode": plan.execution_mode,
                      "entry_assumption": entry_assumption, "portfolio_state": plan.portfolio_state,
-                     "entry": entry, "Y_WIN": int(net > 0), "Y_TP_FIRST": tp_first,
+                     "entry": entry, "exit_price": exit_price,
+                     "exit_fill_assumption": "STOP_MARKET_WORSE_OF_STOP_OR_OPEN_TP_AT_TARGET_TIMEOUT_AT_CLOSE",
+                     "Y_WIN": int(net > 0), "Y_TP_FIRST": tp_first,
                      "Y_SL_FIRST": sl_first, "TIMEOUT": int(timeout),
                      "MFE": float(max(0., favorable.max())), "MAE": float(max(0., adverse.max())),
                      "TIME_TO_TP": t_tp, "TIME_TO_SL": t_sl, "NET_RETURN": net,
