@@ -189,52 +189,31 @@ def compute_sl_bounds(atr_1h_pct: float) -> Tuple[float, float]:
     return sl_min, sl_max
 
 
-def generate_candidate_grid(
-    atr_1h_pct: float,
-    direction: str,
-    regime: str = "RANGE",
-    phase_1h: float = 1.0,
-    phase_4h: float = 1.0,
-    mfe_conditional_pct: Optional[float] = None,
-) -> List[PlanCandidate]:
+def generate_candidate_grid(snapshot, direction: str, *, availability_contract,
+                            horizon: int = 288) -> List[PlanCandidate]:
+    """Provenance-bearing SL candidates; TP3.5R is baseline ONLY.
+
+    No invented phase/regime TP_MAX. Conditional TP research is a later gate.
+    Warmup/gap or inadmissible SL interval means no candidate, not a zero ATR.
     """
-    Génère une grille de plans candidats bornés (ORDRE 4A).
-    Si SL_MIN > SL_MAX -> Grille vide (PLAN REFUSÉ).
-    """
-    sl_min, sl_max = compute_sl_bounds(atr_1h_pct)
+    if direction not in ("LONG", "SHORT") or horizon <= 0:
+        return []
+    try:
+        fraction = _atr_pct_from_snapshot(snapshot, availability_contract)
+        sl_min, sl_max = compute_sl_bounds(fraction)
+    except (FeatureAvailabilityError, ValueError, AttributeError):
+        return []
     if sl_min > sl_max:
         return []
-
-    # Grille de SL admissibles
-    candidate_sls = [0.012, 0.015, 0.018, 0.020, 0.025, 0.030]
-    valid_sls = [s for s in candidate_sls if sl_min <= s <= sl_max]
-    if not valid_sls:
-        valid_sls = [sl_min]
-
-    # TP conditionnel (MFE conditionnel, horizon, phase, régime)
-    if mfe_conditional_pct is not None and mfe_conditional_pct > 0:
-        tp_max = max(TP_MIN_R, min(6.0, mfe_conditional_pct / max(sl_min, 1e-6)))
-    else:
-        # Boost conditionnel structurel
-        boost = 0.5 * (phase_1h >= 0.8) + 0.5 * (regime in ("BULL", "BEAR"))
-        tp_max = min(5.5, TP_MIN_R + boost)
-
-    candidate_tps = [3.5, 4.0, 4.5, 5.0, 5.5, 6.0]
-    valid_tps = [t for t in candidate_tps if TP_MIN_R <= t <= tp_max]
-    if not valid_tps:
-        valid_tps = [TP_MIN_R]
-
-    grid = []
-    for sl in valid_sls:
-        for tp in valid_tps:
-            grid.append(PlanCandidate(
-                direction=direction,
-                sl_pct=sl,
-                tp_r=tp,
-                horizon=288,
-                execution_mode="MAKER_POST_ONLY"
-            ))
-    return grid
+    sls = sorted(set([sl_min, sl_max] + [s for s in (0.012, 0.015, 0.018, 0.020, 0.025, 0.030)
+                                     if sl_min <= s <= sl_max]))
+    plans = [PlanCandidate(direction, sl, TP_MIN_R, horizon=horizon,
+                           portfolio_state=snapshot.portfolio.copy(),
+                           atr_observation=snapshot.atr_1h,
+                           sl_min_bound=sl_min, sl_max_bound=sl_max) for sl in sls]
+    if not all(plan.admissible() for plan in plans):
+        raise ValueError("Generated inadmissible candidate")
+    return plans
 
 
 def select_best_plan(
