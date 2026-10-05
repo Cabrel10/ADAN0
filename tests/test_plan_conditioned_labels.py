@@ -25,7 +25,14 @@ def naive(frame, i, plan, fee):
     tp = int(t_tp != 0 and (t_sl == 0 or t_tp < t_sl))
     timeout = not (sl or tp)
     close = float(frame.close.iloc[i + plan.horizon])
-    gross = (entry - close if short else close - entry) / (entry * plan.sl_pct) if timeout else (plan.tp_r if tp else -1.)
+    if timeout:
+        exit_price = close
+    elif tp:
+        exit_price = target
+    else:
+        open_at_stop = float(frame.open.iloc[i + t_sl])
+        exit_price = max(stop, open_at_stop) if short else min(stop, open_at_stop)
+    gross = (entry - exit_price if short else exit_price - entry) / (entry * plan.sl_pct)
     net = gross - fee / plan.sl_pct
     return dict(Y_WIN=int(net > 0), Y_TP_FIRST=tp, Y_SL_FIRST=sl, MFE=mfe, MAE=mae,
                 TIME_TO_TP=t_tp, TIME_TO_SL=t_sl, NET_RETURN=net, TIMEOUT=int(timeout))
@@ -82,6 +89,14 @@ class PlanLabelTests(unittest.TestCase):
         self.assertEqual(rows[0]['Y_SL_FIRST'],1);self.assertEqual(rows[1]['Y_SL_FIRST'],0)
         self.assertEqual([x['direction'] for x in rows],['LONG','LONG','SHORT'])
         self.assertTrue(all(x['entry_assumption']=='FILLED_AT_NEXT_OPEN' for x in rows))
+
+    def test_stop_gap_is_not_capped_at_one_R_loss(self):
+        for direction, price in (('LONG',90.),('SHORT',110.)):
+            data=frame();data.iloc[302,:4]=[price,price+.2,price-.2,price]
+            row=self.compare(data,[300],[PlanCandidate(direction,.012,3.5,horizon=12)])[0]
+            self.assertEqual(row['TIME_TO_SL'],2)
+            self.assertLess(row['NET_RETURN'],-8.)
+            self.assertEqual(row['exit_price'],price)
 
     def test_seeded_raw_reference_grid(self):
         rng=np.random.default_rng(1729);data=frame()
