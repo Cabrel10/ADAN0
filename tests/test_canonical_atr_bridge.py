@@ -82,6 +82,56 @@ class ATRBridgeTests(unittest.TestCase):
         np.testing.assert_allclose(b.canonical_atr_1h.values, labeler.compute_true_atr_1h(b),
                                    rtol=0, atol=0, equal_nan=True)
 
+    def test_contract_snapshot_geometry_candidate_chain(self):
+        from adan_trading_bot.features.feature_registry import get_feature_registry
+        from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityContract, FeatureAvailabilityError
+        from adan_trading_bot.policy.geometry_engine import generate_candidate_grid, compute_geometry, select_best_plan, compute_sl_bounds
+        from dataclasses import replace
+        contract = FeatureAvailabilityContract(get_feature_registry())
+        snap = NestedStateBuilder(bars()).snapshot(301)
+        values = contract.materialize(snap, ['c1h.atr_1h', 'c1h.atr_1h_pct'])
+        self.assertEqual(values, {'c1h.atr_1h': 2.0, 'c1h.atr_1h_pct': 0.02})
+        self.assertEqual(compute_sl_bounds(0.02), (0.02, 0.03))
+        self.assertEqual(compute_sl_bounds(2.0), (2.0, 0.03))  # factor100 input => infeasible, not a usable interval
+        for direction in ('LONG', 'SHORT'):
+            plans = generate_candidate_grid(snap, direction, availability_contract=contract)
+            self.assertTrue(plans)
+            self.assertTrue(all(p.admissible() and 0.02 <= p.sl_pct <= 0.03 and p.tp_r == 3.5 for p in plans))
+            self.assertTrue(all(p.atr_observation is snap.atr_1h for p in plans))
+            best, geometry = select_best_plan(snap, [(p, 0.6) for p in plans], availability_contract=contract)
+            self.assertIsNotNone(best); self.assertTrue(geometry.viable)
+        geometry = compute_geometry('LONG', 100., 99.9, snapshot=snap, availability_contract=contract)
+        self.assertTrue(geometry.viable); self.assertTrue(geometry.candidate_plan.admissible())
+        self.assertEqual(geometry.sl_distance_pct, 0.02)
+        self.assertFalse(compute_geometry('LONG', 100., 99.9, atr_1h_pct=2.0,
+                                          snapshot=snap, availability_contract=contract).viable)
+        forged = replace(snap, atr_1h=replace(snap.atr_1h, fraction=2.0))
+        with self.assertRaises(FeatureAvailabilityError):
+            contract.materialize(forged, ['c1h.atr_1h_pct'])
+
+    def test_warmup_gap_and_outside_bounds_abstain(self):
+        from adan_trading_bot.features.feature_registry import get_feature_registry
+        from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityContract, FeatureAvailabilityError
+        from adan_trading_bot.policy.geometry_engine import generate_candidate_grid, compute_geometry, select_best_plan
+        from dataclasses import replace
+        contract = FeatureAvailabilityContract(get_feature_registry())
+        for spread in (0.1, 0.23, 2.0):  # 0.20%, 0.46%, 4.0% ATR => infeasible SL interval
+            snap = NestedStateBuilder(bars(spread=spread)).snapshot(301)
+            self.assertEqual(generate_candidate_grid(snap, 'LONG', availability_contract=contract), [])
+            self.assertFalse(compute_geometry('LONG', 100., 99.9, snapshot=snap, availability_contract=contract).viable)
+        warm = NestedStateBuilder(bars()).snapshot(100)
+        self.assertTrue(np.isnan(warm.atr_1h.value))
+        with self.assertRaises(FeatureAvailabilityError):
+            contract.materialize(warm, ['c1h.atr_1h'])
+        self.assertEqual(generate_candidate_grid(warm, 'LONG', availability_contract=contract), [])
+        gap = bars().drop(bars().index[245]); snap_gap = NestedStateBuilder(gap).snapshot(299)
+        self.assertEqual(generate_candidate_grid(snap_gap, 'LONG', availability_contract=contract), [])
+        snap = NestedStateBuilder(bars()).snapshot(301)
+        plan = generate_candidate_grid(snap, 'LONG', availability_contract=contract)[0]
+        invalid = replace(plan, sl_pct=0.031)
+        self.assertFalse(invalid.admissible())
+        self.assertEqual(select_best_plan(snap, [(invalid, 0.99)], availability_contract=contract), (None, None))
+
     def test_invalid_hour_resets_without_zero_or_bfill(self):
         frame = bars(); frame.iloc[245, frame.columns.get_loc('high')] = np.nan
         b = NestedStateBuilder(frame)
