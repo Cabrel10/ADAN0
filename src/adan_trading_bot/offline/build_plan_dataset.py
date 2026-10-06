@@ -45,7 +45,7 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
     warmup, horizon_max = max(288,max(horizons)), max(horizons)
     segments = [frame.iloc[start:end] for start,end in zip(cuts[:-1],cuts[1:])]
     candidates = [(segment_id,i) for segment_id,segment in enumerate(segments)
-                  for i in range(warmup,len(segment)-horizon_max,stride)]
+                  for i in range(warmup,len(segment)-horizon_max-1,stride)]
     if not candidates: raise ValueError('No complete causal state/horizon window')
     # Deterministically cover the whole partition, not only early liquid/illiquid bars.
     if len(candidates)>max_states:
@@ -99,6 +99,7 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
                 key='|'.join(str(row[x]) for x in ('state_id','direction','sl_pct','tp_r','horizon','execution_mode','portfolio_context_json'))
                 row['plan_id']=hashlib.sha256(key.encode()).hexdigest()
                 row['outcome_end_ts']=segment.index[pending_indices[number]+pending_plans[number].horizon]
+                row['label_available_ts']=row['outcome_end_ts']+pd.Timedelta(minutes=5)
                 row['fees_rt']=.0008
                 plan_rows.append(row)
     states,plans=pd.DataFrame(state_rows),pd.DataFrame(plan_rows)
@@ -106,14 +107,14 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
     if not states.state_id.is_unique or not plans.plan_id.is_unique: raise AssertionError('Duplicate state/plan IDs')
     if not set(plans.state_id).issubset(set(states.state_id)): raise AssertionError('Missing relational state')
     if not np.isfinite(states[names].to_numpy()).all(): raise AssertionError('NaN/unknown feature injected')
-    if (plans.outcome_end_ts >= pd.Timestamp(hi)).any(): raise AssertionError('Outcome crosses partition boundary')
+    if (plans.label_available_ts >= pd.Timestamp(hi)).any(): raise AssertionError('Outcome availability reaches/crosses next partition boundary')
     if not ((plans.sl_min_bound<=plans.sl_pct)&(plans.sl_pct<=plans.sl_max_bound)).all(): raise AssertionError('Candidate violates bounds')
     if not ((plans.Y_TP_FIRST+plans.Y_SL_FIRST+plans.TIMEOUT)==1).all(): raise AssertionError('Outcome event partition invalid')
     source = hashlib.sha256(inspect.getsource(compute_plan_outcomes).encode()).hexdigest()
     metadata={'version':VERSION,'split':split,'state_rows':len(states),'plan_rows':len(plans),
         'feature_names':names,'registry_sha256':hashlib.sha256(Path('config/feature_registry.json').read_bytes()).hexdigest(),
         'micro_capital_regime':asdict(regime),'max_states':max_states,'stride_bars':stride,'horizons':list(horizons),
-        'counters':counters,'warmup_bars':warmup,'purged_tail_bars_per_segment':horizon_max,
+        'counters':counters,'warmup_bars':warmup,'purged_tail_bars_per_segment':horizon_max+1,
         'continuous_segments':len(segments),'start':str(states.decision_open_ts.min()),'end':str(states.decision_open_ts.max()),
         'outcome_function_sha256':source,'fees_rt_assumption':.0008,
         'entry_assumption':'FILLED_AT_NEXT_OPEN_CONDITIONAL_ONLY_NOT_A_MAKER_FILL_MODEL',
