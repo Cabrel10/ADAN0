@@ -16,12 +16,19 @@ from adan_trading_bot.data.nested_state_builder import NestedStateBuilder
 from adan_trading_bot.offline import labeler_mfe_mae as labeler
 
 
-def distribution(values):
+def distribution(values, *, binary=None):
     values = np.asarray(values)
+    if values.ndim != 1 or not len(values) or not np.isfinite(values).all():
+        raise ValueError('Distribution requires a nonempty finite label vector')
+    if not np.equal(values, np.round(values)).all():
+        raise ValueError('Categorical labels must be integer-valued')
     labels, counts = np.unique(values, return_counts=True)
     probs = counts / len(values)
     entropy = float(-(probs * np.log(probs)).sum())
-    binary = set(labels).issubset({0, 1})
+    if binary is None:
+        binary = set(labels).issubset({0, 1})
+    if binary and not set(labels).issubset({0, 1}):
+        raise ValueError('Binary target contains nonbinary classes')
     prevalence = float(values.mean()) if binary else None
     return {'n': len(values), 'counts': {str(int(k)): int(v) for k, v in zip(labels, counts)},
             'prevalence': prevalence, 'majority_accuracy': float(probs.max()),
@@ -32,7 +39,8 @@ def distribution(values):
 
 
 def stats(frame):
-    result = {'rows': len(frame), 'distributions': {name: distribution(frame[name]) for name in labeler.LABEL_COLS
+    categorical = {'y_regime', 'y_direction', 'y_qualite_setup', 'y_conviction'}
+    result = {'rows': len(frame), 'distributions': {name: distribution(frame[name], binary=name not in categorical) for name in labeler.LABEL_COLS
                                       if name.startswith('y_') and name in frame},
               'continuous': {name: {str(q): float(frame[name].quantile(q)) for q in (0, .1, .5, .9, .99, 1)}
                              for name in ('mfe', 'mae', 'net_return', 'time_to_tp', 'time_to_sl') if name in frame}}
