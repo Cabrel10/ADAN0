@@ -44,6 +44,73 @@ class PositionSize:
     motif_refus: str = ""
 
 
+@dataclass(frozen=True)
+class MicroCapitalRegime:
+    """Current explicit configuration, not the legacy quarter-Kelly/$15 regime."""
+    initial_capital: float
+    allocation_min: float
+    allocation_max: float
+    risk_per_trade: float
+    max_positions: int
+    configured_min_notional: float
+    effective_min_notional: float
+    config_sha256: str
+    min_notional_policy: str = "max(configured_min, latest_user_requirement_11_USD)"
+
+
+def load_micro_capital_regime(config_path="config/config.yaml", required_min_notional=11.0):
+    import hashlib
+    import math
+    from pathlib import Path
+    import yaml
+    payload = Path(config_path).read_bytes()
+    config = yaml.safe_load(payload)
+    tier = config['capital_tiers'][0]
+    if 'micro' not in tier['name'].lower():
+        raise ValueError("First capital tier is not the configured Micro regime")
+    minimum, maximum = map(float, tier['exposure_range'])
+    risk = float(tier['risk_per_trade_pct'])
+    initial = float(config['sandbox']['initial_capital'])
+    exchange_min = float(config['trading_rules']['min_order_value_usdt'])
+    if not all(math.isfinite(x) for x in (minimum, maximum, risk, initial, exchange_min, required_min_notional)):
+        raise ValueError("Nonfinite micro-capital configuration")
+    if not (0 < minimum <= maximum <= 100 and 0 < risk <= 100 and initial > 0 and exchange_min > 0 and required_min_notional > 0):
+        raise ValueError("Invalid micro-capital percentages or capital")
+    if tier['max_concurrent_positions'] != 1 or float(tier['leverage']) != 1.0:
+        raise ValueError("Current micro contract requires one position, leverage=1")
+    return MicroCapitalRegime(initial, minimum/100, maximum/100, risk/100, 1,
+                              exchange_min, max(exchange_min, required_min_notional),
+                              hashlib.sha256(payload).hexdigest())
+
+
+def size_micro_position(regime, capital, sl_fraction, *, allocation_fraction=None,
+                        positions_open=0, exposure_current=0., available_cash=None):
+    """Bounded sizing for a hypothetical flat micro portfolio, not a fill model.
+
+    Four percent is a MAXIMUM risk budget, not an obligation to risk exactly 4%.
+    A cash/min-order/risk conflict means abstention; never fall back to 20% or
+    fabricate a zero portfolio. Probability/EV admission is a separate gate.
+    """
+    import math
+    allocation = (regime.allocation_min + regime.allocation_max)/2 if allocation_fraction is None else allocation_fraction
+    cash = capital if available_cash is None else available_cash
+    if not all(math.isfinite(x) for x in (capital, sl_fraction, allocation, cash, exposure_current)):
+        return PositionSize(False, motif_refus="nonfinite micro portfolio")
+    if capital <= 0 or not 0 < sl_fraction < 1 or cash < 0 or exposure_current < 0:
+        return PositionSize(False, motif_refus="invalid capital/SL/cash/exposure")
+    if positions_open != 0 or exposure_current != 0:
+        return PositionSize(False, motif_refus="micro maximum one simultaneous position")
+    if not regime.allocation_min <= allocation <= regime.allocation_max:
+        return PositionSize(False, motif_refus="allocation outside configured micro range")
+    notional = min(capital*allocation, capital*regime.risk_per_trade/sl_fraction, cash)
+    if notional < capital*regime.allocation_min:
+        return PositionSize(False, motif_refus="risk/cash incompatible with micro minimum allocation")
+    if notional < regime.effective_min_notional:
+        return PositionSize(False, motif_refus="below effective conservative minimum order")
+    return PositionSize(True, size_usd=notional, risk_usd=notional*sl_fraction,
+                        f_applied=notional/capital)
+
+
 def size_position(
     capital: float,
     p_win: float,
