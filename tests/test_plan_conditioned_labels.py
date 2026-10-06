@@ -113,4 +113,73 @@ class PlanLabelTests(unittest.TestCase):
         with self.assertRaises(ValueError):compute_plan_outcomes(NestedStateBuilder(data.drop(data.index[250])),[300],[plan],fees_rt=.0008)
 
 
-if __name__=='__main__':unittest.main(verbosity=2)
+def validate_real_train(n=1000, seed=1729):
+    """Direct production vs independent scalar reference on unique TRAIN entries.
+
+    Explicit direction/SL/TP/horizon vary independently of sweep labels. Samples
+    validate arithmetic, not predictive edge: horizons overlap, no OOS claim.
+    """
+    import hashlib
+    import inspect
+    from collections import Counter
+    from adan_trading_bot.offline.labeler_mfe_mae import PARQUET
+    if n <= 0 or n > 20000:
+        raise ValueError('Positive real sample count <=20000 required')
+    source = pd.read_parquet(PARQUET, columns=['open','high','low','close','volume'])
+    train = source[(source.index >= '2017-01-01') & (source.index < '2022-01-01')]
+    rng = np.random.default_rng(seed); remaining = n
+    errors = {field: 0 for field in FIELDS}; maxima = {field: 0. for field in FIELDS}
+    examples, timestamps, all_rows, windows = [], [], [], []
+    for block, start in enumerate(np.linspace(0, len(train)-5000, 12, dtype=int)):
+        for offset in range(int(start), min(int(start)+20000, len(train)-5000+1), 500):
+            sample = train.iloc[offset:offset+5000]
+            clock = sample.index.to_numpy(dtype='datetime64[ns]').astype(np.int64)
+            if (np.diff(clock)==300_000_000_000).all(): break
+        else: raise ValueError('No continuous TRAIN stratum')
+        count = remaining // (12-block); remaining -= count
+        indices = np.sort(rng.choice(np.arange(288,len(sample)-288),size=count,replace=False))
+        plans = [PlanCandidate('LONG' if (block+j)%2 else 'SHORT',
+                               (.012,.015,.02,.025,.03)[(block+j)%5],
+                               (3.5,4.,5.)[(block+j)%3],horizon=(12,48,144,288)[(block+j)%4],
+                               execution_mode='CONDITIONAL_FILLED_NEXT_OPEN') for j in range(count)]
+        rows = compute_plan_outcomes(NestedStateBuilder(sample),indices,plans,fees_rt=.0008)
+        for index, plan, row in zip(indices,plans,rows):
+            truth = naive(sample,int(index),plan,.0008)
+            timestamps.append(str(sample.index[index+1])); all_rows.append(row)
+            for field in FIELDS:
+                actual,expected=float(row[field]),float(truth[field])
+                delta=abs(actual-expected);maxima[field]=max(maxima[field],delta)
+                same=actual==expected if field not in ('MFE','MAE','NET_RETURN') else np.isclose(actual,expected,atol=1e-12,rtol=0)
+                if not same:
+                    errors[field]+=1
+                    if len(examples)<20:examples.append({'field':field,'entry':str(row['entry_timestamp']),'actual':actual,'reference':expected})
+        windows.append({'start':str(sample.index[0]),'end':str(sample.index[-1]),'decisions':count})
+    assert len(timestamps)==n and len(set(timestamps))==n
+    distributions={field:dict(Counter(str(x[field]) for x in all_rows)) for field in ('Y_TP_FIRST','Y_SL_FIRST','Y_WIN','TIMEOUT')}
+    return {'split':'TRAIN_ONLY','n':n,'seed':seed,'atol':1e-12,'rtol':0,'divergences':errors,
+            'max_absolute_error':maxima,'examples':examples,'windows':windows,'distributions':distributions,
+            'win_differs_from_tp_first':sum(x['Y_WIN']!=x['Y_TP_FIRST'] for x in all_rows),
+            'stop_losses_worse_than_minus_1R_plus_fees':sum(x['Y_SL_FIRST'] and x['NET_RETURN'] < -1-.0008/x['sl_pct']-1e-12 for x in all_rows),
+            'entry_timestamp_sha256':hashlib.sha256('\n'.join(timestamps).encode()).hexdigest(),
+            'production_function_sha256':hashlib.sha256(inspect.getsource(compute_plan_outcomes).encode()).hexdigest(),
+            'reference_function_sha256':hashlib.sha256(inspect.getsource(naive).encode()).hexdigest(),
+            'interpretation':'Hypothetical filled entry, explicit costs and conservative stop gaps; maker fill probability and portfolio OOS are NOT validated.'}
+
+
+if __name__=='__main__':
+    import argparse,json
+    from pathlib import Path
+    ap=argparse.ArgumentParser();ap.add_argument('--real-n',type=int,default=0);ap.add_argument('--report',type=Path)
+    args=ap.parse_args()
+    suite=unittest.defaultTestLoader.loadTestsFromTestCase(PlanLabelTests)
+    result=unittest.TextTestRunner(verbosity=2).run(suite)
+    if not result.wasSuccessful():raise SystemExit(1)
+    if args.real_n:
+        report=validate_real_train(args.real_n)
+        print(json.dumps(report,indent=2))
+        if args.report:
+            path=args.report.resolve()
+            if not path.is_relative_to(Path('/home/ubuntu/webapp')) or not path.parent.is_dir():raise ValueError('Report outside workspace')
+            path.write_text(json.dumps(report,indent=2)+'\n')
+        if any(report['divergences'].values()):raise SystemExit(1)
+
