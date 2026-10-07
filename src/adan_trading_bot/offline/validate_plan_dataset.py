@@ -29,12 +29,13 @@ FEE = 0.0008
 
 
 def scalar_outcome(raw, decision_pos, direction, sl, tp_r, horizon, fee=FEE):
-    entry = float(raw.open.iloc[decision_pos + 1]); short = direction == 'SHORT'
+    # raw: dict of plain float arrays (open/high/low/close); scalar loop, no vectorized production code.
+    entry = float(raw['open'][decision_pos + 1]); short = direction == 'SHORT'
     stop = entry * (1 + sl) if short else entry * (1 - sl)
     target = entry * (1 - sl * tp_r) if short else entry * (1 + sl * tp_r)
     mfe = mae = 0.0; t_tp = t_sl = 0
     for k in range(1, horizon + 1):
-        hi = float(raw.high.iloc[decision_pos + k]); lo = float(raw.low.iloc[decision_pos + k])
+        hi = float(raw['high'][decision_pos + k]); lo = float(raw['low'][decision_pos + k])
         mfe = max(mfe, (entry - lo) / entry if short else (hi - entry) / entry)
         mae = max(mae, (hi - entry) / entry if short else (entry - lo) / entry)
         if not t_tp and ((lo <= target) if short else (hi >= target)): t_tp = k
@@ -42,11 +43,11 @@ def scalar_outcome(raw, decision_pos, direction, sl, tp_r, horizon, fee=FEE):
     sl_first = int(bool(t_sl) and (not t_tp or t_sl <= t_tp))
     tp_first = int(bool(t_tp) and (not t_sl or t_tp < t_sl))
     if not (sl_first or tp_first):
-        exit_price = float(raw.close.iloc[decision_pos + horizon])
+        exit_price = float(raw['close'][decision_pos + horizon])
     elif tp_first:
         exit_price = target
     else:
-        gap_open = float(raw.open.iloc[decision_pos + t_sl])
+        gap_open = float(raw['open'][decision_pos + t_sl])
         exit_price = max(stop, gap_open) if short else min(stop, gap_open)
     gross = ((entry - exit_price) if short else (exit_price - entry)) / (entry * sl)
     net = gross - fee / sl
@@ -55,11 +56,18 @@ def scalar_outcome(raw, decision_pos, direction, sl, tp_r, horizon, fee=FEE):
             'TIME_TO_TP': t_tp, 'TIME_TO_SL': t_sl, 'NET_RETURN': net}
 
 
-def validate(max_states, stride, horizons=(48, 144, 288)):
+def validate(max_states, stride, horizons=(48, 144, 288), mutate=False):
     raw_all = pd.read_parquet(PARQUET, columns=['open', 'high', 'low', 'close', 'volume'])
     train = raw_all[(raw_all.index >= '2017-01-01') & (raw_all.index < '2022-01-01')]
     states, plans, manifest = build(raw_all, split='train', max_states=max_states,
                                     stride=stride, horizons=horizons)
+    arrays = {c: train[c].to_numpy(dtype=float) for c in ('open', 'high', 'low', 'close')}
+    if mutate:
+        # Oracle self-test: corrupt exactly one row per field; each must be detected once.
+        plans = plans.copy()
+        for row, field in enumerate(FIELDS):
+            column = plans.columns.get_loc(field)
+            plans.iloc[row, column] = plans.iloc[row, column] + (0.5 if field in FLOATS else 1)
     pos = pd.Series(np.arange(len(train)), index=train.index)
     clock = train.index.to_numpy(dtype='datetime64[ns]').astype(np.int64)
     gap_after = set(train.index[np.flatnonzero(np.diff(clock) != 300_000_000_000)])
@@ -100,7 +108,7 @@ def validate(max_states, stride, horizons=(48, 144, 288)):
             checks['label_clock_mismatch'] += 1
         if any(ts in gap_after for ts in train.index[p:end]): checks['window_crosses_gap'] += 1
         if r.label_available_ts >= pd.Timestamp('2022-01-01'): checks['label_after_partition'] += 1
-        truth = scalar_outcome(train, p, r.direction, float(r.sl_pct), float(r.tp_r), int(r.horizon))
+        truth = scalar_outcome(arrays, p, r.direction, float(r.sl_pct), float(r.tp_r), int(r.horizon))
         for f in FIELDS:
             a, e = float(r[f]), float(truth[f]); d = abs(a - e); maxima[f] = max(maxima[f], d)
             same = np.isclose(a, e, atol=1e-12, rtol=0) if f in FLOATS else a == e
@@ -133,11 +141,18 @@ def validate(max_states, stride, horizons=(48, 144, 288)):
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--max-states', type=int, default=300); ap.add_argument('--stride', type=int, default=12)
-    ap.add_argument('--report', type=Path, required=True); args = ap.parse_args()
+    ap.add_argument('--report', type=Path, required=True); ap.add_argument('--self-test', action='store_true')
+    args = ap.parse_args()
     target = args.report.resolve()
     if not target.is_relative_to(Path('/home/ubuntu/webapp')) or not target.parent.is_dir():
         raise ValueError('Report parent must exist in workspace')
+    if args.self_test:
+        corrupted = validate(args.max_states, args.stride, mutate=True)
+        detected = corrupted['field_divergences']
+        assert all(detected[f] == 1 for f in FIELDS), detected
+        print('ORACLE_SELF_TEST_PASS', detected)
     result = validate(args.max_states, args.stride)
+    result['oracle_self_test'] = 'one corruption per field injected and detected exactly once' if args.self_test else 'not run'
     target.write_text(json.dumps(result, indent=2, default=str) + '\n')
     print(json.dumps({k: result[k] for k in ('states', 'plans', 'plans_per_state', 'decision_abstention', 'field_divergences', 'contract_checks')}, indent=2, default=str))
     if any(result['field_divergences'].values()) or any(result['contract_checks'].values()):
