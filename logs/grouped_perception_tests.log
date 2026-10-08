@@ -1,0 +1,27 @@
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k'
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data'
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke'
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v30_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v30_500k'
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance'
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading'
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k'
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/eval1k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/eval1k'
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k'
+2026-10-08 00:39:10 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe'
+2026-10-08 00:39:10 - adan_trading_bot - INFO - ADAN Trading Bot v0.1.0 initialized
+test_exact_partition_of_all_admitted_names (__main__.GroupedPerceptionTests.test_exact_partition_of_all_admitted_names) ... ok
+test_missing_extra_and_nonfinite_values_raise_never_zero (__main__.GroupedPerceptionTests.test_missing_extra_and_nonfinite_values_raise_never_zero) ... ok
+test_only_verified_intra_group_edges_and_forward_backward (__main__.GroupedPerceptionTests.test_only_verified_intra_group_edges_and_forward_backward) ... ok
+test_plan_changes_z_for_same_state (__main__.GroupedPerceptionTests.test_plan_changes_z_for_same_state) ... /home/ubuntu/webapp/MORNINGSTAR/ADAN0/tests/test_grouped_perception.py:107: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:822.)
+  self.assertGreater(float((z1 - z2).abs().max()), 1e-4)
+ok
+test_plan_encoder_rejects_outcomes_and_out_of_bounds (__main__.GroupedPerceptionTests.test_plan_encoder_rejects_outcomes_and_out_of_bounds) ... ok
+test_scale_invariance_and_causal_sequence_order (__main__.GroupedPerceptionTests.test_scale_invariance_and_causal_sequence_order) ... ok
+test_temporal_encoder_is_causal (__main__.GroupedPerceptionTests.test_temporal_encoder_is_causal) ... ok
+test_unknown_or_config_or_label_names_rejected (__main__.GroupedPerceptionTests.test_unknown_or_config_or_label_names_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 7.346s
+
+OK

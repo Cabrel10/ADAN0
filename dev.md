@@ -19,6 +19,116 @@ Sizing cible : capital ~20 $, allocation Micro 70–90 %, min ordre ~11 $,
 une position maximum, risque/trade 4 %. Les anciens plafonds 20 %/40 % et
 minimum 15 $ restent des prototypes NON alignés à réconcilier avec la config.
 
+### GATE 4 — PASS : labels diagnostiqués, vérité plan-conditionnée validée, dataset causal purgé validé (2026-10-08)
+
+Commits `d081dc5` → `7db037c` (PR #11). TRAIN uniquement ; VAL/TEST non touchés.
+Données : BTCUSDT_5m_featured.parquet, SHA256 3c4fd111…5935 ; Python 3.12.13,
+NumPy 2.2.6, pandas 3.0.5. Aucun entraînement.
+
+**1. Audit des labels actuels (logs/gate4_label_audit.json)** : 458 489 barres TRAIN,
+33 segments continus, warmup 288 et queue 288 purgés par segment → 440 954 labels.
+Artefact legacy réellement présent `data/labeled/train.parquet` (458 392 lignes,
+SHA256 28377d03…b29b) — mesuré tel quel, pas supposé être la version d'origine.
+
+| Label | legacy (fichier réel) | actuel | majorité | entropie (bits) |
+|---|---:|---:|---:|---:|
+| y_tp_first = y_win (3.5R/1.2%) | 14.36 % | 14.33 % | 0.857 | 0.593 |
+| y_sl_first | 64.12 % | 63.93 % | 0.639 | 0.943 |
+| y_expansion_imminente | 19.16 % | **8.76 %** | 0.912 | 0.428 |
+| y_sweep_confirme | 1.22 % | 1.21 % | 0.988 | 0.094 |
+| y_reintegration_valide | 5.93 % | 5.93 % | 0.941 | 0.325 |
+| y_anomalie_donnees | 0 % | 0 % | 1.000 | 0 (constante, inutile) |
+| y_regime (BULL/BEAR/RANGE/TRAP) | 17.8/14.0/58.9/9.3 % | 17.7/14.0/59.0/9.3 % | 0.590 | 1.607 |
+| y_direction (L/S/AUCUNE) | 4.0/3.8/92.2 % | 4.0/3.8/92.2 % | 0.922 | 0.474 |
+
+Le fichier legacy réel ne contient donc PAS 97 % expansion / 94 % TRAP : ces chiffres
+venaient d'une génération antérieure. Ils sont **reproduits** par la reconstruction de
+l'ancienne formule sur le même flux causal : expansion(range futur 12 barres > 1.5×ATR
+5m) = **96.74 %** ; TRAP(range 4h / ATR 5m > 1.8) = **94.43 %** (médiane du ratio 4.79,
+p10 2.29). Cause : erreur d'échelle (dénominateur ATR d'UNE barre 5m contre une étendue
+de 12 ou 48 barres), pas un signal. Corrigé : expansion vs ATR 1h canonique = 8.76 %,
+TRAP structurel = 9.29 %.
+
+Invariants actuels : 0 double premier événement, 0 excursion négative, 0 temps
+incohérent ; 95 890 timeouts à net_return=0 ; 406 483 lignes AUCUNE évaluées LONG.
+Conditionnements : sweep non nul seulement aux phases 11–12 (7.25/7.28 %) par
+construction ; TP_first par année 26.2 % (2017) → 11.9–15.5 % (2018–21) ; ni régime
+ni sweep ne séparent nettement TP/SL (sweep : 13.4 % vs 14.3 %) — associations
+descriptives, pas d'edge. Baselines tests indépendants (tests/test_label_audit_metrics.py 3/3).
+
+**Défauts confirmés des labels legacy/actuels (ne PAS entraîner dessus)** : Y_WIN≡TP_FIRST ;
+timeout=0 sans coûts ; MFE/MAE censurés à la sortie ; AUCUNE évaluée LONG ; qualité/conviction
+contiennent des labels futurs ; y_anomalie constante. Ils restent des diagnostics.
+
+**2. Vérité conditionnée au plan (STATE(t)+PLAN(t) → résultat futur)** —
+`labeler_mfe_mae.compute_plan_outcomes` : direction/SL/TP/horizon explicites ; entrée
+hypothétique à open[t+1] ; MFE/MAE sur TOUT l'horizon ; touches 1-based, 0=non touché ;
+même barre TP+SL ⇒ SL ; stop gap rempli au pire de (stop, open) ; TP au prix cible ;
+timeout au close de l'horizon ; frais RT explicites (0.08 %) ; NET_RETURN en R ;
+**Y_WIN = NET_RETURN > 0 ≠ Y_TP_FIRST**. Probabilité de fill maker et slippage NON
+inférés de l'OHLC (hors contrat, à modéliser avant backtest).
+- tests/test_plan_conditioned_labels.py 8/8 (barre d'entrée, ambiguïté, symétrie,
+  timeout gagnant, coûts, gaps LONG/SHORT, entrées invalides rejetées).
+- Oracle scalaire indépendant sur 1 000 entrées TRAIN uniques (12 fenêtres 2017-08-17
+  → 2021-12-31, seed 1729) : **0 divergence** sur 9 champs, erreur max 1.8e-14
+  (logs/plan_conditioned_train_validation.json). 379 lignes où Y_WIN≠TP_FIRST,
+  9 pertes de gap < −1R : la distinction est réelle.
+
+**3. Dataset relationnel State×Plan (`offline/build_plan_dataset.py`)** : segments
+continus, état nommé admis par le contrat (283 noms, aucune colonne de label), plans
+générés par le candidate factory à partir du seul snapshot t, scénario micro-capital
+explicite (20.5 $, allocation 80 %, risque ≤4 %, 1 position, min 11 $), outcomes
+futurs, `label_available_ts = outcome_end + 5 min` strictement < frontière de split,
+fenêtres ne traversant aucun gap, TEST refusé, rien de fabriqué si vide.
+- tests/test_plan_dataset_contract.py 4/4 (jointure, mutation future, purge
+  frontière/gaps, refus TEST/données inexploitables).
+- Cardinalité mesurée avant génération : stride 12 → 36 755 décisions TRAIN
+  (~840 K plans) ; stride 48 → 9 200 (~210 K).
+- **Oracle dataset-level indépendant** (`offline/validate_plan_dataset.py` : boucle
+  scalaire sur tableaux bruts, ATR indépendant `validate_labeler.reference_atr`,
+  bornes SL recalculées, horloges/gaps/frontière recalculés) :
+  - auto-test : 1 corruption injectée par champ → détectée exactement 1 fois (9/9) ;
+  - 100 états : 88 admis, 2 286 plans, 0 divergence, 0 violation ;
+  - **2 000 états répartis sur tout TRAIN (2017-08-18 → 2021-12-30, 33 segments) :
+    1 734 admis (abstention 13.3 %, uniquement intervalle SL vide), 46 374 plans
+    (12–36 par état), 0 divergence sur les 9 champs (max 1.9e-14), 0 sur les 12
+    contrôles de contrat** (logs/gate4_dataset_oracle_2000.json).
+- Taux descriptifs TRAIN (plans alternatifs chevauchants, pas des trades) :
+  TP_first 4.6 %, SL_first 37.8 %, timeout 57.7 %, Y_WIN 41.2 %. NET_RETURN moyen
+  LONG +0.05R à 288 barres, SHORT −0.06 à −0.08R : aucune conclusion d'edge.
+
+**4. Verrous traités pendant ce gate**
+- Minimum d'ordre : config réelle `trading_rules.min_order_value_usdt = 5 $` (pas 15 $) ;
+  consigne utilisateur ≈11 $ ⇒ **décision : 11 $ effectif = max(config, 11)**, plus
+  conservateur, consigné dans `MicroCapitalRegime.min_notional_policy`.
+  Micro tier réel : exposure 70–90 %, risque 4 %, 1 position, levier 1, capital 20.5 $
+  (tests/test_micro_capital_risk.py 3/3). L'ancien quart-Kelly 20 %/40 %/15 $ reste legacy.
+- TP_MAX : audit MFE conditionnel TRAIN (logs/tp_mfe_train_audit.json, 3 000 états) —
+  à 48 barres P(MFE≥3.5R) ≈ 0.4–1.5 %, à 288 barres 6–15 %. Proposition TRAIN
+  (support ≥200) : 5.5R pour SL 1.2–1.5 %/288, 4.5R pour 1.5–2 %/288, 3.5R ou rien
+  ailleurs. **PROPOSITION seulement**, à confirmer sur VAL avec économie premier-toucher.
+- ATR 4h : reste UNKNOWN, hors modèle.
+
+**Encore ouverts avant tout entraînement** : modèle de fill maker/slippage pour le
+backtest ; confirmation VAL du TP_MAX ; dataset TRAIN+VAL complet généré et manifesté.
+
+### GATE 5 — perception relationnelle par groupes : IMPLÉMENTÉE ET TESTÉE (2026-10-08)
+
+`models/grouped_perception.py` (commit 5c6252a) remplace tout tenseur plat du registre :
+- `build_layout` re-vérifie CHAQUE nom contre le contrat de disponibilité (un préfixe
+  `c4h.` ne suffit pas : `c4h.atr_4h` est refusé) et partitionne exactement les 283 noms :
+  bar_5m 8 · seq_5m 35 lags × 7 canaux · c1h 16 · c4h 14.
+- Normalisation causale par état : prix → log(x/close_t), spreads/ATR → /close_t,
+  volumes → log1p(x/running_vol_1h). Valeur manquante, en trop ou non finie ⇒ erreur,
+  jamais zéro. Invariance d'échelle testée (prix ×37, volume ×5).
+- Encodeurs par groupe avec message passing sur les SEULES arêtes vérifiées internes
+  au groupe ; CNN temporel causal (sortie antérieure inchangée si la dernière barre
+  change) ; attention inter-groupes ; FiLM par plan (6) + portefeuille (4) ; Z=128.
+- `encode_plan` refuse toute colonne de résultat et tout SL hors bornes ATR de l'état.
+- tests/test_grouped_perception.py 8/8 (partition exacte, refus config/label/UNKNOWN,
+  absence de zéro, invariance, causalité temporelle, forward/backward finis, Z dépend du plan).
+L'ancien `RelationalPerception` tout-registre et le MLP plat restent bloqués.
+
 ### GATE ATR — PASS pour le bridge 1h, géométrie finale NON verrouillée (2026-10-05)
 
 Commits intermédiaires `d03a8df` → `ca67619` ; PR #11. Périmètre testé :
