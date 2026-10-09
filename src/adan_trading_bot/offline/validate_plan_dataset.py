@@ -87,6 +87,12 @@ def validate(max_states, stride, horizons=(48, 144, 288), mutate=False, split="t
         raise ValueError('Duplicate state/plan IDs; no silent deduplication')
     if not set(plans.state_id).issubset(set(states.state_id)):
         raise ValueError('Orphan plan in full dataset')
+    if not np.isfinite(states[manifest['feature_names']].to_numpy(dtype=float)).all():
+        raise ValueError('Nonfinite feature in full dataset before sampling')
+    if set(FIELDS) & set(states.columns):
+        raise ValueError('Outcome leaked into full state table')
+    if hashlib.sha256(Path('config/feature_registry.json').read_bytes()).hexdigest() != manifest['registry_sha256']:
+        raise ValueError('Registry provenance mismatch')
     if len(states) > max_states:
         states = states.sort_values('decision_open_ts').iloc[np.linspace(0,len(states)-1,max_states,dtype=int)]
         plans = plans[plans.state_id.isin(states.state_id)].copy()
@@ -137,7 +143,7 @@ def validate(max_states, stride, horizons=(48, 144, 288), mutate=False, split="t
     for _, r in plans.iterrows():
         if r.state_id not in state_index.index: checks['orphan_plan'] += 1; continue
         s = state_index.loc[r.state_id]; p = int(pos[s.decision_open_ts])
-        fraction = reference_atr(train, p) / float(train.close.iloc[p])
+        fraction = atr_cache[s.decision_open_ts.floor('h')] / float(train.close.iloc[p])
         sl_min, sl_max = max(0.012, fraction, cost_rt / 0.30), min(0.030, 2.5 * fraction)
         if not (np.isclose(r.sl_min_bound, sl_min, atol=1e-12, rtol=0) and np.isclose(r.sl_max_bound, sl_max, atol=1e-12, rtol=0)):
             checks['bounds_mismatch'] += 1

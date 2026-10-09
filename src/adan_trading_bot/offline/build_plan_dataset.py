@@ -168,11 +168,18 @@ if __name__=='__main__':
     if free_disk < 4*1024**3 or memory_available < 2*1024**3:
         raise ValueError('Insufficient resources: require 4 GiB disk and 2 GiB available RAM before generation')
     print(json.dumps({'build_pid':os.getpid(),'free_disk_bytes':free_disk,'memory_available_bytes':memory_available,'market':'SPOT','fee_verified':market.fee_verified}),flush=True)
+    generation_commit=subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
+    code_paths=['src/adan_trading_bot/offline/build_plan_dataset.py','src/adan_trading_bot/offline/labeler_mfe_mae.py',
+                'src/adan_trading_bot/policy/market_contract.py','src/adan_trading_bot/policy/geometry_engine.py',
+                'src/adan_trading_bot/policy/risk_engine.py','src/adan_trading_bot/features/feature_availability_contract.py',
+                'src/adan_trading_bot/data/nested_state_builder.py','src/adan_trading_bot/features/canonical_atr.py']
+    code_hashes={str(path):hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in code_paths}
     raw=pd.read_parquet(PARQUET,columns=['open','high','low','close','volume'])
     states,plans,metadata=build(raw,split=args.split,max_states=args.max_states,stride=args.stride,market=market,count_only=args.count_only)
     metadata['preflight']={'pid':os.getpid(),'free_disk_bytes':free_disk,'memory_available_bytes':memory_available}
     metadata['git_dirty']=bool(subprocess.check_output(['git','diff','--name-only']).strip())
-    metadata['git_commit']=subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
+    metadata['git_commit']=generation_commit
+    metadata['source_code_sha256']=code_hashes
     digest=hashlib.sha256()
     with open(PARQUET,'rb') as handle:
         for chunk in iter(lambda:handle.read(1024*1024),b''):digest.update(chunk)
