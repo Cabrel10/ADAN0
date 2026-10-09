@@ -8,7 +8,10 @@ best-VAL checkpoint, full resume (model, optimizer, scheduler, RNG, step, config
 manifests hashes, git commit). Baselines reported: TRAIN-prior constant predictor.
 
 Device policy: CPU runs are capped at --max-cpu-steps (default 10_000).
-500K requires CUDA (and passing 1K/5K/10K GPU benchmarks recorded beforehand).
+--steps counts optimizer updates, NOT unique State×Plan examples. The future
+500K experiment means exactly 500,000 distinct admissible State×Plan rows,
+never timestamps or 500,000 optimizer updates. It remains explicitly BLOCKED.
+GPU benchmarks also wait for account fees, positive TRAIN/VAL EV and oracle gates.
 """
 from __future__ import annotations
 
@@ -191,7 +194,10 @@ def main():
         if not bench.exists() or not all(json.loads(bench.read_text()).get(str(k), {}).get('passed') for k in (1000, 5000, 10000)):
             raise SystemExit('Runs >10K require passing 1K/5K/10K GPU benchmarks recorded in gpu_benchmarks.json')
     market = load_market_contract()
-    if args.steps > 10000:
+    if args.steps <= 0 or args.batch <= 0:
+        raise SystemExit('Positive optimizer updates and batch size required')
+    planned_example_presentations = args.steps * args.batch
+    if args.steps > 10000 or planned_example_presentations >= 500000:
         market.require_verified_fees()
         raise SystemExit('500K blocked: LONG-only TRAIN/VAL EV, dataset oracle, mandatory baselines and example-count gates are not yet signed off')
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
@@ -219,6 +225,8 @@ def main():
               'val_manifest': va_m['plans_sha256'], 'registry_sha256': tr_m['registry_sha256'], 'torch': torch.__version__,
               'market': market.market, 'market_contract_sha256': market.sha256(),
               'action_space_contract_sha256': market.action_space_sha256(), 'fee_verified': market.fee_verified,
+              'planned_example_presentations': planned_example_presentations,
+              'steps_unit': 'optimizer_updates_not_unique_examples', 'experiment_500k_authorized': False,
               'params': sum(p.numel() for p in params), 'train_plans': len(tr['outcome']), 'val_plans': len(va['outcome'])}
     step, best, history = 0, float('inf'), []
     last = out / 'last.pt'

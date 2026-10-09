@@ -162,6 +162,8 @@ def main():
     target.write_text(json.dumps(report,indent=2,default=str)+'\n')
     print(json.dumps({'verdict':report['verdict'],'blocking_reasons':reasons,
           'train':train['baseline_rates'],'val':val['baseline_rates']},indent=2))
+    if reasons:
+        raise SystemExit(2)  # completed audit, but economic/account gate is NO-GO
 
 
 if __name__ == '__main__':
