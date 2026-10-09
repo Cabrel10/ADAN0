@@ -73,7 +73,7 @@ print("=" * 72)
 # Les anciens cas SHORT sont remplacés par leurs miroirs LONG exacts (prix reflétés
 # autour de 100), et une position SHORT doit être refusée à la construction.
 print("\nL0 — Contrat SPOT : position SHORT refusée")
-from adan_trading_bot.policy.market_contract import MarketContractError
+from adan_trading_bot.policy.market_contract import MarketContractError, load_market_contract
 try:
     LifecycleManager(OpenPosition(direction="SHORT", entry=100.0, stop_loss=101.2, take_profit=95.8,
                                   size_usd=16.4, entry_index=0, fees_rt=0.005, atr_1h_pct=0.012))
@@ -102,7 +102,7 @@ a = m.on_bar(o=100.5, h=101.80, l=100.2, c=101.40)   # MFE = 1.80/1.20 = +1.5R
 check("L3 MFE=+1.5R → MOVE_SL break-even", a.action == "MOVE_SL"
       and "break-even" in a.reason, f"new_stop={a.new_stop}")
 check("L3 SL break-even = entry + frais (LONG)",
-      abs(pos.stop_loss - (100.0 + 100.0 * 0.0008)) < 1e-9, f"SL={pos.stop_loss:.4f}")
+      abs(pos.stop_loss - (100.0 + 100.0 * load_market_contract().cost_rt)) < 1e-9, f"SL={pos.stop_loss:.4f}")
 check("L3 SL au-dessus de l'entry (hors gaps/slippage)", pos.stop_loss > pos.entry)
 
 print("\nL4 — Trailing ATR (MFE ≥ +2.0R)")
@@ -157,6 +157,14 @@ m.on_bar(o=100, h=100.8, l=99.6, c=100.5)
 m.on_bar(o=100.5, h=101.2, l=100.1, c=101.0)
 check("L9 MFE suivi (+1.00R max)", abs(pos.mfe_r - 1.0) < 1e-6, f"MFE={pos.mfe_r:+.2f}R")
 check("L9 MAE suivi (−0.33R min)", abs(pos.mae_r - (-1 / 3)) < 0.01, f"MAE={pos.mae_r:+.2f}R")
+
+print("\nL10 — Ambiguïté SL/TP et gap : convention de l'oracle")
+pos = make_position("LONG")
+a = LifecycleManager(pos).on_bar(o=100., h=105., l=98., c=101.)
+check("L10 même barre TP+SL → SL_FIRST", a.action == "CLOSE" and "stop-loss" in a.reason)
+pos = make_position("LONG")
+a = LifecycleManager(pos).on_bar(o=97., h=98., l=96., c=97.)
+check("L10 gap SL → pire open", a.action == "CLOSE" and a.exit_price == 97.)
 
 # ─── Verdict ─────────────────────────────────────────────────────────────────
 print("\n" + "=" * 72)

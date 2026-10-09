@@ -20,7 +20,7 @@ Règles (dans l'ordre de priorité à chaque clôture 5m) :
        (close sous le plus bas des 3 dernières pour un LONG / au-dessus du
        plus haut pour un SHORT) ET la progression reste négative.
   5. Break-even                → dès +1.5R, le SL remonte à entry + frais
-       (trade garanti sans perte)
+       (hors gap/slippage et coûts réalisés variables)
   6. Trailing                  → dès +2.0R, le SL suit le prix à 1.0 × ATR_1h
   7. Time-stop                 → au-delà de MAX_HOLD barres, CLOSE au marché
 
@@ -50,13 +50,13 @@ MAX_HOLD_BARS = 288           # time-stop : 24 h (288 × 5m)
 @dataclass
 class OpenPosition:
     """Position ouverte suivie par la vigie."""
-    direction: str              # 'LONG' | 'SHORT'
+    direction: str              # LONG inventory under SPOT
     entry: float
     stop_loss: float
     take_profit: float
     size_usd: float
     entry_index: int            # indice de la barre d'entrée (timeline 5m)
-    fees_rt: float              # frais aller-retour (fraction, ex. 0.0008)
+    fees_rt: Optional[float] = None  # expected RT costs from central SPOT contract
     atr_1h_pct: float = 0.012   # ATR contenant 1h en % (pour le trailing)
     # état courant (mis à jour à chaque barre)
     bars_held: int = 0
@@ -83,6 +83,11 @@ class LifecycleManager:
         from adan_trading_bot.policy.market_contract import load_market_contract
         market = market_contract or load_market_contract()
         market.require_direction(position.direction)   # SPOT: only LONG positions can exist; exits are SELL_EXIT
+        self.market_contract = market
+        if position.fees_rt is None:
+            position.fees_rt = market.cost_rt
+        if not np.isfinite(position.fees_rt) or not np.isclose(position.fees_rt,market.cost_rt,rtol=0,atol=1e-15):
+            raise ValueError("Position expected costs differ from central SPOT contract")
         self.pos = position
         self.risk = abs(position.entry - position.stop_loss)  # 1R en prix
         if self.risk <= 0:
@@ -118,6 +123,7 @@ class LifecycleManager:
         Retourne VigilAction (HOLD / MOVE_SL / CLOSE + motif).
         """
         p = self.pos
+        self.market_contract.require_direction(p.direction)
         p.bars_held += 1
         self._update_excursions(h, l)
 
@@ -126,25 +132,17 @@ class LifecycleManager:
         # clôture courante aux extrêmes des barres PRÉCÉDENTES uniquement.
         r_close = self._r(c)
 
-        # ── 1/2. Niveaux durs : TP / SL touchés ─────────────────────────────
-        if p.direction == "SHORT":
-            if l <= p.take_profit:
-                self._push_recent(h, l)
-                return VigilAction("CLOSE", "take-profit atteint",
-                                   r_courant=self._r(p.take_profit), exit_price=p.take_profit)
-            if h >= p.stop_loss:
-                self._push_recent(h, l)
-                return VigilAction("CLOSE", "stop-loss touché",
-                                   r_courant=self._r(p.stop_loss), exit_price=p.stop_loss)
-        else:
-            if h >= p.take_profit:
-                self._push_recent(h, l)
-                return VigilAction("CLOSE", "take-profit atteint",
-                                   r_courant=self._r(p.take_profit), exit_price=p.take_profit)
-            if l <= p.stop_loss:
-                self._push_recent(h, l)
-                return VigilAction("CLOSE", "stop-loss touché",
-                                   r_courant=self._r(p.stop_loss), exit_price=p.stop_loss)
+        # Same conservative OHLC convention as the plan oracle: SL first on
+        # an ambiguous bar; a gap through the stop fills at the worse open.
+        if l <= p.stop_loss:
+            exit_price = min(p.stop_loss, o)
+            self._push_recent(h, l)
+            return VigilAction("CLOSE", "stop-loss touché (SELL_EXIT)",
+                               r_courant=self._r(exit_price), exit_price=exit_price)
+        if h >= p.take_profit:
+            self._push_recent(h, l)
+            return VigilAction("CLOSE", "take-profit atteint (SELL_EXIT)",
+                               r_courant=self._r(p.take_profit), exit_price=p.take_profit)
 
         # ── 3. Anomalie critique détectée par le JEV → sortie au marché ──────
         if judgment is not None:
@@ -176,7 +174,7 @@ class LifecycleManager:
                                        f"{extr_low:.2f}, {r_close:+.2f}R) — coupe anticipée",
                                        r_courant=r_close, exit_price=c)
 
-        # ── 5. Break-even : dès +1.5R, SL → entry + frais (jamais de perte) ──
+        # ── 5. Break-even : dès +1.5R, SL → entry + frais attendus (pas une garantie face aux gaps) ──
         if not p.breakeven_done and p.mfe_r >= BREAKEVEN_TRIGGER_R - 1e-9:
             fees_price = p.entry * p.fees_rt
             if p.direction == "SHORT":
