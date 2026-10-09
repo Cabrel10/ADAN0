@@ -1,0 +1,52 @@
+{
+  "asset": "BTCUSDT_BINANCE",
+  "block_rate": 0.827,
+  "blocked": 153,
+  "corrects_previous_claim": "commit c2ca902 stated the gate is 'closed by construction'. That was derived from the upper bounds only. sl_lo=0.003 with tp_hi=0.0222 gives p_min=0.278, so the gate IS satisfiable inside the action box. This run measures which term actually blocks.",
+  "dominant_term": "H-A_signal_p_hmm_too_low",
+  "gate_invocations": 185,
+  "generated_at": "2026-09-05 08:13:41",
+  "margin_distribution_p_hmm_minus_p_min": {
+    "max": 0.629441,
+    "mean": -0.237523,
+    "min": -0.556667,
+    "n": 185,
+    "p10": -0.523478,
+    "p50": -0.404469,
+    "p90": 0.48272
+  },
+  "p_hmm_distribution": {
+    "max": 0.99,
+    "mean": 0.229418,
+    "min": 0.01,
+    "n": 185,
+    "p10": 0.01,
+    "p50": 0.01,
+    "p90": 0.99
+  },
+  "p_min_required_distribution": {
+    "max": 0.566667,
+    "mean": 0.466942,
+    "min": 0.329368,
+    "n": 185,
+    "p10": 0.379227,
+    "p50": 0.468841,
+    "p90": 0.566667
+  },
+  "passed": 32,
+  "reason_counts": {
+    "accepted": 32,
+    "negative_ev_fee_gate": 153
+  },
+  "seed": 330500,
+  "share_both_adverse": 0.2595,
+  "share_p_hmm_below_0.5": 0.8378,
+  "share_p_min_above_0.5": 0.3027,
+  "sltp_box_env": {
+    "ADAN_SL_HI": "0.0235",
+    "ADAN_TP_HI": "0.0222",
+    "ADAN_TP_LO": "0.0135"
+  },
+  "split": "train",
+  "steps": 500
+}

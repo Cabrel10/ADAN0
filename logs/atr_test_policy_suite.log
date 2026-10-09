@@ -1,0 +1,43 @@
+2026-10-05 14:50:33 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k'
+2026-10-05 14:50:33 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data'
+2026-10-05 14:50:33 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke'
+2026-10-05 14:50:33 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance'
+2026-10-05 14:50:33 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading'
+2026-10-05 14:50:33 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k'
+2026-10-05 14:50:33 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k'
+2026-10-05 14:50:33 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe'
+2026-10-05 14:50:33 - adan_trading_bot - INFO - ADAN Trading Bot v0.1.0 initialized
+========================================================================
+TEST policy/ — géométrie, gate d'abstention, risk engine
+========================================================================
+
+── G. Géométrie (invariants Phase 0b) ──
+  ✅ G1 stop 0.10% → planché à 1.2% — sl_pct=1.20%
+  ✅ G2 ATR 2.0% > plancher → SL = 2.0%
+  ✅ G3 frais taker 0.40%/SL 1.2% = 0.33R > 0.30R → refus — frais_r=0.33R
+  ✅ G4 EV nette maker exacte — EV=+1.647R attendu +1.647R
+  ✅ G5 TP = 3.5×SL
+  ✅ G6 P(win)=0.15 → EV brute −0.325R < 0 → refus — EV_brute=-0.325R
+
+── D. Gate d'abstention & direction ──
+  ✅ D1 integrity_ok=False → HOLD
+  ✅ D2 6ᵉ trade (quota 5) → HOLD
+  ✅ D3 cooldown actif → HOLD
+  ✅ D4 anomalie P=0.80 → HOLD
+  ✅ D5 régime TRAP P=0.90 → HOLD
+  ✅ D6a sweep haut → SHORT
+  ✅ D6b sweep bas → LONG
+  ✅ D6c aucun sweep → HOLD
+  ✅ D7 sweep non confirmé (P=0.30) → HOLD
+  ✅ D8 chemin complet → GO SHORT — 7 filtres passés
+
+── R. Risk engine (Kelly fractionnaire + plafonds) ──
+  ✅ R1 Kelly ≤ 0 (p=0.10) → refus
+  ✅ R2 Kelly plafonné à 20 % (2000$) — size=2000$
+  ✅ R3 taille < 15$ → refus minimum Binance
+  ✅ R4 pertes jour > 5 % → arrêt
+  ✅ R5 exposition 39%+20% → réduite au reliquat (100$) — size=100$
+  ✅ R5b exposition 41 % → refus (au plafond)
+
+========================================================================
+✅ TOUS LES TESTS POLICY PASSENT (géométrie + gate + risk).

@@ -95,6 +95,31 @@ class DynamicBehaviorEngine:
         self._load_macro_data()
         self._load_btc_daily_history()  # Audit anomaly #1: oracle online from step 1
 
+        # The production config is the single source of truth for the HMM
+        # lifecycle. Module constants remain safe defaults for older configs.
+        hmm_config = self.config.get("production", {}).get("sota_architecture", {})
+        self._hmm_min_obs = int(hmm_config.get("hmm_min_obs", HMM_MIN_OBS))
+        self._hmm_window = int(hmm_config.get("hmm_window", HMM_WINDOW))
+        configured_states = int(hmm_config.get("hmm_n_states", N_HMM_STATES))
+        if configured_states != N_HMM_STATES:
+            raise ValueError(
+                f"Configured hmm_n_states={configured_states}, but the context contract "
+                f"requires {N_HMM_STATES} states"
+            )
+        if self._hmm_min_obs < 2 * N_HMM_STATES:
+            raise ValueError("hmm_min_obs is too small for a three-state HMM")
+        if self._hmm_window < self._hmm_min_obs:
+            raise ValueError("hmm_window must be greater than or equal to hmm_min_obs")
+        logger.info(
+            "[HMM_CONFIG] configured/effective: states=%d min_obs=%d window=%d "
+            "refit_interval=%d available=%s",
+            N_HMM_STATES,
+            self._hmm_min_obs,
+            self._hmm_window,
+            min(120, self._hmm_window),
+            HMM_AVAILABLE,
+        )
+
     def log_info(self, message, step=None):
         """Log un message avec le système intelligent SmartLogger."""
         if self.smart_logger:
@@ -324,7 +349,24 @@ class DynamicBehaviorEngine:
         """
         if not hasattr(self, '_hmm_model'):
             self._hmm_fitted = False
+            self._hmm_fit_count = 0
+            self._hmm_fit_failures = 0
+            self._hmm_last_fallback_reason = "warming_up"
+            self._hmm_last_observation_id = None
+            self._hmm_state_order = None  # semantic indices: [bull, sideways, bear]
             self._hmm_obs_buffer: list = []  # list of [log_return, atr_pct, rsi_norm, vol_ratio]
+            # V28 FIX: monotone observation counters for refit scheduling.
+            # The previous condition `len(buffer) % REFIT_INTERVAL == 0` could
+            # never trigger again once the rolling buffer was capped at
+            # _hmm_window (500 % 120 == 20 forever): the model froze on the
+            # first ~480 observations of a chunk for the rest of the run,
+            # pinning posteriors (e.g. bear=99.7%) and driving p_hmm to the
+            # 0.01 clamp, which starved the EV gate and collapsed the critic.
+            self._hmm_total_obs = 0       # total observations ever ingested
+            self._hmm_last_refit_obs = 0  # value of _hmm_total_obs at last fit attempt
+            # ADAN0_HMM_READONLY_CONSUMERS: count consumer calls served from
+            # cache (they used to poison the fit buffer). Auditable at runtime.
+            self._hmm_readonly_calls = 0
             if HMM_AVAILABLE:
                 # Use auto-init (k-means) for means/covars — avoids PD matrix issues
                 # Multiple random restarts are done in _update_hmm by creating fresh models
@@ -356,13 +398,31 @@ class DynamicBehaviorEngine:
             np.ndarray of shape (3,) summing to 1.0.
         """
         self._init_hmm()
+        # V28 FIX (data root cause): winsorize raw features AT INGESTION.
+        # The 5m parquet contains stitching discontinuities every ~200 rows
+        # (single-bar |log_return| up to 9.7% — impossible for BTC 5m, whose
+        # real 99.9th percentile is ~0.86%). After RobustScaler (IQR ~1e-3)
+        # these artifacts reach |scaled| ~84 and capture an entire Gaussian
+        # state (state means at ±37..62 in scaled space), pinning the bull
+        # posterior at the 0.01 clamp 58% of the time and starving the EV
+        # gate. Clipping here protects BOTH fit and posterior, and preserves
+        # >99.9% of genuine market moves.
+        log_return = float(np.clip(log_return, -0.02, 0.02))   # ±2% per 5m bar
+        atr_pct = float(np.clip(atr_pct, 0.0, 0.05))           # ATR <= 5% of price
+        rsi_norm = float(np.clip(rsi_norm, 0.0, 1.0))
+        volume_ratio = float(np.clip(volume_ratio, 0.0, 10.0))
         self._hmm_obs_buffer.append([log_return, atr_pct, rsi_norm, volume_ratio])
+        self._hmm_total_obs += 1  # V28 FIX: monotone counter drives refit schedule
 
         # Keep a rolling window
-        if len(self._hmm_obs_buffer) > HMM_WINDOW:
-            self._hmm_obs_buffer = self._hmm_obs_buffer[-HMM_WINDOW:]
+        if len(self._hmm_obs_buffer) > self._hmm_window:
+            self._hmm_obs_buffer = self._hmm_obs_buffer[-self._hmm_window:]
 
-        if self._hmm_model is None or len(self._hmm_obs_buffer) < HMM_MIN_OBS:
+        if self._hmm_model is None:
+            self._hmm_last_fallback_reason = "hmmlearn_unavailable"
+            return self._hmm_probs.copy()
+        if len(self._hmm_obs_buffer) < self._hmm_min_obs:
+            self._hmm_last_fallback_reason = "warming_up"
             return self._hmm_probs.copy()
 
         try:
@@ -422,12 +482,19 @@ class DynamicBehaviorEngine:
                 _ridge_eps = 1e-4 * np.trace(robust_cov) / robust_cov.shape[0]
                 robust_cov = robust_cov + _ridge_eps * np.eye(robust_cov.shape[0])
 
-            # C10: Sliding-window refit every HMM_REFIT_INTERVAL observations
-            _REFIT_INTERVAL = 120  # refit every ~10h of 5m data
-            if not self._hmm_fitted or len(self._hmm_obs_buffer) % _REFIT_INTERVAL == 0:
+            # C10: Sliding-window refit every HMM_REFIT_INTERVAL observations.
+            # V28 FIX: schedule on the MONOTONE total-observation counter, not
+            # on len(buffer) which saturates at _hmm_window and made the modulo
+            # condition unreachable (buffer capped at 500; 500 % 120 == 20).
+            _REFIT_INTERVAL = min(120, self._hmm_window)  # refit every ~10h on 5m
+            _need_refit = (
+                not self._hmm_fitted
+                or (self._hmm_total_obs - self._hmm_last_refit_obs) >= _REFIT_INTERVAL
+            )
+            if _need_refit:
                 n_init = getattr(self, '_hmm_n_init', 10)
                 best_score = -np.inf
-                best_model_params = None
+                best_model = None
 
                 # ── Strategy 1: covariance_type='full' with LedoitWolf pre-init ──
                 # First half of inits use LedoitWolf covariance as starting point
@@ -455,12 +522,7 @@ class DynamicBehaviorEngine:
                         score = trial_hmm.score(X)
                         if score > best_score:
                             best_score = score
-                            best_model_params = {
-                                'means_': trial_hmm.means_.copy(),
-                                'covars_': trial_hmm.covars_.copy(),
-                                'transmat_': trial_hmm.transmat_.copy(),
-                                'startprob_': trial_hmm.startprob_.copy(),
-                            }
+                            best_model = trial_hmm
                     except Exception as _hmm_err:
                         if init_i == 0:
                             logger.debug(f"[HMM_FIT] full init {init_i}: {_hmm_err}")
@@ -472,7 +534,7 @@ class DynamicBehaviorEngine:
                 # statistically much more efficient and almost always succeeds
                 # when individual 'full' fits failed due to per-cluster sample
                 # starvation (500 bars / 3 states ≈ 166 samples per state).
-                if best_model_params is None:
+                if best_model is None:
                     logger.warning("[HMM_FIT] full init failed; trying 'tied' covariance")
                     for init_i in range(n_init):
                         try:
@@ -487,17 +549,11 @@ class DynamicBehaviorEngine:
                             score = trial_hmm.score(X)
                             if score > best_score:
                                 best_score = score
-                                best_model_params = {
-                                    'means_': trial_hmm.means_.copy(),
-                                    'covars_': trial_hmm.covars_.copy(),
-                                    'transmat_': trial_hmm.transmat_.copy(),
-                                    'startprob_': trial_hmm.startprob_.copy(),
-                                    '_cov_type_used': 'tied',
-                                }
+                                best_model = trial_hmm
                         except Exception:
                             continue
                 # ── Strategy 3: fallback to 'diag' if 'full' AND 'tied' failed ──
-                if best_model_params is None:
+                if best_model is None:
                     logger.warning(
                         "[HMM_FIT] All 'full'+'tied' covariance inits failed. "
                         "Falling back to covariance_type='diag'."
@@ -515,22 +571,19 @@ class DynamicBehaviorEngine:
                             score = trial_hmm.score(X)
                             if score > best_score:
                                 best_score = score
-                                best_model_params = {
-                                    'means_': trial_hmm.means_.copy(),
-                                    'covars_': trial_hmm.covars_.copy(),
-                                    'transmat_': trial_hmm.transmat_.copy(),
-                                    'startprob_': trial_hmm.startprob_.copy(),
-                                }
-                                # Store the successful model for predict_proba
-                                self._hmm_model = trial_hmm
+                                best_model = trial_hmm
                         except Exception:
                             continue
 
-                # Restore best params
-                if best_model_params is not None:
-                    for k, v in best_model_params.items():
-                        setattr(self._hmm_model, k, v)
+                # Keep the complete fitted estimator and its covariance type.
+                if best_model is not None:
+                    self._hmm_model = best_model
                     self._hmm_fitted = True
+                    self._hmm_fit_count += 1
+                    self._hmm_last_fallback_reason = None
+                    # V28 FIX: advance the refit watermark so the next fit is
+                    # scheduled _REFIT_INTERVAL NEW observations from now.
+                    self._hmm_last_refit_obs = self._hmm_total_obs
                     # Log regime separation quality
                     try:
                         n_feat = self._hmm_model.means_.shape[1]
@@ -538,6 +591,7 @@ class DynamicBehaviorEngine:
                         means_trend = self._hmm_model.means_[:, trend_col]
                         means_logret = self._hmm_model.means_[:, 0]
                         order = np.argsort(means_trend)
+                        self._hmm_state_order = (int(order[2]), int(order[1]), int(order[0]))
                         cov_type = self._hmm_model.covariance_type
                         lw_tag = "+LedoitWolf" if _use_ledoit_wolf else ""
                         logger.info(
@@ -552,17 +606,28 @@ class DynamicBehaviorEngine:
                     except Exception:
                         pass
                 else:
+                    self._hmm_fit_failures += 1
+                    self._hmm_last_fallback_reason = "all_fit_strategies_failed"
                     logger.warning(
-                        f"[HMM_FIT] ALL inits failed (full+diag). "
-                        f"Keeping uniform priors. n_obs={len(X)}"
+                        f"[HMM_FIT] ALL inits failed (full+tied+diag). "
+                        f"Keeping previous probabilities. n_obs={len(X)}"
                     )
 
-            # Posterior probability of last observation
+            # Hidden-state ids are arbitrary: expose [bull, sideways, bear].
             if self._hmm_fitted:
-                posteriors = self._hmm_model.predict_proba(X)
-                self._hmm_probs = posteriors[-1].astype(np.float32)
+                raw_probs = self._hmm_model.predict_proba(X)[-1]
+                if self._hmm_state_order is None:
+                    means = self._hmm_model.means_
+                    trend_col = 4 if means.shape[1] >= 5 else 0
+                    order = np.argsort(means[:, trend_col])
+                    self._hmm_state_order = (int(order[2]), int(order[1]), int(order[0]))
+                self._hmm_probs = np.asarray(
+                    [raw_probs[index] for index in self._hmm_state_order], dtype=np.float32
+                )
+                self._hmm_probs /= max(float(self._hmm_probs.sum()), 1e-12)
         except Exception as e:
-            logger.debug(f"HMM update fallback: {e}")
+            self._hmm_last_fallback_reason = f"update_error:{type(e).__name__}"
+            logger.warning(f"HMM update fallback: {e}")
 
         return self._hmm_probs.copy()
 
@@ -577,6 +642,10 @@ class DynamicBehaviorEngine:
         """
         self._init_hmm()
 
+        observation_id = market_data.get("observation_id")
+        if observation_id is not None and observation_id == self._hmm_last_observation_id:
+            return self._hmm_probs.copy()
+
         # Extract 4D feature vector
         log_ret = market_data.get("log_return", 0.0)
         atr_pct = market_data.get("atr_pct", 0.0)
@@ -590,7 +659,49 @@ class DynamicBehaviorEngine:
             if prev_close > 0 and close > 0:
                 log_ret = float(np.log(close / prev_close))
 
+        # ADAN0_HMM_READONLY_CONSUMERS: separate READ from WRITE.
+        # Measured before this guard (hmm_buffer_contamination_20260905_003847):
+        #   599 calls for 300 env steps; observation_id None in 49.92% of them;
+        #   250 of the 500 rolling-fit rows were ONE repeated synthetic point
+        #   (0.0, 0.0, 0.5, 1.0), leaving 251 distinct points out of 500; and
+        #   49.92% of returned posteriors were predict_proba(X)[-1] of that
+        #   fake row, i.e. p_hmm did not describe the market at all.
+        # Cause: detect_market_regime() (L915) is a CONSUMER. It is reached with
+        # `market_conditions` (env L874 = {"close", "asset"} + indicators, no
+        # prev_close, no observation_id), so every feature fell back to its
+        # default and got appended to the fit buffer.
+        # A caller that supplies neither an observation_id nor a usable
+        # log_return cannot be the producer, so serve it the cached posterior
+        # and ingest nothing.
+        _is_producer = (observation_id is not None) or (log_ret != 0.0)
+        if not _is_producer:
+            self._hmm_readonly_calls = getattr(
+                self, "_hmm_readonly_calls", 0) + 1
+            return self._hmm_probs.copy()
+
+        self._hmm_last_observation_id = observation_id
         return self._update_hmm(log_ret, atr_pct, rsi_norm, volume_ratio)
+
+    def get_hmm_diagnostics(self) -> Dict[str, Any]:
+        """Return compact runtime diagnostics without exposing model internals."""
+        self._init_hmm()
+        probs = self._hmm_probs.astype(float)
+        return {
+            "available": bool(HMM_AVAILABLE),
+            "configured_min_obs": self._hmm_min_obs,
+            "effective_min_obs": self._hmm_min_obs,
+            "configured_window": self._hmm_window,
+            "effective_window": self._hmm_window,
+            "buffer_length": len(self._hmm_obs_buffer),
+            "fitted": bool(self._hmm_fitted),
+            "fit_count": int(self._hmm_fit_count),
+            "fit_failures": int(self._hmm_fit_failures),
+            "probabilities": probs.tolist(),
+            "probability_sum": float(probs.sum()),
+            "state_order": list(self._hmm_state_order) if self._hmm_state_order else None,
+            "covariance_type": self._hmm_model.covariance_type if self._hmm_model is not None and self._hmm_fitted else None,
+            "fallback_reason": self._hmm_last_fallback_reason,
+        }
 
     # ─── Exogenous Regime Oracle Integration ────────────────────────────
     def _load_oracle(self):
@@ -828,33 +939,10 @@ class DynamicBehaviorEngine:
         best_state = int(np.argmax(probs))
         confidence = float(probs[best_state])
 
-        # Derive human-readable label from HMM means if fitted
+        # Fitted probabilities already follow the stable semantic order
+        # [bull, sideways, bear], independent of hmmlearn's hidden-state ids.
         if hasattr(self, '_hmm_model') and self._hmm_model is not None and self._hmm_fitted:
-            try:
-                # A3 FIX: Use cumulative return feature (col 4 = cum_ret_60) for
-                # regime labeling. This has O(1) values (amplified 1000x) and
-                # provides real separation between bull/bear/sideways states.
-                n_feat = self._hmm_model.means_.shape[1]
-                # Use the trend feature: col 4 (cum_ret_60) if 6D, else col 0
-                trend_col = 4 if n_feat >= 5 else 0
-                means = self._hmm_model.means_[:, trend_col]
-                order = np.argsort(means)  # ascending: bear, sideways, bull
-
-                mean_spread = means[order[2]] - means[order[0]]
-                # A3 FIX v3: Always use sorted labeling when spread is non-trivial.
-                # With 6D features (cumret × 1000), typical spreads are O(0.001-0.01).
-                # Any non-degenerate spread means HMM found different regimes.
-                if mean_spread > 1e-4:
-                    labels = {int(order[0]): 'bear', int(order[1]): 'sideways', int(order[2]): 'bull'}
-                    regime = labels.get(best_state, 'sideways')
-                else:
-                    regime = 'sideways'
-                    logger.debug(
-                        f"[HMM_REGIME] Degenerate spread ({mean_spread:.6f}), "
-                        f"defaulting to sideways"
-                    )
-            except Exception:
-                regime = ['bear', 'sideways', 'bull'][best_state]
+            regime = ['bull', 'sideways', 'bear'][best_state]
         else:
             # Heuristic fallback while HMM is warming up
             adx = market_data.get("adx", 0)
@@ -1148,7 +1236,7 @@ class DynamicBehaviorEngine:
             adjusted_pos = max(adjusted_pos, 0.01)  # Min 1%
 
             tier_name = current_tier if isinstance(current_tier, str) else getattr(current_tier, "name", str(current_tier))
-            logger.info(
+            logger.debug(
                 f"[DBE_V2_FINAL] {worker_key} | Tier={tier_name} | Regime={regime} | Final: SL={adjusted_sl:.2%}, TP={adjusted_tp:.2%}, Pos={adjusted_pos:.2%}"
             )
 
@@ -2556,224 +2644,26 @@ class DynamicBehaviorEngine:
 
     def _compute_risk_parameters(
         self,
-        state: Dict[str, Any],
-        mod: Dict[str, Any],
+        state: Dict[str, Any] = None,
+        mod: Dict[str, Any] = None,
         risk_horizon: float = 0.0,
     ) -> None:
+        """REMOVED DEAD CODE (V30 autonomous audit, 2026-08-26).
+
+        FINDING #4 confirmed by grep: ZERO production callers. The active
+        runtime risk path is compute_dynamic_modulation() ->
+        _get_tier_based_parameters() (reads workers.*.trading_parameters).
+        The old body re-derived SL/TP from a top-level 'risk_parameters'
+        block with obsolete 10-20 pct bounds that CONTRADICT the per-profile
+        _PROFILE_BOUNDS contract. Its logic is deleted entirely so it can
+        never silently re-inject stale risk geometry. Kept as a hard-fail
+        stub (not deleted outright) to surface any accidental re-wiring.
         """
-        Calcule les paramètres de risque dynamiques (SL/TP).
-
-        Args:
-            state: Dictionnaire contenant l'état actuel
-            mod: Dictionnaire à mettre à jour avec les nouveaux paramètres de risque
-            risk_horizon: Horizon de risque choisi par l'agent (-1: court terme, 1: long terme)
-        """
-        try:
-            if state is None or mod is None:
-                logger.warning("State ou mod est None dans _compute_risk_parameters")
-                return
-
-            # Récupération des configurations
-            risk_cfg = self.config.get("risk_parameters", {})
-            regime_params = self.config.get("regime_parameters", {}).get(
-                self.current_regime, {}
-            )
-
-            # Paramètres de base
-            base_sl = float(risk_cfg.get("base_sl_pct", 0.02))
-            base_tp = float(risk_cfg.get("base_tp_pct", 0.04))
-            
-            # ⚠️ IMPORTANT: SL/TP sont IMMUABLES - pas de modulation dynamique
-            # Les valeurs SL/TP sont déterminées par Optuna pour chaque worker
-            # et appliquées directement par le portfolio manager
-            # Forcer les valeurs de base sans modulation
-            mod["sl_pct"] = base_sl
-            mod["tp_pct"] = base_tp
-            return  # EXIT EARLY - pas de modulation SL/TP
-
-            # Initialisation des valeurs d'état avec des valeurs par défaut si manquantes
-            current_drawdown = float(state.get("drawdown", 0.0))
-            volatility = float(state.get("volatility", 0.0))
-            win_rate = float(state.get("win_rate", 0.5))  # 50% par défaut
-            sharpe_ratio = float(state.get("sharpe_ratio", 0.0))
-            current_step = int(state.get("current_step", 0))
-
-            # ACCUMULATION VOLATILITÉ: Stocker dans l'historique
-            if volatility > 0.0:
-                if not hasattr(self, "volatility_history"):
-                    self.volatility_history = []
-                # Éviter les doublons
-                if (
-                    not self.volatility_history
-                    or abs(self.volatility_history[-1] - volatility) > 1e-6
-                ):
-                    self.volatility_history.append(volatility)
-                    logger.debug(
-                        f"[VOL HISTORY] Ajouté: {volatility:.4f}, Total: {len(self.volatility_history)} points"
-                    )
-
-            # Récupération des multiplicateurs spécifiques au régime
-            sl_multiplier = float(regime_params.get("sl_multiplier", 1.0))
-            tp_multiplier = float(regime_params.get("tp_multiplier", 1.0))
-
-            # === NOUVEAU: Ajustement basé sur l'horizon de risque de l'agent ===
-            # risk_horizon est entre -1 (court terme) et 1 (long terme)
-            # Pour le SL: plus l'horizon est court (-1), plus le SL est serré (multiplicateur > 1)
-            #             plus l'horizon est long (1), plus le SL est large (multiplicateur < 1)
-            sl_multiplier_rh = 1.0 - (
-                risk_horizon * 0.3
-            )  # Ex: -1 -> 1.3, 0 -> 1.0, 1 -> 0.7
-            # Pour le TP: plus l'horizon est court (-1), plus le TP est serré (multiplicateur < 1)
-            #             plus l'horizon est long (1), plus le TP est large (multiplicateur > 1)
-            tp_multiplier_rh = 1.0 + (
-                risk_horizon * 0.3
-            )  # Ex: -1 -> 0.7, 0 -> 1.0, 1 -> 1.3
-
-            sl_multiplier *= sl_multiplier_rh
-            tp_multiplier *= tp_multiplier_rh
-            # ==================================================================
-
-            # 1. Ajustement basé sur le drawdown
-            max_drawdown = float(risk_cfg.get("max_drawdown", 0.1))  # 10% par défaut
-            drawdown_factor = 1.0 - min(
-                current_drawdown / (max_drawdown * 2), 0.5
-            )  # Réduction jusqu'à 50%
-
-            # 2. Ajustement basé sur la volatilité
-            vol_management = self.config.get("volatility_management", {})
-            min_vol = float(vol_management.get("min_volatility", 0.01))
-            max_vol = float(vol_management.get("max_volatility", 0.20))
-            vol_factor = (
-                1.0 - ((volatility - min_vol) / (max_vol - min_vol + 1e-6)) * 0.5
-            )  # Réduction jusqu'à 50%
-
-            # 3. Ajustement basé sur le win rate
-            target_win_rate = 0.6  # Cible de 60% de trades gagnants
-            win_rate_factor = (win_rate / target_win_rate) ** 2  # Effet non linéaire
-
-            # 4. Ajustement basé sur le ratio de Sharpe
-            sharpe_factor = 1.0 + (
-                max(0, sharpe_ratio) / 2.0
-            )  # Améliore le risque avec un meilleur Sharpe
-
-            # Calcul des nouveaux paramètres avec contraintes
-            min_sl = float(risk_cfg.get("min_sl_pct", 0.005))  # 0.5% minimum
-            max_sl = float(risk_cfg.get("max_sl_pct", 0.10))  # 10% maximum
-            min_tp = float(risk_cfg.get("min_tp_pct", 0.01))  # 1% minimum
-            max_tp = float(risk_cfg.get("max_tp_pct", 0.20))  # 20% maximum
-
-            # Calcul des nouvelles valeurs
-            new_sl = base_sl * sl_multiplier * drawdown_factor * vol_factor
-            new_tp = base_tp * tp_multiplier * win_rate_factor * sharpe_factor
-
-            # Application des limites
-            new_sl = max(min_sl, min(max_sl, new_sl))
-            new_tp = max(min_tp, min(max_tp, new_tp))
-
-            # Vérification de l'initialisation de smoothed_params
-            if not hasattr(self, "smoothed_params"):
-                self.smoothed_params = {
-                    "sl_pct": base_sl,
-                    "tp_pct": base_tp,
-                    "position_size": 0.1,
-                    "risk_level": 1.0,
-                }
-
-            # Application du lissage exponentiel
-            smoothing = self.config.get("smoothing", {}).get("adaptation_rate", 0.1)
-
-            # Mise à jour des paramètres lissés
-            for param, new_val in [("sl_pct", new_sl), ("tp_pct", new_tp)]:
-                if param in self.smoothed_params:
-                    self.smoothed_params[param] = (
-                        1.0 - smoothing
-                    ) * self.smoothed_params[param] + smoothing * new_val
-                else:
-                    self.smoothed_params[param] = new_val
-
-            # Calcul du coefficient d'agressivité (0-1) basé sur plusieurs facteurs
-            # 1. Facteur de confiance (winrate récent)
-            winrate_factor = min(
-                1.0, max(0.0, (win_rate - 0.4) / 0.6) # 0% à 100% pour winrate de 0.4 à 1.0
-            )
-
-            # 2. Facteur de drawdown (pénalise les périodes de pertes)
-            drawdown_factor = 1.0 - (
-                self.state["drawdown"] / 100.0 * 2
-            )  # Réduit la taille avec le drawdown
-
-            # 3. Facteur de volatilité (pénalise la volatilité élevée)
-            vol_factor = 1.0 / (
-                1.0 + self.state["volatility"] * 10
-            )  # Réduit la taille avec la volatilité
-
-            # 4. Facteur de régime de marché
-            regime_factors = {
-                "bull": 1.0,
-                "bear": 0.3,
-                "volatile": 0.5,
-                "sideways": 0.7,
-                "neutral": 0.8,
-            }
-            regime_factor = regime_factors.get(self.current_regime.lower(), 0.5)
-
-            # Calcul final du coefficient d'agressivité (0-1)
-            aggressivity = (
-                winrate_factor * 0.4
-                + drawdown_factor * 0.3
-                + volatility_factor * 0.2
-                + regime_factor * 0.1
-            )
-
-            # Lissage du coefficient d'agressivité
-            if "aggressivity" not in self.smoothed_params:
-                self.smoothed_params["aggressivity"] = 0.5  # Valeur par défaut
-
-            smoothing = self.config.get("smoothing", {}).get("adaptation_rate", 0.1)
-            self.smoothed_params["aggressivity"] = (
-                1.0 - smoothing
-            ) * self.smoothed_params["aggressivity"] + smoothing * aggressivity
-
-            # Mise à jour du dictionnaire de sortie avec les valeurs lissées
-            mod.update(
-                {
-                    "sl_pct": self.smoothed_params.get("sl_pct", base_sl),
-                    "tp_pct": self.smoothed_params.get("tp_pct", base_tp),
-                    "risk_level": self.state.get("current_risk_level", 1.0),
-                    "regime": self.current_regime,
-                    "volatility": volatility,
-                    "aggressivity": self.smoothed_params["aggressivity"],
-                }
-            )
-
-            # Journalisation des changements importants (tous les 50 pas)
-            if current_step > 0 and current_step % 50 == 0:
-                logger.info(
-                    f"🔧 Paramètres de risque - "
-                    f"Régime: {self.current_regime.upper()} | "
-                    f"Drawdown: {current_drawdown:.2f}% | "
-                    f"Volatilité: {volatility:.2f}% | "
-                    f"Win Rate: {win_rate:.1f}% | "
-                    f"Sharpe: {sharpe_ratio:.2f} | "
-                    f"SL: {new_sl:.2f}% (lissé: {mod['sl_pct']:.2f}%) | "
-                    f"TP: {new_tp:.2f}% (lissé: {mod['tp_pct']:.2f}%) | "
-                    f"Niveau de risque: {mod['risk_level']:.2f}"
-                )
-
-        except Exception as e:
-            logger.error(
-                f"Erreur dans _compute_risk_parameters: {str(e)}", exc_info=True
-            )
-            # En cas d'erreur, on utilise les valeurs par défaut
-            mod.update(
-                {
-                    "sl_pct": risk_cfg.get("base_sl_pct", 0.02),
-                    "tp_pct": risk_cfg.get("base_tp_pct", 0.04),
-                    "risk_level": 1.0,
-                    "regime": self.current_regime,
-                    "volatility": 0.0,
-                }
-            )
+        raise RuntimeError(
+            "_compute_risk_parameters is REMOVED dead code (V30/FINDING #4). "
+            "Use compute_dynamic_modulation() -> _get_tier_based_parameters(). "
+            "If you hit this, a caller was wrongly re-introduced."
+        )
 
     def _compute_reward_modulation(self, mod: Dict[str, Any]) -> None:
         """Calcule la modulation des récompenses."""

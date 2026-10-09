@@ -14,6 +14,10 @@ from enum import Enum
 
 from .fee_manager import FeeManager, FeeType
 from .position_sizer import PositionSizer, PositionSizingMethod
+from ..environment.action_routing import (
+    route_action_by_state as _route_action_by_state,
+    HOLD as _RT_HOLD, BUY as _RT_BUY, SELL as _RT_SELL,
+)  # v12 shared state-conditioned routing (single source of truth)
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +183,14 @@ class ActionTranslator:
             if self.action_space_type == "discrete":
                 action_type, confidence = self._parse_discrete_action(agent_action)
             else:
-                action_type, confidence = self._parse_continuous_action(agent_action)
+                # v12: state-conditioned routing needs current position state.
+                _positions = portfolio_state.get("positions", {}) if isinstance(portfolio_state, dict) else {}
+                _pos = _positions.get(asset) if isinstance(_positions, dict) else None
+                try:
+                    _in_pos = bool(_pos) and (float(_pos) != 0.0 if isinstance(_pos, (int, float)) else bool(getattr(_pos, "is_open", _pos)))
+                except Exception:
+                    _in_pos = bool(_pos)
+                action_type, confidence = self._parse_continuous_action(agent_action, in_position=_in_pos)
 
             # Calculate position size
             position_size = self._calculate_position_size(
@@ -258,9 +269,19 @@ class ActionTranslator:
 
         return self.discrete_action_map[action_idx], confidence
 
-    def _parse_continuous_action(self, action: Union[np.ndarray, List[float]]
-                                ) -> Tuple[ActionType, float]:
-        """Parse continuous action from agent."""
+    def _parse_continuous_action(self, action: Union[np.ndarray, List[float]],
+                                 in_position: bool = False,
+                                 slot_available: bool = True,
+                                 threshold: float = 0.10
+                                 ) -> Tuple[ActionType, float]:
+        """Parse continuous action from agent (v12 state-conditioned routing).
+
+        Delegates the direction decision to the SHARED router so live trading
+        decodes action[0] identically to the training env and paper trading:
+          * FLAT : a0 > +thr -> BUY  ; else -> HOLD (even a0 = -1)
+          * LONG : a0 < -thr -> SELL ; else -> HOLD (even a0 = +1)
+        No CLOSE_SHORT branch: SPOT is long-only, so SELL == close long.
+        """
         if isinstance(action, list):
             action = np.array(action)
 
@@ -268,20 +289,19 @@ class ActionTranslator:
             logger.warning("Continuous action must have at least 2 dimensions")
             return ActionType.HOLD, 0.0
 
-        # First dimension: action type (mapped to discrete)
-        # Second dimension: confidence/strength
         action_value = float(action[0])
         confidence = float(np.clip(action[1], 0.0, 1.0))
 
-        # Map continuous action to discrete action type
-        if action_value < -0.5:
-            action_type = ActionType.SELL
-        elif action_value > 0.5:
+        discrete = _route_action_by_state(
+            action_value,
+            in_position=bool(in_position),
+            slot_available=bool(slot_available),
+            threshold=threshold,
+        )
+        if discrete == _RT_BUY:
             action_type = ActionType.BUY
-        elif action_value < -0.25:
-            action_type = ActionType.CLOSE_LONG
-        elif action_value > 0.25:
-            action_type = ActionType.CLOSE_SHORT
+        elif discrete == _RT_SELL:
+            action_type = ActionType.SELL  # SPOT: SELL closes the long
         else:
             action_type = ActionType.HOLD
 

@@ -1,0 +1,116 @@
+{
+  "split": "TRAIN_ONLY",
+  "n": 1000,
+  "seed": 1729,
+  "atol": 1e-12,
+  "rtol": 0,
+  "divergences": {
+    "Y_WIN": 0,
+    "Y_TP_FIRST": 0,
+    "Y_SL_FIRST": 0,
+    "MFE": 0,
+    "MAE": 0,
+    "TIME_TO_TP": 0,
+    "TIME_TO_SL": 0,
+    "NET_RETURN": 0,
+    "TIMEOUT": 0
+  },
+  "max_absolute_error": {
+    "Y_WIN": 0.0,
+    "Y_TP_FIRST": 0.0,
+    "Y_SL_FIRST": 0.0,
+    "MFE": 0.0,
+    "MAE": 0.0,
+    "TIME_TO_TP": 0.0,
+    "TIME_TO_SL": 0.0,
+    "NET_RETURN": 1.7985612998927536e-14,
+    "TIMEOUT": 0.0
+  },
+  "examples": [],
+  "windows": [
+    {
+      "start": "2017-08-17 04:00:00",
+      "end": "2017-09-03 12:35:00",
+      "decisions": 83
+    },
+    {
+      "start": "2018-01-07 17:35:00",
+      "end": "2018-01-25 02:10:00",
+      "decisions": 83
+    },
+    {
+      "start": "2018-06-01 07:15:00",
+      "end": "2018-06-18 15:50:00",
+      "decisions": 83
+    },
+    {
+      "start": "2018-10-23 09:35:00",
+      "end": "2018-11-09 18:10:00",
+      "decisions": 83
+    },
+    {
+      "start": "2019-03-16 02:10:00",
+      "end": "2019-04-02 10:45:00",
+      "decisions": 83
+    },
+    {
+      "start": "2019-08-15 17:00:00",
+      "end": "2019-09-02 01:35:00",
+      "decisions": 83
+    },
+    {
+      "start": "2019-12-28 08:30:00",
+      "end": "2020-01-14 17:05:00",
+      "decisions": 83
+    },
+    {
+      "start": "2020-05-19 23:25:00",
+      "end": "2020-06-06 08:00:00",
+      "decisions": 83
+    },
+    {
+      "start": "2020-10-10 06:30:00",
+      "end": "2020-10-27 15:05:00",
+      "decisions": 84
+    },
+    {
+      "start": "2021-03-06 05:55:00",
+      "end": "2021-03-23 14:30:00",
+      "decisions": 84
+    },
+    {
+      "start": "2021-07-24 05:15:00",
+      "end": "2021-08-10 13:50:00",
+      "decisions": 84
+    },
+    {
+      "start": "2021-12-14 15:20:00",
+      "end": "2021-12-31 23:55:00",
+      "decisions": 84
+    }
+  ],
+  "distributions": {
+    "Y_TP_FIRST": {
+      "0": 987,
+      "1": 13
+    },
+    "Y_SL_FIRST": {
+      "0": 740,
+      "1": 260
+    },
+    "Y_WIN": {
+      "1": 392,
+      "0": 608
+    },
+    "TIMEOUT": {
+      "1": 727,
+      "0": 273
+    }
+  },
+  "win_differs_from_tp_first": 379,
+  "stop_losses_worse_than_minus_1R_plus_fees": 9,
+  "entry_timestamp_sha256": "eab9d0b07d9d1a783630c3305d89871b18dbd1ca36cd18e21c70baa9cfc6c66d",
+  "production_function_sha256": "a50519c84c2a75761bc8212474549238563e8efc2aac37cab7bac81d2ad6da4a",
+  "reference_function_sha256": "961b99f7c13052617fd64200d5c982ad8b669a2cf518ca1d6601a46fe2337b80",
+  "interpretation": "Hypothetical filled entry, explicit costs and conservative stop gaps; maker fill probability and portfolio OOS are NOT validated."
+}

@@ -1,0 +1,40 @@
+2026-10-05 14:50:43 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k'
+2026-10-05 14:50:43 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data'
+2026-10-05 14:50:43 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke'
+2026-10-05 14:50:43 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance'
+2026-10-05 14:50:43 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading'
+2026-10-05 14:50:43 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k'
+2026-10-05 14:50:43 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k'
+2026-10-05 14:50:43 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe'
+2026-10-05 14:50:43 - adan_trading_bot - INFO - ADAN Trading Bot v0.1.0 initialized
+========================================================================
+TEST nested_state_builder — causalité du LivingStateSnapshot
+========================================================================
+
+T1 — Le futur ne doit JAMAIS influencer le passé
+  ✅ snapshot invariant sous mutation du futur (barres > i)
+
+T2 — Contenant 1h RUNNING à k=6/12 (mi-formation)
+  ✅ running_1h == OHLCV des 6 premières 5m (pas la 1h complète) — k=6/12, O=87.08 vs 87.08
+
+T3 — prev_1h == bougie 1h civile FERMÉE précédente
+  ✅ prev_1h (high/low/close) == 1h fermée précédente
+
+T4 — Phases aux frontières horaires
+  ✅ 00:00 → phase 1/12 & 1/48 ; 03:55 → 12/12 & 48/48
+
+T5 — Contrôle d'intégrité (étape 2 → abstention)
+  ✅ historique court → False
+  ✅ NaN dans la fenêtre → False
+  ✅ OHLC incohérent (low > high) → False
+
+T6 — Détection des sweeps (référence Phase 0)
+  ✅ sweep_high_1h détecté (dépassement + réintégration)
+  ✅ pas de faux sweep_low_1h
+
+T7 — Cohérence sur données réelles BTCUSDT (10k barres)
+  ✅ running_1h à k=12 == 1h recalculée sur données réelles
+
+========================================================================
+✅ TOUS LES TESTS PASSENT — causalité du LivingStateSnapshot prouvée.
+   (futur muté sans effet · contenants vivants exacts · intégrité active)

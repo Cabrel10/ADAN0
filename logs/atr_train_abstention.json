@@ -1,0 +1,110 @@
+{
+  "gate": "ATR_BRIDGE_MEASUREMENT_NOT_FINAL_GEOMETRY_SELECTION",
+  "dataset": "data/processed/BTCUSDT_binance/BTCUSDT_5m_featured.parquet",
+  "dataset_sha256": "3c4fd11116a3c5982248a0adb83b9157fb34569542d4c88f3dfc295294ea5935",
+  "rows": 458489,
+  "start": "2017-08-17 04:00:00",
+  "end": "2021-12-31 23:55:00",
+  "split": "TRAIN_ONLY",
+  "definition": "systemone-1h-sma14-tr-lag1-v1",
+  "canonical_source_sha256": "c9f58929c94dcdf28cd3fa19fd6783e76725fb52db4a9aa187993a007a18892c",
+  "registry_sha256": "295813917cf6baa97a2ddacfa19fb3a0442f85baaea599da564795674d294682",
+  "snapshot_labeler_comparison_count": 458489,
+  "divergences": 0,
+  "candidate_and_integrity_sample_count": 500,
+  "seed": 1729,
+  "atr_sl_abstention_rate": 0.1470722307405412,
+  "years": {
+    "2017": {
+      "decisions": 39311,
+      "atr_unavailable": 528,
+      "atr_below_0_48_percent": 0,
+      "atr_above_3_percent": 6242,
+      "sl_infeasible_given_atr_available": 0.16094680659051647,
+      "atr_sl_abstention_rate_all_decisions": 0.1722164279718145,
+      "atr_sl_feasible_decisions": 32541,
+      "integrity_plus_atr_sl_admissible_decisions": 32538,
+      "atr_fraction_quantiles": {
+        "0.01": 0.00747037174385327,
+        "0.1": 0.009958854244820632,
+        "0.5": 0.01601364034139981,
+        "0.9": 0.03805742460688585,
+        "0.99": 0.06091589806612957
+      }
+    },
+    "2018": {
+      "decisions": 104328,
+      "atr_unavailable": 1614,
+      "atr_below_0_48_percent": 11375,
+      "atr_above_3_percent": 4981,
+      "sl_infeasible_given_atr_available": 0.15923827326362522,
+      "atr_sl_abstention_rate_all_decisions": 0.1722452265930527,
+      "atr_sl_feasible_decisions": 86358,
+      "integrity_plus_atr_sl_admissible_decisions": 86358,
+      "atr_fraction_quantiles": {
+        "0.01": 0.002452165029895614,
+        "0.1": 0.00445099728157153,
+        "0.5": 0.010463948246548381,
+        "0.9": 0.0240597519742001,
+        "0.99": 0.050606519103724275
+      }
+    },
+    "2019": {
+      "decisions": 104768,
+      "atr_unavailable": 1025,
+      "atr_below_0_48_percent": 17284,
+      "atr_above_3_percent": 816,
+      "sl_infeasible_given_atr_available": 0.17446960276837956,
+      "atr_sl_abstention_rate_all_decisions": 0.18254619731215638,
+      "atr_sl_feasible_decisions": 85643,
+      "integrity_plus_atr_sl_admissible_decisions": 85643,
+      "atr_fraction_quantiles": {
+        "0.01": 0.002933605497394625,
+        "0.1": 0.004269256146707376,
+        "0.5": 0.007716478092121097,
+        "0.9": 0.016659386806293575,
+        "0.99": 0.027910984770573546
+      }
+    },
+    "2020": {
+      "decisions": 105159,
+      "atr_unavailable": 1368,
+      "atr_below_0_48_percent": 16213,
+      "atr_above_3_percent": 1439,
+      "sl_infeasible_given_atr_available": 0.17007254964303264,
+      "atr_sl_abstention_rate_all_decisions": 0.18086896984566228,
+      "atr_sl_feasible_decisions": 86139,
+      "integrity_plus_atr_sl_admissible_decisions": 86139,
+      "atr_fraction_quantiles": {
+        "0.01": 0.0027014097089836384,
+        "0.1": 0.004236860749876163,
+        "0.5": 0.007967462129250024,
+        "0.9": 0.01531445523868953,
+        "0.99": 0.036010503001194
+      }
+    },
+    "2021": {
+      "decisions": 104923,
+      "atr_unavailable": 1029,
+      "atr_below_0_48_percent": 19,
+      "atr_above_3_percent": 3498,
+      "sl_infeasible_given_atr_available": 0.03385181049916261,
+      "atr_sl_abstention_rate_all_decisions": 0.043327011236811756,
+      "atr_sl_feasible_decisions": 100377,
+      "integrity_plus_atr_sl_admissible_decisions": 100377,
+      "atr_fraction_quantiles": {
+        "0.01": 0.006059201979137013,
+        "0.1": 0.007700066525622945,
+        "0.5": 0.011655980724180294,
+        "0.9": 0.021736576937372586,
+        "0.99": 0.04105911521577012
+      }
+    }
+  },
+  "versions": {
+    "python": "3.12.13",
+    "numpy": "2.2.6",
+    "pandas": "3.0.5"
+  },
+  "interpretation": "ATR/SL-only abstention is measured before model/EV/fills/portfolio gates. Large abstention is a constraint finding, not fixed via TEST. TP3.5R remains exploratory baseline; TP_MAX unresolved."
+}

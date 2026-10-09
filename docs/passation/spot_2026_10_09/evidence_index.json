@@ -1,0 +1,33 @@
+{
+  "market": "SPOT",
+  "fee_verified": false,
+  "production_authorized": false,
+  "test_touched": false,
+  "files": {
+    "inventory_train_stride12.json": {
+      "source": "data/plan_dataset/spot_diagnostics/inventory_train_stride12/manifest.json",
+      "sha256": "35225e391350ffa7bff5389ccbe2bc3a34e327ae77df00ae1db4f154c84c3701"
+    },
+    "train_diagnostic_manifest.json": {
+      "source": "data/plan_dataset/spot_diagnostics/train_sample_v1/manifest.json",
+      "sha256": "bd5b9fd2d1f34a895b671f81cee174ae7958466d09dc52f1553ffbfd01618e18"
+    },
+    "val_diagnostic_manifest.json": {
+      "source": "data/plan_dataset/spot_diagnostics/val_sample_v1/manifest.json",
+      "sha256": "32e61d47d35cce1aa87ddf40bb55459810f4bf8e7e2846a953e388a759e57f6d"
+    },
+    "oracle_train.json": {
+      "source": "data/plan_dataset/spot_diagnostics/oracle_train.json",
+      "sha256": "efcf2462bcbb8bf70057a70678ee52d179f8bb9248dd3cdd8105110dfda6ae1b"
+    },
+    "oracle_val.json": {
+      "source": "data/plan_dataset/spot_diagnostics/oracle_val.json",
+      "sha256": "6640495a4aa99094f97fdbab51634c5a6c53239fcf1861322c897fe1d4565bd7"
+    },
+    "phase0b_train_val.json": {
+      "source": "data/plan_dataset/spot_diagnostics/phase0b_train_val.json",
+      "sha256": "86005ba78b81a8a75021b32c6c915535faa118ab86d84a0d46815822a9d05f84"
+    }
+  },
+  "note": "Inventory ran concurrently with commits; its legacy git_commit was captured at end. Start commit was 00c65b3; relevant candidate/count arithmetic unchanged. Future generator captures code before build."
+}
