@@ -19,8 +19,10 @@ class RewardCollector:
         # Configurable log directory with safe fallback (no hardcoded /mnt/new_data)
         if log_dir is None:
             log_dir = os.environ.get("ADAN_REWARD_LOG_DIR", "./logs/rewards")
-        self.log_dir = log_dir
-        os.makedirs(log_dir, exist_ok=True)
+        # Ray may change an actor's current working directory after setup.
+        # Freeze the destination now so later writes never depend on that CWD.
+        self.log_dir = os.path.abspath(os.path.expanduser(log_dir))
+        os.makedirs(self.log_dir, exist_ok=True)
         self.step_data = defaultdict(list)
         self.episode_data = defaultdict(list)
         self.current_episode = defaultdict(int)
@@ -118,6 +120,16 @@ class RewardCollector:
                     "hold_score": float(action_hold_score),
                     "size_pct": float(action_size_pct),
                     "confidence": float(action_confidence),
+                    # A8 (cahier §13.6): semantique REELLE de l'action continue.
+                    # L'ancien buy/sell/hold etait un logging FANTOME herite d'une
+                    # version discrete. La vraie action est [direction, size, tf, sl, tp].
+                    "semantics": {
+                        "direction": float(kwargs.get("action_direction", 0.0)),
+                        "size": float(kwargs.get("action_size_raw", action_size_pct)),
+                        "tf": float(kwargs.get("action_tf", 0.0)),
+                        "sl": float(kwargs.get("action_sl", 0.0)),
+                        "tp": float(kwargs.get("action_tp", 0.0)),
+                    },
                 },
                 "triggers": {
                     "sl_triggered": bool(sl_triggered),
@@ -216,16 +228,26 @@ class RewardCollector:
             }
             
             log_file = self._get_log_file(worker_id)
-            with open(log_file, 'a') as f:
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+            with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(data) + '\n')
             
             self.step_data[worker_id].append(data)
             self.global_stats["total_steps_logged"] += 1
             
         except Exception as e:
-            error_file = os.path.join(self.log_dir, "collector_errors.log")
-            with open(error_file, 'a') as f:
-                f.write(f"[{datetime.now().isoformat()}] Error logging step for worker {worker_id}: {e}\n")
+            # Error reporting must not raise a second FileNotFoundError and hide
+            # the original telemetry failure.
+            try:
+                os.makedirs(self.log_dir, exist_ok=True)
+                error_file = os.path.join(self.log_dir, "collector_errors.log")
+                with open(error_file, 'a', encoding='utf-8') as f:
+                    f.write(
+                        f"[{datetime.now().isoformat()}] Error logging step "
+                        f"for worker {worker_id}: {type(e).__name__}: {e}\n"
+                    )
+            except OSError:
+                pass
     
     def log_episode_summary(self, worker_id: str, episode: int, summary: Dict[str, Any]) -> None:
         """Log episode summary data."""
@@ -239,7 +261,8 @@ class RewardCollector:
                 "summary": summary
             }
             log_file = self._get_log_file(worker_id)
-            with open(log_file, 'a') as f:
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+            with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(data) + '\n')
             self.episode_data[worker_id].append(data)
             self.global_stats["total_episodes_logged"] += 1

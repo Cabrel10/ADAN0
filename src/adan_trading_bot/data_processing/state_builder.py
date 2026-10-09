@@ -524,7 +524,24 @@ class StateBuilder:
         
         if not hasattr(self, 'scalers'):
             self.scalers = {}
-        
+
+        # ── FROZEN-EXPERIMENT SCALER GUARD (opt-in, default OFF) ──
+        # For the 5y BTC/DOGE controlled experiment each independent brain MUST
+        # fit its scalers ON ITS OWN TRAIN split (scaler TRAIN-only invariant).
+        # The stale global prod_scalers/*.pkl were fitted on the OLD dataset;
+        # loading them here would silently inject a different-distribution scaler
+        # (data leakage / invariant violation). When ADAN_FORCE_FIT_SCALERS=1 we
+        # skip loading prod_scalers entirely so fit_scalers() runs fresh on the
+        # first env reset with the loaded TRAIN chunk. Default OFF => byte-for-byte
+        # identical behavior for all existing live/backtest/CI paths.
+        if os.environ.get("ADAN_FORCE_FIT_SCALERS", "0").strip() in ("1", "true", "True"):
+            logger.warning(
+                "[SCALER_GUARD] ADAN_FORCE_FIT_SCALERS=1 -> NOT loading prod_scalers; "
+                "scalers will be fit TRAIN-only on first env reset (frozen-experiment mode)."
+            )
+            self.scalers_loaded_from_training = False
+            return
+
         # Essayer d'abord prod_scalers/ (nouveau format)
         # Chercher depuis le répertoire courant ET depuis le parent
         possible_paths = [
@@ -929,7 +946,7 @@ class StateBuilder:
         Returns:
             int: Dimension de l'état du portefeuille
         """
-        return 20
+        return 28
 
     def build_portfolio_state(self, portfolio_manager: Any) -> np.ndarray:
         """
@@ -942,14 +959,14 @@ class StateBuilder:
             Numpy array containing portfolio state information
         """
         if not self.include_portfolio_state or portfolio_manager is None:
-            return np.zeros(20, dtype=np.float32)  # Return zero-padded portfolio state
+            return np.zeros(self.get_portfolio_state_dim(), dtype=np.float32)  # zero-padded portfolio state
 
         try:
             return portfolio_manager.get_state_vector()
 
         except Exception as e:
             logger.error(f"Error building portfolio state: {e}")
-            return np.zeros(20, dtype=np.float32)  # Return zero-padded portfolio state
+            return np.zeros(self.get_portfolio_state_dim(), dtype=np.float32)  # zero-padded portfolio state
 
     # ------------------------------------------------------------------
     # SOTA 2026: Context vector dimension
@@ -1427,7 +1444,7 @@ class StateBuilder:
             )
             result["observation"] = np.zeros(self.observation_shape, dtype=np.float32)
             if self.include_portfolio_state:
-                result["portfolio_state"] = np.zeros(20, dtype=np.float32)  # CORRECTION: 20 dimensions
+                result["portfolio_state"] = np.zeros(self.get_portfolio_state_dim(), dtype=np.float32)
             return result
 
         # Apply timeframe weighting directly on the 3D array
@@ -1462,20 +1479,24 @@ class StateBuilder:
         if self.include_portfolio_state and portfolio_manager is not None:
             portfolio_state = self.build_portfolio_state(portfolio_manager)
 
-            # Ensure portfolio state has exactly 20 features (CORRECTION: was 17)
-            if portfolio_state.size != 20:
+            # Ensure portfolio state has exactly get_portfolio_state_dim()
+            # features (20 base + 8 ACM Capability Vector + 4 ADAN0 drawdown
+            # persistence). MUST match PortfolioManager.get_state_vector()
+            # and the env observation space, else the PPO sees an OOD shape.
+            _ps_dim = self.get_portfolio_state_dim()
+            if portfolio_state.size != _ps_dim:
                 logger.warning(
-                    f"Portfolio state size mismatch. Expected 20, got {portfolio_state.size}. Adjusting."
+                    f"Portfolio state size mismatch. Expected {_ps_dim}, got {portfolio_state.size}. Adjusting."
                 )
-                if portfolio_state.size < 20:
+                if portfolio_state.size < _ps_dim:
                     portfolio_state = np.pad(
                         portfolio_state,
-                        (0, 20 - portfolio_state.size),
+                        (0, _ps_dim - portfolio_state.size),
                         mode="constant",
                         constant_values=0,
                     )
                 else:
-                    portfolio_state = portfolio_state[:20]
+                    portfolio_state = portfolio_state[:28]
 
             result["portfolio_state"] = portfolio_state.astype(np.float32)
 

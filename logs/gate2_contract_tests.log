@@ -1,0 +1,26 @@
+2026-10-05 14:09:38 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k'
+2026-10-05 14:09:38 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data'
+2026-10-05 14:09:38 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke'
+2026-10-05 14:09:38 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance'
+2026-10-05 14:09:38 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading'
+2026-10-05 14:09:38 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k'
+2026-10-05 14:09:38 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k'
+2026-10-05 14:09:38 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe'
+2026-10-05 14:09:38 - adan_trading_bot - INFO - ADAN Trading Bot v0.1.0 initialized
+test_all_label_and_config_sources_prohibited (__main__.AvailabilityTests.test_all_label_and_config_sources_prohibited) ... ok
+test_atr_semantics_are_explicit_and_not_automatically_resolved (__main__.AvailabilityTests.test_atr_semantics_are_explicit_and_not_automatically_resolved) ... ok
+test_canonical_hour_atr_is_lagged_complete_and_not_a_phase_proxy (__main__.AvailabilityTests.test_canonical_hour_atr_is_lagged_complete_and_not_a_phase_proxy) ... ok
+test_every_declaration_has_exclusive_category_and_status (__main__.AvailabilityTests.test_every_declaration_has_exclusive_category_and_status) ... ok
+test_forged_label_source_cannot_bypass_contract (__main__.AvailabilityTests.test_forged_label_source_cannot_bypass_contract) ... ok
+test_integrity_and_duplicate_names_rejected (__main__.AvailabilityTests.test_integrity_and_duplicate_names_rejected) ... ok
+test_legacy_training_entrypoint_blocks_before_loading_data (__main__.AvailabilityTests.test_legacy_training_entrypoint_blocks_before_loading_data) ... ok
+test_materialization_and_future_mutation (__main__.AvailabilityTests.test_materialization_and_future_mutation) ... ok
+test_missing_resolver_cannot_be_filled_with_zero (__main__.AvailabilityTests.test_missing_resolver_cannot_be_filled_with_zero) ... ok
+test_no_1026_auto_input (__main__.AvailabilityTests.test_no_1026_auto_input) ... ok
+test_stale_proof_or_unsafe_status_rejected (__main__.AvailabilityTests.test_stale_proof_or_unsafe_status_rejected) ... ok
+test_training_remains_blocked (__main__.AvailabilityTests.test_training_remains_blocked) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 2.822s
+
+OK

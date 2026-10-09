@@ -1,0 +1,20 @@
+{
+  "classification": {
+    "MARKET_FEATURE": 5,
+    "DERIVED_FEATURE": 272,
+    "UNRESOLVED": 160,
+    "CONTEXT_FEATURE": 4,
+    "LABEL_ONLY": 8,
+    "CONFIG_ONLY": 577
+  },
+  "future_safe": {
+    "VERIFIED": 281,
+    "UNKNOWN": 745,
+    "UNSAFE": 0
+  },
+  "resolution": {
+    "RESOLVED": 281,
+    "UNRESOLVED": 745
+  },
+  "registry_sha256": "169fd1470cc791065492ffeb6ee94ecd37fa52f3330e8774dd65078daf4c2f7a"
+}

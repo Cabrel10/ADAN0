@@ -1,0 +1,24 @@
+2026-10-05 14:49:52 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k'
+2026-10-05 14:49:52 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data'
+2026-10-05 14:49:52 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke'
+2026-10-05 14:49:52 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance'
+2026-10-05 14:49:52 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading'
+2026-10-05 14:49:52 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k'
+2026-10-05 14:49:52 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k'
+2026-10-05 14:49:52 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe'
+2026-10-05 14:49:52 - adan_trading_bot - INFO - ADAN Trading Bot v0.1.0 initialized
+test_contract_snapshot_geometry_candidate_chain (__main__.ATRBridgeTests.test_contract_snapshot_geometry_candidate_chain) ... ok
+test_elapsed_current_hour_mutation_including_t (__main__.ATRBridgeTests.test_elapsed_current_hour_mutation_including_t) ... ok
+test_future_mutation (__main__.ATRBridgeTests.test_future_mutation) ... ok
+test_gap_resets_14_complete_hour_warmup (__main__.ATRBridgeTests.test_gap_resets_14_complete_hour_warmup) ... ok
+test_invalid_hour_resets_without_zero_or_bfill (__main__.ATRBridgeTests.test_invalid_hour_resets_without_zero_or_bfill) ... ok
+test_provenance_window_unit_lag_availability (__main__.ATRBridgeTests.test_provenance_window_unit_lag_availability) ... ok
+test_true_range_uses_previous_close (__main__.ATRBridgeTests.test_true_range_uses_previous_close) ... ok
+test_unique_function_and_every_timestamp_equality (__main__.ATRBridgeTests.test_unique_function_and_every_timestamp_equality) ... ok
+test_warmup_gap_and_outside_bounds_abstain (__main__.ATRBridgeTests.test_warmup_gap_and_outside_bounds_abstain) ... ok
+test_warmup_nan_and_partial_initial_hour (__main__.ATRBridgeTests.test_warmup_nan_and_partial_initial_hour) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 4.723s
+
+OK

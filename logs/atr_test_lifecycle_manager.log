@@ -1,0 +1,50 @@
+2026-10-05 14:50:49 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v29_500k'
+2026-10-05 14:50:49 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/data'
+2026-10-05 14:50:49 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/smoke'
+2026-10-05 14:50:49 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/surveillance'
+2026-10-05 14:50:49 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/trading'
+2026-10-05 14:50:49 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/v37_500k'
+2026-10-05 14:50:49 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/doge_500k'
+2026-10-05 14:50:49 - adan_trading_bot.utils.log_utils - WARNING - Failed to remove old log file /home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe: [Errno 21] Is a directory: '/home/ubuntu/webapp/MORNINGSTAR/ADAN0/logs/probe'
+2026-10-05 14:50:49 - adan_trading_bot - INFO - ADAN Trading Bot v0.1.0 initialized
+========================================================================
+TEST lifecycle_manager — vigie active de position (étape 10)
+========================================================================
+
+L1 — Take-profit atteint
+  ✅ L1a SHORT : low < TP → CLOSE au TP — exit=95.8, r=+3.50R
+  ✅ L1b LONG : high > TP → CLOSE au TP
+
+L2 — Stop-loss touché
+  ✅ L2 SHORT : high ≥ SL → CLOSE −1R
+
+L3 — Break-even (MFE ≥ +1.5R)
+  ✅ L3 MFE=+1.5R → MOVE_SL break-even — new_stop=99.92
+  ✅ L3 SL break-even = entry − frais (SHORT) — SL=99.9200
+  ✅ L3 trade garanti sans perte (SL < entry)
+
+L4 — Trailing ATR (MFE ≥ +2.0R)
+  ✅ L4 MFE=+2.0R → trailing MOVE_SL — action=MOVE_SL, SL=98.800
+  ✅ L4 SL trailing suit le prix à 1×ATR — SL=98.800 attendu≈98.800
+
+L5 — Invalidation de thèse (coupe anticipée)
+  ✅ L5 invalidation après 6 barres → CLOSE anticipée — r=-0.50R
+  ✅ L5 perte contenue (< 1R, ≈ −0.5R) — perte -0.50R au lieu de −1R
+
+L6 — Anomalie critique (JEV)
+  ✅ L6 P(anomalie)=0.85 → CLOSE immédiate au marché
+
+L7 — Time-stop (288 barres)
+  ✅ L7 time-stop après 288 barres → CLOSE
+
+L8 — HOLD nominal (thèse intacte)
+  ✅ L8 première barre en léger profit → HOLD — r=+0.25R
+
+L9 — Suivi MFE/MAE barre par barre
+  ✅ L9 MFE suivi (+1.00R max) — MFE=+1.00R
+  ✅ L9 MAE suivi (−0.33R min) — MAE=-0.33R
+
+========================================================================
+✅ TOUS LES TESTS LIFECYCLE PASSENT (vigie active opérationnelle).
+   TP/SL · break-even +1.5R · trailing +2.0R · invalidation anticipée
+   anomalie critique · time-stop · suivi MFE/MAE

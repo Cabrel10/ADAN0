@@ -1,0 +1,101 @@
+{
+  "aggregate": {
+    "bear_share_mean": 0.6167,
+    "bear_share_on_falling": 0.795,
+    "bear_share_on_rising": 0.5275,
+    "falling_windows": 1,
+    "rising_windows": 2,
+    "windows_measured": 3
+  },
+  "assets": [
+    "BTCUSDT"
+  ],
+  "generated_at": "2026-09-04 23:47:47",
+  "method": "Read the posteriors the pipeline produces over several asset/split windows and compare each window's regime call with that window's realized 5m close move.",
+  "question": "Is the near one-hot bear posterior a broken HMM (H-alpha) or a genuinely bearish, unrepresentative probe window (H-beta)?",
+  "seed": 330500,
+  "splits": [
+    "train",
+    "val",
+    "test"
+  ],
+  "steps_per_window": 200,
+  "verdict": "H_BETA_regime_call_tracks_realized_direction",
+  "windows": [
+    {
+      "asset": "BTCUSDT",
+      "posteriors": {
+        "bear_mean": 0.849539,
+        "bear_p50": 1.0,
+        "bull_mean": 0.102127,
+        "bull_p50": 0.0,
+        "n_obs": 200,
+        "p_hmm_p50": 0.01,
+        "p_hmm_share_at_floor_0.01": 0.78,
+        "share_bear_above_0.9": 0.795,
+        "share_bull_above_0.5": 0.05,
+        "sideways_mean": 0.048333,
+        "sideways_p50": 0.0
+      },
+      "realized": {
+        "available": true,
+        "direction": "DOWN",
+        "first_close": 77134.63,
+        "last_close": 63913.06,
+        "rows": 7991,
+        "window_return_pct": -17.1409
+      },
+      "split": "train"
+    },
+    {
+      "asset": "BTCUSDT",
+      "posteriors": {
+        "bear_mean": 0.484816,
+        "bear_p50": 0.333333,
+        "bull_mean": 0.46685,
+        "bull_p50": 0.333333,
+        "n_obs": 200,
+        "p_hmm_p50": 0.333333,
+        "p_hmm_share_at_floor_0.01": 0.435,
+        "share_bear_above_0.9": 0.435,
+        "share_bull_above_0.5": 0.42,
+        "sideways_mean": 0.048333,
+        "sideways_p50": 0.0
+      },
+      "realized": {
+        "available": true,
+        "direction": "UP",
+        "first_close": 64197.67,
+        "last_close": 65400.66,
+        "rows": 1143,
+        "window_return_pct": 1.8739
+      },
+      "split": "val"
+    },
+    {
+      "asset": "BTCUSDT",
+      "posteriors": {
+        "bear_mean": 0.686289,
+        "bear_p50": 1.0,
+        "bull_mean": 0.265378,
+        "bull_p50": 0.0,
+        "n_obs": 200,
+        "p_hmm_p50": 0.01,
+        "p_hmm_share_at_floor_0.01": 0.605,
+        "share_bear_above_0.9": 0.62,
+        "share_bull_above_0.5": 0.21,
+        "sideways_mean": 0.048333,
+        "sideways_p50": 0.0
+      },
+      "realized": {
+        "available": true,
+        "direction": "UP",
+        "first_close": 63851.88,
+        "last_close": 64163.41,
+        "rows": 2283,
+        "window_return_pct": 0.4879
+      },
+      "split": "test"
+    }
+  ]
+}
