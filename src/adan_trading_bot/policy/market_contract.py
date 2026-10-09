@@ -9,8 +9,8 @@ Derived ONLY from config/config.yaml trading_rules:
   that exists in the portfolio/execution path; it is NOT inferred here.
 Costs: commission_pct and slippage_pct are PER SIDE (action_routing per_side);
 round-trip cost = 2 * (commission + slippage). The live account fee tier is
-NOT queried (no API credentials are used); configured values are authoritative
-and recorded with the config SHA256.
+queried only by the explicit read-only CLI. Without a fresh account evidence
+snapshot, configured costs are diagnostic ONLY and production/500K is blocked.
 Every consumer (candidate factory, plan outcomes, dataset, oracle, risk,
 trainer, tests) must call `load_market_contract()` and `require_direction`.
 """
@@ -96,7 +96,7 @@ class MarketContract:
         return hashlib.sha256(payload).hexdigest()
 
 
-def load_market_contract(config_path='config/config.yaml'):
+def load_market_contract(config_path='config/config.yaml', fee_evidence_path='config/spot_account_fees.json'):
     import yaml
     raw = Path(config_path).read_bytes()
     rules = yaml.safe_load(raw)['trading_rules']
@@ -112,5 +112,76 @@ def load_market_contract(config_path='config/config.yaml'):
         raise MarketContractError('Futures/short contract requested but no validated margin/short execution path exists')
     if leverage != 1.0:
         raise MarketContractError('Spot strict requires leverage == 1')
+    kwargs = {}
+    evidence_path = Path(fee_evidence_path)
+    if evidence_path.exists():
+        from datetime import datetime, timezone
+        evidence_raw = evidence_path.read_bytes()
+        evidence = json.loads(evidence_raw)
+        if (evidence.get('source'), evidence.get('market'), evidence.get('symbol'), evidence.get('discount_applied')) != (
+                'binance:/api/v3/account/commission', 'SPOT', 'BTCUSDT', False):
+            raise MarketContractError('Unsupported account fee evidence; never infer discounts')
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(evidence['retrieved_at'])).total_seconds()
+        if not 0 <= age <= 86400:
+            raise MarketContractError('Account fee evidence expired or future-dated (24h freshness limit)')
+        commission = float(evidence['buy_taker_per_side'])
+        kwargs = {'commission_exit_per_side': float(evidence['sell_taker_per_side']),
+                  'fee_verified': True, 'fee_source': evidence['source'] + ':undiscounted_taker',
+                  'fee_evidence_sha256': hashlib.sha256(evidence_raw).hexdigest()}
     return MarketContract('SPOT', ('LONG',), ('BUY', 'SELL_EXIT', 'HOLD'), commission, slippage, leverage,
-                          hashlib.sha256(raw).hexdigest())
+                          hashlib.sha256(raw).hexdigest(), **kwargs)
+
+
+def fetch_account_fee_evidence(output):
+    """Signed READ-ONLY account commission request; never place orders or print secrets.
+
+    Conservative market-entry/stop/exit assumption: undiscounted taker + buyer/seller,
+    including tax and special commission. BNB discount is NOT assumed, even if enabled.
+    This is not a claim of exact future realized fill costs.
+    """
+    import os
+    import hmac
+    import time
+    import urllib.parse
+    import urllib.request
+    from datetime import datetime, timezone
+    target = Path(output).resolve()
+    if not target.is_relative_to(Path('/home/ubuntu/webapp')) or not target.parent.is_dir() or target.exists():
+        raise MarketContractError('Evidence output must be new and inside workspace with an existing parent')
+    key, secret = os.getenv('ADAN_API_KEY'), os.getenv('ADAN_API_SECRET')
+    if not key or not secret:
+        raise MarketContractError('NO-GO: ADAN_API_KEY/ADAN_API_SECRET absent; account fee tier unavailable')
+    query = urllib.parse.urlencode({'symbol': 'BTCUSDT', 'timestamp': int(time.time()*1000), 'recvWindow': 5000})
+    signature = hmac.new(secret.encode(), query.encode(), hashlib.sha256).hexdigest()
+    request = urllib.request.Request('https://api.binance.com/api/v3/account/commission?' + query + '&signature=' + signature,
+                                     headers={'X-MBX-APIKEY': key})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.load(response)
+    except Exception as error:
+        # Do not expose signed URL, credentials or response content in tracebacks.
+        raise MarketContractError('Account commission read failed (' + type(error).__name__ + ')') from None
+    if data.get('symbol') != 'BTCUSDT':
+        raise MarketContractError('Unexpected symbol in account fee response')
+    components = {name: {k: float(data[name][k]) for k in ('maker', 'taker', 'buyer', 'seller')}
+                  for name in ('standardCommission', 'taxCommission', 'specialCommission')}
+    if not all(math.isfinite(v) and v >= 0 for group in components.values() for v in group.values()):
+        raise MarketContractError('Invalid account commission response')
+    evidence = {'source': 'binance:/api/v3/account/commission', 'market': 'SPOT', 'symbol': 'BTCUSDT',
+                'retrieved_at': datetime.now(timezone.utc).isoformat(), 'discount_applied': False,
+                'components': components,
+                'buy_taker_per_side': sum(g['taker'] + g['buyer'] for g in components.values()),
+                'sell_taker_per_side': sum(g['taker'] + g['seller'] for g in components.values())}
+    target.write_text(json.dumps(evidence, indent=2) + '\n')
+    print('Read-only account fee evidence saved; no orders submitted.')
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fetch-account-fees', type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        fetch_account_fee_evidence(args.fetch_account_fees)
+    except MarketContractError as error:
+        raise SystemExit(str(error)) from None
