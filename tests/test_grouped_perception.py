@@ -74,6 +74,7 @@ class GroupedPerceptionTests(unittest.TestCase):
         plan, port = encode_plan(clean, context)
         self.assertEqual(plan.shape, (6,)); self.assertEqual(port.shape, (4,))
         with self.assertRaises(PerceptionContractError): encode_plan(dict(clean, sl_pct=clean['sl_max_bound'] + .001), context)
+        with self.assertRaises(PerceptionContractError): encode_plan(dict(clean, direction='SHORT'), context)
 
     def test_only_verified_intra_group_edges_and_forward_backward(self):
         torch.manual_seed(1729)
@@ -100,7 +101,7 @@ class GroupedPerceptionTests(unittest.TestCase):
         torch.manual_seed(3); model = GroupedRelationalPerception(self.layout, self.graph, self.contract).eval()
         enc = encode_state(self.layout, self.contract.materialize(NestedStateBuilder(self.data).snapshot(400), self.names))
         t = lambda a: torch.tensor(a).unsqueeze(0)
-        p1 = torch.tensor([[1, .012, 3.5, 1., 0., .5]]); p2 = torch.tensor([[0, .03, 3.5, .17, 1.5, 0.]])
+        p1 = torch.tensor([[1, .018, 3.5, 1., 0., .5]]); p2 = torch.tensor([[1, .03, 3.5, .17, 1.5, 0.]])
         port = torch.tensor([[.8, .04, .8, 0.]])
         z1 = model(t(enc['bar']), t(enc['seq']), t(enc['c1h']), t(enc['c4h']), p1, port)
         z2 = model(t(enc['bar']), t(enc['seq']), t(enc['c1h']), t(enc['c4h']), p2, port)

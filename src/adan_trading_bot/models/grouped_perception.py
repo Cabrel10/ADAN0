@@ -125,14 +125,20 @@ def encode_state(layout, values):
     return {'bar': norm(layout.bar), 'seq': seq, 'c1h': norm(layout.c1h), 'c4h': norm(layout.c4h)}
 
 
-def encode_plan(plan_row, portfolio_context):
+def encode_plan(plan_row, portfolio_context, market_contract=None):
     """Explicit plan + portfolio conditioning (no outcome columns accepted)."""
     forbidden = {'Y_WIN', 'Y_TP_FIRST', 'Y_SL_FIRST', 'MFE', 'MAE', 'NET_RETURN', 'TIMEOUT',
                  'TIME_TO_TP', 'TIME_TO_SL', 'exit_price'}
     if forbidden & set(plan_row):
         raise PerceptionContractError('Outcome columns must never enter the plan encoder')
+    from adan_trading_bot.policy.market_contract import load_market_contract, MarketContractError
+    market = market_contract or load_market_contract()
+    try:
+        market.require_direction(plan_row['direction'])
+    except MarketContractError as error:
+        raise PerceptionContractError(str(error)) from error
     sl, lo, hi = float(plan_row['sl_pct']), float(plan_row['sl_min_bound']), float(plan_row['sl_max_bound'])
-    if not lo <= sl <= hi:
+    if not 0 < lo <= sl <= hi or sl < market.min_sl_for_costs - 1e-12:
         raise PerceptionContractError('Plan outside its own ATR bounds')
     plan = np.array([1.0 if plan_row['direction'] == 'LONG' else 0.0, sl, float(plan_row['tp_r']),
                      float(plan_row['horizon']) / 288.0, sl / lo - 1.0, hi / sl - 1.0], dtype=np.float32)

@@ -52,9 +52,42 @@ class SpotContractTests(unittest.TestCase):
     def test_futures_config_refused_without_execution_path(self):
         import tempfile, yaml, pathlib
         config = yaml.safe_load(open('config/config.yaml')); config['trading_rules']['futures_enabled'] = True
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory(dir='/home/ubuntu/webapp') as d:
             path = pathlib.Path(d) / 'c.yaml'; path.write_text(yaml.safe_dump(config))
             with self.assertRaises(MarketContractError): load_market_contract(str(path))
+
+    def test_short_in_spot_dataset_fails_immediately_even_with_valid_hashes(self):
+        _, plans, manifest = build(bars(), max_states=2, horizons=(12,))
+        plans.loc[plans.index[-1], 'direction'] = 'SHORT'
+        with self.assertRaisesRegex(MarketContractError, 'SHORT'):
+            self.market.validate_dataset(plans, manifest)
+
+    def test_risk_rejects_short(self):
+        from adan_trading_bot.policy.risk_engine import size_micro_position, load_micro_capital_regime
+        with self.assertRaises(MarketContractError):
+            size_micro_position(load_micro_capital_regime(), 20.5, .02, direction='SHORT')
+
+    def test_paper_execution_buy_sell_exit_only_and_configured_costs(self):
+        import tempfile
+        from adan_trading_bot.trading.execution_engine import ExecutionEngine
+        with tempfile.TemporaryDirectory(dir='/home/ubuntu/webapp') as d:
+            engine = ExecutionEngine(log_dir=d)
+            with self.assertRaises(MarketContractError):
+                engine._execute_open('SELL', 100., .8, .02, .07, 0.)
+            self.assertIsNone(engine._execute_close(100., 'AGENT_CLOSE', 0.))
+            trade = engine._execute_open('BUY', 100., .8, .02, .07, 0.)
+            self.assertIsNotNone(trade)
+            self.assertEqual(engine.position.side, 'BUY')
+            self.assertAlmostEqual(trade.fee_usd, trade.size_usd * self.market.commission_per_side)
+            self.assertAlmostEqual(trade.price, 100.*(1+self.market.slippage_per_side))
+            closed = engine._execute_close(101., 'SELL_EXIT', 1.)
+            self.assertEqual(closed.side, 'SELL')
+            self.assertIsNone(engine.position)
+            self.assertGreaterEqual(engine.cash, 0.)
+
+    def test_unverified_fees_block_production(self):
+        with self.assertRaisesRegex(MarketContractError, 'NO-GO'):
+            replace(self.market, fee_verified=False).require_verified_fees()
 
     def test_spot_dataset_contains_no_short_and_uses_configured_cost(self):
         states, plans, manifest = build(bars(), max_states=5, horizons=(12, 48))
