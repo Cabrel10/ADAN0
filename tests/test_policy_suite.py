@@ -126,25 +126,25 @@ MARKET = load_market_contract()
 COST = MARKET.cost_rt
 
 # G0 : SHORT refusé par le contrat spot
-g0 = compute_geometry("SHORT", entry=100.0, invalidation_level=101.5, p_win=0.60)
+g0 = compute_geometry("SHORT", entry=100.0, invalidation_level=101.5, p_tp_first=0.60)
 check("G0 SHORT refusé en spot", not g0.viable and "direction invalide" in g0.motif_refus)
 
 # G1 : ATR .64% -> SL_MAX=1.6% < coût/.30=1.667% : abstention obligatoire.
-g = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, p_win=0.60)
+g = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, p_tp_first=0.60)
 check("G1 intervalle SL incompatible avec frais spot → refus", not g.viable and "SL_MIN > SL_MAX" in g.motif_refus,
       g.motif_refus)
 
 # G2 : ATR 1h 2.0 % → SL = ATR
-g2 = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, atr_1h_pct=0.020, p_win=0.60)
+g2 = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, atr_1h_pct=0.020, p_tp_first=0.60)
 check("G2 ATR 2.0% > plancher → SL = 2.0%", abs(g2.sl_distance_pct - 0.020) < 1e-9)
 
 # G3 : ATR .70% -> SL_MAX=1.75%, plancher coût 1.667% admissible.
-g3 = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, atr_1h_pct=0.007, p_win=0.60)
+g3 = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, atr_1h_pct=0.007, p_tp_first=0.60)
 check("G3 coût spot → SL plancher coût 1.667%, frais ≤ 0.30R", g3.viable and g3.frais_r <= FEES_R_MAX + 1e-12,
       f"frais_r={g3.frais_r:.3f}R")
 
 # G4 : EV nette avec coût spot — SL 2.0 % (ATR 2 %) : frais = 0.005/0.02 = 0.25R
-g4 = compute_geometry("LONG", entry=100.0, invalidation_level=98.0, atr_1h_pct=0.020, p_win=0.60)
+g4 = compute_geometry("LONG", entry=100.0, invalidation_level=98.0, atr_1h_pct=0.020, p_tp_first=0.60)
 ev_brute_attendu = 0.60 * TP_R_RATIO - 0.40
 ev_nette_attendu = ev_brute_attendu - (COST / g4.sl_distance_pct)
 check("G4 EV nette spot exacte", g4.viable and abs(g4.ev_nette_r - ev_nette_attendu) < 1e-6,
@@ -152,14 +152,14 @@ check("G4 EV nette spot exacte", g4.viable and abs(g4.ev_nette_r - ev_nette_atte
 
 check("G5 TP = 3.5×SL", abs(g4.tp_distance_pct - TP_R_RATIO * g4.sl_distance_pct) < 1e-12)
 
-g6 = compute_geometry("LONG", entry=100.0, invalidation_level=98.0, atr_1h_pct=0.020, p_win=0.15)
+g6 = compute_geometry("LONG", entry=100.0, invalidation_level=98.0, atr_1h_pct=0.020, p_tp_first=0.15)
 check("G6 P(win)=0.15 → EV brute < 0 → refus", not g6.viable and g6.ev_brute_r < 0,
       f"EV_brute={g6.ev_brute_r:+.3f}R")
 
 # ═══ GATE D'ABSTENTION (étapes 5-6) ═══
 print("\n── D. Gate d'abstention & direction (spot) ──")
 
-geom_ok = compute_geometry("LONG", entry=100.0, invalidation_level=98.0, atr_1h_pct=0.020, p_win=0.60)
+geom_ok = compute_geometry("LONG", entry=100.0, invalidation_level=98.0, atr_1h_pct=0.020, p_tp_first=0.60)
 
 # D1 : intégrité False → HOLD immédiat
 d = evaluate(make_snapshot(integrity=False), make_judgment(), geom_ok)

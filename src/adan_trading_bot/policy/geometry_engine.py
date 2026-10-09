@@ -92,6 +92,7 @@ class TradeGeometry:
     ev_nette_r: float = 0.0
     motif_refus: str = ""
     candidate_plan: Optional[PlanCandidate] = None
+    ev_source: str = "BINARY_TP_SL_PROXY_NOT_PREDICTED_NET_RETURN"
 
 
 def _atr_pct_from_snapshot(snap, availability_contract=None) -> float:
@@ -107,7 +108,7 @@ def compute_geometry(
     entry: float,
     invalidation_level: float,
     atr_1h_pct: Optional[float] = None,
-    p_win: float = 0.55,
+    p_tp_first: float = 0.55,
     fees_rt: Optional[float] = None,
     *, snapshot=None, availability_contract=None,
 ) -> TradeGeometry:
@@ -119,8 +120,9 @@ def compute_geometry(
                          le SL technique, AVANT application du plancher.
     atr_1h_pct         : optional fraction cross-check, NEVER the authoritative source;
                          snapshot + availability_contract are mandatory
-    p_win              : probabilité calibrée de succès (issue du JEV, étape 4)
-    fees_rt            : régime de frais aller-retour (maker par défaut)
+    p_tp_first              : P(TP_FIRST), NEVER P(Y_WIN). Binary TP/SL economics are a legacy proxy;
+                         timeouts/gap losses require plan-conditioned NET_RETURN for production
+    fees_rt            : expected round-trip costs from central SPOT contract by default
 
     Retourne un TradeGeometry — viable=False avec motif si un invariant tombe.
     """
@@ -142,7 +144,7 @@ def compute_geometry(
         return TradeGeometry(False, "NONE", motif_refus=f"ATR unavailable: {error}")
     if atr_1h_pct is not None and not math.isclose(atr_1h_pct, fraction, rel_tol=1e-12, abs_tol=1e-12):
         return TradeGeometry(False, "NONE", motif_refus="ATR scalar differs from canonical snapshot fraction")
-    if not math.isfinite(entry) or not math.isfinite(invalidation_level) or not (0 <= p_win <= 1) or not math.isfinite(fees_rt) or fees_rt < 0:
+    if not math.isfinite(entry) or not math.isfinite(invalidation_level) or not (0 <= p_tp_first <= 1) or not math.isfinite(fees_rt) or fees_rt < 0:
         return TradeGeometry(False, "NONE", motif_refus="invalid economics or price")
     if floor_pct > ceiling_pct:
         return TradeGeometry(False, "NONE", motif_refus="SL_MIN > SL_MAX")
@@ -172,14 +174,14 @@ def compute_geometry(
         )
 
     # ── Invariant 4 : EV nette positive exigée ───────────────────────────────
-    ev_brute = p_win * TP_R_RATIO - (1.0 - p_win) * 1.0
+    ev_brute = p_tp_first * TP_R_RATIO - (1.0 - p_tp_first) * 1.0
     ev_nette = ev_brute - frais_r
     if ev_nette <= 0:
         return TradeGeometry(
             False, "NONE", entry=entry, sl_distance_pct=sl_pct,
             tp_distance_pct=tp_pct, frais_r=frais_r,
             ev_brute_r=ev_brute, ev_nette_r=ev_nette,
-            motif_refus=f"EV nette {ev_nette:+.3f}R ≤ 0 (P(win)={p_win:.2f})",
+            motif_refus=f"EV nette {ev_nette:+.3f}R ≤ 0 (P(win)={p_tp_first:.2f})",
         )
 
     return TradeGeometry(
@@ -240,7 +242,7 @@ def generate_candidate_grid(snapshot, direction: str, *, availability_contract,
 
 def select_best_plan(
     snapshot,
-    candidate_evaluations: List[Tuple[PlanCandidate, float]], # List of (plan, p_win)
+    candidate_evaluations: List[Tuple[PlanCandidate, float]], # List of (plan, p_tp_first)
     fees_rt: Optional[float] = None,
     *, availability_contract=None,
 ) -> Tuple[Optional[PlanCandidate], Optional[TradeGeometry]]:
@@ -268,19 +270,19 @@ def select_best_plan(
         return None, None
 
     market = load_market_contract()
-    for plan, p_win in candidate_evaluations:
+    for plan, p_tp_first in candidate_evaluations:
         market.require_direction(plan.direction)
         if (not plan.admissible(market) or not sl_min <= plan.sl_pct <= sl_max
                 or plan.sl_min_bound != sl_min or plan.sl_max_bound != sl_max
                 or plan.atr_observation != snapshot.atr_1h
-                or not math.isfinite(p_win) or not 0 <= p_win <= 1
+                or not math.isfinite(p_tp_first) or not 0 <= p_tp_first <= 1
                 or plan.tp_r != TP_MIN_R or plan.tp_status != "BASELINE_ONLY_TP_MAX_UNRESOLVED"):
             continue
         frais_r = fees_rt / plan.sl_pct
         if frais_r > FEES_R_MAX:
             continue
 
-        ev_brute = p_win * plan.tp_r - (1.0 - p_win) * 1.0
+        ev_brute = p_tp_first * plan.tp_r - (1.0 - p_tp_first) * 1.0
         ev_nette = ev_brute - frais_r
         if ev_nette <= 0:
             continue
