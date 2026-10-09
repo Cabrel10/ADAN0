@@ -64,9 +64,11 @@ class PlanCandidate:
     sl_min_bound: Optional[float] = None
     sl_max_bound: Optional[float] = None
     tp_status: str = "BASELINE_ONLY_TP_MAX_UNRESOLVED"
+    market: str = "SPOT"
 
     def admissible(self):
-        return (self.direction in ("LONG", "SHORT") and self.horizon > 0
+        allowed = ("LONG",) if self.market == "SPOT" else ()
+        return (self.direction in allowed and self.horizon > 0
                 and self.atr_observation is not None and self.atr_observation.available
                 and self.sl_min_bound is not None and self.sl_max_bound is not None
                 and math.isfinite(self.sl_pct) and math.isfinite(self.tp_r)
@@ -106,7 +108,7 @@ def compute_geometry(
     invalidation_level: float,
     atr_1h_pct: Optional[float] = None,
     p_win: float = 0.55,
-    fees_rt: float = FEES_RT_MAKER,
+    fees_rt: Optional[float] = None,
     *, snapshot=None, availability_contract=None,
 ) -> TradeGeometry:
     """Construit et valide la géométrie d'un trade candidat.
@@ -122,8 +124,13 @@ def compute_geometry(
 
     Retourne un TradeGeometry — viable=False avec motif si un invariant tombe.
     """
-    if direction not in ("LONG", "SHORT"):
-        return TradeGeometry(False, "NONE", motif_refus="direction invalide")
+    from adan_trading_bot.policy.market_contract import load_market_contract, MarketContractError
+    if fees_rt is None:
+        fees_rt = load_market_contract().cost_rt      # configured spot per-side costs x2
+    try:
+        load_market_contract().require_direction(direction)
+    except MarketContractError as error:
+        return TradeGeometry(False, "NONE", motif_refus=f"direction invalide: {error}")
     if entry <= 0:
         return TradeGeometry(False, "NONE", motif_refus="entry invalide")
 
@@ -199,24 +206,29 @@ def compute_sl_bounds(atr_1h_pct: float) -> Tuple[float, float]:
 
 
 def generate_candidate_grid(snapshot, direction: str, *, availability_contract,
-                            horizon: int = 288) -> List[PlanCandidate]:
+                            horizon: int = 288, market_contract=None) -> List[PlanCandidate]:
     """Provenance-bearing SL candidates; TP3.5R is baseline ONLY.
 
     No invented phase/regime TP_MAX. Conditional TP research is a later gate.
     Warmup/gap or inadmissible SL interval means no candidate, not a zero ATR.
     """
-    if direction not in ("LONG", "SHORT") or horizon <= 0:
+    from adan_trading_bot.policy.market_contract import load_market_contract
+    market = market_contract or load_market_contract()
+    market.require_direction(direction)          # SHORT under SPOT raises, never silently dropped
+    if horizon <= 0:
         return []
     try:
         fraction = _atr_pct_from_snapshot(snapshot, availability_contract)
         sl_min, sl_max = compute_sl_bounds(fraction)
     except (FeatureAvailabilityError, ValueError, AttributeError):
         return []
+    # Cost feasibility: round-trip costs must stay <= FEES_R_MAX in R units.
+    sl_min = max(sl_min, market.min_sl_for_costs)
     if sl_min > sl_max:
         return []
     sls = sorted(set([sl_min, sl_max] + [s for s in (0.012, 0.015, 0.018, 0.020, 0.025, 0.030)
                                      if sl_min <= s <= sl_max]))
-    plans = [PlanCandidate(direction, sl, TP_MIN_R, horizon=horizon,
+    plans = [PlanCandidate(direction, sl, TP_MIN_R, horizon=horizon, market=market.market,
                            portfolio_state=snapshot.portfolio.copy(),
                            atr_observation=snapshot.atr_1h,
                            sl_min_bound=sl_min, sl_max_bound=sl_max) for sl in sls]
@@ -228,7 +240,7 @@ def generate_candidate_grid(snapshot, direction: str, *, availability_contract,
 def select_best_plan(
     snapshot,
     candidate_evaluations: List[Tuple[PlanCandidate, float]], # List of (plan, p_win)
-    fees_rt: float = FEES_RT_MAKER,
+    fees_rt: Optional[float] = None,
     *, availability_contract=None,
 ) -> Tuple[Optional[PlanCandidate], Optional[TradeGeometry]]:
     """
@@ -242,6 +254,9 @@ def select_best_plan(
     best_geom = None
     best_ev = float("-inf")
     entry = snapshot.price
+    if fees_rt is None:
+        from adan_trading_bot.policy.market_contract import load_market_contract
+        fees_rt = load_market_contract().cost_rt
     try:
         fraction = _atr_pct_from_snapshot(snapshot, availability_contract)
         sl_min, sl_max = compute_sl_bounds(fraction)

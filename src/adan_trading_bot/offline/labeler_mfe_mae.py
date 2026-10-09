@@ -336,7 +336,7 @@ def compute_labels(b: NestedStateBuilder, feats: np.ndarray):
 
 
 def compute_plan_outcomes(b, decision_indices, candidates, *, fees_rt,
-                          entry_assumption="FILLED_AT_NEXT_OPEN"):
+                          entry_assumption="FILLED_AT_NEXT_OPEN", market_contract=None):
     """State × explicit candidate outcomes, conditional on hypothetical filled entry.
 
     No direction classifier: each supplied LONG/SHORT/SL/TP/horizon is evaluated.
@@ -350,6 +350,10 @@ def compute_plan_outcomes(b, decision_indices, candidates, *, fees_rt,
     """
     if entry_assumption != "FILLED_AT_NEXT_OPEN":
         raise ValueError("Unsupported entry/fill assumption")
+    from adan_trading_bot.policy.market_contract import load_market_contract
+    market = market_contract or load_market_contract()
+    for plan in candidates:
+        market.require_direction(plan.direction)
     if len(decision_indices) != len(candidates):
         raise ValueError("One explicit plan is required per decision")
     if not np.isfinite(fees_rt) or fees_rt < 0:

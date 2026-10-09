@@ -79,9 +79,10 @@ class VigilAction:
 class LifecycleManager:
     """Surveille une position ouverte à chaque clôture 5m (étape 10)."""
 
-    def __init__(self, position: OpenPosition):
-        if position.direction not in ("LONG", "SHORT"):
-            raise ValueError("direction doit être LONG ou SHORT")
+    def __init__(self, position: OpenPosition, market_contract=None):
+        from adan_trading_bot.policy.market_contract import load_market_contract
+        market = market_contract or load_market_contract()
+        market.require_direction(position.direction)   # SPOT: only LONG positions can exist; exits are SELL_EXIT
         self.pos = position
         self.risk = abs(position.entry - position.stop_loss)  # 1R en prix
         if self.risk <= 0:

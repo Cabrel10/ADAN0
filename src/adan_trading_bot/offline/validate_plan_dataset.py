@@ -25,10 +25,9 @@ from adan_trading_bot.offline.validate_labeler import reference_atr
 
 FIELDS = ['Y_WIN', 'Y_TP_FIRST', 'Y_SL_FIRST', 'TIMEOUT', 'MFE', 'MAE', 'TIME_TO_TP', 'TIME_TO_SL', 'NET_RETURN']
 FLOATS = {'MFE', 'MAE', 'NET_RETURN'}
-FEE = 0.0008
 
 
-def scalar_outcome(raw, decision_pos, direction, sl, tp_r, horizon, fee=FEE):
+def scalar_outcome(raw, decision_pos, direction, sl, tp_r, horizon, fee):
     # raw: dict of plain float arrays (open/high/low/close); scalar loop, no vectorized production code.
     entry = float(raw['open'][decision_pos + 1]); short = direction == 'SHORT'
     stop = entry * (1 + sl) if short else entry * (1 - sl)
@@ -75,8 +74,14 @@ def validate(max_states, stride, horizons=(48, 144, 288), mutate=False):
     checks = {'state_raw_mismatch': 0, 'state_atr_mismatch': 0, 'state_nonfinite': 0,
               'bounds_mismatch': 0, 'plan_outside_bounds': 0, 'window_crosses_gap': 0,
               'label_after_partition': 0, 'entry_not_next_bar': 0, 'label_clock_mismatch': 0,
-              'outcome_columns_in_state': 0, 'orphan_plan': 0, 'unexpected_tp': 0}
+              'outcome_columns_in_state': 0, 'orphan_plan': 0, 'unexpected_tp': 0, 'short_in_spot': 0, 'fee_mismatch': 0, 'duplicate_plan_id': 0, 'sl_below_cost_floor': 0}
     examples = []
+    import yaml
+    rules = yaml.safe_load(open('config/config.yaml'))['trading_rules']
+    assert rules['futures_enabled'] is False, 'oracle independently confirms spot config'
+    cost_rt = 2 * (float(rules['commission_pct']) + float(rules['slippage_pct']))
+    checks['duplicate_plan_id'] = int(plans.plan_id.duplicated().sum())
+    checks['sl_below_cost_floor'] = int((plans.sl_pct < cost_rt / 0.30 - 1e-12).sum())
     leaks = {'MFE', 'MAE', 'Y_WIN', 'Y_TP_FIRST', 'Y_SL_FIRST', 'NET_RETURN', 'TIMEOUT', 'TIME_TO_TP', 'TIME_TO_SL'}
     checks['outcome_columns_in_state'] = len(leaks & set(states.columns))
     state_index = states.set_index('state_id')
@@ -97,7 +102,7 @@ def validate(max_states, stride, horizons=(48, 144, 288), mutate=False):
         if r.state_id not in state_index.index: checks['orphan_plan'] += 1; continue
         s = state_index.loc[r.state_id]; p = int(pos[s.decision_open_ts])
         fraction = reference_atr(train, p) / float(train.close.iloc[p])
-        sl_min, sl_max = max(0.012, fraction), min(0.030, 2.5 * fraction)
+        sl_min, sl_max = max(0.012, fraction, cost_rt / 0.30), min(0.030, 2.5 * fraction)
         if not (np.isclose(r.sl_min_bound, sl_min, atol=1e-12, rtol=0) and np.isclose(r.sl_max_bound, sl_max, atol=1e-12, rtol=0)):
             checks['bounds_mismatch'] += 1
         if not (sl_min - 1e-12 <= r.sl_pct <= sl_max + 1e-12): checks['plan_outside_bounds'] += 1
@@ -108,7 +113,9 @@ def validate(max_states, stride, horizons=(48, 144, 288), mutate=False):
             checks['label_clock_mismatch'] += 1
         if any(ts in gap_after for ts in train.index[p:end]): checks['window_crosses_gap'] += 1
         if r.label_available_ts >= pd.Timestamp('2022-01-01'): checks['label_after_partition'] += 1
-        truth = scalar_outcome(arrays, p, r.direction, float(r.sl_pct), float(r.tp_r), int(r.horizon))
+        truth = scalar_outcome(arrays, p, r.direction, float(r.sl_pct), float(r.tp_r), int(r.horizon), float(r.fees_rt))
+        if r.direction != 'LONG': checks['short_in_spot'] += 1
+        if not np.isclose(float(r.fees_rt), cost_rt, rtol=0, atol=1e-15): checks['fee_mismatch'] += 1
         for f in FIELDS:
             a, e = float(r[f]), float(truth[f]); d = abs(a - e); maxima[f] = max(maxima[f], d)
             same = np.isclose(a, e, atol=1e-12, rtol=0) if f in FLOATS else a == e

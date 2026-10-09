@@ -93,7 +93,7 @@ class ATRBridgeTests(unittest.TestCase):
         self.assertEqual(values, {'c1h.atr_1h': 2.0, 'c1h.atr_1h_pct': 0.02})
         self.assertEqual(compute_sl_bounds(0.02), (0.02, 0.03))
         self.assertEqual(compute_sl_bounds(2.0), (2.0, 0.03))  # factor100 input => infeasible, not a usable interval
-        for direction in ('LONG', 'SHORT'):
+        for direction in ('LONG',):
             plans = generate_candidate_grid(snap, direction, availability_contract=contract)
             self.assertTrue(plans)
             self.assertTrue(all(p.admissible() and 0.02 <= p.sl_pct <= 0.03 and p.tp_r == 3.5 for p in plans))

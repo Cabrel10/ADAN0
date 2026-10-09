@@ -120,45 +120,46 @@ print("=" * 72)
 # ═══ GÉOMÉTRIE (étape 7) ═══
 print("\n── G. Géométrie (invariants Phase 0b) ──")
 
-# G1 : stop < 1.2 % → plancher appliqué (jamais de micro-SL)
-g = compute_geometry("SHORT", entry=100.0, invalidation_level=100.10,  # 0.10 % seulement
-                     p_win=0.60)
-check("G1 stop 0.10% → planché à 1.2%", abs(g.sl_distance_pct - SL_FLOOR_PCT) < 1e-9,
+# SPOT STRICT : entrées LONG uniquement ; coûts = contrat (2×(0.20 %+0.05 %) = 0.50 % RT).
+from adan_trading_bot.policy.market_contract import load_market_contract
+MARKET = load_market_contract()
+COST = MARKET.cost_rt
+
+# G0 : SHORT refusé par le contrat spot
+g0 = compute_geometry("SHORT", entry=100.0, invalidation_level=101.5, p_win=0.60)
+check("G0 SHORT refusé en spot", not g0.viable and "direction invalide" in g0.motif_refus)
+
+# G1 : stop < plancher → plancher appliqué (frais tolérés : 0.10%→ max(1.2%, ATR, coût/0.30))
+g = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, p_win=0.60)
+check("G1 stop 0.10% → planché à SL_MIN", abs(g.sl_distance_pct - max(SL_FLOOR_PCT, 0.0064)) < 1e-9,
       f"sl_pct={g.sl_distance_pct*100:.2f}%")
 
-# G2 : ATR 1h élevé (2.0 %) → SL = ATR, pas le plancher fixe
-g2 = compute_geometry("SHORT", entry=100.0, invalidation_level=100.10,
-                      atr_1h_pct=0.020, p_win=0.60)
+# G2 : ATR 1h 2.0 % → SL = ATR
+g2 = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, atr_1h_pct=0.020, p_win=0.60)
 check("G2 ATR 2.0% > plancher → SL = 2.0%", abs(g2.sl_distance_pct - 0.020) < 1e-9)
 
-# G3 : frais_R > 0.30 R → rejet (SL planché à 1.2 %, frais taker 0.40 %)
-#      invalidation à 0.10 % → planchée à 1.2 % → frais_R = 0.40/1.2 = 0.333R > 0.30R
-g3 = compute_geometry("SHORT", entry=100.0, invalidation_level=100.10,
-                      p_win=0.60, fees_rt=0.0040)  # taker stress, SL planché à 1.2 %
-check("G3 frais taker 0.40%/SL 1.2% = 0.33R > 0.30R → refus",
-      not g3.viable and g3.frais_r > FEES_R_MAX, f"frais_r={g3.frais_r:.2f}R")
+# G3 : coût spot 0.50% RT sur SL 1.2% = 0.417R > 0.30R → refus (le spot impose SL ≥ 1.667%)
+g3 = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, p_win=0.60)
+check("G3 coût spot 0.50%/SL 1.2% = 0.42R > 0.30R → refus", not g3.viable and g3.frais_r > FEES_R_MAX,
+      f"frais_r={g3.frais_r:.3f}R")
 
-# G4 : EV nette maker correcte — EV brute = 0.60×3.5 − 0.40 = 1.70R ;
-#      frais maker = 0.08 %/1.5 % = 0.053R → nette ≈ 1.647R
-g4 = compute_geometry("SHORT", entry=100.0, invalidation_level=101.5,
-                      p_win=0.60, fees_rt=FEES_RT_MAKER)
+# G4 : EV nette avec coût spot — SL 2.0 % (ATR 2 %) : frais = 0.005/0.02 = 0.25R
+g4 = compute_geometry("LONG", entry=100.0, invalidation_level=98.0, atr_1h_pct=0.020, p_win=0.60)
 ev_brute_attendu = 0.60 * TP_R_RATIO - 0.40
-ev_nette_attendu = ev_brute_attendu - (FEES_RT_MAKER / g4.sl_distance_pct)
-check("G4 EV nette maker exacte", g4.viable and abs(g4.ev_nette_r - ev_nette_attendu) < 1e-6,
+ev_nette_attendu = ev_brute_attendu - (COST / g4.sl_distance_pct)
+check("G4 EV nette spot exacte", g4.viable and abs(g4.ev_nette_r - ev_nette_attendu) < 1e-6,
       f"EV={g4.ev_nette_r:+.3f}R attendu {ev_nette_attendu:+.3f}R")
 
-# G5 : TP = 3.5 R exactement
 check("G5 TP = 3.5×SL", abs(g4.tp_distance_pct - TP_R_RATIO * g4.sl_distance_pct) < 1e-12)
 
-# G6 : P(win)=0.15 → EV brute = 0.15×3.5 − 0.85 = −0.325R < 0 → refus
-g6 = compute_geometry("SHORT", entry=100.0, invalidation_level=101.5, p_win=0.15)
-check("G6 P(win)=0.15 → EV brute −0.325R < 0 → refus",
-      not g6.viable and g6.ev_brute_r < 0, f"EV_brute={g6.ev_brute_r:+.3f}R")
+g6 = compute_geometry("LONG", entry=100.0, invalidation_level=98.0, atr_1h_pct=0.020, p_win=0.15)
+check("G6 P(win)=0.15 → EV brute < 0 → refus", not g6.viable and g6.ev_brute_r < 0,
+      f"EV_brute={g6.ev_brute_r:+.3f}R")
 
 # ═══ GATE D'ABSTENTION (étapes 5-6) ═══
-print("\n── D. Gate d'abstention & direction ──")
+print("\n── D. Gate d'abstention & direction (spot) ──")
 
-geom_ok = compute_geometry("SHORT", entry=100.0, invalidation_level=101.5, p_win=0.60)
+geom_ok = compute_geometry("LONG", entry=100.0, invalidation_level=98.0, atr_1h_pct=0.020, p_win=0.60)
 
 # D1 : intégrité False → HOLD immédiat
 d = evaluate(make_snapshot(integrity=False), make_judgment(), geom_ok)
@@ -180,22 +181,21 @@ check("D4 anomalie P=0.80 → HOLD", not d.go)
 d = evaluate(make_snapshot(), make_judgment(p_trap=0.9), geom_ok)
 check("D5 régime TRAP P=0.90 → HOLD", not d.go)
 
-# D6 : direction — sweep haut → SHORT ; sweep bas → LONG ; aucun → HOLD
+# D6 : spot — sweep haut → HOLD (aucun SHORT) ; sweep bas → BUY LONG ; aucun → HOLD
 d = evaluate(make_snapshot(sweep_high=1, sweep_low=0), make_judgment(), geom_ok)
-check("D6a sweep haut → SHORT", d.go and d.direction == "SHORT")
-geom_long = compute_geometry("LONG", entry=100.0, invalidation_level=98.5, p_win=0.60)
-d = evaluate(make_snapshot(sweep_high=0, sweep_low=1), make_judgment(), geom_long)
-check("D6b sweep bas → LONG", d.go and d.direction == "LONG")
+check("D6a sweep haut → HOLD (SHORT interdit en spot)", not d.go and "SHORT interdit" in d.motif)
+d = evaluate(make_snapshot(sweep_high=0, sweep_low=1), make_judgment(), geom_ok)
+check("D6b sweep bas → BUY LONG", d.go and d.direction == "LONG" and d.action == "BUY")
 d = evaluate(make_snapshot(sweep_high=0, sweep_low=0), make_judgment(), geom_ok)
 check("D6c aucun sweep → HOLD", not d.go)
 
 # D7 : sweep non confirmé par le JEV → HOLD
-d = evaluate(make_snapshot(), make_judgment(p_sweep=0.30), geom_ok)
-check("D7 sweep non confirmé (P=0.30) → HOLD", not d.go)
+d = evaluate(make_snapshot(sweep_high=0, sweep_low=1), make_judgment(p_sweep=0.30), geom_ok)
+check("D7 sweep non confirmé (P=0.30) → HOLD", not d.go and "non confirmé" in d.motif)
 
 # D8 : chemin complet GO
-d = evaluate(make_snapshot(), make_judgment(), geom_ok, trades_today=2)
-check("D8 chemin complet → GO SHORT", d.go and d.direction == "SHORT"
+d = evaluate(make_snapshot(sweep_high=0, sweep_low=1), make_judgment(), geom_ok, trades_today=2)
+check("D8 chemin complet → GO BUY LONG", d.go and d.direction == "LONG" and d.action == "BUY"
       and len(d.checks) >= 6, f"{len(d.checks)} filtres passés")
 
 # ═══ RISK ENGINE (étape 8) ═══

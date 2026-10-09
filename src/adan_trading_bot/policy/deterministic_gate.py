@@ -16,10 +16,12 @@ Chaîne de refus (workflow étape 5, dans l'ordre — premier refus gagne) :
   6. EV nette ≤ 0 (géométrie, étape 7 déjà calculée)
   7. régime incompatible (TRAP)     → HOLD
 
-Direction (étape 6) :
-  sweep_high_1h (piège au-dessus) → SHORT candidat
-  sweep_low_1h  (piège en-dessous) → LONG candidat
-  ni l'un ni l'autre / les deux   → AUCUNE (HOLD)
+Direction (étape 6) — SOUS CONTRAT SPOT STRICT (policy/market_contract.py) :
+  sweep_low_1h  (piège en-dessous) → BUY (entrée LONG)
+  sweep_high_1h (piège au-dessus)  → HOLD si flat (aucun SHORT en spot) ;
+                                     la sortie d'un long ouvert relève du
+                                     lifecycle manager (SELL_EXIT), pas du gate
+  ni l'un ni l'autre / les deux    → HOLD
 
 La probabilité P(win) vient du jugement calibré (system_one_core) ; la
 géométrie est validée par geometry_engine (étape 7) AVANT la décision finale.
@@ -46,9 +48,10 @@ P_REGIME_TRAP_MAX = 0.40        # si P(TRAP) > 0.40 → HOLD
 class GateDecision:
     """Verdict du gardien : HOLD motivé ou GO avec direction."""
     go: bool
-    direction: str                      # 'LONG' | 'SHORT' | 'NONE'
+    direction: str                      # entry direction admitted by market contract, or 'NONE'
     motif: str
     checks: List[str] = field(default_factory=list)   # journal des filtres passés
+    action: str = "HOLD"                # BUY | HOLD (SELL_EXIT handled by lifecycle manager)
 
 
 def evaluate(snapshot, judgment, geometry: TradeGeometry,
@@ -95,9 +98,14 @@ def evaluate(snapshot, judgment, geometry: TradeGeometry,
 
     # ── Étape 6 : DIRECTION ──────────────────────────────────────────────────
     p_sweep_ok = judgment.noul.get("sweep_confirme", 0.0)
+    from .market_contract import load_market_contract
+    market = load_market_contract()
     direction = "NONE"
     if snapshot.sweep_high_1h and not snapshot.sweep_low_1h:
-        direction = "SHORT"          # piège au-dessus → on vend la réintégration
+        candidate = "SHORT"          # piège au-dessus
+        if candidate not in market.entry_directions:
+            return GateDecision(False, "NONE", f"sweep haut : SHORT interdit en {market.market} → HOLD", checks)
+        direction = candidate
     elif snapshot.sweep_low_1h and not snapshot.sweep_high_1h:
         direction = "LONG"           # piège en-dessous → on achète la réintégration
 
@@ -117,5 +125,5 @@ def evaluate(snapshot, judgment, geometry: TradeGeometry,
                             f"vs signal ({direction})", checks)
 
     return GateDecision(True, direction,
-                        f"opportunité validée ({direction}, EV {geometry.ev_nette_r:+.3f}R)",
-                        checks)
+                        f"opportunité validée (BUY {direction}, EV {geometry.ev_nette_r:+.3f}R)",
+                        checks, action="BUY")

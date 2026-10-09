@@ -7,6 +7,8 @@ from adan_trading_bot.data.nested_state_builder import NestedStateBuilder
 from adan_trading_bot.policy.geometry_engine import PlanCandidate
 from adan_trading_bot.offline.labeler_mfe_mae import compute_plan_outcomes
 
+from adan_trading_bot.policy.market_contract import load_market_contract, MarketContractError
+FEE = load_market_contract().cost_rt
 FIELDS = ['Y_WIN','Y_TP_FIRST','Y_SL_FIRST','MFE','MAE','TIME_TO_TP','TIME_TO_SL','NET_RETURN','TIMEOUT']
 
 
@@ -44,7 +46,7 @@ def frame():
 
 
 class PlanLabelTests(unittest.TestCase):
-    def compare(self, data, indices, plans, fee=.0008):
+    def compare(self, data, indices, plans, fee=FEE):
         actual = compute_plan_outcomes(NestedStateBuilder(data), indices, plans, fees_rt=fee)
         for i, plan, row in zip(indices, plans, actual):
             expected = naive(data, i, plan, fee)
@@ -53,7 +55,7 @@ class PlanLabelTests(unittest.TestCase):
         return actual
 
     def test_entry_bar_touch_same_bar_ambiguity_and_symmetry(self):
-        for direction in ('LONG','SHORT'):
+        for direction in ('LONG',):
             for event in ('tp','sl','both'):
                 data=frame(); plan=PlanCandidate(direction,.012,3.5,horizon=12)
                 if event in ('tp','both'): data.iloc[301,data.columns.get_loc('high' if direction=='LONG' else 'low')]=104.2 if direction=='LONG' else 95.8
@@ -80,18 +82,18 @@ class PlanLabelTests(unittest.TestCase):
     def test_costs_make_flat_timeout_loss(self):
         row=self.compare(frame(),[300],[PlanCandidate('LONG',.012,3.5,horizon=12)])[0]
         self.assertEqual(row['TIMEOUT'],1);self.assertEqual(row['Y_WIN'],0)
-        self.assertAlmostEqual(row['NET_RETURN'],-.0008/.012)
+        self.assertAlmostEqual(row['NET_RETURN'],-FEE/.012)
 
     def test_same_state_different_plan_targets_and_horizons(self):
         data=frame();data.iloc[301,data.columns.get_loc('low')]=98.7
-        plans=[PlanCandidate('LONG',.012,3.5,horizon=12),PlanCandidate('LONG',.02,3.5,horizon=12),PlanCandidate('SHORT',.012,3.5,horizon=288)]
+        plans=[PlanCandidate('LONG',.012,3.5,horizon=12),PlanCandidate('LONG',.02,3.5,horizon=12),PlanCandidate('LONG',.012,3.5,horizon=288)]
         rows=self.compare(data,[300]*3,plans)
         self.assertEqual(rows[0]['Y_SL_FIRST'],1);self.assertEqual(rows[1]['Y_SL_FIRST'],0)
-        self.assertEqual([x['direction'] for x in rows],['LONG','LONG','SHORT'])
+        self.assertEqual([x['horizon'] for x in rows],[12,12,288])
         self.assertTrue(all(x['entry_assumption']=='FILLED_AT_NEXT_OPEN' for x in rows))
 
     def test_stop_gap_is_not_capped_at_one_R_loss(self):
-        for direction, price in (('LONG',90.),('SHORT',110.)):
+        for direction, price in (('LONG',90.),):
             data=frame();data.iloc[302,:4]=[price,price+.2,price-.2,price]
             row=self.compare(data,[300],[PlanCandidate(direction,.012,3.5,horizon=12)])[0]
             self.assertEqual(row['TIME_TO_SL'],2)
@@ -102,15 +104,19 @@ class PlanLabelTests(unittest.TestCase):
         rng=np.random.default_rng(1729);data=frame()
         mid=100*np.exp(np.cumsum(rng.normal(0,.001,len(data))))
         data['open']=mid;data['close']=mid;data['high']=mid*1.003;data['low']=mid*.997
-        indices=list(range(192,392,10));plans=[PlanCandidate('LONG' if j%2 else 'SHORT',.012 if j%3 else .02,3.5,horizon=12 if j%2 else 288) for j in range(len(indices))]
+        indices=list(range(192,392,10));plans=[PlanCandidate('LONG',.012 if j%3 else .02,3.5,horizon=12 if j%2 else 288) for j in range(len(indices))]
         self.compare(data,indices,plans)
+
+    def test_short_rejected_by_spot_contract(self):
+        with self.assertRaises(MarketContractError):
+            compute_plan_outcomes(NestedStateBuilder(frame()),[300],[PlanCandidate('SHORT',.012,3.5,horizon=12)],fees_rt=FEE)
 
     def test_incomplete_invalid_or_unsupported_inputs_rejected(self):
         data=frame();b=NestedStateBuilder(data);plan=PlanCandidate('LONG',.012,3.5,horizon=12)
-        for index, bad in [(799,plan),(300,replace(plan,direction='AUCUNE')),(300,replace(plan,sl_pct=0)),(300,replace(plan,horizon=12.5))]:
-            with self.assertRaises(ValueError):compute_plan_outcomes(b,[index],[bad],fees_rt=.0008)
-        with self.assertRaises(ValueError):compute_plan_outcomes(b,[300],[plan],fees_rt=.0008,entry_assumption='GUARANTEED_MAKER_FILL')
-        with self.assertRaises(ValueError):compute_plan_outcomes(NestedStateBuilder(data.drop(data.index[250])),[300],[plan],fees_rt=.0008)
+        for index, bad in [(799,plan),(300,replace(plan,sl_pct=0)),(300,replace(plan,horizon=12.5))]:
+            with self.assertRaises(ValueError):compute_plan_outcomes(b,[index],[bad],fees_rt=FEE)
+        with self.assertRaises(ValueError):compute_plan_outcomes(b,[300],[plan],fees_rt=FEE,entry_assumption='GUARANTEED_MAKER_FILL')
+        with self.assertRaises(ValueError):compute_plan_outcomes(NestedStateBuilder(data.drop(data.index[250])),[300],[plan],fees_rt=FEE)
 
 
 def validate_real_train(n=1000, seed=1729):
@@ -138,13 +144,13 @@ def validate_real_train(n=1000, seed=1729):
         else: raise ValueError('No continuous TRAIN stratum')
         count = remaining // (12-block); remaining -= count
         indices = np.sort(rng.choice(np.arange(288,len(sample)-288),size=count,replace=False))
-        plans = [PlanCandidate('LONG' if (block+j)%2 else 'SHORT',
+        plans = [PlanCandidate('LONG',
                                (.012,.015,.02,.025,.03)[(block+j)%5],
                                (3.5,4.,5.)[(block+j)%3],horizon=(12,48,144,288)[(block+j)%4],
                                execution_mode='CONDITIONAL_FILLED_NEXT_OPEN') for j in range(count)]
-        rows = compute_plan_outcomes(NestedStateBuilder(sample),indices,plans,fees_rt=.0008)
+        rows = compute_plan_outcomes(NestedStateBuilder(sample),indices,plans,fees_rt=FEE)
         for index, plan, row in zip(indices,plans,rows):
-            truth = naive(sample,int(index),plan,.0008)
+            truth = naive(sample,int(index),plan,FEE)
             timestamps.append(str(sample.index[index+1])); all_rows.append(row)
             for field in FIELDS:
                 actual,expected=float(row[field]),float(truth[field])
@@ -159,7 +165,7 @@ def validate_real_train(n=1000, seed=1729):
     return {'split':'TRAIN_ONLY','n':n,'seed':seed,'atol':1e-12,'rtol':0,'divergences':errors,
             'max_absolute_error':maxima,'examples':examples,'windows':windows,'distributions':distributions,
             'win_differs_from_tp_first':sum(x['Y_WIN']!=x['Y_TP_FIRST'] for x in all_rows),
-            'stop_losses_worse_than_minus_1R_plus_fees':sum(x['Y_SL_FIRST'] and x['NET_RETURN'] < -1-.0008/x['sl_pct']-1e-12 for x in all_rows),
+            'stop_losses_worse_than_minus_1R_plus_fees':sum(x['Y_SL_FIRST'] and x['NET_RETURN'] < -1-FEE/x['sl_pct']-1e-12 for x in all_rows),
             'entry_timestamp_sha256':hashlib.sha256('\n'.join(timestamps).encode()).hexdigest(),
             'production_function_sha256':hashlib.sha256(inspect.getsource(compute_plan_outcomes).encode()).hexdigest(),
             'reference_function_sha256':hashlib.sha256(inspect.getsource(naive).encode()).hexdigest(),

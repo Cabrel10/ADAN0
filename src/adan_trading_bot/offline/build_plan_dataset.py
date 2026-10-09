@@ -22,12 +22,13 @@ from adan_trading_bot.features.feature_availability_contract import FeatureAvail
 from adan_trading_bot.policy.geometry_engine import generate_candidate_grid
 from adan_trading_bot.policy.risk_engine import load_micro_capital_regime, size_micro_position
 from adan_trading_bot.offline.labeler_mfe_mae import compute_plan_outcomes, PARQUET
+from adan_trading_bot.policy.market_contract import load_market_contract
 
-VERSION = 'plan-conditioned-conditional-fill-v1'
+VERSION = 'plan-conditioned-spot-long-v2'
 RANGES = {'train': ('2017-01-01','2022-01-01'), 'val': ('2022-01-01','2024-01-01')}
 
 
-def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,288), regime=None):
+def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,288), regime=None, market=None):
     if split not in RANGES: raise ValueError('TEST dataset construction/evaluation is not authorized')
     if max_states <= 0 or stride <= 0 or not horizons or any(not isinstance(h,int) or h <= 0 for h in horizons):
         raise ValueError('Positive sample/stride/integer horizons required')
@@ -37,6 +38,8 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
     frame = frame[(frame.index >= lo) & (frame.index < hi)]
     if frame.empty: raise ValueError('No rows in authorized partition')
     regime = load_micro_capital_regime() if regime is None else regime
+    market = load_market_contract() if market is None else market
+    fees_rt = market.cost_rt
     registry = get_feature_registry(); contract = FeatureAvailabilityContract(registry)
     names = contract.eligible_names()
     if not names: raise ValueError('No verified named features')
@@ -67,9 +70,9 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
             except FeatureAvailabilityError: counters['atr_unavailable_veto']+=1;continue
             state_id=f'{split}:BTCUSDT:{snapshot.timestamp.isoformat()}'
             admitted=[]
-            for direction in ('LONG','SHORT'):
+            for direction in market.entry_directions:
                 for horizon in horizons:
-                    for candidate in generate_candidate_grid(snapshot,direction,availability_contract=contract,horizon=horizon):
+                    for candidate in generate_candidate_grid(snapshot,direction,availability_contract=contract,horizon=horizon,market_contract=market):
                         sizing=size_micro_position(regime,regime.initial_capital,candidate.sl_pct)
                         if not sizing.ok: counters['risk_veto']+=1;continue
                         context={'scenario':'SYNTHETIC_FLAT_INITIAL_MICRO_CAPITAL',
@@ -92,7 +95,7 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
                     'sl_min_bound':plan.sl_min_bound,'sl_max_bound':plan.sl_max_bound,
                     'tp_status':plan.tp_status,'portfolio_context_json':json.dumps(context,sort_keys=True)})
         if pending_plans:
-            outcomes=compute_plan_outcomes(b,pending_indices,pending_plans,fees_rt=.0008)
+            outcomes=compute_plan_outcomes(b,pending_indices,pending_plans,fees_rt=fees_rt,market_contract=market)
             for number,(row,metadata) in enumerate(zip(outcomes,pending_metadata)):
                 row=dict(row);row.pop('portfolio_state')
                 row.update(metadata)
@@ -100,7 +103,7 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
                 row['plan_id']=hashlib.sha256(key.encode()).hexdigest()
                 row['outcome_end_ts']=segment.index[pending_indices[number]+pending_plans[number].horizon]
                 row['label_available_ts']=row['outcome_end_ts']+pd.Timedelta(minutes=5)
-                row['fees_rt']=.0008
+                row['fees_rt']=fees_rt
                 plan_rows.append(row)
     states,plans=pd.DataFrame(state_rows),pd.DataFrame(plan_rows)
     if states.empty or plans.empty: raise ValueError('No admitted states/candidates; never fabricate rows')
@@ -110,13 +113,14 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
     if (plans.label_available_ts >= pd.Timestamp(hi)).any(): raise AssertionError('Outcome availability reaches/crosses next partition boundary')
     if not ((plans.sl_min_bound<=plans.sl_pct)&(plans.sl_pct<=plans.sl_max_bound)).all(): raise AssertionError('Candidate violates bounds')
     if not ((plans.Y_TP_FIRST+plans.Y_SL_FIRST+plans.TIMEOUT)==1).all(): raise AssertionError('Outcome event partition invalid')
+    if not set(plans.direction).issubset(set(market.entry_directions)): raise AssertionError(f'Inadmissible direction for {market.market}')
     source = hashlib.sha256(inspect.getsource(compute_plan_outcomes).encode()).hexdigest()
     metadata={'version':VERSION,'split':split,'state_rows':len(states),'plan_rows':len(plans),
         'feature_names':names,'registry_sha256':hashlib.sha256(Path('config/feature_registry.json').read_bytes()).hexdigest(),
         'micro_capital_regime':asdict(regime),'max_states':max_states,'stride_bars':stride,'horizons':list(horizons),
         'counters':counters,'warmup_bars':warmup,'purged_tail_bars_per_segment':horizon_max+1,
         'continuous_segments':len(segments),'start':str(states.decision_open_ts.min()),'end':str(states.decision_open_ts.max()),
-        'outcome_function_sha256':source,'fees_rt_assumption':.0008,
+        'outcome_function_sha256':source,'fees_rt_assumption':fees_rt,'market_contract':{**__import__('dataclasses').asdict(market),'cost_rt':market.cost_rt,'min_sl_for_costs':market.min_sl_for_costs},'market_contract_sha256':market.sha256(),
         'entry_assumption':'FILLED_AT_NEXT_OPEN_CONDITIONAL_ONLY_NOT_A_MAKER_FILL_MODEL',
         'portfolio_assumption':'EXOGENOUS_SYNTHETIC_FLAT_MICRO_SCENARIO_NOT_HISTORICAL_LEDGER',
         'tp_status':'BASELINE_3_5R_ONLY_CONDITIONAL_TP_MAX_UNRESOLVED',
