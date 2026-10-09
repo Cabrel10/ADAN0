@@ -21,6 +21,8 @@ RETURN_CLIP = (-3.0, 6.0)
 class PlanJudgmentCore(nn.Module):
     def __init__(self, dim_z=128, dim_slot=32, hidden=128):
         super().__init__()
+        from adan_trading_bot.policy.market_contract import load_market_contract
+        self.market_contract_sha256 = load_market_contract().sha256()
         self.slot_outcome = nn.Parameter(torch.randn(dim_slot) * 0.02)
         self.slot_win = nn.Parameter(torch.randn(dim_slot) * 0.02)
         self.slot_return = nn.Parameter(torch.randn(dim_slot) * 0.02)

@@ -134,6 +134,8 @@ class ExecutionEngine:
     ):
         self.market_contract = load_market_contract()
         if mode == "live":
+            if exchange_id != "binance" or symbol != "BTC/USDT" or testnet:
+                raise MarketContractError("Account fee evidence is bound to Binance BTC/USDT production SPOT, not another venue/testnet")
             self.market_contract.require_verified_fees()
         self.mode = mode
         self.exchange_id = exchange_id

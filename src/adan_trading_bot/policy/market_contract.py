@@ -76,6 +76,19 @@ class MarketContract:
         if not all(math.isfinite(float(x)) and math.isclose(float(x), self.cost_rt, rel_tol=0, abs_tol=1e-15)
                    for x in plans.fees_rt):
             raise MarketContractError('Dataset cost differs from central market contract')
+        import numpy as np
+        fields = ('sl_pct','tp_r','horizon','fees_rt','Y_WIN','Y_TP_FIRST','Y_SL_FIRST',
+                  'TIMEOUT','NET_RETURN','MFE','MAE','TIME_TO_TP','TIME_TO_SL')
+        if not np.isfinite(plans[list(fields)].to_numpy(dtype=float)).all():
+            raise MarketContractError('Nonfinite plan/outcome in SPOT dataset')
+        if (plans.sl_pct < self.min_sl_for_costs - 1e-12).any():
+            raise MarketContractError('SPOT dataset violates FEES_R_MAX')
+        if not ((plans.Y_TP_FIRST + plans.Y_SL_FIRST + plans.TIMEOUT) == 1).all():
+            raise MarketContractError('Invalid outcome partition')
+        if not plans[['Y_WIN','Y_TP_FIRST','Y_SL_FIRST','TIMEOUT']].isin([0,1]).all().all():
+            raise MarketContractError('Nonbinary outcome label')
+        if not (plans.Y_WIN == (plans.NET_RETURN > 0).astype(int)).all():
+            raise MarketContractError('Y_WIN differs from NET_RETURN > 0')
         if manifest is not None:
             if manifest.get('market_contract_sha256') != self.sha256():
                 raise MarketContractError('Dataset market/cost contract hash mismatch')
@@ -148,7 +161,12 @@ def fetch_account_fee_evidence(output):
     target = Path(output).resolve()
     if not target.is_relative_to(Path('/home/ubuntu/webapp')) or not target.parent.is_dir() or target.exists():
         raise MarketContractError('Evidence output must be new and inside workspace with an existing parent')
-    key, secret = os.getenv('ADAN_API_KEY'), os.getenv('ADAN_API_SECRET')
+    import yaml
+    config = yaml.safe_load(Path('config/config.yaml').read_text())
+    if config['exchange']['default'] != 'binance':
+        raise MarketContractError('Account fee reader is implemented for configured Binance SPOT only')
+    key = os.getenv('ADAN_API_KEY') or os.getenv('BINANCE_API_KEY')
+    secret = os.getenv('ADAN_API_SECRET') or os.getenv('BINANCE_SECRET_KEY') or os.getenv('BINANCE_API_SECRET')
     if not key or not secret:
         raise MarketContractError('NO-GO: ADAN_API_KEY/ADAN_API_SECRET absent; account fee tier unavailable')
     query = urllib.parse.urlencode({'symbol': 'BTCUSDT', 'timestamp': int(time.time()*1000), 'recvWindow': 5000})

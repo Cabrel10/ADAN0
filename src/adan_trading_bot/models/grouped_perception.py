@@ -217,6 +217,8 @@ class GroupedRelationalPerception(nn.Module):
         self.head = nn.Sequential(nn.Linear(dim, z_dim), nn.LayerNorm(z_dim), nn.GELU())
 
     def forward(self, bar, seq, c1h, c4h, plan, portfolio):
+        if not torch.all(plan[:, 0] == 1):
+            raise PerceptionContractError("SPOT perception admits LONG plans only")
         tokens = torch.stack([self.bar(bar), self.seq(seq), self.c1h(c1h), self.c4h(c4h)], dim=1)
         tokens = tokens + self.group_id.weight.unsqueeze(0)
         attended, _ = self.attn(tokens, tokens, tokens)

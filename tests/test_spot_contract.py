@@ -47,7 +47,7 @@ class SpotContractTests(unittest.TestCase):
         low = NestedStateBuilder(bars(spread=0.7)).snapshot(301)  # ATR 1.4% -> [1.667%, 3%]
         plans = generate_candidate_grid(low, 'LONG', availability_contract=self.contract)
         self.assertAlmostEqual(min(p.sl_pct for p in plans), 0.005 / 0.30)
-        self.assertTrue(all(p.cost_r_ok for p in plans) if hasattr(plans[0], 'cost_r_ok') else True)
+        self.assertTrue(all(self.market.cost_rt / p.sl_pct <= self.market.fees_r_max + 1e-12 for p in plans))
 
     def test_futures_config_refused_without_execution_path(self):
         import tempfile, yaml, pathlib
@@ -60,6 +60,12 @@ class SpotContractTests(unittest.TestCase):
         _, plans, manifest = build(bars(), max_states=2, horizons=(12,))
         plans.loc[plans.index[-1], 'direction'] = 'SHORT'
         with self.assertRaisesRegex(MarketContractError, 'SHORT'):
+            self.market.validate_dataset(plans, manifest)
+
+    def test_nonfinite_outcome_fails_before_training(self):
+        _, plans, manifest = build(bars(), max_states=2, horizons=(12,))
+        plans.loc[plans.index[0], 'NET_RETURN'] = float('nan')
+        with self.assertRaisesRegex(MarketContractError, 'Nonfinite'):
             self.market.validate_dataset(plans, manifest)
 
     def test_risk_rejects_short(self):
