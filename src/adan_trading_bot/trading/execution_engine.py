@@ -2,7 +2,7 @@
 ExecutionEngine — Paper trading (virtual portfolio) and Live trading (CCXT orders).
 
 Decodes the PPO Box(5,) action:
-  action[0] = direction   ∈ [-1, 1]  → -1=SHORT, 0=HOLD, +1=LONG
+  action[0] = direction   ∈ [-1, 1]  → -1=SELL_EXIT (HOLD if flat), 0=HOLD, +1=BUY (LONG)
   action[1] = size_pct    ∈ [-1, 1]  → mapped to [0, max_position_pct]
   action[2] = tf_pref     ∈ [-1, 1]  → timeframe preference (informational)
   action[3] = sl_pct      ∈ [-1, 1]  → mapped to [0.5%, 5%] stop-loss
@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from adan_trading_bot.policy.market_contract import load_market_contract, MarketContractError
 
 try:
     import ccxt
@@ -131,6 +132,9 @@ class ExecutionEngine:
         capital_tiers: list = None,   # capital_tiers from config.yaml
         profile: str = "intraday",    # worker profile → SL/TP bounds (train coherence)
     ):
+        self.market_contract = load_market_contract()
+        if mode == "live":
+            self.market_contract.require_verified_fees()
         self.mode = mode
         self.exchange_id = exchange_id
         self.symbol = symbol
@@ -260,6 +264,8 @@ class ExecutionEngine:
         action[3] = sl_pct      ∈ [-1, 1] → profile SL band
         action[4] = tp_pct      ∈ [-1, 1] → profile TP band
         """
+        if np.asarray(action).shape != (5,) or not np.isfinite(action).all():
+            raise MarketContractError("Invalid spot action")
         direction = float(action[0])
         raw_size = float(action[1])
         tf_pref = float(action[2])
@@ -513,12 +519,20 @@ class ExecutionEngine:
         3. MIN ORDER : notional < 11 $ → forcé à 11 $ si le capital le permet,
                        sinon ordre rejeté pour protéger le portefeuille.
         """
+        if side != "BUY":
+            raise MarketContractError("SPOT permits BUY entries only; SELL is an exit of owned inventory")
+        self.market_contract.require_direction("LONG")
+        if not np.isfinite([price,size_pct,sl_pct,tp_pct]).all() or price <= 0 or size_pct <= 0:
+            raise MarketContractError("Invalid spot order inputs")
+        if sl_pct < self.market_contract.min_sl_for_costs - 1e-12:
+            return None  # fee_R cap shared with the candidate factory
+        if self.mode == "live" and not self.live_client:
+            return None  # never fabricate a live fill
         if self.position is not None:
             return None  # Only one position at a time
 
         # Slippage : BUY at higher price, SELL at lower price
-        fill_price = price * (1.0 + SLIPPAGE_BPS / 10000.0) if side == "BUY" else \
-                     price * (1.0 - SLIPPAGE_BPS / 10000.0)
+        fill_price = price * (1.0 + self.market_contract.slippage_per_side)
 
         # ── SAFETY LAYER 1: Respect du tier — cap issu de capital_tiers ──
         # size_pct est transmis tel quel par le modèle / DBE.
@@ -551,8 +565,10 @@ class ExecutionEngine:
             f"(tier_cap={tier_cap*100:.1f}%, min_order=${self.MIN_ORDER_VALUE:.2f})"
         )
 
+        fee_usd = size_usd * self.market_contract.commission_per_side
+        if size_usd + fee_usd > self.cash:
+            return None
         size_asset = size_usd / fill_price
-        fee_usd = size_usd * 0.001  # 0.1% maker/taker fee
 
         # SL/TP prices
         if side == "BUY":
@@ -614,9 +630,13 @@ class ExecutionEngine:
             return None
 
         pos = self.position
+        if pos.side != "BUY":
+            raise MarketContractError("SHORT inventory is invalid in SPOT")
+        if self.mode == "live" and not self.live_client:
+            return None
 
         # Slippage: SELL at lower price
-        fill_price = price * (1.0 - SLIPPAGE_BPS / 10000.0)
+        fill_price = price * (1.0 - self.market_contract.slippage_per_side)
 
         # PnL
         if pos.side == "BUY":
@@ -624,13 +644,18 @@ class ExecutionEngine:
         else:
             pnl = (pos.entry_price - fill_price) * pos.size_asset
 
-        fee_usd = pos.size_usd * 0.001  # closing fee
+        exit_rate = self.market_contract.commission_exit_per_side
+        exit_rate = self.market_contract.commission_per_side if exit_rate is None else exit_rate
+        fee_usd = fill_price * pos.size_asset * exit_rate
 
         # Execute live order
         if self.mode == "live" and self.live_client:
             order = self._place_live_order("sell", pos.size_asset)
-            if order:
-                fill_price = order.get("average", fill_price)
+            if not order:
+                return None  # retain owned inventory on a failed exit
+            fill_price = order.get("average") or fill_price
+            pnl = (fill_price - pos.entry_price) * pos.size_asset
+            fee_usd = fill_price * pos.size_asset * exit_rate
 
         # Update portfolio
         self.cash += pos.size_usd + pnl - fee_usd
@@ -664,6 +689,11 @@ class ExecutionEngine:
 
     def _place_live_order(self, side: str, amount: float) -> Optional[Dict]:
         """Place a real order via CCXT. Returns order dict or None."""
+        self.market_contract.require_verified_fees()
+        if side.lower() not in ("buy", "sell") or not np.isfinite(amount) or amount <= 0:
+            raise MarketContractError("Invalid spot order")
+        if side.lower() == "sell" and (self.position is None or self.position.side != "BUY" or amount > self.position.size_asset):
+            raise MarketContractError("SELL_EXIT cannot exceed owned spot inventory")
         if not self.live_client:
             return None
         try:
