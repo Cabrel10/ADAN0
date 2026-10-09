@@ -46,7 +46,7 @@ SL_MAX_BOUND = 0.030          # SL_MAX = min(3.00%, 2.5 × ATR_1h)
 SL_ATR_MAX_MULT = 2.5
 TP_R_RATIO = 3.5              # exploratory Phase0b baseline, not an optimality claim
 TP_MIN_R = 3.5                # baseline
-FEES_R_MAX = 0.30             # refus géométrique si frais > 0.30 R
+from adan_trading_bot.policy.market_contract import FEES_R_MAX, load_market_contract, MarketContractError
 FEES_RT_TAKER = 0.0040        # 0.40 % aller-retour (stress-test)
 FEES_RT_MAKER = 0.0008        # 0.08 % aller-retour (ordres limit post-only)
 
@@ -54,7 +54,7 @@ FEES_RT_MAKER = 0.0008        # 0.08 % aller-retour (ordres limit post-only)
 @dataclass(frozen=True)
 class PlanCandidate:
     """Spécification d'un plan de trading candidat."""
-    direction: str                     # 'LONG' | 'SHORT'
+    direction: str                     # LONG entry only under SPOT
     sl_pct: float                      # ex: 0.012 (1.2%)
     tp_r: float                        # ex: 3.5 (3.5R)
     horizon: int = 288                 # 288 barres 5m = 24h
@@ -66,9 +66,9 @@ class PlanCandidate:
     tp_status: str = "BASELINE_ONLY_TP_MAX_UNRESOLVED"
     market: str = "SPOT"
 
-    def admissible(self):
-        allowed = ("LONG",) if self.market == "SPOT" else ()
-        return (self.direction in allowed and self.horizon > 0
+    def admissible(self, market_contract=None):
+        market = market_contract or load_market_contract()
+        return (self.market == market.market and self.direction in market.entry_directions and self.horizon > 0
                 and self.atr_observation is not None and self.atr_observation.available
                 and self.sl_min_bound is not None and self.sl_max_bound is not None
                 and math.isfinite(self.sl_pct) and math.isfinite(self.tp_r)
@@ -137,6 +137,7 @@ def compute_geometry(
     try:
         fraction = _atr_pct_from_snapshot(snapshot, availability_contract)
         floor_pct, ceiling_pct = compute_sl_bounds(fraction)
+        floor_pct = max(floor_pct, fees_rt / FEES_R_MAX)
     except (FeatureAvailabilityError, ValueError, AttributeError) as error:
         return TradeGeometry(False, "NONE", motif_refus=f"ATR unavailable: {error}")
     if atr_1h_pct is not None and not math.isclose(atr_1h_pct, fraction, rel_tol=1e-12, abs_tol=1e-12):
@@ -232,7 +233,7 @@ def generate_candidate_grid(snapshot, direction: str, *, availability_contract,
                            portfolio_state=snapshot.portfolio.copy(),
                            atr_observation=snapshot.atr_1h,
                            sl_min_bound=sl_min, sl_max_bound=sl_max) for sl in sls]
-    if not all(plan.admissible() for plan in plans):
+    if not all(plan.admissible(market) for plan in plans):
         raise ValueError("Generated inadmissible candidate")
     return plans
 
@@ -260,13 +261,16 @@ def select_best_plan(
     try:
         fraction = _atr_pct_from_snapshot(snapshot, availability_contract)
         sl_min, sl_max = compute_sl_bounds(fraction)
+        sl_min = max(sl_min, fees_rt / FEES_R_MAX)
     except (FeatureAvailabilityError, ValueError, AttributeError):
         return None, None
     if sl_min > sl_max or not math.isfinite(fees_rt) or fees_rt < 0:
         return None, None
 
+    market = load_market_contract()
     for plan, p_win in candidate_evaluations:
-        if (not plan.admissible() or not sl_min <= plan.sl_pct <= sl_max
+        market.require_direction(plan.direction)
+        if (not plan.admissible(market) or not sl_min <= plan.sl_pct <= sl_max
                 or plan.sl_min_bound != sl_min or plan.sl_max_bound != sl_max
                 or plan.atr_observation != snapshot.atr_1h
                 or not math.isfinite(p_win) or not 0 <= p_win <= 1

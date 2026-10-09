@@ -73,7 +73,7 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
             for direction in market.entry_directions:
                 for horizon in horizons:
                     for candidate in generate_candidate_grid(snapshot,direction,availability_contract=contract,horizon=horizon,market_contract=market):
-                        sizing=size_micro_position(regime,regime.initial_capital,candidate.sl_pct)
+                        sizing=size_micro_position(regime,regime.initial_capital,candidate.sl_pct, direction=candidate.direction, market_contract=market)
                         if not sizing.ok: counters['risk_veto']+=1;continue
                         context={'scenario':'SYNTHETIC_FLAT_INITIAL_MICRO_CAPITAL',
                             'cash_usd':regime.initial_capital,'equity_usd':regime.initial_capital,
@@ -83,7 +83,7 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
                             'allocation_fraction':sizing.f_applied,'min_order_usd':regime.effective_min_notional,
                             'config_sha256':regime.config_sha256}
                         candidate=replace(candidate,portfolio_state=context,execution_mode='CONDITIONAL_FILLED_NEXT_OPEN')
-                        assert candidate.admissible()
+                        assert candidate.admissible(market)
                         admitted.append((candidate,context))
             if not admitted: counters['sl_interval_veto']+=1;continue
             state_rows.append({'state_id':state_id,'decision_open_ts':snapshot.timestamp,
@@ -120,7 +120,7 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
         'micro_capital_regime':asdict(regime),'max_states':max_states,'stride_bars':stride,'horizons':list(horizons),
         'counters':counters,'warmup_bars':warmup,'purged_tail_bars_per_segment':horizon_max+1,
         'continuous_segments':len(segments),'start':str(states.decision_open_ts.min()),'end':str(states.decision_open_ts.max()),
-        'outcome_function_sha256':source,'fees_rt_assumption':fees_rt,'market_contract':{**__import__('dataclasses').asdict(market),'cost_rt':market.cost_rt,'min_sl_for_costs':market.min_sl_for_costs},'market_contract_sha256':market.sha256(),
+        'outcome_function_sha256':source,'fees_rt_assumption':fees_rt,'market_contract':{**__import__('dataclasses').asdict(market),'cost_rt':market.cost_rt,'min_sl_for_costs':market.min_sl_for_costs},'market_contract_sha256':market.sha256(),'action_space_contract_sha256':market.action_space_sha256(),
         'entry_assumption':'FILLED_AT_NEXT_OPEN_CONDITIONAL_ONLY_NOT_A_MAKER_FILL_MODEL',
         'portfolio_assumption':'EXOGENOUS_SYNTHETIC_FLAT_MICRO_SCENARIO_NOT_HISTORICAL_LEDGER',
         'tp_status':'BASELINE_3_5R_ONLY_CONDITIONAL_TP_MAX_UNRESOLVED',
@@ -129,6 +129,7 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
         'versions':{'python':platform.python_version(),'numpy':np.__version__,'pandas':pd.__version__},
         'label_rates':{key:float(plans[key].mean()) for key in ('Y_TP_FIRST','Y_SL_FIRST','Y_WIN','TIMEOUT')},
         'interpretation':'Rows are alternative hypothetical plans, NOT executed trades. Horizons overlap; purge prevents split/gap leakage but does not make within-TRAIN rows independent. No tuning or OOS alpha inference.'}
+    market.validate_dataset(plans, metadata)
     return states,plans,metadata
 
 
@@ -136,12 +137,25 @@ if __name__=='__main__':
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--split',choices=tuple(RANGES),default='train')
     ap.add_argument('--max-states',type=int,default=5000);ap.add_argument('--stride',type=int,default=12)
-    ap.add_argument('--output',type=Path,required=True);args=ap.parse_args()
+    ap.add_argument('--output',type=Path,required=True)
+    ap.add_argument('--diagnostic-unverified-fees',action='store_true',help='Research only; not allowed for production train_v1/val_v1')
+    args=ap.parse_args()
     output=args.output.resolve()
     if not output.is_relative_to(Path('/home/ubuntu/webapp')) or not output.parent.is_dir():raise ValueError('Output parent must exist within workspace')
     if output.exists():raise ValueError('Refuse overwriting versioned dataset directory')
+    market=load_market_contract()
+    if not args.diagnostic_unverified_fees or output.name in ('train_v1','val_v1'):
+        market.require_verified_fees()
+    import os, shutil
+    free_disk=shutil.disk_usage(output.parent).free
+    memory_available=int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:')))*1024
+    if free_disk < 4*1024**3 or memory_available < 2*1024**3:
+        raise ValueError('Insufficient resources: require 4 GiB disk and 2 GiB available RAM before generation')
+    print(json.dumps({'build_pid':os.getpid(),'free_disk_bytes':free_disk,'memory_available_bytes':memory_available,'market':'SPOT','fee_verified':market.fee_verified}),flush=True)
     raw=pd.read_parquet(PARQUET,columns=['open','high','low','close','volume'])
-    states,plans,metadata=build(raw,split=args.split,max_states=args.max_states,stride=args.stride)
+    states,plans,metadata=build(raw,split=args.split,max_states=args.max_states,stride=args.stride,market=market)
+    metadata['preflight']={'pid':os.getpid(),'free_disk_bytes':free_disk,'memory_available_bytes':memory_available}
+    metadata['git_dirty']=bool(subprocess.check_output(['git','diff','--name-only']).strip())
     metadata['git_commit']=subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
     digest=hashlib.sha256()
     with open(PARQUET,'rb') as handle:

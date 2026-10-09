@@ -131,7 +131,7 @@ check("G0 SHORT refusé en spot", not g0.viable and "direction invalide" in g0.m
 
 # G1 : stop < plancher → plancher appliqué (frais tolérés : 0.10%→ max(1.2%, ATR, coût/0.30))
 g = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, p_win=0.60)
-check("G1 stop 0.10% → planché à SL_MIN", abs(g.sl_distance_pct - max(SL_FLOOR_PCT, 0.0064)) < 1e-9,
+check("G1 stop 0.10% → planché à SL_MIN", abs(g.sl_distance_pct - max(SL_FLOOR_PCT, 0.0064, MARKET.min_sl_for_costs)) < 1e-9,
       f"sl_pct={g.sl_distance_pct*100:.2f}%")
 
 # G2 : ATR 1h 2.0 % → SL = ATR
@@ -140,7 +140,7 @@ check("G2 ATR 2.0% > plancher → SL = 2.0%", abs(g2.sl_distance_pct - 0.020) < 
 
 # G3 : coût spot 0.50% RT sur SL 1.2% = 0.417R > 0.30R → refus (le spot impose SL ≥ 1.667%)
 g3 = compute_geometry("LONG", entry=100.0, invalidation_level=99.90, p_win=0.60)
-check("G3 coût spot 0.50%/SL 1.2% = 0.42R > 0.30R → refus", not g3.viable and g3.frais_r > FEES_R_MAX,
+check("G3 coût spot → SL plancher coût 1.667%, frais ≤ 0.30R", g3.viable and g3.frais_r <= FEES_R_MAX + 1e-12,
       f"frais_r={g3.frais_r:.3f}R")
 
 # G4 : EV nette avec coût spot — SL 2.0 % (ATR 2 %) : frais = 0.005/0.02 = 0.25R

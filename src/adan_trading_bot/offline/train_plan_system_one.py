@@ -33,6 +33,7 @@ from adan_trading_bot.features.relation_graph import RelationGraph
 from adan_trading_bot.models.grouped_perception import build_layout, encode_state, GroupedRelationalPerception, SEQ_FIELDS
 from adan_trading_bot.models.plan_judgment_core import PlanJudgmentCore, plan_losses, OUTCOMES
 from adan_trading_bot.offline.labeler_mfe_mae import PARQUET
+from adan_trading_bot.policy.market_contract import load_market_contract
 
 GROUPS = ('bar', 'seq', 'c1h', 'c4h')
 
@@ -54,6 +55,23 @@ def load_split(directory, layout):
             raise ValueError(f'{name}.parquet hash mismatch vs manifest')
     states = pd.read_parquet(directory / 'states.parquet')
     plans = pd.read_parquet(directory / 'plans.parquet')
+    market = load_market_contract()
+    market.validate_dataset(plans, manifest)
+    if not states.state_id.is_unique or not plans.plan_id.is_unique:
+        raise ValueError('Duplicate state/plan ID; never silently deduplicate')
+    if not set(plans.state_id).issubset(set(states.state_id)):
+        raise ValueError('Orphan plan')
+    outcomes = {'Y_WIN','Y_TP_FIRST','Y_SL_FIRST','TIMEOUT','NET_RETURN','MFE','MAE','TIME_TO_TP','TIME_TO_SL'}
+    if outcomes & set(states.columns):
+        raise ValueError('Outcome leaked into state inputs')
+    if not ((plans.Y_TP_FIRST + plans.Y_SL_FIRST + plans.TIMEOUT) == 1).all():
+        raise ValueError('Invalid outcome partition')
+    if not (plans.Y_WIN == (plans.NET_RETURN > 0).astype(int)).all():
+        raise ValueError('Y_WIN is not NET_RETURN > 0')
+    if not np.isfinite(states[list(layout.names)].to_numpy(dtype=float)).all():
+        raise ValueError('Nonfinite state')
+    if manifest['registry_sha256'] != sha('config/feature_registry.json'):
+        raise ValueError('Registry hash mismatch')
     if sorted(manifest['feature_names']) != sorted(layout.names):
         raise ValueError('Dataset feature names differ from contract-admitted layout')
     encoded = {g: [] for g in GROUPS}
@@ -172,6 +190,10 @@ def main():
         bench = Path(args.out) / 'gpu_benchmarks.json'
         if not bench.exists() or not all(json.loads(bench.read_text()).get(str(k), {}).get('passed') for k in (1000, 5000, 10000)):
             raise SystemExit('Runs >10K require passing 1K/5K/10K GPU benchmarks recorded in gpu_benchmarks.json')
+    market = load_market_contract()
+    if args.steps > 10000:
+        market.require_verified_fees()
+        raise SystemExit('500K blocked: LONG-only TRAIN/VAL EV, dataset oracle, mandatory baselines and example-count gates are not yet signed off')
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
 
@@ -195,6 +217,8 @@ def main():
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip()
     config = {**vars(args), 'device': str(device), 'git_commit': commit, 'train_manifest': tr_m['plans_sha256'],
               'val_manifest': va_m['plans_sha256'], 'registry_sha256': tr_m['registry_sha256'], 'torch': torch.__version__,
+              'market': market.market, 'market_contract_sha256': market.sha256(),
+              'action_space_contract_sha256': market.action_space_sha256(), 'fee_verified': market.fee_verified,
               'params': sum(p.numel() for p in params), 'train_plans': len(tr['outcome']), 'val_plans': len(va['outcome'])}
     step, best, history = 0, float('inf'), []
     last = out / 'last.pt'

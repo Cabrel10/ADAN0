@@ -16,7 +16,7 @@ class DatasetContractTests(unittest.TestCase):
         states,plans,manifest=build(fixture(),max_states=5,horizons=(12,48))
         self.assertEqual(len(states),5)
         self.assertEqual(len(manifest['feature_names']),283)
-        self.assertEqual(len(plans),5*1*2*2)   # spot: LONG only x 2 horizons x 2 SL (bounds 2%..3% at ATR 2%)
+        self.assertEqual(len(plans),5*1*2*3)   # LONG x 2 horizons x SL {2%,2.5%,3%}
         self.assertEqual(set(plans.direction),{'LONG'})
         self.assertTrue(states.state_id.is_unique);self.assertTrue(plans.plan_id.is_unique)
         self.assertTrue(set(plans.state_id).issubset(set(states.state_id)))

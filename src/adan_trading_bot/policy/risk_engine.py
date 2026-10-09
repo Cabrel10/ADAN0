@@ -15,7 +15,7 @@ par des plafonds stricts :
 Garde-fous réglementaires/techniques :
   · exposition courante + nouveau trade ≤ 40 % du capital (anti-concentration)
   · pertes du jour > 5 % du capital → arrêt du jour (circuit breaker)
-  · taille finale ≥ 15 USDT (minimum notional Binance Futures)
+  · taille finale ≥ 15 USDT (conservative configured spot minimum (legacy sizing))
   · f_kelly ≤ 0 → pas de trade (l'edge ne justifie aucun capital)
 
 Référence : workflow étape 8 + dev.md §ADAN-SYSTEM-ONE.
@@ -30,7 +30,7 @@ MAX_EXPOSURE_PER_TRADE = 0.20   # 20 % du capital max par trade
 MAX_EXPOSURE_TOTAL = 0.40       # 40 % d'exposition cumulée max
 DAILY_LOSS_CIRCUIT = 0.05       # arrêt du jour si pertes > 5 % du capital
 KELLY_FRACTION = 0.25           # quart de Kelly (robustesse)
-MIN_NOTIONAL_USD = 15.0         # minimum Binance Futures
+MIN_NOTIONAL_USD = 15.0         # conservative legacy minimum; use micro regime for SPOT
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,8 @@ def load_micro_capital_regime(config_path="config/config.yaml", required_min_not
     import math
     from pathlib import Path
     import yaml
+    from .market_contract import load_market_contract
+    load_market_contract(config_path).require_direction("LONG")
     payload = Path(config_path).read_bytes()
     config = yaml.safe_load(payload)
     tier = config['capital_tiers'][0]
@@ -84,7 +86,8 @@ def load_micro_capital_regime(config_path="config/config.yaml", required_min_not
 
 
 def size_micro_position(regime, capital, sl_fraction, *, allocation_fraction=None,
-                        positions_open=0, exposure_current=0., available_cash=None):
+                        positions_open=0, exposure_current=0., available_cash=None,
+                        direction="LONG", market_contract=None):
     """Bounded sizing for a hypothetical flat micro portfolio, not a fill model.
 
     Four percent is a MAXIMUM risk budget, not an obligation to risk exactly 4%.
@@ -92,6 +95,9 @@ def size_micro_position(regime, capital, sl_fraction, *, allocation_fraction=Non
     fabricate a zero portfolio. Probability/EV admission is a separate gate.
     """
     import math
+    from .market_contract import load_market_contract
+    market = market_contract or load_market_contract()
+    market.require_direction(direction)
     allocation = (regime.allocation_min + regime.allocation_max)/2 if allocation_fraction is None else allocation_fraction
     cash = capital if available_cash is None else available_cash
     if not all(math.isfinite(x) for x in (capital, sl_fraction, allocation, cash, exposure_current)):
