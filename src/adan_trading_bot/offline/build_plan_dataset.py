@@ -28,7 +28,7 @@ VERSION = 'plan-conditioned-spot-long-v2'
 RANGES = {'train': ('2017-01-01','2022-01-01'), 'val': ('2022-01-01','2024-01-01')}
 
 
-def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,288), regime=None, market=None):
+def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,288), regime=None, market=None, count_only=False):
     if split not in RANGES: raise ValueError('TEST dataset construction/evaluation is not authorized')
     if max_states <= 0 or stride <= 0 or not horizons or any(not isinstance(h,int) or h <= 0 for h in horizons):
         raise ValueError('Positive sample/stride/integer horizons required')
@@ -57,6 +57,7 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
     for segment_id,i in candidates: grouped.setdefault(segment_id,[]).append(i)
     state_rows, plan_rows, counters = [], [], {'selected_decisions':len(candidates),'integrity_veto':0,
         'atr_unavailable_veto':0,'sl_interval_veto':0,'risk_veto':0}
+    admitted_states = admitted_plans = 0
     for segment_id, indices in grouped.items():
         segment=segments[segment_id];b=NestedStateBuilder(segment)
         pending_plans, pending_indices, pending_metadata = [], [], []
@@ -86,6 +87,9 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
                         assert candidate.admissible(market)
                         admitted.append((candidate,context))
             if not admitted: counters['sl_interval_veto']+=1;continue
+            admitted_states += 1; admitted_plans += len(admitted)
+            if count_only:
+                continue
             state_rows.append({'state_id':state_id,'decision_open_ts':snapshot.timestamp,
                 'decision_close_ts':snapshot.timestamp+pd.Timedelta(minutes=5),
                 'segment_id':segment_id,'atr_available_at':snapshot.atr_1h.available_at,**values})
@@ -105,6 +109,17 @@ def build(frame, *, split='train', max_states=5000, stride=12, horizons=(48,144,
                 row['label_available_ts']=row['outcome_end_ts']+pd.Timedelta(minutes=5)
                 row['fees_rt']=fees_rt
                 plan_rows.append(row)
+    if count_only:
+        return None, None, {'version':VERSION, 'split':split, 'count_only':True,
+            'state_rows':admitted_states,'plan_rows':admitted_plans,'counters':counters,
+            'max_states':max_states,'stride_bars':stride,'horizons':list(horizons),
+            'continuous_segments':len(segments),'feature_names':names,
+            'registry_sha256':hashlib.sha256(Path('config/feature_registry.json').read_bytes()).hexdigest(),
+            'market_contract':asdict(market),'market_contract_sha256':market.sha256(),
+            'action_space_contract_sha256':market.action_space_sha256(),
+            'fees_rt_assumption':market.cost_rt,'seed':None,'test_touched':False,
+            'training_authorized':False,'live_trading_authorized':False,
+            'interpretation':'Exact admissible State×Plan cardinality using the SAME factory, feature and risk gates; no outcomes computed. Config fees are diagnostic unless account-verified.'}
     states,plans=pd.DataFrame(state_rows),pd.DataFrame(plan_rows)
     if states.empty or plans.empty: raise ValueError('No admitted states/candidates; never fabricate rows')
     if not states.state_id.is_unique or not plans.plan_id.is_unique: raise AssertionError('Duplicate state/plan IDs')
@@ -139,6 +154,7 @@ if __name__=='__main__':
     ap.add_argument('--max-states',type=int,default=5000);ap.add_argument('--stride',type=int,default=12)
     ap.add_argument('--output',type=Path,required=True)
     ap.add_argument('--diagnostic-unverified-fees',action='store_true',help='Research only; not allowed for production train_v1/val_v1')
+    ap.add_argument('--count-only',action='store_true')
     args=ap.parse_args()
     output=args.output.resolve()
     if not output.is_relative_to(Path('/home/ubuntu/webapp')) or not output.parent.is_dir():raise ValueError('Output parent must exist within workspace')
@@ -153,7 +169,7 @@ if __name__=='__main__':
         raise ValueError('Insufficient resources: require 4 GiB disk and 2 GiB available RAM before generation')
     print(json.dumps({'build_pid':os.getpid(),'free_disk_bytes':free_disk,'memory_available_bytes':memory_available,'market':'SPOT','fee_verified':market.fee_verified}),flush=True)
     raw=pd.read_parquet(PARQUET,columns=['open','high','low','close','volume'])
-    states,plans,metadata=build(raw,split=args.split,max_states=args.max_states,stride=args.stride,market=market)
+    states,plans,metadata=build(raw,split=args.split,max_states=args.max_states,stride=args.stride,market=market,count_only=args.count_only)
     metadata['preflight']={'pid':os.getpid(),'free_disk_bytes':free_disk,'memory_available_bytes':memory_available}
     metadata['git_dirty']=bool(subprocess.check_output(['git','diff','--name-only']).strip())
     metadata['git_commit']=subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
@@ -162,9 +178,10 @@ if __name__=='__main__':
         for chunk in iter(lambda:handle.read(1024*1024),b''):digest.update(chunk)
     metadata['dataset_path']=PARQUET;metadata['dataset_sha256']=digest.hexdigest()
     output.mkdir()
-    states.to_parquet(output/'states.parquet',index=False)
-    plans.to_parquet(output/'plans.parquet',index=False)
-    metadata['states_sha256']=hashlib.sha256((output/'states.parquet').read_bytes()).hexdigest()
-    metadata['plans_sha256']=hashlib.sha256((output/'plans.parquet').read_bytes()).hexdigest()
+    if not args.count_only:
+        states.to_parquet(output/'states.parquet',index=False)
+        plans.to_parquet(output/'plans.parquet',index=False)
+        metadata['states_sha256']=hashlib.sha256((output/'states.parquet').read_bytes()).hexdigest()
+        metadata['plans_sha256']=hashlib.sha256((output/'plans.parquet').read_bytes()).hexdigest()
     (output/'manifest.json').write_text(json.dumps(metadata,indent=2)+'\n')
     print(json.dumps({k:v for k,v in metadata.items() if k!='feature_names'},indent=2))

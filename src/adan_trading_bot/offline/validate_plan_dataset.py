@@ -7,7 +7,7 @@ canonical_atr, the geometry engine or compute_plan_outcomes:
   - SL bounds recomputed from that independent ATR
   - outcomes recomputed by an independent scalar loop
   - purge/gap/partition checks recomputed from raw timestamps
-No training, no VAL/TEST use, no tuning.
+No training, TRAIN/VAL only, TEST never used, no tuning.
 """
 import argparse
 import hashlib
@@ -55,11 +55,42 @@ def scalar_outcome(raw, decision_pos, direction, sl, tp_r, horizon, fee):
             'TIME_TO_TP': t_tp, 'TIME_TO_SL': t_sl, 'NET_RETURN': net}
 
 
-def validate(max_states, stride, horizons=(48, 144, 288), mutate=False):
+def validate(max_states, stride, horizons=(48, 144, 288), mutate=False, split="train", dataset_dir=None):
     raw_all = pd.read_parquet(PARQUET, columns=['open', 'high', 'low', 'close', 'volume'])
-    train = raw_all[(raw_all.index >= '2017-01-01') & (raw_all.index < '2022-01-01')]
-    states, plans, manifest = build(raw_all, split='train', max_states=max_states,
-                                    stride=stride, horizons=horizons)
+    from adan_trading_bot.offline.build_plan_dataset import RANGES
+    from adan_trading_bot.policy.market_contract import load_market_contract
+    from adan_trading_bot.features.feature_availability_contract import FeatureAvailabilityContract
+    from adan_trading_bot.features.feature_registry import get_feature_registry
+    if split not in RANGES or max_states <= 0:
+        raise ValueError('Oracle accepts TRAIN/VAL and positive temporal sample size only')
+    lo, hi = RANGES[split]
+    train = raw_all[(raw_all.index >= lo) & (raw_all.index < hi)]
+    market = load_market_contract()
+    if dataset_dir is None:
+        states, plans, manifest = build(raw_all, split=split, max_states=max_states,
+                                        stride=stride, horizons=horizons, market=market)
+    else:
+        directory = Path(dataset_dir)
+        manifest = json.loads((directory/'manifest.json').read_text())
+        if manifest['split'] != split or manifest.get('test_touched'):
+            raise ValueError('Oracle dataset split mismatch')
+        for name in ('states','plans'):
+            if hashlib.sha256((directory/f'{name}.parquet').read_bytes()).hexdigest() != manifest[f'{name}_sha256']:
+                raise ValueError('Saved dataset hash mismatch')
+        states = pd.read_parquet(directory/'states.parquet')
+        plans = pd.read_parquet(directory/'plans.parquet')
+    market.validate_dataset(plans, manifest)  # reject ANY SHORT before sampling
+    contract = FeatureAvailabilityContract(get_feature_registry())
+    for name in manifest['feature_names']:
+        contract.require(name)  # UNKNOWN is an error, not zero
+    if not states.state_id.is_unique or not plans.plan_id.is_unique:
+        raise ValueError('Duplicate state/plan IDs; no silent deduplication')
+    if not set(plans.state_id).issubset(set(states.state_id)):
+        raise ValueError('Orphan plan in full dataset')
+    if len(states) > max_states:
+        states = states.sort_values('decision_open_ts').iloc[np.linspace(0,len(states)-1,max_states,dtype=int)]
+        plans = plans[plans.state_id.isin(states.state_id)].copy()
+
     arrays = {c: train[c].to_numpy(dtype=float) for c in ('open', 'high', 'low', 'close')}
     if mutate:
         # Oracle self-test: corrupt exactly one row per field; each must be detected once.
@@ -74,12 +105,17 @@ def validate(max_states, stride, horizons=(48, 144, 288), mutate=False):
     checks = {'state_raw_mismatch': 0, 'state_atr_mismatch': 0, 'state_nonfinite': 0,
               'bounds_mismatch': 0, 'plan_outside_bounds': 0, 'window_crosses_gap': 0,
               'label_after_partition': 0, 'entry_not_next_bar': 0, 'label_clock_mismatch': 0,
-              'outcome_columns_in_state': 0, 'orphan_plan': 0, 'unexpected_tp': 0, 'short_in_spot': 0, 'fee_mismatch': 0, 'duplicate_plan_id': 0, 'sl_below_cost_floor': 0}
+              'outcome_columns_in_state': 0, 'orphan_plan': 0, 'unexpected_tp': 0, 'short_in_spot': 0, 'fee_mismatch': 0, 'duplicate_plan_id': 0, 'sl_below_cost_floor': 0, 'outcome_nonfinite': 0, 'feature_available_after_decision': 0}
     examples = []
     import yaml
     rules = yaml.safe_load(open('config/config.yaml'))['trading_rules']
     assert rules['futures_enabled'] is False, 'oracle independently confirms spot config'
     cost_rt = 2 * (float(rules['commission_pct']) + float(rules['slippage_pct']))
+    if market.fee_verified:
+        evidence=json.loads(Path('config/spot_account_fees.json').read_text())
+        cost_rt=float(evidence['buy_taker_per_side'])+float(evidence['sell_taker_per_side'])+2*float(rules['slippage_pct'])
+    checks['outcome_nonfinite']=int((~np.isfinite(plans[FIELDS].to_numpy(dtype=float))).sum())
+    checks['feature_available_after_decision']=int((states.atr_available_at > states.decision_close_ts).sum())
     checks['duplicate_plan_id'] = int(plans.plan_id.duplicated().sum())
     checks['sl_below_cost_floor'] = int((plans.sl_pct < cost_rt / 0.30 - 1e-12).sum())
     leaks = {'MFE', 'MAE', 'Y_WIN', 'Y_TP_FIRST', 'Y_SL_FIRST', 'NET_RETURN', 'TIMEOUT', 'TIME_TO_TP', 'TIME_TO_SL'}
@@ -112,7 +148,7 @@ def validate(max_states, stride, horizons=(48, 144, 288), mutate=False):
         if r.outcome_end_ts != train.index[end] or r.label_available_ts != train.index[end] + pd.Timedelta(minutes=5):
             checks['label_clock_mismatch'] += 1
         if any(ts in gap_after for ts in train.index[p:end]): checks['window_crosses_gap'] += 1
-        if r.label_available_ts >= pd.Timestamp('2022-01-01'): checks['label_after_partition'] += 1
+        if r.label_available_ts >= pd.Timestamp(hi): checks['label_after_partition'] += 1
         truth = scalar_outcome(arrays, p, r.direction, float(r.sl_pct), float(r.tp_r), int(r.horizon), float(r.fees_rt))
         if r.direction != 'LONG': checks['short_in_spot'] += 1
         if not np.isclose(float(r.fees_rt), cost_rt, rtol=0, atol=1e-15): checks['fee_mismatch'] += 1
@@ -129,7 +165,7 @@ def validate(max_states, stride, horizons=(48, 144, 288), mutate=False):
         n=('plan_id', 'size'), tp_first=('Y_TP_FIRST', 'mean'), sl_first=('Y_SL_FIRST', 'mean'),
         timeout=('TIMEOUT', 'mean'), win=('Y_WIN', 'mean')).reset_index()
     counts = manifest['counters']
-    return {'gate': 'GATE4_DATASET_LEVEL_ORACLE', 'split': 'TRAIN_ONLY', 'max_states': max_states, 'stride': stride,
+    return {'gate': 'GATE4_DATASET_LEVEL_ORACLE', 'split':split.upper(),'saved_dataset':str(dataset_dir) if dataset_dir else None, 'max_states': max_states, 'stride': stride,
             'horizons': list(horizons), 'states': len(states), 'plans': len(plans),
             'plans_per_state': {'mean': float(plans.groupby('state_id').size().mean()),
                                 'min': int(plans.groupby('state_id').size().min()),
@@ -149,16 +185,17 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--max-states', type=int, default=300); ap.add_argument('--stride', type=int, default=12)
     ap.add_argument('--report', type=Path, required=True); ap.add_argument('--self-test', action='store_true')
+    ap.add_argument('--split',choices=('train','val'),default='train');ap.add_argument('--dataset-dir',type=Path)
     args = ap.parse_args()
     target = args.report.resolve()
     if not target.is_relative_to(Path('/home/ubuntu/webapp')) or not target.parent.is_dir():
         raise ValueError('Report parent must exist in workspace')
     if args.self_test:
-        corrupted = validate(args.max_states, args.stride, mutate=True)
+        corrupted = validate(args.max_states, args.stride, mutate=True,split=args.split,dataset_dir=args.dataset_dir)
         detected = corrupted['field_divergences']
         assert all(detected[f] == 1 for f in FIELDS), detected
         print('ORACLE_SELF_TEST_PASS', detected)
-    result = validate(args.max_states, args.stride)
+    result = validate(args.max_states, args.stride,split=args.split,dataset_dir=args.dataset_dir)
     result['oracle_self_test'] = 'one corruption per field injected and detected exactly once' if args.self_test else 'not run'
     target.write_text(json.dumps(result, indent=2, default=str) + '\n')
     print(json.dumps({k: result[k] for k in ('states', 'plans', 'plans_per_state', 'decision_abstention', 'field_divergences', 'contract_checks')}, indent=2, default=str))
