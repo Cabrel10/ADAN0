@@ -50,11 +50,11 @@ def make_position(direction="LONG", entry=100.0, sl_pct=0.012, tp_r=3.5):
     if direction == "SHORT":
         return OpenPosition(direction="SHORT", entry=entry,
                             stop_loss=entry + risk, take_profit=entry - tp_r * risk,
-                            size_usd=1000, entry_index=0, fees_rt=0.0008,
+                            size_usd=1000, entry_index=0, fees_rt=None,
                             atr_1h_pct=0.012)
     return OpenPosition(direction="LONG", entry=entry,
                         stop_loss=entry - risk, take_profit=entry + tp_r * risk,
-                        size_usd=1000, entry_index=0, fees_rt=0.0008,
+                        size_usd=1000, entry_index=0, fees_rt=None,
                         atr_1h_pct=0.012)
 
 
