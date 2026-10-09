@@ -796,7 +796,7 @@ négatifs conservés ; aucune entraînement CPU > 10K pas (GPU via colab-cli).
 
 
 **Last updated:** 2026-09-20  
-**Status:** SPOT STRICT — 500K BLOCKED (account fees / coverage / net EV / trainer gates)  
+**Status:** SPOT STRICT — 500K BLOCKED (account fees / coverage / net EV / trainer gates)
 
 ---
 

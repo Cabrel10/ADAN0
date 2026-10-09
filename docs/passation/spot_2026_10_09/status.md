@@ -119,4 +119,3 @@ les runs atteignant 500K présentations ou >10K updates tant que les gates sont 
 
 Preuves locales : `data/plan_dataset/spot_diagnostics/`.
 Passation versionnée : `docs/passation/spot_2026_10_09/` ; PR #11.
-
